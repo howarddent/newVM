@@ -1,0 +1,365 @@
+unit newVM;
+
+{*******************************************************************************
+
+     Vector / Matrix objects leveraging intel mkl libraries
+
+     Dr H. Dent uk. email howard@hgrd.co.uk             29 July 2026
+
+     Inspired by Dew MtxVec Library for fpc but does not  distinguish
+     between matrix and vector objects. Vectors are column dimension (*,1)
+     or row dimension (1.*).
+
+     ADDITIONS (for interop with newVMComplex.pas):
+       - public DataPtr function: raw pointer to the underlying double
+         buffer, so other units can pass it straight into MKL calls
+         without needing full friend access to the record internals.
+       - public Rows / Cols read-only properties, so other units can
+         query dimensions to size a matching object (e.g. for a real ->
+         complex copy of the "same dimensions").
+       These do not change any existing behaviour.
+
+     OPERATOR OVERLOADS (algebraic expressions on TVMobj):
+       - '+' and '-' are element-wise, via cblas_daxpy (Y := alpha*X + Y).
+       - unary '-' negates via cblas_dscal.
+       - '*' between two TVMobj is matrix multiplication, delegating to
+         the existing MatMult (cblas_dgemm).
+       - '*' and '/' against a plain Double scalar scale every element,
+         via cblas_dscal and IPP's ippsDivC_64f_I respectively.
+       These let expressions like  C := A*B + D;  or  C := 2*A - B/3;
+       be written directly instead of via named routines.
+
+*******************************************************************************}
+
+{$mode delphi}{$H+}
+{$Align 8}
+{$Linklib 'mkl_rt.so'}
+{$Linklib 'pthread'}
+{$Linklib 'm'}
+{$Linklib 'dl'}
+//The three libs above aren't used directly by this unit, but mkl_rt.so
+//dlopen's libmkl_core.so (and friends) at runtime, which expects libm/
+//pthread/dl to already be loaded into the process's global symbol table.
+//Without this, you get errors like:
+//  symbol lookup error: .../libmkl_core.so: undefined symbol: log10
+
+interface
+
+uses
+  Classes, SysUtils,cblas,math,TestRegistry,OneAPI,Types;
+
+Const
+  MaxDim = 65536;    //maximum dimensions of any array
+
+Type
+  TDim = 0..MaxDim-1;
+  TDataSize = 1..MaxDim*MaxDim;
+  TVector = Array of Double;   //maximum dimensions of any array
+
+
+type
+  
+  { TVMobj }
+
+  TVMobj = record
+    private
+      fData : tVector;  //Holds data for object
+      frows, fcols : TDim;
+      function getelement(r,c: TDim): Double;
+      procedure setelement(r,c: TDim; AValue: Double);
+    public
+      constructor create(r,c :tDim);Overload;
+      Constructor create(r,c: TDim; const Values : TVector); overload;
+      function writeMatrix: TStringList;
+      property Element[r,c:TDim]:Double read getelement write setelement; default;
+      procedure fillRandom;
+      procedure Id;
+      function DataPtr: PDouble;   //raw buffer, for MKL interop from other units
+      property Rows: TDim read frows;              //read-only dimension accessors
+      property Cols: TDim read fcols;
+
+      { Operator overloads - see OPERATOR OVERLOADS note in the header above.
+        Mode Delphi only supports operator overloading as "class operator"
+        members of the record - the free-standing "operator + (...)"
+        syntax declared at unit scope is an ObjFPC/FPC-mode-only extension
+        and is rejected under $mode Delphi. }
+      class operator +(const A, B: TVMobj): TVMobj;
+      class operator -(const A, B: TVMobj): TVMobj;
+      class operator -(const A: TVMobj): TVMobj;
+      class operator *(const A, B: TVMobj): TVMobj;
+      class operator *(const A: TVMobj; const k: Double): TVMobj;
+      class operator *(const k: Double; const A: TVMobj): TVMobj;
+      class operator /(const A: TVMobj; const k: Double): TVMobj;
+    end;
+
+function calcoffset(r,c :TDim):integer;inline;
+function MatMult( const A, B: TVMObj): TVMobj;
+function LinearSolve(var A, B: TVMObj):integer;
+function CopyObj(Const A : TVMObj):TVMobj;
+
+{ Elementwise transcendental/algebraic functions, via MKL VML (vd* routines
+  in OneAPI.pas). Each returns a new TVMobj of the same dimensions as A,
+  with the function applied to every element. Marked "overload" since
+  Sin/Cos/Sqr/Sqrt/Exp/Ln also exist in System/Math for plain numeric
+  types - without "overload" the TVMobj versions here would hide those
+  entirely within this unit, breaking any plain Sqrt(x: Double) call. }
+function Sin(const A: TVMobj): TVMobj; overload;
+function Cos(const A: TVMobj): TVMobj; overload;
+function Tan(const A: TVMobj): TVMobj; overload;
+function Sinh(const A: TVMobj): TVMobj; overload;
+function Sqr(const A: TVMobj): TVMobj; overload;
+function Sqrt(const A: TVMobj): TVMobj; overload;
+function Exp(const A: TVMobj): TVMobj; overload;
+function Ln(const A: TVMobj): TVMobj; overload;
+
+implementation
+
+function calcoffset(r, c: TDim): integer;
+begin
+  result := (r*(c-1))+r-1;
+end;
+
+{ TVMobj }
+
+function TVMobj.getelement(r,c: TDim): Double;
+var
+   Ix : Integer;
+begin
+   assert((r<=rows) and (c<=cols),'Dimensions don''t match in getelement');
+   Ix := calcoffset(r,c);
+   assert(Ix<= high(fdata),'Index out of range in get element');
+   result := fdata[Ix];
+end;
+
+procedure TVMobj.setelement(r,c:TDim; AValue: Double);
+var
+ Ix : Integer;
+begin
+   assert((r<=rows) and (c<=cols),'Dimensions don''t match in setelement');
+   Ix := calcoffset(r,c);
+   assert(Ix <= high(fdata),'Index out of range in set element');
+   fdata[Ix] := Avalue;
+end;
+
+constructor TVMobj.create(r,c :tDim);
+var
+  i,N : integer;
+begin
+  assert((r>0) and (c>0),'rows and columns must be > 0');
+  frows := r;
+  fcols := c;
+  N := r*c;
+  setLength(fData,N);
+  for i := low(fdata) to high(fdata) do fdata[i] := 0;
+end;
+
+constructor TVMobj.create(r,c : TDim; const Values: TVector);
+begin
+  assert((r>0) and (c>0),'rows and columns must be > 0');
+  assert( (r*c) = high(values)+1,'Incompatible dimensions ');
+  frows := r;
+  fcols := c;
+  fdata := copy(Values,0,high(values)+1);
+end;
+
+function TVMobj.writeMatrix: TStringList;
+const
+  fieldwidth = 10;
+var
+   i,j,k,l: integer;
+   s,t : String;
+begin
+  result:= TStringList.create;
+  for i:=0 to rows-1 do begin // row by row
+    s := '    ['+chr(9);//+chr(9);
+    for j:=0 to cols-1 do begin
+      t :=floatToStrf(FData[i*cols+j],fffixed,10,3);
+      s := s + t;
+      l := length(t);    // pad t to get constant length
+     if l < fieldwidth then
+      for k := 1 to fieldwidth-l do s := s +' ';
+    end;
+    s := s {+chr(9)}+']';
+    result.add(s);
+  end;
+end;
+
+procedure TVMobj.fillRandom;
+//
+// from c program at
+//https://www.smcm.iqfr.csic.es/docs/intel/mkl/mkl_manual/sf/sf_vslusage.htm
+// Timed for 1000x1000 loop 100ms intel mkl 2ms!
+//
+const
+  vslConst = 8388608;
+  VSL_RNG_METHOD_GAUSSIAN_ICDF = 2;
+var
+  vsSTream : pointer;
+begin
+  vslNewStream(@vsStream,vslConst,777);
+  vdRngGaussian(VSL_RNG_METHOD_GAUSSIAN_ICDF,vsStream,high(fdata)+1,@Fdata[0],0,1);
+  vsldeleteStream(@vsStream);
+end;
+
+procedure TVMobj.Id;
+const
+  s : string = 'Routine Id :';
+begin
+    //Check dimensions of matrices are compatible. A must be square and A.cols =
+  // B.rows
+  assert(cols=rows,s +'Matrix A must be square');
+  lapacke_dlaset(CBlasRowMajor,'A',rows,cols,0,1,@Fdata[0],rows);
+end;
+
+function TVMobj.DataPtr: PDouble;
+begin
+  result := @fdata[0];
+end;
+
+
+
+function MatMult(const A, B: TVMObj): TVMobj;
+const
+  s : String = 'Routine MatMult :';
+var
+  m,n,k,I : integer;
+  C : TVMObj;
+begin
+  m := A.Rows;
+  n := B.Cols;
+  k := A.Cols;
+  //Check for compatibilty of matrices
+  assert(A.cols = B.rows,s+'columns of first matrix must equal rows of second');
+  c := TVMObj.Create(m,n);
+  //check library initialized
+  cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+              m,n,k, { m, n, k }
+              1,     { alpha   }
+                @A.FData[0], k,
+                @B.Fdata[0], n,
+              1, {beta}
+                @C.Fdata[0],n
+             );
+    result := C;
+end;
+
+function LinearSolve(var A, B: TVMObj):integer;
+const
+  s : String = 'Function linear Solve : ';
+var
+  ipiv : array of integer;
+{ Direct linear solve for matrix A and Vectors B. On return A is in LU
+  factored form and solution matrix is in B. Returns info from Lapacke}
+begin
+  //Check dimensions of matrices are compatible. A must be square and A.cols =
+  // B.rows
+  assert(A.Cols = A.Rows,s+'Matrix A must be square');
+  assert(A.Rows = B.cols, s+'Matrix A and B have incompatible dimensions');
+  setlength(ipiv,A.rows);
+ linearSolve:= lapacke_dgesv(CBlasRowMajor,A.rows,B.cols,@A.Fdata[0],A.cols,@ipiv[0],@B.FData[0],B.cols);
+end;
+
+function CopyObj(const A: TVMObj): TVMobj;
+begin
+  result := TVMObj.Create(A.rows,A.cols);
+  LAPACKE_dlacpy(CBlasRowMajor,'A',A.rows,A.cols,@A.Fdata[0],a.cols,@result.fdata[0],result.cols);
+end;
+
+class operator TVMobj.+(const A, B: TVMobj): TVMobj;
+const
+  s : String = 'Operator + (TVMobj) : ';
+begin
+  assert((A.Rows=B.Rows) and (A.Cols=B.Cols), s+'matrix dimensions must match');
+  result := CopyObj(B);
+  cblas_daxpy(A.Rows*A.Cols, 1, A.DataPtr, 1, result.DataPtr, 1);
+end;
+
+class operator TVMobj.-(const A, B: TVMobj): TVMobj;
+const
+  s : String = 'Operator - (TVMobj) : ';
+begin
+  assert((A.Rows=B.Rows) and (A.Cols=B.Cols), s+'matrix dimensions must match');
+  result := CopyObj(A);
+  cblas_daxpy(A.Rows*A.Cols, -1, B.DataPtr, 1, result.DataPtr, 1);
+end;
+
+class operator TVMobj.-(const A: TVMobj): TVMobj;
+begin
+  result := CopyObj(A);
+  cblas_dscal(A.Rows*A.Cols, -1, result.DataPtr, 1);
+end;
+
+class operator TVMobj.*(const A, B: TVMobj): TVMobj;
+begin
+  result := MatMult(A, B);
+end;
+
+class operator TVMobj.*(const A: TVMobj; const k: Double): TVMobj;
+begin
+  result := CopyObj(A);
+  cblas_dscal(A.Rows*A.Cols, k, result.DataPtr, 1);
+end;
+
+class operator TVMobj.*(const k: Double; const A: TVMobj): TVMobj;
+begin
+  result := A * k;
+end;
+
+class operator TVMobj./(const A: TVMobj; const k: Double): TVMobj;
+const
+  s : String = 'Operator / (TVMobj) : ';
+begin
+  assert(k<>0, s+'division by zero');
+  result := CopyObj(A);
+  ippsDivC_64f_I(k, result.DataPtr, A.Rows*A.Cols);
+end;
+
+function Sin(const A: TVMobj): TVMobj;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  vdSin(A.Rows*A.Cols, A.DataPtr, result.DataPtr);
+end;
+
+function Cos(const A: TVMobj): TVMobj;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  vdCos(A.Rows*A.Cols, A.DataPtr, result.DataPtr);
+end;
+
+function Tan(const A: TVMobj): TVMobj;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  vdTan(A.Rows*A.Cols, A.DataPtr, result.DataPtr);
+end;
+
+function Sinh(const A: TVMobj): TVMobj;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  vdSinh(A.Rows*A.Cols, A.DataPtr, result.DataPtr);
+end;
+
+function Sqr(const A: TVMobj): TVMobj;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  vdSqr(A.Rows*A.Cols, A.DataPtr, result.DataPtr);
+end;
+
+function Sqrt(const A: TVMobj): TVMobj;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  vdSqrt(A.Rows*A.Cols, A.DataPtr, result.DataPtr);
+end;
+
+function Exp(const A: TVMobj): TVMobj;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  vdExp(A.Rows*A.Cols, A.DataPtr, result.DataPtr);
+end;
+
+function Ln(const A: TVMobj): TVMobj;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  vdLn(A.Rows*A.Cols, A.DataPtr, result.DataPtr);
+end;
+
+end.

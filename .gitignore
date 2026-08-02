@@ -1,0 +1,14 @@
+# Free Pascal / Lazarus build artifacts
+lib/
+*.o
+*.ppu
+*.rsj
+*.compiled
+*.res
+newVMtest
+
+# Lazarus IDE session state (per-user, not shared project config)
+*.lps
+
+# Claude Code local settings
+.claude/settings.local.json
