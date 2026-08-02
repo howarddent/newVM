@@ -84,9 +84,10 @@ type
       class operator *(const A: TVMobj; const k: Double): TVMobj;
       class operator *(const k: Double; const A: TVMobj): TVMobj;
       class operator /(const A: TVMobj; const k: Double): TVMobj;
+      class operator =(const A, B: TVMobj): Boolean;
     end;
 
-function calcoffset(r,c :TDim):integer;inline;
+function calcoffset(r,c,cols :TDim):integer;inline;
 function MatMult( const A, B: TVMObj): TVMobj;
 function LinearSolve(var A, B: TVMObj):integer;
 function CopyObj(Const A : TVMObj):TVMobj;
@@ -108,9 +109,9 @@ function Ln(const A: TVMobj): TVMobj; overload;
 
 implementation
 
-function calcoffset(r, c: TDim): integer;
+function calcoffset(r, c, cols: TDim): integer;
 begin
-  result := (r*(c-1))+r-1;
+  result := r*cols+c;
 end;
 
 { TVMobj }
@@ -119,8 +120,8 @@ function TVMobj.getelement(r,c: TDim): Double;
 var
    Ix : Integer;
 begin
-   assert((r<=rows) and (c<=cols),'Dimensions don''t match in getelement');
-   Ix := calcoffset(r,c);
+   assert((r<rows) and (c<cols),'Dimensions don''t match in getelement');
+   Ix := calcoffset(r,c,cols);
    assert(Ix<= high(fdata),'Index out of range in get element');
    result := fdata[Ix];
 end;
@@ -129,8 +130,8 @@ procedure TVMobj.setelement(r,c:TDim; AValue: Double);
 var
  Ix : Integer;
 begin
-   assert((r<=rows) and (c<=cols),'Dimensions don''t match in setelement');
-   Ix := calcoffset(r,c);
+   assert((r<rows) and (c<cols),'Dimensions don''t match in setelement');
+   Ix := calcoffset(r,c,cols);
    assert(Ix <= high(fdata),'Index out of range in set element');
    fdata[Ix] := Avalue;
 end;
@@ -248,7 +249,7 @@ begin
   //Check dimensions of matrices are compatible. A must be square and A.cols =
   // B.rows
   assert(A.Cols = A.Rows,s+'Matrix A must be square');
-  assert(A.Rows = B.cols, s+'Matrix A and B have incompatible dimensions');
+  assert(A.Rows = B.Rows, s+'Matrix A and B have incompatible dimensions');
   setlength(ipiv,A.rows);
  linearSolve:= lapacke_dgesv(CBlasRowMajor,A.rows,B.cols,@A.Fdata[0],A.cols,@ipiv[0],@B.FData[0],B.cols);
 end;
@@ -306,6 +307,12 @@ begin
   assert(k<>0, s+'division by zero');
   result := CopyObj(A);
   ippsDivC_64f_I(k, result.DataPtr, A.Rows*A.Cols);
+end;
+
+class operator TVMobj.=(const A, B: TVMobj): Boolean;
+begin
+  Result := (A.Rows = B.Rows) and (A.Cols = B.Cols) and
+            CompareMem(A.DataPtr, B.DataPtr, A.Rows*A.Cols*SizeOf(Double));
 end;
 
 function Sin(const A: TVMobj): TVMobj;

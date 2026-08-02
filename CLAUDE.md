@@ -11,9 +11,11 @@ does not distinguish matrix and vector types: a vector is just an (N,1) or
 (1,N) matrix. There are four parallel "flavors" of the same object model for
 real/complex × double/single precision (see Architecture below).
 
-There is no README, no test framework config beyond FPCUnit's `TestRegistry`
-being pulled in, and no CI. `newVMtest.lpr` is a scratch/smoke-test program,
-not a real unit test suite.
+There is no README and no CI, but there is a real automated test suite:
+`newVMTests.pas` (FPCUnit `TTestCase`s, one per `TVMobj*` type) plus
+`newVMtest.lpr`, which now builds as a plain-text FPCUnit console runner
+rather than an eyeballed demo — see the `newVMTests.pas and newVMtest.lpr`
+section below.
 
 ## Build
 
@@ -40,7 +42,9 @@ Run it:
 ```
 ./newVMtest
 ```
-(No CLI args are meaningfully handled beyond `-h`/`--help`.)
+This runs the full FPCUnit suite (`newVMTests.pas`) via a plain-text console
+runner and exits non-zero if any test fails or errors — no CLI args are
+handled.
 
 There is no headless `fpc`-only build path documented here — always build via
 `lazbuild` and the `.lpi`, since that's what encodes the search paths and
@@ -74,13 +78,19 @@ real→complex promotion (`RealToComplex`) and part extraction
 ### Core object shape (`TVMobj` and siblings)
 
 Each is a Pascal `record` (not a `class`) wrapping a dynamic array (`fData`)
-plus `frows`/`fcols`. Elements are stored **row-major**, and addressed via
-the default indexed property `Element[r,c]`, backed by `calcoffset` — note
-`calcoffset` computes `(r*(c-1))+r-1`, which is *not* the standard
-`r*cols+c` row-major formula; read it carefully before assuming standard
-indexing when touching offset logic (`writeMatrix` and the complex-unit
-`fillRandom`/copy tricks use `i*cols+j` directly instead, which is the
-formula you'd normally expect — the two coexist in the codebase).
+plus `frows`/`fcols`. Elements are stored **row-major**, 0-based, and
+addressed via the default indexed property `Element[r,c]`, backed by
+`calcoffset(r,c,cols) = r*cols+c` — the standard row-major formula, and the
+same one `writeMatrix` and the complex-unit `fillRandom`/copy tricks use
+directly via `i*cols+j`. (Historical note: `calcoffset` originally took only
+`(r,c)` and computed `(r*(c-1))+r-1`, which algebraically reduces to
+`r*c-1` — a function of the *product* r*c, not position, so e.g. `[1,3]`
+and `[3,1]` silently aliased the same storage slot in any matrix with more
+than one row and column, and `[0,anything]` produced a negative index. It
+only ever happened to work for row/column vectors. Fixed to take `cols` as
+a third argument and use the standard formula; nothing in the library
+itself depended on the old behavior, since every internal routine already
+bypassed the property and read `FData` directly.)
 
 Because these are records, not classes, **value semantics apply**: assigning
 one `TVMobj` to another copies the record header but `fData` is a dynamic
@@ -95,11 +105,15 @@ message, not exceptions — they only fire because the `.lpi` enables
 unit-local `const s = 'Routine Name : '` prefix on the message) rather than
 introducing exception-based validation.
 
-`DataPtr` (on `TVMobj`) and the equivalent raw-pointer access on the other
-records exist specifically so sibling units can hand a raw buffer pointer
-straight into an MKL call without needing friend/private access — this is
-the established pattern for cross-unit interop; use it rather than exposing
-more internal fields.
+`DataPtr` (on `TVMobj`/`TVMobjS`) and the equivalent raw-pointer access on
+the other records exist specifically so sibling units can hand a raw buffer
+pointer straight into an MKL call without needing friend/private access —
+this is the established pattern for cross-unit interop; use it rather than
+exposing more internal fields. All four types expose public read-only
+`Rows`/`Cols` properties (the complex units gained theirs alongside the
+`calcoffset` fix below, for parity with the real units and so external code
+— including the test suite — can query dimensions without reaching into
+private fields).
 
 ### Operator overloads
 
@@ -172,7 +186,7 @@ These are declared `overload` in every unit, which is load-bearing, not
 decorative: without it, each unit's `Sin`/`Cos`/etc. would simply *hide*
 `System`/`Math`'s versions (and each other's, across units) rather than
 extending them, since plain identifier redeclaration in Pascal shadows by
-default. `overload` is what lets `newVMtest.lpr` — which `uses` all four
+default. `overload` is what lets `newVMTests.pas` — which `uses` all four
 `TVMobj*` units together — call `Sin(dblA)`, `Sin(sngA)`, `Sin(cplA)`,
 `Sin(cplsA)` and have each resolve to the right unit's version purely by
 argument type, with the plain-numeric `Sin` still reachable too.
@@ -219,15 +233,52 @@ Every LAPACKE/CBLAS call passes `CBlasRowMajor` explicitly — this codebase
 consistently uses row-major storage, unlike Fortran-native
 column-major LAPACK. Keep new routines consistent with this.
 
-### `newVMtest.lpr`
+### `newVMTests.pas` and `newVMtest.lpr`
 
-Smoke-test / demo program exercising: real→complex promotion
-(`RealToComplexS`), identity fill (`.id`), matrix multiply (`matmultC`),
-linear solve (`LinearSolveC`), and eigendecomposition (`EigDecomposeS`),
-timed with `hirestimer.THighResTimer`. It's a manual sanity check you run
-and eyeball the output of, not an automated pass/fail test — there's no
-assertion-based test harness wired up despite `TestRegistry` being in the
-`uses` clauses of the `newVM*` units.
+`newVMTests.pas` is the real automated test suite, using FPCUnit
+(`fpcunit`/`testregistry` — the `TestRegistry` unit already pulled into
+every `newVM*` unit's `uses` clause turned out to be exactly this
+framework). One `TTestCase` per type — `TVMobjTests`, `TVMobjSTests`,
+`TVMobjZTests`, `TVMobjCTests` — each registered via `RegisterTest` in the
+unit's `initialization` section. Coverage per type: construction and
+dimension-validation asserts, `Element[r,c]` get/set (including
+out-of-range and non-square addressing), `writeMatrix`, `fillRandom`
+(exploits the hard-coded seed — see below), `Id`, `DataPtr` (real types),
+`CopyObj*` independence, `MatMult*`, `LinearSolve*`, every operator
+overload including the assertion paths, and the elementwise VML functions.
+The two complex types additionally cover `RealToComplex*`/`GetRealPart*`/
+`GetImagPart*`/`SplitComplex*`, `EigDecompose*` (verified via the defining
+equation `A*v = lambda*v`, not hard-coded eigenvectors, since LAPACK
+doesn't guarantee a particular sign/normalisation), and the mixed
+real/complex operators.
+
+One reusable trick worth knowing: `fillRandom` seeds a fresh VSL stream
+with a hard-coded constant (777) on every call, so two same-sized
+`fillRandom` calls produce bit-identical data — several tests exploit this
+via the `=` operator (e.g. `TestFillRandomDeterministic`) instead of
+needing a real "are these matrices approximately equal" helper.
+
+`newVMtest.lpr` is now a thin FPCUnit console runner (based on the
+`simpletestrunner` pattern: `TPlainResultsWriter` + `TTestResult` over
+`GetTestRegistry`) — it just runs everything `newVMTests.pas` registered,
+prints a plain-text pass/fail report, and sets a non-zero exit code on any
+failure or error, so `./newVMtest` is a real CI-style gate. It no longer
+does the old eyeballed demo (real→complex promotion, identity fill, timed
+matmult/solve/eigendecompose) or handles any CLI args (including the old
+`-h`/`--help`); `hirestimer.pas` is consequently unused by the current
+project files, though it still exists in the repo as a general-purpose
+`THighResTimer` if timing is needed again.
+
+Building this suite surfaced two real, pre-existing bugs, both fixed as
+part of adding the tests (not just worked around):
+- `calcoffset` — see the "Core object shape" section above.
+- `LinearSolve`/`LinearSolveS`/`LinearSolveZ`/`LinearSolveC` all asserted
+  `A.Rows = B.cols` instead of `A.Rows = B.Rows` before checking the solve.
+  Since `B.cols` is actually the LAPACKE `nrhs` (number of independent
+  right-hand-side vectors, unconstrained relative to `A.Rows`), this
+  incorrectly rejected the common single-RHS case (`B` as an Nx1 column)
+  for any N other than 1. Undetected before because the old demo always
+  passed a square `B`.
 
 Note: `newVMtest.lpi` lists `newvmconvert.pas` (unit `newVMConvert`) as a
 project file, but that file does not currently exist in the repo — check
@@ -237,8 +288,10 @@ project membership.
 ### `hirestimer.pas`
 
 Platform-specific high-resolution timer (`THighResTimer`), using
-`clock_gettime(CLOCK_MONOTONIC, ...)` on Unix. Used for timing MKL routine
-calls in the test program.
+`clock_gettime(CLOCK_MONOTONIC, ...)` on Unix. Previously used to time MKL
+routine calls in the old `newVMtest.lpr` demo; not referenced by any
+current project file now that `newVMtest.lpr` is an FPCUnit console
+runner, but kept in the repo as a general-purpose utility.
 
 ### `backup/`
 

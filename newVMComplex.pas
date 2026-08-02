@@ -99,7 +99,7 @@ type
   TVMobjZ = record
     private
       fData : TVectorZ;  //Holds data for object
-      rows, cols : TDimZ;
+      frows, fcols : TDimZ;
       function getelement(r,c: TDimZ): TComplex16;
       procedure setelement(r,c: TDimZ; AValue: TComplex16);
     public
@@ -109,6 +109,8 @@ type
       property Element[r,c:TDimZ]:TComplex16 read getelement write setelement; default;
       procedure fillRandom;
       procedure Id;
+      property Rows: TDimZ read frows;              //read-only dimension accessors
+      property Cols: TDimZ read fcols;
 
       { Operator overloads - see OPERATOR OVERLOADS note in the header above.
         Mode Delphi only supports operator overloading as "class operator"
@@ -131,9 +133,10 @@ type
       class operator -(const A: TVMobj; const B: TVMobjZ): TVMobjZ;
       class operator *(const A: TVMobjZ; const B: TVMobj): TVMobjZ;
       class operator *(const A: TVMobj; const B: TVMobjZ): TVMobjZ;
+      class operator =(const A, B: TVMobjZ): Boolean;
   end;
 
-function calcoffsetZ(r,c :TDimZ):integer;inline;
+function calcoffsetZ(r,c,cols :TDimZ):integer;inline;
 function MatMultZ( const A, B: TVMObjZ): TVMobjZ;
 function LinearSolveZ(var A, B: TVMObjZ):integer;
 function CopyObjZ(Const A : TVMObjZ):TVMobjZ;
@@ -167,9 +170,9 @@ begin
   result.im := im;
 end;
 
-function calcoffsetZ(r, c: TDimZ): integer;
+function calcoffsetZ(r, c, cols: TDimZ): integer;
 begin
-  result := (r*(c-1))+r-1;
+  result := r*cols+c;
 end;
 
 { TVMobjZ }
@@ -178,8 +181,8 @@ function TVMobjZ.getelement(r,c: TDimZ): TComplex16;
 var
    Ix : Integer;
 begin
-   assert((r<=rows) and (c<=cols),'Dimensions don''t match in getelement');
-   Ix := calcoffsetZ(r,c);
+   assert((r<rows) and (c<cols),'Dimensions don''t match in getelement');
+   Ix := calcoffsetZ(r,c,cols);
    assert(Ix<= high(fdata),'Index out of range in get element');
    result := fdata[Ix];
 end;
@@ -188,8 +191,8 @@ procedure TVMobjZ.setelement(r,c:TDimZ; AValue: TComplex16);
 var
  Ix : Integer;
 begin
-   assert((r<=rows) and (c<=cols),'Dimensions don''t match in setelement');
-   Ix := calcoffsetZ(r,c);
+   assert((r<rows) and (c<cols),'Dimensions don''t match in setelement');
+   Ix := calcoffsetZ(r,c,cols);
    assert(Ix <= high(fdata),'Index out of range in set element');
    fdata[Ix] := Avalue;
 end;
@@ -199,8 +202,8 @@ var
   i,N : integer;
 begin
   assert((r>0) and (c>0),'rows and columns must be > 0');
-  rows := r;
-  cols := c;
+  frows := r;
+  fcols := c;
   N := r*c;
   setLength(fData,N);
   for i := low(fdata) to high(fdata) do fdata[i] := Cplx(0,0);
@@ -210,8 +213,8 @@ constructor TVMobjZ.create(r,c : TDimZ; const Values: TVectorZ);
 begin
   assert((r>0) and (c>0),'rows and columns must be > 0');
   assert( (r*c) = high(values)+1,'Incompatible dimensions ');
-  rows := r;
-  cols := c;
+  frows := r;
+  fcols := c;
   fdata := copy(Values,0,high(values)+1);
 end;
 
@@ -316,7 +319,7 @@ var
   factored form and solution matrix is in B. Returns info from Lapacke}
 begin
   assert(A.Cols = A.Rows,s+'Matrix A must be square');
-  assert(A.Rows = B.cols, s+'Matrix A and B have incompatible dimensions');
+  assert(A.Rows = B.Rows, s+'Matrix A and B have incompatible dimensions');
   setlength(ipiv,A.rows);
   LinearSolveZ:= lapacke_zgesv(CBlasRowMajor,A.rows,B.cols,@A.Fdata[0],A.cols,@ipiv[0],@B.FData[0],B.cols);
 end;
@@ -562,6 +565,12 @@ end;
 class operator TVMobjZ.*(const A: TVMobj; const B: TVMobjZ): TVMobjZ;
 begin
   result := MatMultZ(RealToComplex(A), B);
+end;
+
+class operator TVMobjZ.=(const A, B: TVMobjZ): Boolean;
+begin
+  Result := (A.rows = B.rows) and (A.cols = B.cols) and
+            CompareMem(@A.FData[0], @B.FData[0], A.rows*A.cols*SizeOf(TComplex16));
 end;
 
 function Sin(const A: TVMobjZ): TVMobjZ;
