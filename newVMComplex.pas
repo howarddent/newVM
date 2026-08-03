@@ -109,6 +109,8 @@ type
       property Element[r,c:TDimZ]:TComplex16 read getelement write setelement; default;
       procedure fillRandom;
       procedure Id;
+      procedure linspace(Start, increment: TComplex16);
+      function Transpose: TVMObjZ;
       property Rows: TDimZ read frows;              //read-only dimension accessors
       property Cols: TDimZ read fcols;
 
@@ -161,6 +163,7 @@ function Sqr(const A: TVMobjZ): TVMobjZ; overload;
 function Sqrt(const A: TVMobjZ): TVMobjZ; overload;
 function Exp(const A: TVMobjZ): TVMobjZ; overload;
 function Ln(const A: TVMobjZ): TVMobjZ; overload;
+function MulObjZ(const A, B: TVMObjZ): TVMobjZ;
 
 implementation
 
@@ -281,7 +284,31 @@ begin
   lapacke_zlaset(CBlasRowMajor,'A',rows,cols,zero,one,@Fdata[0],rows);
 end;
 
+procedure TVMobjZ.linspace(Start, increment: TComplex16);
+const
+  s : String ='routine linspace';
+var
+  i : integer;
+begin
+  assert(fdata <>nil,s+  ': MVObj Not Initialized');
+  //IPP has no complex VectorSlope (ippsVectorSlope_64fc isn't exported by
+  //libipps - only the real forms are), so build the arithmetic sequence
+  //directly: FData[i] = Start + i*increment.
+  for i := 0 to high(fdata) do
+    FData[i] := Cplx(start.re + i*increment.re, start.im + i*increment.im);
+end;
 
+function TVMobjZ.Transpose:TVMObjZ;
+var
+  temp : TDimZ;
+begin
+  result := copyobjZ(self);
+  MKL_Zimatcopy('R','T',rows,cols,Cplx(1,0),@result.FData[0],cols,rows);
+//swap row and column numbers
+  temp := self.rows;
+  result.frows := self.cols;
+  result.fcols := temp;
+end;
 
 function MatMultZ(const A, B: TVMObjZ): TVMobjZ;
 const
@@ -494,7 +521,7 @@ end;
 
 class operator TVMobjZ.*(const A, B: TVMobjZ): TVMobjZ;
 begin
-  result := MatMultZ(A, B);
+  result := MulObjZ(A, B);
 end;
 
 class operator TVMobjZ.*(const A: TVMobjZ; const k: TComplex16): TVMobjZ;
@@ -621,6 +648,15 @@ function Ln(const A: TVMobjZ): TVMobjZ;
 begin
   result := TVMobjZ.Create(A.rows, A.cols);
   vzLn(A.rows*A.cols, @A.FData[0], @result.FData[0]);
+end;
+
+function MulObjZ(const A, B: TVMObjZ): TVMobjZ;
+const
+  s: string ='Routine MulObjZ : ';
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObjZ(A);
+  vzMul(A.rows*A.cols, @A.FData[0], @B.FData[0], @result.FData[0]);
 end;
 
 end.

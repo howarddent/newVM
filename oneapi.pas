@@ -259,6 +259,11 @@ procedure vmdSub(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl;ex
 
 procedure vmdMul(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl;external;
 
+//single-precision real analogue of vmdMul above, for newVMSingle's
+//elementwise '*' operator (MulObjS) - there is no "vs"-family Mul, same
+//reason vmdMul (not vdMul) backs the double-precision version.
+procedure vmsMul(const n: Integer; a: PSingle; b: PSingle; r: PSingle); cdecl;external;
+
 procedure vmdDiv(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl;external;
 
 procedure vmdPowx(const n: Integer; a: PDouble; b: Double; r: PDouble); cdecl;external;
@@ -320,6 +325,14 @@ function ippsCos_64f_A50(a : Pdouble; r: Pdouble; n: Integer): Integer; cdecl;ex
 
 function ippsVectorSlope_64f( a : Pdouble; len: Integer; offset: double; slope: double): Integer; cdecl;external;
 
+//single-precision real analogue of ippsVectorSlope_64f, for newVMSingle's linspace.
+function ippsVectorSlope_32f( a : PSingle; len: Integer; offset: Single; slope: Single): Integer; cdecl;external;
+
+//NOTE: IPP does not ship complex VectorSlope variants (ippsVectorSlope_64fc/
+//_32fc are not exported by libipps - only the real 8u/16u/16s/32u/32s/32f/64f
+//forms exist), so newVMComplex's/newVMComplexSingle's linspace fill their
+//complex arithmetic sequence with a plain Pascal loop instead - see there.
+
 function ippsCopy_64f(const pSrc: PDouble; pDst: PDouble; len: Integer): Integer; cdecl;external;
 
 function ippsMulC_64f_I_L(val: double; pSrcDst: PDouble; len: Integer): Integer; cdecl;external;
@@ -356,6 +369,12 @@ function ippMalloc(length: Integer): Pointer; cdecl;external;
 procedure ippFree(ptr: Pointer); cdecl;external;
 
 procedure MKL_Dimatcopy(const ordering: UTF8Char; const trans: UTF8Char; rows: NativeUInt; cols: NativeUInt; const alpha: Double; AB: PDouble; lda: NativeUInt; ldb: NativeUInt); cdecl;external;
+
+//single/complex analogues of MKL_Dimatcopy above, for the other three
+//units' Transpose methods.
+procedure MKL_Simatcopy(const ordering: UTF8Char; const trans: UTF8Char; rows: NativeUInt; cols: NativeUInt; const alpha: Single; AB: PSingle; lda: NativeUInt; ldb: NativeUInt); cdecl;external;
+procedure MKL_Zimatcopy(const ordering: UTF8Char; const trans: UTF8Char; rows: NativeUInt; cols: NativeUInt; const alpha: TComplex16; AB: PComplex16; lda: NativeUInt; ldb: NativeUInt); cdecl;external;
+procedure MKL_Cimatcopy(const ordering: UTF8Char; const trans: UTF8Char; rows: NativeUInt; cols: NativeUInt; const alpha: TComplex8; AB: PComplex8; lda: NativeUInt; ldb: NativeUInt); cdecl;external;
 
 // Random Number Generator
 

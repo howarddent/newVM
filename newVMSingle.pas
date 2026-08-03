@@ -69,6 +69,8 @@ type
       property Element[r,c:TDimS]:Single read getelement write setelement; default;
       procedure fillRandom;
       procedure Id;
+      procedure linspace(Start, increment: Single);
+      function Transpose: TVMObjS;
       function DataPtr: PSingle;                  //raw buffer, for MKL interop from other units
       property Rows: TDimS read frows;             //read-only dimension accessors
       property Cols: TDimS read fcols;
@@ -105,6 +107,7 @@ function Sqr(const A: TVMobjS): TVMobjS; overload;
 function Sqrt(const A: TVMobjS): TVMobjS; overload;
 function Exp(const A: TVMobjS): TVMobjS; overload;
 function Ln(const A: TVMobjS): TVMobjS; overload;
+function MulObjS(const A, B: TVMObjS): TVMObjS;
 
 implementation
 
@@ -208,7 +211,25 @@ begin
   result := @fdata[0];
 end;
 
+procedure TVMobjS.linspace(Start, increment: Single);
+const
+  s : String ='routine linspace';
+begin
+  assert(fdata <>nil,s+  ': MVObj Not Initialized');
+  ippsVectorSlope_32f(@FData[0],high(fdata)+1,start,increment);
+end;
 
+function TVMobjS.Transpose:TVMObjS;
+var
+  temp : TDimS;
+begin
+  result := copyobjS(self);
+  MKL_Simatcopy('R','T',rows,cols,1,result.DataPtr,cols,rows);
+//swap row and column numbers
+  temp := self.rows;
+  result.frows := self.cols;
+  result.fcols := temp;
+end;
 
 function MatMultS(const A, B: TVMObjS): TVMobjS;
 const
@@ -280,7 +301,7 @@ end;
 
 class operator TVMobjS.*(const A, B: TVMobjS): TVMobjS;
 begin
-  result := MatMultS(A, B);
+  result := MulObjS(A, B);
 end;
 
 class operator TVMobjS.*(const A: TVMobjS; const k: Single): TVMobjS;
@@ -355,6 +376,15 @@ function Ln(const A: TVMobjS): TVMobjS;
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
   vsLn(A.Rows*A.Cols, A.DataPtr, result.DataPtr);
+end;
+
+function MulObjS(const A, B: TVMObjS): TVMObjS;
+const
+  s: string ='Routine MulObjS : ';
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObjS(A);
+  vmsMul(A.rows*A.cols,A.Dataptr,B.DataPtr,Result.DataPtr);
 end;
 
 end.

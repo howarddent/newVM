@@ -93,6 +93,8 @@ type
       property Element[r,c:TDimC]:TComplex8 read getelement write setelement; default;
       procedure fillRandom;
       procedure Id;
+      procedure linspace(Start, increment: TComplex8);
+      function Transpose: TVMObjC;
       property Rows: TDimC read frows;              //read-only dimension accessors
       property Cols: TDimC read fcols;
 
@@ -146,6 +148,7 @@ function Sqr(const A: TVMobjC): TVMobjC; overload;
 function Sqrt(const A: TVMobjC): TVMobjC; overload;
 function Exp(const A: TVMobjC): TVMobjC; overload;
 function Ln(const A: TVMobjC): TVMobjC; overload;
+function MulObjC(const A, B: TVMObjC): TVMobjC;
 
 implementation
 
@@ -266,7 +269,31 @@ begin
   lapacke_claset(CBlasRowMajor,'A',rows,cols,zero,one,@Fdata[0],rows);
 end;
 
+procedure TVMobjC.linspace(Start, increment: TComplex8);
+const
+  s : String ='routine linspace';
+var
+  i : integer;
+begin
+  assert(fdata <>nil,s+  ': MVObj Not Initialized');
+  //IPP has no complex VectorSlope (ippsVectorSlope_32fc isn't exported by
+  //libipps - only the real forms are), so build the arithmetic sequence
+  //directly: FData[i] = Start + i*increment.
+  for i := 0 to high(fdata) do
+    FData[i] := Cplx8(start.re + i*increment.re, start.im + i*increment.im);
+end;
 
+function TVMobjC.Transpose:TVMObjC;
+var
+  temp : TDimC;
+begin
+  result := copyobjC(self);
+  MKL_Cimatcopy('R','T',rows,cols,Cplx8(1,0),@result.FData[0],cols,rows);
+//swap row and column numbers
+  temp := self.rows;
+  result.frows := self.cols;
+  result.fcols := temp;
+end;
 
 function MatMultC(const A, B: TVMObjC): TVMobjC;
 const
@@ -466,7 +493,7 @@ end;
 
 class operator TVMobjC.*(const A, B: TVMobjC): TVMobjC;
 begin
-  result := MatMultC(A, B);
+  result := MulObjC(A, B);
 end;
 
 class operator TVMobjC.*(const A: TVMobjC; const k: TComplex8): TVMobjC;
@@ -593,6 +620,15 @@ function Ln(const A: TVMobjC): TVMobjC;
 begin
   result := TVMobjC.Create(A.rows, A.cols);
   vcLn(A.rows*A.cols, @A.FData[0], @result.FData[0]);
+end;
+
+function MulObjC(const A, B: TVMObjC): TVMobjC;
+const
+  s: string ='Routine MulObjC : ';
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObjC(A);
+  vcMul(A.rows*A.cols, @A.FData[0], @B.FData[0], @result.FData[0]);
 end;
 
 end.

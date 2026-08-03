@@ -74,6 +74,8 @@ type
       property Element[r,c:TDim]:Double read getelement write setelement; default;
       procedure fillRandom;
       procedure Id;
+      procedure linspace(Start, increment: Double);
+      function Transpose: TVMObj;
       function DataPtr: PDouble;   //raw buffer, for MKL interop from other units
       property Rows: TDim read frows;              //read-only dimension accessors
       property Cols: TDim read fcols;
@@ -106,6 +108,7 @@ function Sqr(const A: TVMobj): TVMobj; overload;
 function Sqrt(const A: TVMobj): TVMobj; overload;
 function Exp(const A: TVMobj): TVMobj; overload;
 function Ln(const A: TVMobj): TVMobj; overload;
+function mulObj(const A, B: TVMObj): TVMObj;
 
 implementation
 
@@ -211,6 +214,25 @@ begin
   result := @fdata[0];
 end;
 
+procedure TVMObj.linspace(Start, increment: Double);
+const
+  s : String ='routine linspace';
+begin
+  assert(fdata <>nil,s+  ': MVObj Not Initialized');
+  ippsVectorSlope_64f(@FData[0],high(fdata)+1,start,increment);
+end;
+
+function TVMObj.Transpose:TVMObj;
+var
+  temp : TDim;
+begin
+  result := copyobj(self);
+  MKL_Dimatcopy('R','T',rows,cols,1,result.DataPtr,cols,rows);
+//swap row and column numbers
+  temp := self.rows;
+  result.frows := self.cols;
+  result.fcols := temp;
+end;
 
 
 function MatMult(const A, B: TVMObj): TVMobj;
@@ -286,7 +308,7 @@ end;
 
 class operator TVMobj.*(const A, B: TVMobj): TVMobj;
 begin
-  result := MatMult(A, B);
+  result := MulObj(A, B);
 end;
 
 class operator TVMobj.*(const A: TVMobj; const k: Double): TVMobj;
@@ -361,6 +383,16 @@ function Ln(const A: TVMobj): TVMobj;
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
   vdLn(A.Rows*A.Cols, A.DataPtr, result.DataPtr);
+end;
+
+function mulObj(const A, B: TVMObj): TVMObj;
+const
+  s: string ='Routine mulObj : ';
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObj(A);
+  vmdmul(A.rows*A.cols,A.Dataptr,B.DataPtr,Result.DataPtr);
+
 end;
 
 end.

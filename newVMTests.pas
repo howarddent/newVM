@@ -65,7 +65,7 @@ type
     procedure TestLinearSolveNonSquareAsserts;
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
-    procedure TestOperatorMulMatchesMatMult;
+    procedure TestOperatorMulIsElementwise;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -109,7 +109,7 @@ type
     procedure TestLinearSolveNonSquareAsserts;
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
-    procedure TestOperatorMulMatchesMatMult;
+    procedure TestOperatorMulIsElementwise;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -152,7 +152,7 @@ type
     procedure TestLinearSolveNonSquareAsserts;
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
-    procedure TestOperatorMulMatchesMatMult;
+    procedure TestOperatorMulIsElementwise;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -200,7 +200,7 @@ type
     procedure TestLinearSolveNonSquareAsserts;
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
-    procedure TestOperatorMulMatchesMatMult;
+    procedure TestOperatorMulIsElementwise;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -474,12 +474,13 @@ begin
   AssertTrue(-(-A) = A);
 end;
 
-procedure TVMobjTests.TestOperatorMulMatchesMatMult;
+procedure TVMobjTests.TestOperatorMulIsElementwise;
 var A, B: TVMobj;
 begin
   A := TVMobj.Create(2, 2, [1, 2, 3, 4]);
   B := TVMobj.Create(2, 2, [5, 6, 7, 8]);
-  AssertTrue(A * B = MatMult(A, B));
+  AssertTrue(A * B = mulObj(A, B));
+  AssertTrue(A * B = TVMobj.Create(2, 2, [5, 12, 21, 32]));
 end;
 
 procedure TVMobjTests.TestOperatorScalarMulDiv;
@@ -797,12 +798,13 @@ begin
   AssertTrue(-(-A) = A);
 end;
 
-procedure TVMobjSTests.TestOperatorMulMatchesMatMult;
+procedure TVMobjSTests.TestOperatorMulIsElementwise;
 var A, B: TVMobjS;
 begin
   A := TVMobjS.Create(2, 2, [1, 2, 3, 4]);
   B := TVMobjS.Create(2, 2, [5, 6, 7, 8]);
-  AssertTrue(A * B = MatMultS(A, B));
+  AssertTrue(A * B = MulObjS(A, B));
+  AssertTrue(A * B = TVMobjS.Create(2, 2, [5, 12, 21, 32]));
 end;
 
 procedure TVMobjSTests.TestOperatorScalarMulDiv;
@@ -1122,12 +1124,13 @@ begin
   AssertTrue(-(-A) = A);
 end;
 
-procedure TVMobjZTests.TestOperatorMulMatchesMatMult;
+procedure TVMobjZTests.TestOperatorMulIsElementwise;
 var A, B: TVMobjZ;
 begin
   A := TVMobjZ.Create(2, 2, [Cplx(1,1), Cplx(2,0), Cplx(3,0), Cplx(4,-1)]);
   B := TVMobjZ.Create(2, 2, [Cplx(5,0), Cplx(6,1), Cplx(7,0), Cplx(8,0)]);
-  AssertTrue(A * B = MatMultZ(A, B));
+  AssertTrue(A * B = MulObjZ(A, B));
+  AssertTrue(A * B = TVMobjZ.Create(2, 2, [Cplx(5,5), Cplx(12,2), Cplx(21,0), Cplx(32,-8)]));
 end;
 
 procedure TVMobjZTests.TestOperatorScalarMulDiv;
@@ -1528,12 +1531,13 @@ begin
   AssertTrue(-(-A) = A);
 end;
 
-procedure TVMobjCTests.TestOperatorMulMatchesMatMult;
+procedure TVMobjCTests.TestOperatorMulIsElementwise;
 var A, B: TVMobjC;
 begin
   A := TVMobjC.Create(2, 2, [Cplx8(1,1), Cplx8(2,0), Cplx8(3,0), Cplx8(4,-1)]);
   B := TVMobjC.Create(2, 2, [Cplx8(5,0), Cplx8(6,1), Cplx8(7,0), Cplx8(8,0)]);
-  AssertTrue(A * B = MatMultC(A, B));
+  AssertTrue(A * B = MulObjC(A, B));
+  AssertTrue(A * B = TVMobjC.Create(2, 2, [Cplx8(5,5), Cplx8(12,2), Cplx8(21,0), Cplx8(32,-8)]));
 end;
 
 procedure TVMobjCTests.TestOperatorScalarMulDiv;
