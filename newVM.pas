@@ -33,6 +33,7 @@ unit newVM;
 
 {$mode delphi}{$H+}
 {$Align 8}
+{$IFDEF UNIX}
 {$Linklib 'mkl_rt.so'}
 {$Linklib 'pthread'}
 {$Linklib 'm'}
@@ -42,6 +43,9 @@ unit newVM;
 //pthread/dl to already be loaded into the process's global symbol table.
 //Without this, you get errors like:
 //  symbol lookup error: .../libmkl_core.so: undefined symbol: log10
+//This is a Unix/ELF dynamic-linker quirk - Windows DLLs resolve their own
+//imports independently, so mkl_rt.dll needs no such preload on Windows.
+{$ENDIF}
 
 interface
 
@@ -391,7 +395,7 @@ const
 begin
   assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
   result := CopyObj(A);
-  vmdmul(A.rows*A.cols,A.Dataptr,B.DataPtr,Result.DataPtr);
+  vdMul(A.rows*A.cols,A.Dataptr,B.DataPtr,Result.DataPtr);
 
 end;
 

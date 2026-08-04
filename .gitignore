@@ -6,6 +6,11 @@ lib/
 *.compiled
 *.res
 newVMtest
+newVMtest.exe
+
+# Third-party runtime DLLs that are sometimes copied next to the exe for
+# local testing (see CLAUDE.md's Windows build notes) - not project sources
+openblas.dll
 
 # Lazarus IDE session state (per-user, not shared project config)
 *.lps

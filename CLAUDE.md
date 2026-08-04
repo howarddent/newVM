@@ -52,6 +52,33 @@ compiler options (assertions are force-enabled via
 `IncludeAssertionCode=True`, which several routines rely on for argument
 validation — see below).
 
+### Building on Windows
+
+The same `.lpi`/units also target Windows (confirmed compiling on Windows
+11 with a real Lazarus/FPC install; see "Cross-platform library binding"
+below for the runtime-loading approach this required):
+
+- MKL and IPP move from Unix `{$Linklib 'foo.so'}` directives, resolved at
+  link time, to runtime `LoadLibrary`/`GetProcedureAddress` binding on
+  Windows — see "Cross-platform library binding" below for why a static
+  Windows `external 'somedll.dll'` declaration doesn't work for either
+  library. No source changes are needed to retarget; just build the
+  `.lpi` with a Windows-targeting FPC/Lazarus install.
+- Required at runtime, discoverable via `PATH` (or copied next to the
+  built `.exe`): an Intel oneAPI MKL runtime DLL (recent installs ship a
+  *versioned* dispatcher, e.g. `mkl_rt.2.dll` or `mkl_rt.3.dll`, not a
+  plain `mkl_rt.dll` — see below), IPP's `ippcore.dll`/`ippvm.dll`/
+  `ipps.dll`, and OpenBLAS's `openblas.dll` (`cblas.pas` already had
+  `{$IFDEF WINDOWS} CBLASLib = 'openblas.dll'` before this Windows support
+  was added). None of these ship on `PATH` by default with a oneAPI
+  install — you must add the relevant `oneAPI\mkl\<version>\bin` and
+  `oneAPI\<version>\bin` (IPP) directories to `PATH` yourself, or copy the
+  DLLs next to `newVMtest.exe`.
+- `newVMtest.lpr` gained `{$APPTYPE CONSOLE}` so it builds as a console
+  subsystem executable on Windows (a no-op on Unix targets); it already
+  guarded `cthreads` behind `{$IFDEF UNIX}` (not available/needed on
+  Windows, where the RTL doesn't need it for thread support).
+
 ## Architecture
 
 ### The four parallel unit families
@@ -207,12 +234,74 @@ there's no attempt to unwrap branch cuts.
   several routines reinterpret a complex buffer as a flat real array via
   pointer casts, e.g. `fillRandom` and `RealToComplex`/`GetRealPart`).
 - All four `newVM*` units declare `{$Linklib 'mkl_rt.so'}` plus `pthread`,
-  `m`, and `dl` — the comment in each file header explains why: `mkl_rt.so`
-  `dlopen`s `libmkl_core.so` at runtime, which expects `libm`/`pthread`/`dl`
-  already resolved in the process's global symbol table, or you get
-  `symbol lookup error: ... undefined symbol: log10`-style failures. Don't
-  remove these linklib directives even though nothing in the unit calls into
-  them directly.
+  `m`, and `dl`, guarded by `{$IFDEF UNIX}` — the comment in each file
+  header explains why: `mkl_rt.so` `dlopen`s `libmkl_core.so` at runtime,
+  which expects `libm`/`pthread`/`dl` already resolved in the process's
+  global symbol table, or you get `symbol lookup error: ... undefined
+  symbol: log10`-style failures. Don't remove these linklib directives
+  even though nothing in the unit calls into them directly. This is purely
+  a Unix/ELF dynamic-linker quirk — Windows PE imports are resolved per-DLL
+  independently, so nothing analogous is needed (or emitted) there; see
+  "Cross-platform library binding" below.
+
+### Cross-platform library binding (`{$IFDEF UNIX}`/`{$IFDEF WINDOWS}` in `OneAPI.pas`)
+
+`OneAPI.pas` targets Linux and Windows from the same source. On Unix,
+every MKL- and IPP-backed routine keeps its original plain
+`cdecl;external;` declaration (inside one big `{$IFDEF UNIX}` block),
+resolved at link time via the `{$Linklib}` block — completely unchanged
+from how the unit always worked.
+
+On Windows, a static `external 'somedll.dll'` declaration turned out not
+to be viable for *either* library, for related but distinct reasons — so
+both are handled the same way: every MKL- and IPP-backed routine is
+declared as a `var` of a matching procedural type (inside one big
+`{$IFDEF WINDOWS}` block) instead of an `external` function, and resolved
+at runtime via `LoadLibrary`/`GetProcedureAddress` (from `DynLibs`) in the
+unit's `initialization` section. This mirrors the pattern `cblas.pas`
+already uses for OpenBLAS (`LoadAddresses`/`TryInitializeCBLAS`), and
+means call sites elsewhere (`newVM.pas` etc.) are unaffected either way —
+calling a procedural variable uses the same syntax as calling a plain
+external function.
+
+- **MKL** (`lapacke_*`, `vmd*`/`vd*`/`vs*`/`vc*`/`vz*`, `MKL_malloc`
+  et al., `MKL_*imatcopy`, `vslNewStream`/`vdRngGaussian`/`vsRngGaussian`)
+  was originally assumed to ship one fixed-name merged runtime-dispatch
+  DLL on Windows the way `mkl_rt.so` is fixed on Linux — **this turned out
+  to be wrong**: real Intel oneAPI installs (confirmed on this machine for
+  2025.3 and 2026.0/2026.1) ship a *versioned* dispatcher DLL
+  (`mkl_rt.2.dll`, `mkl_rt.3.dll`, ...) with no unversioned `mkl_rt.dll`
+  compatibility copy, and the version suffix increments across oneAPI
+  releases. A hard-coded `external 'mkl_rt.dll'` therefore fails at
+  runtime with "DLL not found" on every real install. `LoadMKLFunctions`
+  resolves this by trying a fixed list of candidate names
+  (`MKLCandidateLibs`: unversioned `mkl_rt.dll` first, then
+  `mkl_rt.1.dll` through `mkl_rt.10.dll`) via `LoadLibrary`, caching
+  whichever one is found (`GetMKLHandle`), then resolving every MKL
+  symbol from that one handle via `MKLProc`. If a future oneAPI release
+  bumps the suffix past 10, extend `MKLCandidateLibs`.
+- **IPP** (`ippsCos_64f_A50`, `ippsVectorSlope_64f`/`_32f`, `ippsCopy_64f`,
+  `ippsMulC_64f`/`_I_L`, `ippsAddC_64f_I`, `ippsSubC_64f_I`,
+  `ippsDivC_64f_I`/`_32f_I`, `ippsSqr_64f_I`, `ippsExp_64f_I`, `ippInit`,
+  `ippMalloc`, `ippFree`) is split across three separate DLLs even on
+  Windows (`ippcore.dll`/`ippvm.dll`/`ipps.dll`, mirroring the Linux
+  `libippcore.so`/`libippvm.so`/`libipps.so` triplet), and which DLL
+  actually exports a given symbol is not reliably documented and can vary
+  by IPP version (several of these are declared in `ipps.h` but actually
+  resolve from `ippvm.dll`). `LoadIPPFunctions` resolves each one at
+  runtime by trying `ipps.dll`, then `ippvm.dll`, then `ippcore.dll` via
+  `IPPProc`, asserting if none of the three export it.
+- Both loaders are called from `OneAPI`'s `initialization` section
+  (Windows-only), so nothing in `newVMtest.lpr` or elsewhere needs to call
+  them explicitly.
+- If `LoadMKLFunctions`'s or `LoadIPPFunctions`'s assert fires for a given
+  symbol on Windows: for MKL, it means none of `MKLCandidateLibs` was
+  found on `PATH` at all (check the oneAPI `mkl/<version>/bin` directory
+  is actually on `PATH`, and consider whether the installed version's
+  suffix exceeds the hard-coded range); for IPP, it means none of the
+  three DLLs export that exact symbol name (check the installed IPP
+  version's actual DLL layout, e.g. via `dumpbin /exports`, and extend
+  `IPPProc`'s search list if needed).
 
 ### CBLAS/LAPACKE calling convention gotchas (complex units)
 
