@@ -1,0 +1,37 @@
+object Form1: TForm1
+  Left = 300
+  Height = 600
+  Top = 200
+  Width = 900
+  Caption = 'newVM Function Plot Demo'
+  ClientHeight = 600
+  ClientWidth = 900
+  OnCreate = FormCreate
+  Position = poScreenCenter
+  LCLVersion = '4.99.0.0'
+  object Chart1: TChart
+    Left = 0
+    Height = 600
+    Top = 0
+    Width = 900
+    AxisList = <
+      item
+        Grid.Color = clSilver
+        Minors = <>
+      end
+      item
+        Alignment = calBottom
+        Grid.Color = clSilver
+        Minors = <>
+      end>
+    Title.Text.Strings = (
+      'y = exp(-0.1*x^2) * sin(3*x)'
+    )
+    Title.Visible = True
+    Align = alClient
+    object Chart1LineSeries1: TLineSeries
+      LinePen.Color = clRed
+      LinePen.Width = 2
+    end
+  end
+end

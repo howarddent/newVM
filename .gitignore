@@ -7,6 +7,12 @@ lib/
 *.res
 newVMtest
 
+# Demo project binaries: each demos/<Name>/ produces an extensionless
+# binary named after its project - ignore those, keep everything with
+# an extension (.pas/.lpr/.lpi/.lfm/.ico/...).
+demos/*/[A-Za-z]*
+!demos/*/*.*
+
 # Lazarus IDE session state (per-user, not shared project config)
 *.lps
 
