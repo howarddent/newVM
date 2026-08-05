@@ -221,6 +221,49 @@ argument type, with the plain-numeric `Sin` still reachable too.
 Complex `Sqrt`/`Ln` return principal-branch values (standard for MKL VML);
 there's no attempt to unwrap branch cuts.
 
+### FFT/DCT/DST functions (`fftw3.pas`)
+
+`fftw3.pas` is a runtime (`dlopen`-based) binding to FFTW3, double
+precision (`libfftw3`, `fftw_` prefix) and single precision (`libfftw3f`,
+`fftwf_` prefix) — see "External bindings" below for why it loads at
+runtime via `LoadLibrary`/`GetProcedureAddress` (mirroring `cblas.pas`)
+rather than link-time `external`. It self-initializes both libraries from
+its own `initialization` section (`InitializeFFTW3`), so no explicit
+init call is needed anywhere else, unlike `InitializeCBLAS`.
+
+Each of the four `newVM*` units adds functions built on top of it,
+vector-only (`A.Rows=1` or `A.Cols=1`; asserts otherwise) and never
+mutating their input (every FFTW plan is created with
+`FFTW_PRESERVE_INPUT`, matching this library's general non-mutating
+convention):
+
+- `newVM.pas`/`newVMSingle.pas` (real): `DCT1`..`DCT4` and `DST1`..`DST4`,
+  one per r2r transform kind (FFTW's `REDFT00/10/01/11` and
+  `RODFT00/10/01/11` respectively). These are **unnormalized**, matching
+  FFTW's own convention - e.g. `DCT1(DCT1(x)) = x * 2*(N-1)` (DCT-I is
+  self-inverse up to that scale); `DCT2`/`DCT3` are each other's inverse
+  up to `2*N`; `DCT4`/`DST4` are each self-inverse up to `2*N`; `DST1` is
+  self-inverse up to `2*(N+1)`. Get the scale factor wrong and a
+  round-trip test will fail by orders of magnitude, not silently drift -
+  see `newVMTests.pas`'s `TestDCT*RoundTrip`/`TestDST*RoundTrip` for the
+  exact factor per kind, empirically verified there.
+- `newVMComplex.pas`/`newVMComplexSingle.pas` (complex): `FFT_R2C`
+  (real vector of length N -> FFTW's packed half-spectrum, length
+  `N div 2 + 1`, exploiting conjugate symmetry), `FFT_C2R` (the inverse -
+  takes the target real length `N` explicitly, since the half-spectrum's
+  own length doesn't disambiguate even vs odd `N`), and `FFT`/`IFFT`
+  (complex-to-complex, forward/inverse). Unlike the raw DCT/DST functions
+  above, these **are normalized** (`FFT_C2R` and `IFFT` divide by `N`), so
+  `FFT_C2R(FFT_R2C(x), N) = x` and `IFFT(FFT(x)) = x` hold directly - no
+  manual rescaling needed at call sites.
+- Marked `overload` throughout, same reason as `Sin`/`Cos`/etc: all four
+  units' versions of these names are visible together in
+  `newVMTests.pas`, and would otherwise just hide each other.
+
+Ported the original raw-FFTW3 spectral-differentiation demo
+(`/home/howard/projects/Lazarus/fftw3`) to `DCT1` for
+`demos/SpectralDiff/` - see the "`demos/`" section below.
+
 ### External bindings
 
 - `cblas.pas` — machine-generated (`h2pas`) BLAS declarations bound against
@@ -233,6 +276,15 @@ there's no attempt to unwrap branch cuts.
   `MKL_Complex16`/`MKL_Complex8` — two contiguous IEEE-754 floats — since
   several routines reinterpret a complex buffer as a flat real array via
   pointer casts, e.g. `fillRandom` and `RealToComplex`/`GetRealPart`).
+- `fftw3.pas` — see the dedicated "FFT/DCT/DST functions" section above.
+  Like `cblas.pas`, it resolves its library at runtime via
+  `LoadLibrary`/`GetProcedureAddress` rather than a link-time `external`:
+  on this development machine, double-precision `libfftw3` only exists as
+  a static `.a` (from a manual source build), while single-precision
+  `libfftw3f` is only installed as a versioned runtime `.so.3` (via the
+  distro's apt package, no `-dev` package, so no unversioned symlink) -
+  dynamic loading against the exact versioned name works regardless of
+  which of those a given machine happens to have.
 - All four `newVM*` units declare `{$Linklib 'mkl_rt.so'}` plus `pthread`,
   `m`, and `dl`, guarded by `{$IFDEF UNIX}` — the comment in each file
   header explains why: `mkl_rt.so` `dlopen`s `libmkl_core.so` at runtime,
@@ -334,12 +386,16 @@ dimension-validation asserts, `Element[r,c]` get/set (including
 out-of-range and non-square addressing), `writeMatrix`, `fillRandom`
 (exploits the hard-coded seed — see below), `Id`, `DataPtr` (real types),
 `CopyObj*` independence, `MatMult*`, `LinearSolve*`, every operator
-overload including the assertion paths, and the elementwise VML functions.
-The two complex types additionally cover `RealToComplex*`/`GetRealPart*`/
+overload including the assertion paths, the elementwise VML functions,
+and `DCT1`..`DCT4`/`DST1`..`DST4` (each verified as a self-inverse or
+mutual-inverse round trip at the exact FFTW scale factor for that kind -
+see the "FFT/DCT/DST functions" architecture section above). The two
+complex types additionally cover `RealToComplex*`/`GetRealPart*`/
 `GetImagPart*`/`SplitComplex*`, `EigDecompose*` (verified via the defining
 equation `A*v = lambda*v`, not hard-coded eigenvectors, since LAPACK
-doesn't guarantee a particular sign/normalisation), and the mixed
-real/complex operators.
+doesn't guarantee a particular sign/normalisation), the mixed real/complex
+operators, and `FFT_R2C`/`FFT_C2R`/`FFT`/`IFFT` (round-trip and a
+known-value DC-component check).
 
 One reusable trick worth knowing: `fillRandom` seeds a fresh VSL stream
 with a hard-coded constant (777) on every call, so two same-sized
@@ -377,10 +433,45 @@ project membership.
 ### `hirestimer.pas`
 
 Platform-specific high-resolution timer (`THighResTimer`), using
-`clock_gettime(CLOCK_MONOTONIC, ...)` on Unix. Previously used to time MKL
-routine calls in the old `newVMtest.lpr` demo; not referenced by any
-current project file now that `newVMtest.lpr` is an FPCUnit console
-runner, but kept in the repo as a general-purpose utility.
+`clock_gettime(CLOCK_MONOTONIC, ...)` on Unix, plus a `TProfiler`
+convenience wrapper (`Profiler.Start`/`Profiler.Stop`, both global
+singletons instantiated in the unit's `initialization` section). No
+longer referenced by `newVMtest.lpr` (now an FPCUnit console runner that
+doesn't time anything), but used by `demos/SpectralDiff` to time the
+spectral-differentiation call, specifically so demo projects don't need
+an external timing package (e.g. EpikTimer/`etpackage`) as a dependency.
+
+### `demos/`
+
+Each subdirectory is a standalone Lazarus GUI project (own `.lpi`/`.lpr`/
+form unit/`.lfm`) demonstrating `newVM` capabilities, built against the
+top-level units in place via `OtherUnitFiles=../..` in its `.lpi` (no
+copying) - build with `lazbuild --lazarusdir=<path> demos/<Name>/<Name>.lpi`
+same as the main project. Both require the `TAChartLazarusPkg` and `LCL`
+packages. Compiled binaries and each demo's own `lib/` output are
+`.gitignore`d via a pattern scoped to `demos/*/` (see the top of
+`.gitignore`), not hardcoded per demo.
+
+- **`FunctionPlot`** — plots `y = f(x)` over the real line via a
+  `TChart`/`TLineSeries`, computed with `TVMobj.linspace` plus the
+  elementwise `Exp`/`Sin`/`Sqr`/`*` functions from `newVM.pas`. Default
+  function is `y = exp(-0.1*x^2) * sin(3*x)`, 1000 points over `[-10,10]`.
+- **`SpectralDiff`** — Chebyshev spectral differentiation of
+  `f(x) = exp(x)*sin(5x)` via `DCT1` (newVM.pas's FFTW-backed DCT-I),
+  recoded from the original raw-FFTW3 demo at
+  `/home/howard/projects/Lazarus/fftw3` (`unit1.pas`/`project1.lpr`) so it
+  goes through `TVMobj`/`DCT1` instead of calling
+  `fftw_plan_r2r_1d`/`fftw_execute_r2r` directly. Samples `f` at the `N+1`
+  Chebyshev points `x_i = cos(pi*i/N)` (`N=32`), transforms to Chebyshev
+  coefficient space via `DCT1`, differentiates the coefficient series via
+  the classic recursion from Trefethen's *Spectral Methods in MATLAB*
+  (`Recurr`, ported verbatim from the original demo's `recurr`), then
+  transforms back via `DCT1` again (each `DCT1` call is unnormalized -
+  see "FFT/DCT/DST functions" above - so the result is scaled by
+  `Logical_N = 2*N`, divided back out explicitly). Plots the spectral
+  derivative against the exact derivative plus their difference; the
+  error plot typically shows ~1e-13 to 1e-14 (double-precision noise),
+  demonstrating spectral accuracy.
 
 ### `backup/`
 

@@ -44,7 +44,7 @@ unit newVMSingle;
 interface
 
 uses
-  Classes, SysUtils, cblas, math, TestRegistry, OneAPI, Types;
+  Classes, SysUtils, cblas, math, TestRegistry, OneAPI, Types, fftw3;
 
 Const
   MaxDimS = 65536;    //maximum dimensions of any array
@@ -111,6 +111,20 @@ function Sqrt(const A: TVMobjS): TVMobjS; overload;
 function Exp(const A: TVMobjS): TVMobjS; overload;
 function Ln(const A: TVMobjS): TVMobjS; overload;
 function MulObjS(const A, B: TVMObjS): TVMObjS;
+
+{ Real-to-real DCT/DST types I-IV, via FFTW3 (fftw3.pas) r2r transforms on
+  the single-precision library - see the matching DCT1..DST4 comment in
+  newVM.pas for the shape/mutation/normalization rules, which apply here
+  identically. Marked "overload" because newVM.pas declares the TVMobj
+  (double) analogues of these same names. }
+function DCT1(const A: TVMobjS): TVMobjS; overload;  //FFTW_REDFT00
+function DCT2(const A: TVMobjS): TVMobjS; overload;  //FFTW_REDFT10
+function DCT3(const A: TVMobjS): TVMobjS; overload;  //FFTW_REDFT01 (inverse of DCT2, up to scale)
+function DCT4(const A: TVMobjS): TVMobjS; overload;  //FFTW_REDFT11 (self-inverse, up to scale)
+function DST1(const A: TVMobjS): TVMobjS; overload;  //FFTW_RODFT00
+function DST2(const A: TVMobjS): TVMobjS; overload;  //FFTW_RODFT10
+function DST3(const A: TVMobjS): TVMobjS; overload;  //FFTW_RODFT01 (inverse of DST2, up to scale)
+function DST4(const A: TVMobjS): TVMobjS; overload;  //FFTW_RODFT11 (self-inverse, up to scale)
 
 implementation
 
@@ -388,6 +402,63 @@ begin
   assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
   result := CopyObjS(A);
   vsMul(A.rows*A.cols,A.Dataptr,B.DataPtr,Result.DataPtr);
+end;
+
+function r2rTransformS(const A: TVMobjS; kind: TFFTW_r2r_kind): TVMobjS;
+const
+  s : String = 'Routine r2rTransformS : ';
+var
+  n : integer;
+  plan : fftw_plan;
+begin
+  assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
+  n := A.Rows*A.Cols;
+  assert(Assigned(fftwf_plan_r2r_1d), s+'FFTW3 (single) library not loaded');
+  result := TVMobjS.Create(A.Rows, A.Cols);
+  plan := fftwf_plan_r2r_1d(n, A.DataPtr, result.DataPtr, kind, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
+  assert(plan<>nil, s+'fftwf_plan_r2r_1d failed');
+  fftwf_execute_r2r(plan, A.DataPtr, result.DataPtr);
+  fftwf_destroy_plan(plan);
+end;
+
+function DCT1(const A: TVMobjS): TVMobjS;
+begin
+  result := r2rTransformS(A, FFTW_REDFT00);
+end;
+
+function DCT2(const A: TVMobjS): TVMobjS;
+begin
+  result := r2rTransformS(A, FFTW_REDFT10);
+end;
+
+function DCT3(const A: TVMobjS): TVMobjS;
+begin
+  result := r2rTransformS(A, FFTW_REDFT01);
+end;
+
+function DCT4(const A: TVMobjS): TVMobjS;
+begin
+  result := r2rTransformS(A, FFTW_REDFT11);
+end;
+
+function DST1(const A: TVMobjS): TVMobjS;
+begin
+  result := r2rTransformS(A, FFTW_RODFT00);
+end;
+
+function DST2(const A: TVMobjS): TVMobjS;
+begin
+  result := r2rTransformS(A, FFTW_RODFT10);
+end;
+
+function DST3(const A: TVMobjS): TVMobjS;
+begin
+  result := r2rTransformS(A, FFTW_RODFT01);
+end;
+
+function DST4(const A: TVMobjS): TVMobjS;
+begin
+  result := r2rTransformS(A, FFTW_RODFT11);
 end;
 
 end.

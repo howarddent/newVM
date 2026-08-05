@@ -67,7 +67,7 @@ unit newVMComplexSingle;
 interface
 
 uses
-  Classes, SysUtils, cblas, math, TestRegistry, OneAPI, Types, newVMSingle;
+  Classes, SysUtils, cblas, math, TestRegistry, OneAPI, Types, newVMSingle, fftw3;
 
 Const
   MaxDimC = 65536;    //maximum dimensions of any array
@@ -152,6 +152,16 @@ function Sqrt(const A: TVMobjC): TVMobjC; overload;
 function Exp(const A: TVMobjC): TVMobjC; overload;
 function Ln(const A: TVMobjC): TVMobjC; overload;
 function MulObjC(const A, B: TVMObjC): TVMobjC;
+
+{ Real<->complex and complex<->complex 1D FFTs, via FFTW3 (fftw3.pas) on
+  the single-precision library - see the matching FFT_R2C..IFFT comment in
+  newVMComplex.pas for the shape/mutation/normalization rules, which apply
+  here identically. Marked "overload" because newVMComplex.pas declares
+  the TVMobj/TVMobjZ (double) analogues of these same names. }
+function FFT_R2C(const A: TVMobjS): TVMobjC; overload;         //real -> packed half-spectrum
+function FFT_C2R(const A: TVMobjC; N: Integer): TVMobjS; overload; //packed half-spectrum -> real, normalized
+function FFT(const A: TVMobjC): TVMobjC; overload;             //complex -> complex, forward
+function IFFT(const A: TVMobjC): TVMobjC; overload;            //complex -> complex, inverse, normalized
 
 implementation
 
@@ -632,6 +642,79 @@ begin
   assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
   result := CopyObjC(A);
   vcMul(A.rows*A.cols, @A.FData[0], @B.FData[0], @result.FData[0]);
+end;
+
+function FFT_R2C(const A: TVMobjS): TVMobjC;
+const
+  s : String = 'Routine FFT_R2C : ';
+var
+  n, nc : integer;
+  plan : fftw_plan;
+begin
+  assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
+  n := A.Rows*A.Cols;
+  assert(Assigned(fftwf_plan_dft_r2c_1d), s+'FFTW3 (single) library not loaded');
+  nc := n div 2 + 1;
+  if A.Cols = 1 then result := TVMobjC.Create(nc, 1) else result := TVMobjC.Create(1, nc);
+  plan := fftwf_plan_dft_r2c_1d(n, A.DataPtr, PComplex8(@result.FData[0]), FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
+  assert(plan<>nil, s+'fftwf_plan_dft_r2c_1d failed');
+  fftwf_execute_dft_r2c(plan, A.DataPtr, PComplex8(@result.FData[0]));
+  fftwf_destroy_plan(plan);
+end;
+
+function FFT_C2R(const A: TVMobjC; N: Integer): TVMobjS;
+const
+  s : String = 'Routine FFT_C2R : ';
+var
+  nc : integer;
+  plan : fftw_plan;
+begin
+  assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
+  assert(N>0, s+'N must be > 0');
+  nc := A.Rows*A.Cols;
+  assert(nc = (N div 2 + 1), s+'A''s length must be N div 2 + 1');
+  assert(Assigned(fftwf_plan_dft_c2r_1d), s+'FFTW3 (single) library not loaded');
+  if A.Cols = 1 then result := TVMobjS.Create(N, 1) else result := TVMobjS.Create(1, N);
+  plan := fftwf_plan_dft_c2r_1d(N, PComplex8(@A.FData[0]), result.DataPtr, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
+  assert(plan<>nil, s+'fftwf_plan_dft_c2r_1d failed');
+  fftwf_execute_dft_c2r(plan, PComplex8(@A.FData[0]), result.DataPtr);
+  fftwf_destroy_plan(plan);
+  ippsDivC_32f_I(N, result.DataPtr, N);   //normalize, matching FFT_C2R(FFT_R2C(x), N) = x
+end;
+
+function FFT(const A: TVMobjC): TVMobjC;
+const
+  s : String = 'Routine FFT : ';
+var
+  n : integer;
+  plan : fftw_plan;
+begin
+  assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
+  n := A.Rows*A.Cols;
+  assert(Assigned(fftwf_plan_dft_1d), s+'FFTW3 (single) library not loaded');
+  result := TVMobjC.Create(A.Rows, A.Cols);
+  plan := fftwf_plan_dft_1d(n, PComplex8(@A.FData[0]), PComplex8(@result.FData[0]), FFTW_FORWARD, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
+  assert(plan<>nil, s+'fftwf_plan_dft_1d failed');
+  fftwf_execute_dft(plan, PComplex8(@A.FData[0]), PComplex8(@result.FData[0]));
+  fftwf_destroy_plan(plan);
+end;
+
+function IFFT(const A: TVMobjC): TVMobjC;
+const
+  s : String = 'Routine IFFT : ';
+var
+  n : integer;
+  plan : fftw_plan;
+begin
+  assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
+  n := A.Rows*A.Cols;
+  assert(Assigned(fftwf_plan_dft_1d), s+'FFTW3 (single) library not loaded');
+  result := TVMobjC.Create(A.Rows, A.Cols);
+  plan := fftwf_plan_dft_1d(n, PComplex8(@A.FData[0]), PComplex8(@result.FData[0]), FFTW_BACKWARD, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
+  assert(plan<>nil, s+'fftwf_plan_dft_1d failed');
+  fftwf_execute_dft(plan, PComplex8(@A.FData[0]), PComplex8(@result.FData[0]));
+  fftwf_destroy_plan(plan);
+  cblas_csscal(n, 1.0/n, @result.FData[0], 1);  //normalize, matching IFFT(FFT(x)) = x
 end;
 
 end.

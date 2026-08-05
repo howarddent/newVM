@@ -73,6 +73,12 @@ type
     procedure TestElementwiseTrig;
     procedure TestElementwiseSqrtSqr;
     procedure TestElementwiseExpLnRoundTrip;
+    procedure TestDCT1SelfInverseRoundTrip;
+    procedure TestDCT2DCT3InverseRoundTrip;
+    procedure TestDCT4SelfInverseRoundTrip;
+    procedure TestDST1SelfInverseRoundTrip;
+    procedure TestDST2DST3InverseRoundTrip;
+    procedure TestDST4SelfInverseRoundTrip;
   end;
 
   { TVMobjSTests - newVMSingle.pas, real single }
@@ -117,6 +123,12 @@ type
     procedure TestElementwiseTrig;
     procedure TestElementwiseSqrtSqr;
     procedure TestElementwiseExpLnRoundTrip;
+    procedure TestDCT1SelfInverseRoundTrip;
+    procedure TestDCT2DCT3InverseRoundTrip;
+    procedure TestDCT4SelfInverseRoundTrip;
+    procedure TestDST1SelfInverseRoundTrip;
+    procedure TestDST2DST3InverseRoundTrip;
+    procedure TestDST4SelfInverseRoundTrip;
   end;
 
   { TVMobjZTests - newVMComplex.pas, complex double }
@@ -165,6 +177,9 @@ type
     procedure TestEigDecomposeSatisfiesEigenEquation;
     procedure TestMixedOperatorsAddSub;
     procedure TestMixedOperatorMatMultKnownValue;
+    procedure TestFFTR2CC2RRoundTrip;
+    procedure TestFFTC2CRoundTrip;
+    procedure TestFFTR2CKnownDCValue;
   end;
 
   { TVMobjCTests - newVMComplexSingle.pas, complex single }
@@ -213,6 +228,9 @@ type
     procedure TestEigDecomposeSatisfiesEigenEquation;
     procedure TestMixedOperatorsAddSub;
     procedure TestMixedOperatorMatMultKnownValue;
+    procedure TestFFTR2CC2RRoundTrip;
+    procedure TestFFTC2CRoundTrip;
+    procedure TestFFTR2CKnownDCValue;
   end;
 
 implementation
@@ -551,6 +569,71 @@ begin
   AssertEquals(2.5, R[0, 1], DblTol);
 end;
 
+{ DCT/DST round-trip tests: FFTW's r2r transforms are unnormalized, so each
+  self-inverse or mutual-inverse pair must be scaled back down to recover
+  the original vector - see the DCT1..DST4 comment in newVM.pas for the
+  scale factor per kind. }
+
+procedure TVMobjTests.TestDCT1SelfInverseRoundTrip;
+const N = 5;
+var A, B, C: TVMobj; i: Integer;
+begin
+  A := TVMobj.Create(1, N, [1, 2, 3, 4, 5]);
+  B := DCT1(A);
+  C := DCT1(B) / (2*(N-1));
+  for i := 0 to N-1 do AssertEquals(A[0, i], C[0, i], DblTol);
+end;
+
+procedure TVMobjTests.TestDCT2DCT3InverseRoundTrip;
+const N = 5;
+var A, B, C: TVMobj; i: Integer;
+begin
+  A := TVMobj.Create(1, N, [1, 2, 3, 4, 5]);
+  B := DCT2(A);
+  C := DCT3(B) / (2*N);
+  for i := 0 to N-1 do AssertEquals(A[0, i], C[0, i], DblTol);
+end;
+
+procedure TVMobjTests.TestDCT4SelfInverseRoundTrip;
+const N = 5;
+var A, B, C: TVMobj; i: Integer;
+begin
+  A := TVMobj.Create(1, N, [1, 2, 3, 4, 5]);
+  B := DCT4(A);
+  C := DCT4(B) / (2*N);
+  for i := 0 to N-1 do AssertEquals(A[0, i], C[0, i], DblTol);
+end;
+
+procedure TVMobjTests.TestDST1SelfInverseRoundTrip;
+const N = 5;
+var A, B, C: TVMobj; i: Integer;
+begin
+  A := TVMobj.Create(1, N, [1, 2, 3, 4, 5]);
+  B := DST1(A);
+  C := DST1(B) / (2*(N+1));
+  for i := 0 to N-1 do AssertEquals(A[0, i], C[0, i], DblTol);
+end;
+
+procedure TVMobjTests.TestDST2DST3InverseRoundTrip;
+const N = 5;
+var A, B, C: TVMobj; i: Integer;
+begin
+  A := TVMobj.Create(1, N, [1, 2, 3, 4, 5]);
+  B := DST2(A);
+  C := DST3(B) / (2*N);
+  for i := 0 to N-1 do AssertEquals(A[0, i], C[0, i], DblTol);
+end;
+
+procedure TVMobjTests.TestDST4SelfInverseRoundTrip;
+const N = 5;
+var A, B, C: TVMobj; i: Integer;
+begin
+  A := TVMobj.Create(1, N, [1, 2, 3, 4, 5]);
+  B := DST4(A);
+  C := DST4(B) / (2*N);
+  for i := 0 to N-1 do AssertEquals(A[0, i], C[0, i], DblTol);
+end;
+
 {===========================================================================
   TVMobjSTests  (real single)
 ===========================================================================}
@@ -873,6 +956,69 @@ begin
   R := Ln(Exp(A));
   AssertEquals(1.0, R[0, 0], SngTol);
   AssertEquals(2.5, R[0, 1], SngTol);
+end;
+
+{ DCT/DST round-trip tests - see the matching TVMobjTests tests above for
+  why each pair needs the scale factor. }
+
+procedure TVMobjSTests.TestDCT1SelfInverseRoundTrip;
+const N = 5;
+var A, B, C: TVMobjS; i: Integer;
+begin
+  A := TVMobjS.Create(1, N, [1, 2, 3, 4, 5]);
+  B := DCT1(A);
+  C := DCT1(B) / (2*(N-1));
+  for i := 0 to N-1 do AssertEquals(A[0, i], C[0, i], SngTol);
+end;
+
+procedure TVMobjSTests.TestDCT2DCT3InverseRoundTrip;
+const N = 5;
+var A, B, C: TVMobjS; i: Integer;
+begin
+  A := TVMobjS.Create(1, N, [1, 2, 3, 4, 5]);
+  B := DCT2(A);
+  C := DCT3(B) / (2*N);
+  for i := 0 to N-1 do AssertEquals(A[0, i], C[0, i], SngTol);
+end;
+
+procedure TVMobjSTests.TestDCT4SelfInverseRoundTrip;
+const N = 5;
+var A, B, C: TVMobjS; i: Integer;
+begin
+  A := TVMobjS.Create(1, N, [1, 2, 3, 4, 5]);
+  B := DCT4(A);
+  C := DCT4(B) / (2*N);
+  for i := 0 to N-1 do AssertEquals(A[0, i], C[0, i], SngTol);
+end;
+
+procedure TVMobjSTests.TestDST1SelfInverseRoundTrip;
+const N = 5;
+var A, B, C: TVMobjS; i: Integer;
+begin
+  A := TVMobjS.Create(1, N, [1, 2, 3, 4, 5]);
+  B := DST1(A);
+  C := DST1(B) / (2*(N+1));
+  for i := 0 to N-1 do AssertEquals(A[0, i], C[0, i], SngTol);
+end;
+
+procedure TVMobjSTests.TestDST2DST3InverseRoundTrip;
+const N = 5;
+var A, B, C: TVMobjS; i: Integer;
+begin
+  A := TVMobjS.Create(1, N, [1, 2, 3, 4, 5]);
+  B := DST2(A);
+  C := DST3(B) / (2*N);
+  for i := 0 to N-1 do AssertEquals(A[0, i], C[0, i], SngTol);
+end;
+
+procedure TVMobjSTests.TestDST4SelfInverseRoundTrip;
+const N = 5;
+var A, B, C: TVMobjS; i: Integer;
+begin
+  A := TVMobjS.Create(1, N, [1, 2, 3, 4, 5]);
+  B := DST4(A);
+  C := DST4(B) / (2*N);
+  for i := 0 to N-1 do AssertEquals(A[0, i], C[0, i], SngTol);
 end;
 
 {===========================================================================
@@ -1282,6 +1428,46 @@ begin
   AssertTrue(P1 = P2);
 end;
 
+procedure TVMobjZTests.TestFFTR2CC2RRoundTrip;
+const N = 7;  //odd, exercises the length-parity case FFT_C2R's explicit N handles
+var A, R: TVMobj; Z: TVMobjZ; i: Integer;
+begin
+  A := TVMobj.Create(1, N, [1, 2, 3, 4, 5, 6, 7]);
+  Z := FFT_R2C(A);
+  AssertEquals(N div 2 + 1, Z.Cols);
+  R := FFT_C2R(Z, N);
+  for i := 0 to N-1 do AssertEquals(A[0, i], R[0, i], DblTol);
+end;
+
+procedure TVMobjZTests.TestFFTC2CRoundTrip;
+const N = 6;
+var A, R: TVMobjZ; i: Integer;
+begin
+  A := TVMobjZ.Create(1, N, [Cplx(1,1), Cplx(2,-1), Cplx(3,0), Cplx(-1,2), Cplx(0,-3), Cplx(4,4)]);
+  R := IFFT(FFT(A));
+  //N=6 is composite, not a power of 2 - FFTW_ESTIMATE's generic codelets
+  //for this size carry more rounding error than DblTol; DblSolveTol
+  //(already used for LAPACK-derived results elsewhere in this suite) fits.
+  for i := 0 to N-1 do begin
+    AssertEquals(A[0, i].re, R[0, i].re, DblSolveTol);
+    AssertEquals(A[0, i].im, R[0, i].im, DblSolveTol);
+  end;
+end;
+
+procedure TVMobjZTests.TestFFTR2CKnownDCValue;
+const N = 4;
+var A: TVMobj; Z: TVMobjZ;
+begin
+  A := TVMobj.Create(1, N, [2, 2, 2, 2]);  //constant vector
+  Z := FFT_R2C(A);
+  //DC component (index 0) of a real FFT is the sum of all samples; a
+  //constant vector's higher harmonics are all exactly zero.
+  AssertEquals(8.0, Z[0, 0].re, DblTol);
+  AssertEquals(0.0, Z[0, 0].im, DblTol);
+  AssertEquals(0.0, Z[0, 1].re, DblTol);
+  AssertEquals(0.0, Z[0, 1].im, DblTol);
+end;
+
 {===========================================================================
   TVMobjCTests  (complex single)
 ===========================================================================}
@@ -1681,6 +1867,43 @@ begin
   AssertEquals(0.0, P1[0, 0].re, SngTol);
   AssertEquals(6.0, P1[0, 0].im, SngTol);
   AssertTrue(P1 = P2);
+end;
+
+procedure TVMobjCTests.TestFFTR2CC2RRoundTrip;
+const N = 7;  //odd, exercises the length-parity case FFT_C2R's explicit N handles
+var A, R: TVMobjS; Z: TVMobjC; i: Integer;
+begin
+  A := TVMobjS.Create(1, N, [1, 2, 3, 4, 5, 6, 7]);
+  Z := FFT_R2C(A);
+  AssertEquals(N div 2 + 1, Z.Cols);
+  R := FFT_C2R(Z, N);
+  for i := 0 to N-1 do AssertEquals(A[0, i], R[0, i], SngTol);
+end;
+
+procedure TVMobjCTests.TestFFTC2CRoundTrip;
+const N = 6;
+var A, R: TVMobjC; i: Integer;
+begin
+  A := TVMobjC.Create(1, N, [Cplx8(1,1), Cplx8(2,-1), Cplx8(3,0), Cplx8(-1,2), Cplx8(0,-3), Cplx8(4,4)]);
+  R := IFFT(FFT(A));
+  for i := 0 to N-1 do begin
+    AssertEquals(A[0, i].re, R[0, i].re, SngTol);
+    AssertEquals(A[0, i].im, R[0, i].im, SngTol);
+  end;
+end;
+
+procedure TVMobjCTests.TestFFTR2CKnownDCValue;
+const N = 4;
+var A: TVMobjS; Z: TVMobjC;
+begin
+  A := TVMobjS.Create(1, N, [2, 2, 2, 2]);  //constant vector
+  Z := FFT_R2C(A);
+  //DC component (index 0) of a real FFT is the sum of all samples; a
+  //constant vector's higher harmonics are all exactly zero.
+  AssertEquals(8.0, Z[0, 0].re, SngTol);
+  AssertEquals(0.0, Z[0, 0].im, SngTol);
+  AssertEquals(0.0, Z[0, 1].re, SngTol);
+  AssertEquals(0.0, Z[0, 1].im, SngTol);
 end;
 
 initialization
