@@ -457,21 +457,25 @@ packages. Compiled binaries and each demo's own `lib/` output are
   elementwise `Exp`/`Sin`/`Sqr`/`*` functions from `newVM.pas`. Default
   function is `y = exp(-0.1*x^2) * sin(3*x)`, 1000 points over `[-10,10]`.
 - **`SpectralDiff`** — Chebyshev spectral differentiation of
-  `f(x) = exp(x)*sin(5x)` via `DCT1` (newVM.pas's FFTW-backed DCT-I),
-  recoded from the original raw-FFTW3 demo at
+  `f(x) = exp(x)*sin(5x)` (the example function, from Trefethen's
+  *Spectral Methods in MATLAB*) via `DCT1` (newVM.pas's FFTW-backed
+  DCT-I), recoded from the original raw-FFTW3 demo at
   `/home/howard/projects/Lazarus/fftw3` (`unit1.pas`/`project1.lpr`) so it
   goes through `TVMobj`/`DCT1` instead of calling
   `fftw_plan_r2r_1d`/`fftw_execute_r2r` directly. Samples `f` at the `N+1`
   Chebyshev points `x_i = cos(pi*i/N)` (`N=32`), transforms to Chebyshev
   coefficient space via `DCT1`, differentiates the coefficient series via
-  the classic recursion from Trefethen's *Spectral Methods in MATLAB*
+  the recursion from Boyd's *Chebyshev and Fourier Spectral Methods*
   (`Recurr`, ported verbatim from the original demo's `recurr`), then
   transforms back via `DCT1` again (each `DCT1` call is unnormalized -
   see "FFT/DCT/DST functions" above - so the result is scaled by
   `Logical_N = 2*N`, divided back out explicitly). Plots the spectral
   derivative against the exact derivative plus their difference; the
   error plot typically shows ~1e-13 to 1e-14 (double-precision noise),
-  demonstrating spectral accuracy.
+  demonstrating spectral accuracy. Times the whole differentiation
+  `NumRuns=5` times from scratch and reports the average over all but the
+  first run (which pays FFTW's one-time internal setup cost and would
+  otherwise skew a single-shot timing).
 
 ### `backup/`
 

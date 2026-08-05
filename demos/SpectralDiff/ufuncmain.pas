@@ -3,11 +3,18 @@ unit ufuncmain;
 {*******************************************************************************
 
      Main form for the SpectralDiff demo: differentiates
-     f(x) = exp(x)*sin(5x) on a Chebyshev grid via DCT-I (newVM.pas's
-     DCT1), using the classic coefficient-space recursion from Trefethen's
-     "Spectral Methods in MATLAB" (Recurr, below) - ported from the
-     original raw-FFTW3 demo's recurr() so it now goes through TVMobj and
-     DCT1 instead of calling fftw_plan_r2r_1d/fftw_execute_r2r directly.
+     f(x) = exp(x)*sin(5x) (the example function, from Trefethen's
+     "Spectral Methods in MATLAB") on a Chebyshev grid via DCT-I
+     (newVM.pas's DCT1), using the coefficient-space differentiation
+     recursion from Boyd's "Chebyshev and Fourier Spectral Methods"
+     (Recurr, below) - ported from the original raw-FFTW3 demo's recurr()
+     so it now goes through TVMobj and DCT1 instead of calling
+     fftw_plan_r2r_1d/fftw_execute_r2r directly.
+
+     Button1Click times the differentiation NumRuns times from scratch and
+     reports the average over all but the first run - the first DCT1 call
+     pays FFTW's one-time internal setup cost and would otherwise skew a
+     single-shot timing.
 
 *******************************************************************************}
 
@@ -24,6 +31,7 @@ const
   N = 32;
   GridSize = N+1;
   Logical_N = 2*N;
+  NumRuns = 5;   //timing repeats; the first is discarded (see header comment)
 
 type
 
@@ -56,8 +64,9 @@ implementation
 
 // Differentiates a Chebyshev coefficient series (as produced by DCT1) via
 // the recursion c'[N]=0, c'[N-1]=N*Logical_N*c[N]/2, c'[i-1]=2*i*c[i]+c'[i+1]
-// - ported verbatim (just re-expressed over TVMobj) from the original
-// fftw3 demo's recurr().
+// - see Boyd, "Chebyshev and Fourier Spectral Methods" (2nd ed.), for the
+// derivation; ported verbatim (just re-expressed over TVMobj) from the
+// original fftw3 demo's recurr().
 function Recurr(const InVec: TVMobj): TVMobj;
 var
   i : integer;
@@ -91,15 +100,20 @@ end;
 procedure TForm1.Button1Click(Sender: TObject);
 var
   coeffs, coeffsDeriv, deriv : TVMobj;
-  j : integer;
-  elapsedUs : Int64;
+  j, run : integer;
+  elapsedUs, totalUs : Int64;
 begin
-  Profiler.Start;
-  coeffs := DCT1(v1);                      //grid values -> scaled Chebyshev coefficients
-  coeffsDeriv := Recurr(coeffs);           //differentiate the Chebyshev series
-  deriv := DCT1(coeffsDeriv) / Logical_N;  //DCT-I is self-inverse, up to this scale
-  elapsedUs := Profiler.Stop;
-  Memo1.Lines.Add('Time for spectral diff: ' + FloatToStr(elapsedUs/1000) + ' ms');
+  totalUs := 0;
+  for run := 1 to NumRuns do begin
+    Profiler.Start;
+    coeffs := DCT1(v1);                      //grid values -> scaled Chebyshev coefficients
+    coeffsDeriv := Recurr(coeffs);           //differentiate the Chebyshev series
+    deriv := DCT1(coeffsDeriv) / Logical_N;  //DCT-I is self-inverse, up to this scale
+    elapsedUs := Profiler.Stop;
+    if run > 1 then totalUs := totalUs + elapsedUs;  //discard the first run - see header comment
+  end;
+  Memo1.Lines.Add(Format('Avg time for spectral diff over %d runs (1st excl.): %.3f ms',
+    [NumRuns-1, (totalUs/(NumRuns-1))/1000]));
 
   for j := 0 to N do begin
     Chart1LineSeries3.AddXY(xv[0, j], deriv[0, j]);
