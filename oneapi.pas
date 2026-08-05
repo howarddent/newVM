@@ -5,12 +5,14 @@ unit OneAPI;
 interface
 
 uses
-  Classes, SysUtils,cblas;
+  Classes, SysUtils, DynLibs, cblas;
 
+{$IFDEF UNIX}
 {$Linklib 'mkl_rt.so'} //intel mkl 64 bit
 {$Linklib 'ippcore.so'}
 {$Linklib 'ippvm.so'}
 {$LinkLib 'ipps.so'}
+{$ENDIF}
 
 const
   IPP_VERSION_MAJOR = 2022;
@@ -207,7 +209,31 @@ type
   end;
   PComplex8 = ^TComplex8;
 
+//On Unix, every routine below (MKL and IPP alike) is declared as a plain
+//"cdecl;external;" function/procedure, resolved at link time via the
+//{$Linklib} block above - unchanged from how this unit always worked on
+//Linux.
+//
+//On Windows, none of that works unmodified:
+// - MKL's Windows redistributable does NOT ship a fixed "mkl_rt.dll" the
+//   way mkl_rt.so is a fixed name on Linux - recent Intel oneAPI releases
+//   version the dispatcher DLL itself (observed: mkl_rt.2.dll for oneAPI
+//   2025.3, mkl_rt.3.dll for 2026.0/2026.1), and there is no unversioned
+//   compatibility copy. A static 'external "mkl_rt.dll"' declaration is
+//   therefore not just a guess but actively wrong on any real install.
+// - IPP ships several separate DLLs (ippcore.dll/ippvm.dll/ipps.dll), and
+//   which one exports a given "ipps*"-prefixed symbol is not reliably
+//   documented and can vary by IPP version.
+//Both problems have the same shape - the correct DLL/filename can't be
+//known at compile time - so both are solved the same way: declare these
+//as procedural-type variables instead of "external" functions, and
+//resolve each one at runtime via LoadLibrary/GetProcedureAddress against
+//a small list of candidate DLL names/files, in LoadMKLFunctions and
+//LoadIPPFunctions (implementation section, run from this unit's
+//initialization). This mirrors the pattern cblas.pas already uses for
+//OpenBLAS (LoadAddresses/TryInitializeCBLAS there).
 
+{$IFDEF UNIX}
   { Lapacke LU factorisation}
 function lapacke_dgetrf(matrix_layout: CBLAS_ORDER; m: Integer; n: Integer; a: PDouble; lda: Integer; ipiv: PInteger): Integer;cdecl;external;
 {LaPacke linear solve}
@@ -257,13 +283,6 @@ procedure vmdAdd(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl;ex
 
 procedure vmdSub(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl;external;
 
-procedure vmdMul(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl;external;
-
-//single-precision real analogue of vmdMul above, for newVMSingle's
-//elementwise '*' operator (MulObjS) - there is no "vs"-family Mul, same
-//reason vmdMul (not vdMul) backs the double-precision version.
-procedure vmsMul(const n: Integer; a: PSingle; b: PSingle; r: PSingle); cdecl;external;
-
 procedure vmdDiv(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl;external;
 
 procedure vmdPowx(const n: Integer; a: PDouble; b: Double; r: PDouble); cdecl;external;
@@ -288,6 +307,11 @@ procedure vdSqr(const n: Integer; a: PDouble; r: PDouble); cdecl; external;
 procedure vdSqrt(const n: Integer; a: PDouble; r: PDouble); cdecl; external;
 procedure vdExp(const n: Integer; a: PDouble; r: PDouble); cdecl; external;
 procedure vdLn(const n: Integer; a: PDouble; r: PDouble); cdecl; external;
+//plain (mode-less) elementwise multiply, for newVM's elementwise '*'
+//operator (mulObj) - deliberately vdMul, not the vmdMul family above (see
+//comment on that block: vmdMul silently reads a missing 5th "mode" stack
+//argument as garbage under the Win64 calling convention).
+procedure vdMul(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl; external;
 
 procedure vsSin(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
 procedure vsCos(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
@@ -297,6 +321,9 @@ procedure vsSqr(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
 procedure vsSqrt(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
 procedure vsExp(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
 procedure vsLn(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
+//single-precision real analogue of vdMul above, for newVMSingle's
+//elementwise '*' operator (MulObjS).
+procedure vsMul(const n: Integer; a: PSingle; b: PSingle; r: PSingle); cdecl; external;
 
 procedure vzSin(const n: Integer; a: PComplex16; r: PComplex16); cdecl; external;
 procedure vzCos(const n: Integer; a: PComplex16; r: PComplex16); cdecl; external;
@@ -341,7 +368,7 @@ function ippsMulC_64f(const pSrc: PIpp64f; val: Ipp64f; pDst: PIpp64f; len: Inte
 
 function ippsAddC_64f_I(val: double; pSrcDst: PDouble; len: Integer): Integer; cdecl;external;
 
-function ippsSubC_64f_I(val: Double; pSrcDst: PDouble; len: Integer): Integer cdecl;external;
+function ippsSubC_64f_I(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;external;
 
 function ippsDivC_64f_I(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl; external;
 
@@ -353,6 +380,9 @@ function ippsExp_64f_I(PDouble: PIpp64f; len: Integer): Integer; cdecl;external;
 
 function ippInit():Integer;cdecl;external;
 
+function ippMalloc(length: Integer): Pointer; cdecl;external;
+
+procedure ippFree(ptr: Pointer); cdecl;external;
 
 // Memory management
 
@@ -363,10 +393,6 @@ function MKL_calloc(num: NativeUInt; size: NativeUInt; align: Integer): Pointer;
 function MKL_realloc(ptr: Pointer; size: NativeUInt): Pointer; cdecl;external;
 
 procedure MKL_free(ptr: Pointer); cdecl;external;
-
-function ippMalloc(length: Integer): Pointer; cdecl;external;
-
-procedure ippFree(ptr: Pointer); cdecl;external;
 
 procedure MKL_Dimatcopy(const ordering: UTF8Char; const trans: UTF8Char; rows: NativeUInt; cols: NativeUInt; const alpha: Double; AB: PDouble; lda: NativeUInt; ldb: NativeUInt); cdecl;external;
 
@@ -387,18 +413,358 @@ function vdRngGaussian(const p1: Integer; p2: Pointer; const p3: Integer; p4: PD
 
 {single precision}
 function vsRngGaussian(const p1: Integer; p2: Pointer; const p3: Integer; p4: PSingle; const p5: Single; const p6: Single): Integer; cdecl;external;
+{$ENDIF}
 
+{$IFDEF WINDOWS}
+type
+  Tlapacke_dgetrf = function(matrix_layout: CBLAS_ORDER; m: Integer; n: Integer; a: PDouble; lda: Integer; ipiv: PInteger): Integer; cdecl;
+  Tlapacke_dgesv  = function(matrix_layout: CBLAS_ORDER; n: Integer; nrhs: Integer; a: PDouble; lda: Integer; ipiv: PInteger; b: PDouble; ldb: Integer): integer; cdecl;
+  Tlapacke_sgesv  = function(matrix_layout: CBLAS_ORDER; n: Integer; nrhs: Integer; a: PSingle; lda: Integer; ipiv: PInteger; b: PSingle; ldb: Integer): integer; cdecl;
+  Tlapacke_zgesv  = function(matrix_layout: CBLAS_ORDER; n: Integer; nrhs: Integer; a: PComplex16; lda: Integer; ipiv: PInteger; b: PComplex16; ldb: Integer): integer; cdecl;
+  Tlapacke_cgesv  = function(matrix_layout: CBLAS_ORDER; n: Integer; nrhs: Integer; a: PComplex8; lda: Integer; ipiv: PInteger; b: PComplex8; ldb: Integer): integer; cdecl;
+  Tlapacke_dlaset = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; alpha: Double; beta: Double; a: PDouble; lda: Integer): Integer; cdecl;
+  Tlapacke_slaset = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; alpha: single; beta: single; a: PSingle; lda: Integer): Integer; cdecl;
+  Tlapacke_zlaset = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; alpha: TComplex16; beta: TComplex16; a: PComplex16; lda: Integer): Integer; cdecl;
+  Tlapacke_claset = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; alpha: TComplex8; beta: TComplex8; a: PComplex8; lda: Integer): Integer; cdecl;
+  Tlapacke_dlacpy = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; const a: PDouble; lda: Integer; b: PDouble; ldb: Integer): Integer; cdecl;
+  Tlapacke_slacpy = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; const a: PSingle; lda: Integer; b: PSingle; ldb: Integer): Integer; cdecl;
+  Tlapacke_zlacpy = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; const a: PComplex16; lda: Integer; b: PComplex16; ldb: Integer): Integer; cdecl;
+  Tlapacke_clacpy = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; const a: PComplex8; lda: Integer; b: PComplex8; ldb: Integer): Integer; cdecl;
+  Tlapacke_dgetri = function(matrix_layout: CBLAS_ORDER; n: Integer; a: PDouble; lda: Integer; const ipiv: PInteger): Integer; cdecl;
+  Tlapacke_dgeev  = function(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PDouble; lda : Integer;
+                        wr ,wi : PDouble; vl : PDouble; ldvl :integer; vr : PDouble; ldvr : Integer):Integer; cdecl;
+  Tlapacke_sgeev  = function(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
+                        wr ,wi : PSingle; vl : PSingle; ldvl :integer; vr : PSingle; ldvr : Integer):Integer; cdecl;
 
-//cblas routines
+  Tvmd3 = procedure(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl; //vmdAdd/Sub/Div shape
+  Tvmd2 = procedure(const n: Integer; a: PDouble; r: PDouble); cdecl; //vmdSqr/Sin/Cos/Exp shape
+  Tvmdpowx = procedure(const n: Integer; a: PDouble; b: Double; r: PDouble); cdecl;
 
-{ MKL BLAS declarations }
+  Tvd2 = procedure(const n: Integer; a: PDouble; r: PDouble); cdecl; //vd*(n,a,r) shape
+  Tvd3 = procedure(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl; //vdMul shape
+  Tvs2 = procedure(const n: Integer; a: PSingle; r: PSingle); cdecl; //vs*(n,a,r) shape
+  Tvs3 = procedure(const n: Integer; a: PSingle; b: PSingle; r: PSingle); cdecl; //vsMul shape
+  Tvz2 = procedure(const n: Integer; a: PComplex16; r: PComplex16); cdecl; //vz*(n,a,r) shape
+  Tvz3 = procedure(const n: Integer; a: PComplex16; b: PComplex16; r: PComplex16); cdecl; //vzMul shape
+  Tvc2 = procedure(const n: Integer; a: PComplex8; r: PComplex8); cdecl; //vc*(n,a,r) shape
+  Tvc3 = procedure(const n: Integer; a: PComplex8; b: PComplex8; r: PComplex8); cdecl; //vcMul shape
 
+  Tippscos_64f_a50     = function(a: PDouble; r: PDouble; n: Integer): Integer; cdecl;
+  Tippsvectorslope_64f = function(a: PDouble; len: Integer; offset: Double; slope: Double): Integer; cdecl;
+  Tippsvectorslope_32f = function(a: PSingle; len: Integer; offset: Single; slope: Single): Integer; cdecl;
+  Tippscopy_64f        = function(const pSrc: PDouble; pDst: PDouble; len: Integer): Integer; cdecl;
+  Tippsmulc_64f_i_l    = function(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;
+  Tippsmulc_64f        = function(const pSrc: PIpp64f; val: Ipp64f; pDst: PIpp64f; len: Integer): Integer; cdecl;
+  Tippsaddc_64f_i      = function(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;
+  Tippssubc_64f_i      = function(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;
+  Tippsdivc_64f_i      = function(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;
+  Tippsdivc_32f_i      = function(val: Single; pSrcDst: PSingle; len: Integer): Integer; cdecl;
+  Tippssqr_64f_i       = function(pSrcDst: PDouble; len: Integer): Integer; cdecl;
+  Tippsexp_64f_i       = function(a: PIpp64f; len: Integer): Integer; cdecl;
+  Tippinit             = function(): Integer; cdecl;
+  Tippmalloc           = function(length: Integer): Pointer; cdecl;
+  Tippfree             = procedure(ptr: Pointer); cdecl;
 
+  Tmkl_malloc  = function(size: NativeUInt; align: Integer): Pointer; cdecl;
+  Tmkl_calloc  = function(num: NativeUInt; size: NativeUInt; align: Integer): Pointer; cdecl;
+  Tmkl_realloc = function(ptr: Pointer; size: NativeUInt): Pointer; cdecl;
+  Tmkl_free    = procedure(ptr: Pointer); cdecl;
+  Tmkl_dimatcopy = procedure(const ordering: UTF8Char; const trans: UTF8Char; rows: NativeUInt; cols: NativeUInt; const alpha: Double; AB: PDouble; lda: NativeUInt; ldb: NativeUInt); cdecl;
+  Tmkl_simatcopy = procedure(const ordering: UTF8Char; const trans: UTF8Char; rows: NativeUInt; cols: NativeUInt; const alpha: Single; AB: PSingle; lda: NativeUInt; ldb: NativeUInt); cdecl;
+  Tmkl_zimatcopy = procedure(const ordering: UTF8Char; const trans: UTF8Char; rows: NativeUInt; cols: NativeUInt; const alpha: TComplex16; AB: PComplex16; lda: NativeUInt; ldb: NativeUInt); cdecl;
+  Tmkl_cimatcopy = procedure(const ordering: UTF8Char; const trans: UTF8Char; rows: NativeUInt; cols: NativeUInt; const alpha: TComplex8; AB: PComplex8; lda: NativeUInt; ldb: NativeUInt); cdecl;
 
+  Tvslnewstream    = function(const p1: Pointer; const p2: Integer; const p3: Cardinal): Integer; cdecl;
+  Tvsldeletestream = function(p1: Pointer): Integer; cdecl;
+  Tvdrnggaussian   = function(const p1: Integer; p2: Pointer; const p3: Integer; p4: PDouble; const p5: Double; const p6: Double): Integer; cdecl;
+  Tvsrnggaussian   = function(const p1: Integer; p2: Pointer; const p3: Integer; p4: PSingle; const p5: Single; const p6: Single): Integer; cdecl;
 
+var
+  lapacke_dgetrf : Tlapacke_dgetrf;
+  lapacke_dgesv  : Tlapacke_dgesv;
+  lapacke_sgesv  : Tlapacke_sgesv;
+  lapacke_zgesv  : Tlapacke_zgesv;
+  lapacke_cgesv  : Tlapacke_cgesv;
+  lapacke_dlaset : Tlapacke_dlaset;
+  lapacke_slaset : Tlapacke_slaset;
+  lapacke_zlaset : Tlapacke_zlaset;
+  lapacke_claset : Tlapacke_claset;
+  lapacke_dlacpy : Tlapacke_dlacpy;
+  lapacke_slacpy : Tlapacke_slacpy;
+  lapacke_zlacpy : Tlapacke_zlacpy;
+  lapacke_clacpy : Tlapacke_clacpy;
+  lapacke_dgetri : Tlapacke_dgetri;
+  lapacke_dgeev  : Tlapacke_dgeev;
+  lapacke_sgeev  : Tlapacke_sgeev;
 
+  vmdSqr  : Tvmd2;
+  vmdAdd  : Tvmd3;
+  vmdSub  : Tvmd3;
+  vmdDiv  : Tvmd3;
+  vmdPowx : Tvmdpowx;
+  vmdSin  : Tvmd2;
+  vmdCos  : Tvmd2;
+  vmdExp  : Tvmd2;
+
+  vdSin  : Tvd2;
+  vdCos  : Tvd2;
+  vdTan  : Tvd2;
+  vdSinh : Tvd2;
+  vdSqr  : Tvd2;
+  vdSqrt : Tvd2;
+  vdExp  : Tvd2;
+  vdLn   : Tvd2;
+  vdMul  : Tvd3;
+
+  vsSin  : Tvs2;
+  vsCos  : Tvs2;
+  vsTan  : Tvs2;
+  vsSinh : Tvs2;
+  vsSqr  : Tvs2;
+  vsSqrt : Tvs2;
+  vsExp  : Tvs2;
+  vsLn   : Tvs2;
+  vsMul  : Tvs3;
+
+  vzSin  : Tvz2;
+  vzCos  : Tvz2;
+  vzTan  : Tvz2;
+  vzSinh : Tvz2;
+  vzSqrt : Tvz2;
+  vzExp  : Tvz2;
+  vzLn   : Tvz2;
+  vzMul  : Tvz3;
+
+  vcSin  : Tvc2;
+  vcCos  : Tvc2;
+  vcTan  : Tvc2;
+  vcSinh : Tvc2;
+  vcSqrt : Tvc2;
+  vcExp  : Tvc2;
+  vcLn   : Tvc2;
+  vcMul  : Tvc3;
+
+  ippsCos_64f_A50     : Tippscos_64f_a50;
+  ippsVectorSlope_64f : Tippsvectorslope_64f;
+  ippsVectorSlope_32f : Tippsvectorslope_32f;
+  ippsCopy_64f        : Tippscopy_64f;
+  ippsMulC_64f_I_L    : Tippsmulc_64f_i_l;
+  ippsMulC_64f        : Tippsmulc_64f;
+  ippsAddC_64f_I      : Tippsaddc_64f_i;
+  ippsSubC_64f_I      : Tippssubc_64f_i;
+  ippsDivC_64f_I      : Tippsdivc_64f_i;
+  ippsDivC_32f_I      : Tippsdivc_32f_i;
+  ippsSqr_64f_I       : Tippssqr_64f_i;
+  ippsExp_64f_I       : Tippsexp_64f_i;
+  ippInit             : Tippinit;
+  ippMalloc           : Tippmalloc;
+  ippFree             : Tippfree;
+
+  MKL_malloc  : Tmkl_malloc;
+  MKL_calloc  : Tmkl_calloc;
+  MKL_realloc : Tmkl_realloc;
+  MKL_free    : Tmkl_free;
+  MKL_Dimatcopy : Tmkl_dimatcopy;
+  MKL_Simatcopy : Tmkl_simatcopy;
+  MKL_Zimatcopy : Tmkl_zimatcopy;
+  MKL_Cimatcopy : Tmkl_cimatcopy;
+
+  vslNewStream    : Tvslnewstream;
+  vslDeleteStream : Tvsldeletestream;
+  vdRngGaussian   : Tvdrnggaussian;
+  vsRngGaussian   : Tvsrnggaussian;
+
+procedure LoadMKLFunctions;
+procedure LoadIPPFunctions;
+{$ENDIF}
 
 implementation
 
-end.
+{$IFDEF WINDOWS}
+//No unversioned "mkl_rt.dll" exists on recent Intel oneAPI installs - the
+//dispatcher DLL itself carries a version suffix that increments across
+//oneAPI releases (observed: mkl_rt.2.dll, mkl_rt.3.dll). Try the
+//unversioned name first (in case some install does provide it or the user
+//has renamed/copied one) then a range of versioned names, and use
+//whichever one LoadLibrary actually finds on PATH.
+const
+  MKLCandidateLibs: array[0..10] of string = (
+    'mkl_rt.dll',
+    'mkl_rt.1.dll', 'mkl_rt.2.dll', 'mkl_rt.3.dll', 'mkl_rt.4.dll',
+    'mkl_rt.5.dll', 'mkl_rt.6.dll', 'mkl_rt.7.dll', 'mkl_rt.8.dll',
+    'mkl_rt.9.dll', 'mkl_rt.10.dll'
+  );
 
+var
+  MKLLibHandle: TLibHandle = NilHandle;
+  MKLLibTried: Boolean = False;
+
+function GetMKLHandle: TLibHandle;
+var
+  i: Integer;
+begin
+  if not MKLLibTried then
+  begin
+    MKLLibTried := True;
+    for i := Low(MKLCandidateLibs) to High(MKLCandidateLibs) do
+    begin
+      MKLLibHandle := LoadLibrary(MKLCandidateLibs[i]);
+      if MKLLibHandle <> NilHandle then Break;
+    end;
+  end;
+  Result := MKLLibHandle;
+end;
+
+function MKLProc(const FuncName: AnsiString): Pointer;
+const
+  s = 'OneAPI (Windows MKL loader) : ';
+var
+  h: TLibHandle;
+begin
+  Result := nil;
+  h := GetMKLHandle;
+  if h <> NilHandle then
+    Result := GetProcedureAddress(h, FuncName);
+  assert(Result <> nil, s + 'could not locate "' + FuncName +
+    '" - is an Intel oneAPI MKL runtime DLL (mkl_rt.dll or a versioned ' +
+    'mkl_rt.<N>.dll) on PATH?');
+end;
+
+procedure LoadMKLFunctions;
+begin
+  //MKL's Windows dispatcher only exports these under the "LAPACKE_" (capital
+  //prefix, lowercase suffix) spelling used by mkl_lapacke.h - unlike every
+  //other symbol resolved below, it does NOT also export an all-lowercase
+  //"lapacke_*" alias, and GetProcedureAddress is case-sensitive. Confirmed
+  //via the exports table of mkl_rt.3.dll. The Pascal identifiers stay
+  //lowercase (matching the Unix external declarations above); only the
+  //string passed to MKLProc needs the real exported casing.
+  pointer(lapacke_dgetrf) := MKLProc('LAPACKE_dgetrf');
+  pointer(lapacke_dgesv)  := MKLProc('LAPACKE_dgesv');
+  pointer(lapacke_sgesv)  := MKLProc('LAPACKE_sgesv');
+  pointer(lapacke_zgesv)  := MKLProc('LAPACKE_zgesv');
+  pointer(lapacke_cgesv)  := MKLProc('LAPACKE_cgesv');
+  pointer(lapacke_dlaset) := MKLProc('LAPACKE_dlaset');
+  pointer(lapacke_slaset) := MKLProc('LAPACKE_slaset');
+  pointer(lapacke_zlaset) := MKLProc('LAPACKE_zlaset');
+  pointer(lapacke_claset) := MKLProc('LAPACKE_claset');
+  pointer(lapacke_dlacpy) := MKLProc('LAPACKE_dlacpy');
+  pointer(lapacke_slacpy) := MKLProc('LAPACKE_slacpy');
+  pointer(lapacke_zlacpy) := MKLProc('LAPACKE_zlacpy');
+  pointer(lapacke_clacpy) := MKLProc('LAPACKE_clacpy');
+  pointer(lapacke_dgetri) := MKLProc('LAPACKE_dgetri');
+  pointer(lapacke_dgeev)  := MKLProc('LAPACKE_dgeev');
+  pointer(lapacke_sgeev)  := MKLProc('LAPACKE_sgeev');
+
+  pointer(vmdSqr)  := MKLProc('vmdSqr');
+  pointer(vmdAdd)  := MKLProc('vmdAdd');
+  pointer(vmdSub)  := MKLProc('vmdSub');
+  pointer(vmdDiv)  := MKLProc('vmdDiv');
+  pointer(vmdPowx) := MKLProc('vmdPowx');
+  pointer(vmdSin)  := MKLProc('vmdSin');
+  pointer(vmdCos)  := MKLProc('vmdCos');
+  pointer(vmdExp)  := MKLProc('vmdExp');
+
+  pointer(vdSin)  := MKLProc('vdSin');
+  pointer(vdCos)  := MKLProc('vdCos');
+  pointer(vdTan)  := MKLProc('vdTan');
+  pointer(vdSinh) := MKLProc('vdSinh');
+  pointer(vdSqr)  := MKLProc('vdSqr');
+  pointer(vdSqrt) := MKLProc('vdSqrt');
+  pointer(vdExp)  := MKLProc('vdExp');
+  pointer(vdLn)   := MKLProc('vdLn');
+  pointer(vdMul)  := MKLProc('vdMul');
+
+  pointer(vsSin)  := MKLProc('vsSin');
+  pointer(vsCos)  := MKLProc('vsCos');
+  pointer(vsTan)  := MKLProc('vsTan');
+  pointer(vsSinh) := MKLProc('vsSinh');
+  pointer(vsSqr)  := MKLProc('vsSqr');
+  pointer(vsSqrt) := MKLProc('vsSqrt');
+  pointer(vsExp)  := MKLProc('vsExp');
+  pointer(vsLn)   := MKLProc('vsLn');
+  pointer(vsMul)  := MKLProc('vsMul');
+
+  pointer(vzSin)  := MKLProc('vzSin');
+  pointer(vzCos)  := MKLProc('vzCos');
+  pointer(vzTan)  := MKLProc('vzTan');
+  pointer(vzSinh) := MKLProc('vzSinh');
+  pointer(vzSqrt) := MKLProc('vzSqrt');
+  pointer(vzExp)  := MKLProc('vzExp');
+  pointer(vzLn)   := MKLProc('vzLn');
+  pointer(vzMul)  := MKLProc('vzMul');
+
+  pointer(vcSin)  := MKLProc('vcSin');
+  pointer(vcCos)  := MKLProc('vcCos');
+  pointer(vcTan)  := MKLProc('vcTan');
+  pointer(vcSinh) := MKLProc('vcSinh');
+  pointer(vcSqrt) := MKLProc('vcSqrt');
+  pointer(vcExp)  := MKLProc('vcExp');
+  pointer(vcLn)   := MKLProc('vcLn');
+  pointer(vcMul)  := MKLProc('vcMul');
+
+  pointer(MKL_malloc)  := MKLProc('MKL_malloc');
+  pointer(MKL_calloc)  := MKLProc('MKL_calloc');
+  pointer(MKL_realloc) := MKLProc('MKL_realloc');
+  pointer(MKL_free)    := MKLProc('MKL_free');
+  pointer(MKL_Dimatcopy) := MKLProc('MKL_Dimatcopy');
+  pointer(MKL_Simatcopy) := MKLProc('MKL_Simatcopy');
+  pointer(MKL_Zimatcopy) := MKLProc('MKL_Zimatcopy');
+  pointer(MKL_Cimatcopy) := MKLProc('MKL_Cimatcopy');
+
+  pointer(vslNewStream)    := MKLProc('vslNewStream');
+  pointer(vslDeleteStream) := MKLProc('vslDeleteStream');
+  pointer(vdRngGaussian)   := MKLProc('vdRngGaussian');
+  pointer(vsRngGaussian)   := MKLProc('vsRngGaussian');
+end;
+
+function IPPProc(const FuncName: AnsiString): Pointer;
+const
+  s = 'OneAPI (Windows IPP loader) : ';
+var
+  h: TLibHandle;
+begin
+  Result := nil;
+  h := LoadLibrary('ipps.dll');
+  if h <> NilHandle then
+    Result := GetProcedureAddress(h, FuncName);
+  if Result = nil then
+  begin
+    h := LoadLibrary('ippvm.dll');
+    if h <> NilHandle then
+      Result := GetProcedureAddress(h, FuncName);
+  end;
+  if Result = nil then
+  begin
+    h := LoadLibrary('ippcore.dll');
+    if h <> NilHandle then
+      Result := GetProcedureAddress(h, FuncName);
+  end;
+  assert(Result <> nil, s + 'could not locate "' + FuncName + '" in ipps.dll/ippvm.dll/ippcore.dll');
+end;
+
+procedure LoadIPPFunctions;
+begin
+  pointer(ippsCos_64f_A50)     := IPPProc('ippsCos_64f_A50');
+  pointer(ippsVectorSlope_64f) := IPPProc('ippsVectorSlope_64f');
+  pointer(ippsVectorSlope_32f) := IPPProc('ippsVectorSlope_32f');
+  pointer(ippsCopy_64f)        := IPPProc('ippsCopy_64f');
+  pointer(ippsMulC_64f_I_L)    := IPPProc('ippsMulC_64f_I_L');
+  pointer(ippsMulC_64f)        := IPPProc('ippsMulC_64f');
+  pointer(ippsAddC_64f_I)      := IPPProc('ippsAddC_64f_I');
+  pointer(ippsSubC_64f_I)      := IPPProc('ippsSubC_64f_I');
+  pointer(ippsDivC_64f_I)      := IPPProc('ippsDivC_64f_I');
+  pointer(ippsDivC_32f_I)      := IPPProc('ippsDivC_32f_I');
+  pointer(ippsSqr_64f_I)       := IPPProc('ippsSqr_64f_I');
+  pointer(ippsExp_64f_I)       := IPPProc('ippsExp_64f_I');
+  pointer(ippInit)             := IPPProc('ippInit');
+  pointer(ippMalloc)           := IPPProc('ippMalloc');
+  pointer(ippFree)             := IPPProc('ippFree');
+end;
+
+initialization
+  LoadMKLFunctions;
+  LoadIPPFunctions;
+{$ENDIF}
+
+end.

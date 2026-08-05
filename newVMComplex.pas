@@ -61,6 +61,7 @@ unit newVMComplex;
 
 {$mode Delphi}{$H+}
 {$Align 8}
+{$IFDEF UNIX}
 {$Linklib 'mkl_rt.so'}
 {$Linklib 'pthread'}
 {$Linklib 'm'}
@@ -69,6 +70,8 @@ unit newVMComplex;
 //expects libm/pthread/dl to already be loaded into the process's
 //global symbol table - without this you get errors like:
 //  symbol lookup error: .../libmkl_core.so: undefined symbol: log10
+//Unix/ELF dynamic-linker quirk only - not needed for mkl_rt.dll on Windows.
+{$ENDIF}
 
 interface
 
