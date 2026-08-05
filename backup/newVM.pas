@@ -67,6 +67,7 @@ type
       frows, fcols : TDim;
       function getelement(r,c: TDim): Double;
       procedure setelement(r,c: TDim; AValue: Double);
+      function Transpose: TVMObj;
     public
       constructor create(r,c :tDim);Overload;
       Constructor create(r,c: TDim; const Values : TVector); overload;
@@ -74,15 +75,10 @@ type
       property Element[r,c:TDim]:Double read getelement write setelement; default;
       procedure fillRandom;
       procedure Id;
+      procedure linspace(Start, increment: Double);
       function DataPtr: PDouble;   //raw buffer, for MKL interop from other units
       property Rows: TDim read frows;              //read-only dimension accessors
       property Cols: TDim read fcols;
-
-      { Operator overloads - see OPERATOR OVERLOADS note in the header above.
-        Mode Delphi only supports operator overloading as "class operator"
-        members of the record - the free-standing "operator + (...)"
-        syntax declared at unit scope is an ObjFPC/FPC-mode-only extension
-        and is rejected under $mode Delphi. }
       class operator +(const A, B: TVMobj): TVMobj;
       class operator -(const A, B: TVMobj): TVMobj;
       class operator -(const A: TVMobj): TVMobj;
@@ -90,9 +86,10 @@ type
       class operator *(const A: TVMobj; const k: Double): TVMobj;
       class operator *(const k: Double; const A: TVMobj): TVMobj;
       class operator /(const A: TVMobj; const k: Double): TVMobj;
+      class operator =(const A, B: TVMobj): Boolean;
     end;
 
-function calcoffset(r,c :TDim):integer;inline;
+function calcoffset(r,c,cols :TDim):integer;inline;
 function MatMult( const A, B: TVMObj): TVMobj;
 function LinearSolve(var A, B: TVMObj):integer;
 function CopyObj(Const A : TVMObj):TVMobj;
@@ -111,12 +108,13 @@ function Sqr(const A: TVMobj): TVMobj; overload;
 function Sqrt(const A: TVMobj): TVMobj; overload;
 function Exp(const A: TVMobj): TVMobj; overload;
 function Ln(const A: TVMobj): TVMobj; overload;
+function mulObj(const A, B: TVMObj): TVMObj;
 
 implementation
 
-function calcoffset(r, c: TDim): integer;
+function calcoffset(r, c, cols: TDim): integer;
 begin
-  result := (r*(c-1))+r-1;
+  result := r*cols+c;
 end;
 
 { TVMobj }
@@ -125,8 +123,8 @@ function TVMobj.getelement(r,c: TDim): Double;
 var
    Ix : Integer;
 begin
-   assert((r<=rows) and (c<=cols),'Dimensions don''t match in getelement');
-   Ix := calcoffset(r,c);
+   assert((r<rows) and (c<cols),'Dimensions don''t match in getelement');
+   Ix := calcoffset(r,c,cols);
    assert(Ix<= high(fdata),'Index out of range in get element');
    result := fdata[Ix];
 end;
@@ -135,8 +133,8 @@ procedure TVMobj.setelement(r,c:TDim; AValue: Double);
 var
  Ix : Integer;
 begin
-   assert((r<=rows) and (c<=cols),'Dimensions don''t match in setelement');
-   Ix := calcoffset(r,c);
+   assert((r<rows) and (c<cols),'Dimensions don''t match in setelement');
+   Ix := calcoffset(r,c,cols);
    assert(Ix <= high(fdata),'Index out of range in set element');
    fdata[Ix] := Avalue;
 end;
@@ -216,6 +214,25 @@ begin
   result := @fdata[0];
 end;
 
+procedure TVMObj.linspace(Start, increment: Double);
+const
+  s : String ='routine linspace';
+begin
+  assert(fdata <>nil,s+  ': MVObj Not Initialized');
+  ippsVectorSlope_64f(@FData[0],high(fdata)+1,start,increment);
+end;
+
+function TVMObj.Transpose:TVMObj;
+var
+  temp : TDim;
+begin
+  result := copyobj(self);
+  MKL_Dimatcopy('R','T',rows,cols,1,result.DataPtr,cols,rows);
+//swap row and column numbers
+  temp := self.rows;
+  result.frows := self.cols;
+  result.fcols := temp;
+end;
 
 
 function MatMult(const A, B: TVMObj): TVMobj;
@@ -254,7 +271,7 @@ begin
   //Check dimensions of matrices are compatible. A must be square and A.cols =
   // B.rows
   assert(A.Cols = A.Rows,s+'Matrix A must be square');
-  assert(A.Rows = B.cols, s+'Matrix A and B have incompatible dimensions');
+  assert(A.Rows = B.Rows, s+'Matrix A and B have incompatible dimensions');
   setlength(ipiv,A.rows);
  linearSolve:= lapacke_dgesv(CBlasRowMajor,A.rows,B.cols,@A.Fdata[0],A.cols,@ipiv[0],@B.FData[0],B.cols);
 end;
@@ -291,7 +308,7 @@ end;
 
 class operator TVMobj.*(const A, B: TVMobj): TVMobj;
 begin
-  result := MatMult(A, B);
+  result := MulObj(A, B);
 end;
 
 class operator TVMobj.*(const A: TVMobj; const k: Double): TVMobj;
@@ -312,6 +329,12 @@ begin
   assert(k<>0, s+'division by zero');
   result := CopyObj(A);
   ippsDivC_64f_I(k, result.DataPtr, A.Rows*A.Cols);
+end;
+
+class operator TVMobj.=(const A, B: TVMobj): Boolean;
+begin
+  Result := (A.Rows = B.Rows) and (A.Cols = B.Cols) and
+            CompareMem(A.DataPtr, B.DataPtr, A.Rows*A.Cols*SizeOf(Double));
 end;
 
 function Sin(const A: TVMobj): TVMobj;
@@ -362,4 +385,11 @@ begin
   vdLn(A.Rows*A.Cols, A.DataPtr, result.DataPtr);
 end;
 
+function mulObj(const A, B: TVMObj): TVMObj;
+const
+  s: string ='Routine mulObj : ';
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObj(A);
+  vmdmul(A.rows*A.cols,A.Dataptr,B.DataPtr,Result.DataPtr);
 end.
