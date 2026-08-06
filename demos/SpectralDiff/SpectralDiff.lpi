@@ -40,7 +40,6 @@
         <ComponentName Value="Form1"/>
         <HasResources Value="True"/>
         <ResourceBaseClass Value="Form"/>
-        <UnitName Value="ufuncmain"/>
       </Unit>
     </Units>
   </ProjectOptions>
@@ -50,8 +49,8 @@
       <Filename Value="SpectralDiff"/>
     </Target>
     <SearchPaths>
-      <OtherUnitFiles Value="../.."/>
       <IncludeFiles Value="$(ProjOutDir)"/>
+      <OtherUnitFiles Value="../.."/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
     <Parsing>
