@@ -145,6 +145,7 @@ function calcoffsetZ(r,c,cols :TDimZ):integer;inline;
 function MatMultZ( const A, B: TVMObjZ): TVMobjZ;
 function LinearSolveZ(var A, B: TVMObjZ):integer;
 function CopyObjZ(Const A : TVMObjZ):TVMobjZ;
+function InvertZ(const A: TVMobjZ): TVMobjZ;  //matrix inverse, via LAPACKE_zgetrf+zgetri; leaves A untouched
 function Cplx(re,im : Double): TComplex16;inline;
 function RealToComplex(const A : TVMobj): TVMobjZ;    //promotes a real double TVMobj to a complex TVMobjZ, im = 0
 function GetRealPart(const A : TVMobjZ): TVMobj;      //extracts the real component of A into a real double TVMobj
@@ -374,6 +375,26 @@ function CopyObjZ(const A: TVMObjZ): TVMobjZ;
 begin
   result := TVMObjZ.Create(A.rows,A.cols);
   LAPACKE_zlacpy(CBlasRowMajor,'A',A.rows,A.cols,@A.Fdata[0],a.cols,@result.fdata[0],result.cols);
+end;
+
+function InvertZ(const A: TVMobjZ): TVMobjZ;
+const
+  s : String = 'Function InvertZ : ';
+var
+  ipiv : array of integer;
+  info : integer;
+{ Matrix inverse via LAPACKE_zgetrf (LU factorisation) followed by
+  LAPACKE_zgetri (inverse from the LU factors), on a CopyObjZ scratch
+  buffer - both LAPACKE calls overwrite their input matrix in place,
+  so A itself is left untouched. }
+begin
+  assert(A.Cols = A.Rows, s+'Matrix A must be square');
+  result := CopyObjZ(A);
+  setlength(ipiv, A.rows);
+  info := lapacke_zgetrf(CBlasRowMajor, A.rows, A.cols, @result.Fdata[0], A.cols, @ipiv[0]);
+  assert(info = 0, s+'LAPACKE_zgetrf failed (singular matrix?), info='+IntToStr(info));
+  info := lapacke_zgetri(CBlasRowMajor, A.rows, @result.Fdata[0], A.cols, @ipiv[0]);
+  assert(info = 0, s+'LAPACKE_zgetri failed (singular matrix?), info='+IntToStr(info));
 end;
 
 function RealToComplex(const A: TVMobj): TVMobjZ;

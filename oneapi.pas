@@ -265,7 +265,19 @@ function lapacke_clacpy(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; 
 
 
 {matrix inversion routines}
+function lapacke_sgetrf(matrix_layout: CBLAS_ORDER; m: Integer; n: Integer; a: PSingle; lda: Integer; ipiv: PInteger): Integer;cdecl;external;
+
+function lapacke_zgetrf(matrix_layout: CBLAS_ORDER; m: Integer; n: Integer; a: PComplex16; lda: Integer; ipiv: PInteger): Integer;cdecl;external;
+
+function lapacke_cgetrf(matrix_layout: CBLAS_ORDER; m: Integer; n: Integer; a: PComplex8; lda: Integer; ipiv: PInteger): Integer;cdecl;external;
+
 function lapacke_dgetri(matrix_layout: CBLAS_ORDER; n: Integer; a: PDouble; lda: Integer; const ipiv: PInteger): Integer; cdecl;external;
+
+function lapacke_sgetri(matrix_layout: CBLAS_ORDER; n: Integer; a: PSingle; lda: Integer; const ipiv: PInteger): Integer; cdecl;external;
+
+function lapacke_zgetri(matrix_layout: CBLAS_ORDER; n: Integer; a: PComplex16; lda: Integer; const ipiv: PInteger): Integer; cdecl;external;
+
+function lapacke_cgetri(matrix_layout: CBLAS_ORDER; n: Integer; a: PComplex8; lda: Integer; const ipiv: PInteger): Integer; cdecl;external;
 
 {eigen values, eigenvector routines}
 
@@ -430,7 +442,13 @@ type
   Tlapacke_slacpy = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; const a: PSingle; lda: Integer; b: PSingle; ldb: Integer): Integer; cdecl;
   Tlapacke_zlacpy = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; const a: PComplex16; lda: Integer; b: PComplex16; ldb: Integer): Integer; cdecl;
   Tlapacke_clacpy = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; const a: PComplex8; lda: Integer; b: PComplex8; ldb: Integer): Integer; cdecl;
+  Tlapacke_sgetrf = function(matrix_layout: CBLAS_ORDER; m: Integer; n: Integer; a: PSingle; lda: Integer; ipiv: PInteger): Integer; cdecl;
+  Tlapacke_zgetrf = function(matrix_layout: CBLAS_ORDER; m: Integer; n: Integer; a: PComplex16; lda: Integer; ipiv: PInteger): Integer; cdecl;
+  Tlapacke_cgetrf = function(matrix_layout: CBLAS_ORDER; m: Integer; n: Integer; a: PComplex8; lda: Integer; ipiv: PInteger): Integer; cdecl;
   Tlapacke_dgetri = function(matrix_layout: CBLAS_ORDER; n: Integer; a: PDouble; lda: Integer; const ipiv: PInteger): Integer; cdecl;
+  Tlapacke_sgetri = function(matrix_layout: CBLAS_ORDER; n: Integer; a: PSingle; lda: Integer; const ipiv: PInteger): Integer; cdecl;
+  Tlapacke_zgetri = function(matrix_layout: CBLAS_ORDER; n: Integer; a: PComplex16; lda: Integer; const ipiv: PInteger): Integer; cdecl;
+  Tlapacke_cgetri = function(matrix_layout: CBLAS_ORDER; n: Integer; a: PComplex8; lda: Integer; const ipiv: PInteger): Integer; cdecl;
   Tlapacke_dgeev  = function(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PDouble; lda : Integer;
                         wr ,wi : PDouble; vl : PDouble; ldvl :integer; vr : PDouble; ldvr : Integer):Integer; cdecl;
   Tlapacke_sgeev  = function(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
@@ -493,7 +511,13 @@ var
   lapacke_slacpy : Tlapacke_slacpy;
   lapacke_zlacpy : Tlapacke_zlacpy;
   lapacke_clacpy : Tlapacke_clacpy;
+  lapacke_sgetrf : Tlapacke_sgetrf;
+  lapacke_zgetrf : Tlapacke_zgetrf;
+  lapacke_cgetrf : Tlapacke_cgetrf;
   lapacke_dgetri : Tlapacke_dgetri;
+  lapacke_sgetri : Tlapacke_sgetri;
+  lapacke_zgetri : Tlapacke_zgetri;
+  lapacke_cgetri : Tlapacke_cgetri;
   lapacke_dgeev  : Tlapacke_dgeev;
   lapacke_sgeev  : Tlapacke_sgeev;
 
@@ -652,7 +676,13 @@ begin
   pointer(lapacke_slacpy) := MKLProc('LAPACKE_slacpy');
   pointer(lapacke_zlacpy) := MKLProc('LAPACKE_zlacpy');
   pointer(lapacke_clacpy) := MKLProc('LAPACKE_clacpy');
+  pointer(lapacke_sgetrf) := MKLProc('LAPACKE_sgetrf');
+  pointer(lapacke_zgetrf) := MKLProc('LAPACKE_zgetrf');
+  pointer(lapacke_cgetrf) := MKLProc('LAPACKE_cgetrf');
   pointer(lapacke_dgetri) := MKLProc('LAPACKE_dgetri');
+  pointer(lapacke_sgetri) := MKLProc('LAPACKE_sgetri');
+  pointer(lapacke_zgetri) := MKLProc('LAPACKE_zgetri');
+  pointer(lapacke_cgetri) := MKLProc('LAPACKE_cgetri');
   pointer(lapacke_dgeev)  := MKLProc('LAPACKE_dgeev');
   pointer(lapacke_sgeev)  := MKLProc('LAPACKE_sgeev');
 

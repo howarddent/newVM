@@ -95,6 +95,7 @@ function calcoffsetS(r,c,cols :TDimS):integer;inline;
 function MatMultS( const A, B: TVMObjS): TVMobjS;
 function LinearSolveS(var A, B: TVMObjS):integer;
 function CopyObjS(Const A : TVMObjS):TVMobjS;
+function InvertS(const A: TVMobjS): TVMobjS;  //matrix inverse, via LAPACKE_sgetrf+sgetri; leaves A untouched
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vs* routines
   in OneAPI.pas). Each returns a new TVMobjS of the same dimensions as A,
@@ -290,6 +291,26 @@ function CopyObjS(const A: TVMObjS): TVMobjS;
 begin
   result := TVMObjS.Create(A.rows,A.cols);
   LAPACKE_slacpy(CBlasRowMajor,'A',A.rows,A.cols,@A.Fdata[0],a.cols,@result.fdata[0],result.cols);
+end;
+
+function InvertS(const A: TVMobjS): TVMobjS;
+const
+  s : String = 'Function InvertS : ';
+var
+  ipiv : array of integer;
+  info : integer;
+{ Matrix inverse via LAPACKE_sgetrf (LU factorisation) followed by
+  LAPACKE_sgetri (inverse from the LU factors), on a CopyObjS scratch
+  buffer - both LAPACKE calls overwrite their input matrix in place,
+  so A itself is left untouched. }
+begin
+  assert(A.Cols = A.Rows, s+'Matrix A must be square');
+  result := CopyObjS(A);
+  setlength(ipiv, A.rows);
+  info := lapacke_sgetrf(CBlasRowMajor, A.rows, A.cols, result.DataPtr, A.cols, @ipiv[0]);
+  assert(info = 0, s+'LAPACKE_sgetrf failed (singular matrix?), info='+IntToStr(info));
+  info := lapacke_sgetri(CBlasRowMajor, A.rows, result.DataPtr, A.cols, @ipiv[0]);
+  assert(info = 0, s+'LAPACKE_sgetri failed (singular matrix?), info='+IntToStr(info));
 end;
 
 class operator TVMobjS.+(const A, B: TVMobjS): TVMobjS;

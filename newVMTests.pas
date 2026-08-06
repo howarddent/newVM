@@ -43,6 +43,7 @@ type
     procedure Raise_IdNonSquare;
     procedure Raise_MatMultDimMismatch;
     procedure Raise_LinearSolveNonSquare;
+    procedure Raise_InvertNonSquare;
     procedure Raise_OperatorAddDimMismatch;
     procedure Raise_ScalarDivByZero;
   published
@@ -63,6 +64,8 @@ type
     procedure TestMatMultDimMismatchAsserts;
     procedure TestLinearSolveRecoversRHS;
     procedure TestLinearSolveNonSquareAsserts;
+    procedure TestInvertRecoversIdentity;
+    procedure TestInvertNonSquareAsserts;
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
@@ -93,6 +96,7 @@ type
     procedure Raise_IdNonSquare;
     procedure Raise_MatMultDimMismatch;
     procedure Raise_LinearSolveNonSquare;
+    procedure Raise_InvertNonSquare;
     procedure Raise_OperatorAddDimMismatch;
     procedure Raise_ScalarDivByZero;
   published
@@ -113,6 +117,8 @@ type
     procedure TestMatMultDimMismatchAsserts;
     procedure TestLinearSolveRecoversRHS;
     procedure TestLinearSolveNonSquareAsserts;
+    procedure TestInvertRecoversIdentity;
+    procedure TestInvertNonSquareAsserts;
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
@@ -143,6 +149,7 @@ type
     procedure Raise_IdNonSquare;
     procedure Raise_MatMultDimMismatch;
     procedure Raise_LinearSolveNonSquare;
+    procedure Raise_InvertNonSquare;
     procedure Raise_OperatorAddDimMismatch;
     procedure Raise_ScalarDivByZero;
   published
@@ -162,6 +169,8 @@ type
     procedure TestMatMultDimMismatchAsserts;
     procedure TestLinearSolveRecoversRHS;
     procedure TestLinearSolveNonSquareAsserts;
+    procedure TestInvertRecoversIdentity;
+    procedure TestInvertNonSquareAsserts;
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
@@ -194,6 +203,7 @@ type
     procedure Raise_IdNonSquare;
     procedure Raise_MatMultDimMismatch;
     procedure Raise_LinearSolveNonSquare;
+    procedure Raise_InvertNonSquare;
     procedure Raise_OperatorAddDimMismatch;
     procedure Raise_ScalarDivByZero;
   published
@@ -213,6 +223,8 @@ type
     procedure TestMatMultDimMismatchAsserts;
     procedure TestLinearSolveRecoversRHS;
     procedure TestLinearSolveNonSquareAsserts;
+    procedure TestInvertRecoversIdentity;
+    procedure TestInvertNonSquareAsserts;
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
@@ -298,6 +310,13 @@ begin
   A := TVMobj.Create(2, 3);
   B := TVMobj.Create(2, 1);
   LinearSolve(A, B);
+end;
+
+procedure TVMobjTests.Raise_InvertNonSquare;
+var A: TVMobj;
+begin
+  A := TVMobj.Create(2, 3);
+  A := Invert(A);
 end;
 
 procedure TVMobjTests.Raise_OperatorAddDimMismatch;
@@ -471,6 +490,31 @@ end;
 procedure TVMobjTests.TestLinearSolveNonSquareAsserts;
 begin
   AssertException(EAssertionFailed, @Raise_LinearSolveNonSquare);
+end;
+
+procedure TVMobjTests.TestInvertRecoversIdentity;
+const N = 3;
+var A, Ainv, Akeep, X: TVMobj; r, c: Integer; expected: Double;
+begin
+  A := TVMobj.Create(N, N);
+  A.fillRandom;
+  Akeep := CopyObj(A);
+  Ainv := Invert(A);
+  //A itself must be left untouched by Invert
+  for r := 0 to N-1 do
+    for c := 0 to N-1 do
+      AssertEquals(Format('A[%d,%d] unmutated', [r, c]), Akeep[r, c], A[r, c], DblTol);
+  X := MatMult(Akeep, Ainv);
+  for r := 0 to N-1 do
+    for c := 0 to N-1 do begin
+      if r = c then expected := 1.0 else expected := 0.0;
+      AssertEquals(Format('(A*Ainv)[%d,%d]', [r, c]), expected, X[r, c], DblSolveTol);
+    end;
+end;
+
+procedure TVMobjTests.TestInvertNonSquareAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_InvertNonSquare);
 end;
 
 procedure TVMobjTests.TestOperatorAddSub;
@@ -693,6 +737,13 @@ begin
   LinearSolveS(A, B);
 end;
 
+procedure TVMobjSTests.Raise_InvertNonSquare;
+var A: TVMobjS;
+begin
+  A := TVMobjS.Create(2, 3);
+  A := InvertS(A);
+end;
+
 procedure TVMobjSTests.Raise_OperatorAddDimMismatch;
 var A, B, C: TVMobjS;
 begin
@@ -860,6 +911,30 @@ end;
 procedure TVMobjSTests.TestLinearSolveNonSquareAsserts;
 begin
   AssertException(EAssertionFailed, @Raise_LinearSolveNonSquare);
+end;
+
+procedure TVMobjSTests.TestInvertRecoversIdentity;
+const N = 3;
+var A, Ainv, Akeep, X: TVMobjS; r, c: Integer; expected: Single;
+begin
+  A := TVMobjS.Create(N, N);
+  A.fillRandom;
+  Akeep := CopyObjS(A);
+  Ainv := InvertS(A);
+  for r := 0 to N-1 do
+    for c := 0 to N-1 do
+      AssertEquals(Format('A[%d,%d] unmutated', [r, c]), Akeep[r, c], A[r, c], SngTol);
+  X := MatMultS(Akeep, Ainv);
+  for r := 0 to N-1 do
+    for c := 0 to N-1 do begin
+      if r = c then expected := 1.0 else expected := 0.0;
+      AssertEquals(Format('(A*Ainv)[%d,%d]', [r, c]), expected, X[r, c], SngSolveTol);
+    end;
+end;
+
+procedure TVMobjSTests.TestInvertNonSquareAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_InvertNonSquare);
 end;
 
 procedure TVMobjSTests.TestOperatorAddSub;
@@ -1080,6 +1155,13 @@ begin
   LinearSolveZ(A, B);
 end;
 
+procedure TVMobjZTests.Raise_InvertNonSquare;
+var A: TVMobjZ;
+begin
+  A := TVMobjZ.Create(2, 3);
+  A := InvertZ(A);
+end;
+
 procedure TVMobjZTests.Raise_OperatorAddDimMismatch;
 var A, B, C: TVMobjZ;
 begin
@@ -1249,6 +1331,33 @@ end;
 procedure TVMobjZTests.TestLinearSolveNonSquareAsserts;
 begin
   AssertException(EAssertionFailed, @Raise_LinearSolveNonSquare);
+end;
+
+procedure TVMobjZTests.TestInvertRecoversIdentity;
+const N = 3;
+var A, Ainv, Akeep, X: TVMobjZ; r, c: Integer; expected: TComplex16;
+begin
+  A := TVMobjZ.Create(N, N);
+  A.fillRandom;
+  Akeep := CopyObjZ(A);
+  Ainv := InvertZ(A);
+  for r := 0 to N-1 do
+    for c := 0 to N-1 do begin
+      AssertEquals(Format('A[%d,%d] unmutated (re)', [r, c]), Akeep[r, c].re, A[r, c].re, DblTol);
+      AssertEquals(Format('A[%d,%d] unmutated (im)', [r, c]), Akeep[r, c].im, A[r, c].im, DblTol);
+    end;
+  X := MatMultZ(Akeep, Ainv);
+  for r := 0 to N-1 do
+    for c := 0 to N-1 do begin
+      if r = c then expected := Cplx(1,0) else expected := Cplx(0,0);
+      AssertEquals(Format('(A*Ainv)[%d,%d] re', [r, c]), expected.re, X[r, c].re, DblSolveTol);
+      AssertEquals(Format('(A*Ainv)[%d,%d] im', [r, c]), expected.im, X[r, c].im, DblSolveTol);
+    end;
+end;
+
+procedure TVMobjZTests.TestInvertNonSquareAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_InvertNonSquare);
 end;
 
 procedure TVMobjZTests.TestOperatorAddSub;
@@ -1527,6 +1636,13 @@ begin
   LinearSolveC(A, B);
 end;
 
+procedure TVMobjCTests.Raise_InvertNonSquare;
+var A: TVMobjC;
+begin
+  A := TVMobjC.Create(2, 3);
+  A := InvertC(A);
+end;
+
 procedure TVMobjCTests.Raise_OperatorAddDimMismatch;
 var A, B, C: TVMobjC;
 begin
@@ -1696,6 +1812,33 @@ end;
 procedure TVMobjCTests.TestLinearSolveNonSquareAsserts;
 begin
   AssertException(EAssertionFailed, @Raise_LinearSolveNonSquare);
+end;
+
+procedure TVMobjCTests.TestInvertRecoversIdentity;
+const N = 3;
+var A, Ainv, Akeep, X: TVMobjC; r, c: Integer; expected: TComplex8;
+begin
+  A := TVMobjC.Create(N, N);
+  A.fillRandom;
+  Akeep := CopyObjC(A);
+  Ainv := InvertC(A);
+  for r := 0 to N-1 do
+    for c := 0 to N-1 do begin
+      AssertEquals(Format('A[%d,%d] unmutated (re)', [r, c]), Akeep[r, c].re, A[r, c].re, SngTol);
+      AssertEquals(Format('A[%d,%d] unmutated (im)', [r, c]), Akeep[r, c].im, A[r, c].im, SngTol);
+    end;
+  X := MatMultC(Akeep, Ainv);
+  for r := 0 to N-1 do
+    for c := 0 to N-1 do begin
+      if r = c then expected := Cplx8(1,0) else expected := Cplx8(0,0);
+      AssertEquals(Format('(A*Ainv)[%d,%d] re', [r, c]), expected.re, X[r, c].re, SngSolveTol);
+      AssertEquals(Format('(A*Ainv)[%d,%d] im', [r, c]), expected.im, X[r, c].im, SngSolveTol);
+    end;
+end;
+
+procedure TVMobjCTests.TestInvertNonSquareAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_InvertNonSquare);
 end;
 
 procedure TVMobjCTests.TestOperatorAddSub;

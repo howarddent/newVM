@@ -130,6 +130,7 @@ function calcoffsetC(r,c,cols :TDimC):integer;inline;
 function MatMultC( const A, B: TVMObjC): TVMobjC;
 function LinearSolveC(var A, B: TVMObjC):integer;
 function CopyObjC(Const A : TVMObjC):TVMobjC;
+function InvertC(const A: TVMobjC): TVMobjC;  //matrix inverse, via LAPACKE_cgetrf+cgetri; leaves A untouched
 function Cplx8(re,im : Single): TComplex8;inline;
 function RealToComplexS(const A : TVMobjS): TVMobjC;    //promotes a real single TVMobjS to a complex TVMobjC, im = 0
 function GetRealPartS(const A : TVMobjC): TVMobjS;      //extracts the real component of A into a real single TVMobjS
@@ -353,6 +354,26 @@ function CopyObjC(const A: TVMObjC): TVMobjC;
 begin
   result := TVMObjC.Create(A.rows,A.cols);
   LAPACKE_clacpy(CBlasRowMajor,'A',A.rows,A.cols,@A.Fdata[0],a.cols,@result.fdata[0],result.cols);
+end;
+
+function InvertC(const A: TVMobjC): TVMobjC;
+const
+  s : String = 'Function InvertC : ';
+var
+  ipiv : array of integer;
+  info : integer;
+{ Matrix inverse via LAPACKE_cgetrf (LU factorisation) followed by
+  LAPACKE_cgetri (inverse from the LU factors), on a CopyObjC scratch
+  buffer - both LAPACKE calls overwrite their input matrix in place,
+  so A itself is left untouched. }
+begin
+  assert(A.Cols = A.Rows, s+'Matrix A must be square');
+  result := CopyObjC(A);
+  setlength(ipiv, A.rows);
+  info := lapacke_cgetrf(CBlasRowMajor, A.rows, A.cols, @result.Fdata[0], A.cols, @ipiv[0]);
+  assert(info = 0, s+'LAPACKE_cgetrf failed (singular matrix?), info='+IntToStr(info));
+  info := lapacke_cgetri(CBlasRowMajor, A.rows, @result.Fdata[0], A.cols, @ipiv[0]);
+  assert(info = 0, s+'LAPACKE_cgetri failed (singular matrix?), info='+IntToStr(info));
 end;
 
 function RealToComplexS(const A: TVMobjS): TVMobjC;
