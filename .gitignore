@@ -18,6 +18,11 @@ openblas.dll
 demos/*/[A-Za-z]*
 !demos/*/*.*
 
+# Windows demo binaries do have an extension (.exe), so the negation above
+# re-includes them - this rule comes after that negation (later patterns
+# win) to actually exclude them, e.g. demos/SpectralDiff/SpectralDiff.exe.
+*.exe
+
 # Lazarus IDE session state (per-user, not shared project config)
 *.lps
 
