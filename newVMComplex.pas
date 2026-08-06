@@ -146,6 +146,7 @@ function MatMultZ( const A, B: TVMObjZ): TVMobjZ;
 function LinearSolveZ(var A, B: TVMObjZ):integer;
 function CopyObjZ(Const A : TVMObjZ):TVMobjZ;
 function InvertZ(const A: TVMobjZ): TVMobjZ;  //matrix inverse, via LAPACKE_zgetrf+zgetri; leaves A untouched
+function KronZ(const A, B: TVMobjZ): TVMobjZ;  //Kronecker product - see Kron in newVM.pas
 function Cplx(re,im : Double): TComplex16;inline;
 function RealToComplex(const A : TVMobj): TVMobjZ;    //promotes a real double TVMobj to a complex TVMobjZ, im = 0
 function GetRealPart(const A : TVMobjZ): TVMobj;      //extracts the real component of A into a real double TVMobj
@@ -395,6 +396,23 @@ begin
   assert(info = 0, s+'LAPACKE_zgetrf failed (singular matrix?), info='+IntToStr(info));
   info := lapacke_zgetri(CBlasRowMajor, A.rows, @result.Fdata[0], A.cols, @ipiv[0]);
   assert(info = 0, s+'LAPACKE_zgetri failed (singular matrix?), info='+IntToStr(info));
+end;
+
+function KronZ(const A, B: TVMobjZ): TVMobjZ;
+var
+  i, j, k, rowdest, coldest : integer;
+  aval : TComplex16;
+begin
+  result := TVMobjZ.Create(A.Rows*B.Rows, A.Cols*B.Cols);
+  for i := 0 to A.Rows-1 do
+    for j := 0 to A.Cols-1 do begin
+      aval := A[i,j];
+      for k := 0 to B.Rows-1 do begin
+        rowdest := i*B.Rows + k;
+        coldest := j*B.Cols;
+        cblas_zaxpy(B.Cols, @aval, @B.FData[k*B.Cols], 1, @result.FData[rowdest*result.Cols + coldest], 1);
+      end;
+    end;
 end;
 
 function RealToComplex(const A: TVMobj): TVMobjZ;

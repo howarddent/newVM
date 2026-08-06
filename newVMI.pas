@@ -41,6 +41,12 @@ unit newVMI;
          units, for interop (e.g. handing an index vector's raw buffer
          to another routine without needing friend access).
 
+     Also declares TVMCompareOp (=, <, <=, >, >=) - shared with newVM.pas's/
+     newVMSingle.pas's Find function so both real units use the one type -
+     and Gather, which takes a TVMobjI (typically Find's 0/1 output) and
+     returns a 1-row TVMobjI of the row-major linear indexes of its
+     non-zero elements.
+
 *******************************************************************************}
 
 {$mode delphi}{$H+}
@@ -70,6 +76,12 @@ Type
   TDataSizeI = 1..MaxDimI*MaxDimI;
   TVectorI = Array of Integer;
 
+  //Comparison criteria for newVM.pas's/newVMSingle.pas's Find - declared
+  //here (rather than duplicated in each real unit) so both units, and any
+  //code that uses them together (e.g. newVMTests.pas), share one type
+  //instead of two same-named enums colliding.
+  TVMCompareOp = (cmpEQ, cmpLT, cmpLE, cmpGT, cmpGE);
+
 type
 
   { TVMobjI }
@@ -96,6 +108,7 @@ type
 
 function calcoffsetI(r,c,cols :TDimI):integer;inline;
 function CopyObjI(Const A : TVMObjI):TVMobjI;
+function Gather(const A: TVMobjI): TVMobjI;  //linear indexes of A's non-zero elements, row-major
 
 implementation
 
@@ -232,6 +245,34 @@ function CopyObjI(const A: TVMObjI): TVMobjI;
 begin
   result := TVMObjI.Create(A.rows,A.cols);
   ippsCopy_32s(A.DataPtr,result.DataPtr,A.rows*A.cols);
+end;
+
+function Gather(const A: TVMobjI): TVMobjI;
+//
+// Examines A (typically the 0/1 output of newVM.pas's/newVMSingle.pas's
+// Find) and returns a 1-row TVMobjI containing the row-major linear
+// index (calcoffsetI convention) of every non-zero element of A, in
+// ascending order. No IPP/MKL primitive exists for this (it's a
+// variable-length compaction, not a fixed-shape vector op), so it's a
+// plain Pascal loop, same rationale as Id/Transpose above.
+//
+const
+  s : String = 'Function Gather : ';
+var
+  i, N, count : integer;
+  idx : TVectorI;
+begin
+  N := A.rows*A.cols;
+  setlength(idx, N);
+  count := 0;
+  for i := 0 to N-1 do
+    if A.fData[i] <> 0 then begin
+      idx[count] := i;
+      inc(count);
+    end;
+  assert(count > 0, s+'A has no non-zero elements');
+  setlength(idx, count);
+  result := TVMObjI.Create(1, count, idx);
 end;
 
 end.

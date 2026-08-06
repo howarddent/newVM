@@ -131,6 +131,7 @@ function MatMultC( const A, B: TVMObjC): TVMobjC;
 function LinearSolveC(var A, B: TVMObjC):integer;
 function CopyObjC(Const A : TVMObjC):TVMobjC;
 function InvertC(const A: TVMobjC): TVMobjC;  //matrix inverse, via LAPACKE_cgetrf+cgetri; leaves A untouched
+function KronC(const A, B: TVMobjC): TVMobjC;  //Kronecker product - see Kron in newVM.pas
 function Cplx8(re,im : Single): TComplex8;inline;
 function RealToComplexS(const A : TVMobjS): TVMobjC;    //promotes a real single TVMobjS to a complex TVMobjC, im = 0
 function GetRealPartS(const A : TVMobjC): TVMobjS;      //extracts the real component of A into a real single TVMobjS
@@ -374,6 +375,23 @@ begin
   assert(info = 0, s+'LAPACKE_cgetrf failed (singular matrix?), info='+IntToStr(info));
   info := lapacke_cgetri(CBlasRowMajor, A.rows, @result.Fdata[0], A.cols, @ipiv[0]);
   assert(info = 0, s+'LAPACKE_cgetri failed (singular matrix?), info='+IntToStr(info));
+end;
+
+function KronC(const A, B: TVMobjC): TVMobjC;
+var
+  i, j, k, rowdest, coldest : integer;
+  aval : TComplex8;
+begin
+  result := TVMobjC.Create(A.Rows*B.Rows, A.Cols*B.Cols);
+  for i := 0 to A.Rows-1 do
+    for j := 0 to A.Cols-1 do begin
+      aval := A[i,j];
+      for k := 0 to B.Rows-1 do begin
+        rowdest := i*B.Rows + k;
+        coldest := j*B.Cols;
+        cblas_caxpy(B.Cols, @aval, @B.FData[k*B.Cols], 1, @result.FData[rowdest*result.Cols + coldest], 1);
+      end;
+    end;
 end;
 
 function RealToComplexS(const A: TVMobjS): TVMobjC;

@@ -50,7 +50,7 @@ unit newVM;
 interface
 
 uses
-  Classes, SysUtils,cblas,math,TestRegistry,OneAPI,Types,fftw3;
+  Classes, SysUtils,cblas,math,TestRegistry,OneAPI,Types,fftw3,newVMI;
 
 Const
   MaxDim = 65536;    //maximum dimensions of any array
@@ -98,6 +98,22 @@ function MatMult( const A, B: TVMObj): TVMobj;
 function LinearSolve(var A, B: TVMObj):integer;
 function CopyObj(Const A : TVMObj):TVMobj;
 function Invert(const A: TVMobj): TVMobj;  //matrix inverse, via LAPACKE_dgetrf+dgetri; leaves A untouched
+{ Find - element-wise comparison of A against Value using Op (see
+  TVMCompareOp in newVMI.pas: cmpEQ/cmpLT/cmpLE/cmpGT/cmpGE). Returns a
+  same-shape TVMobjI with 1 where the criteria matches and 0 elsewhere.
+  No MKL/IPP primitive produces a comparison mask, so this is a plain
+  loop; marked "overload" since newVMSingle.pas declares the TVMobjS
+  analogue of the same name. }
+function Find(const A: TVMobj; Op: TVMCompareOp; Value: Double): TVMobjI; overload;
+{ Kron - Kronecker matrix product of A (m,n) and B (p,q): an (m*p, n*q)
+  result whose (i,j) block (each p x q) is A[i,j]*B. No BLAS/LAPACK
+  routine computes a Kronecker product directly, so this places each
+  block via cblas_daxpy (alpha=A[i,j]) row-by-row into the zero-filled
+  result - the same "scale via axpy onto a fresh buffer" idiom the '+'/'-'
+  operators use, just applied per source row instead of over the whole
+  buffer at once, since a block's rows aren't contiguous in the result's
+  row-major layout. }
+function Kron(const A, B: TVMobj): TVMobj;
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vd* routines
   in OneAPI.pas). Each returns a new TVMobj of the same dimensions as A,
@@ -322,6 +338,41 @@ begin
   assert(info = 0, s+'LAPACKE_dgetrf failed (singular matrix?), info='+IntToStr(info));
   info := lapacke_dgetri(CBlasRowMajor, A.rows, result.DataPtr, A.cols, @ipiv[0]);
   assert(info = 0, s+'LAPACKE_dgetri failed (singular matrix?), info='+IntToStr(info));
+end;
+
+function Find(const A: TVMobj; Op: TVMCompareOp; Value: Double): TVMobjI;
+var
+  i, j : integer;
+  matched : Boolean;
+begin
+  result := TVMobjI.Create(A.Rows, A.Cols);
+  for i := 0 to A.Rows-1 do
+    for j := 0 to A.Cols-1 do begin
+      case Op of
+        cmpEQ: matched := A[i,j] = Value;
+        cmpLT: matched := A[i,j] < Value;
+        cmpLE: matched := A[i,j] <= Value;
+        cmpGT: matched := A[i,j] > Value;
+        cmpGE: matched := A[i,j] >= Value;
+      else
+        matched := False;
+      end;
+      if matched then result[i,j] := 1 else result[i,j] := 0;
+    end;
+end;
+
+function Kron(const A, B: TVMobj): TVMobj;
+var
+  i, j, k, rowdest, coldest : integer;
+begin
+  result := TVMobj.Create(A.Rows*B.Rows, A.Cols*B.Cols);
+  for i := 0 to A.Rows-1 do
+    for j := 0 to A.Cols-1 do
+      for k := 0 to B.Rows-1 do begin
+        rowdest := i*B.Rows + k;
+        coldest := j*B.Cols;
+        cblas_daxpy(B.Cols, A[i,j], @B.FData[k*B.Cols], 1, @result.FData[rowdest*result.Cols + coldest], 1);
+      end;
 end;
 
 class operator TVMobj.+(const A, B: TVMobj): TVMobj;

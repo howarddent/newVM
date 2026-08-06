@@ -44,7 +44,7 @@ unit newVMSingle;
 interface
 
 uses
-  Classes, SysUtils, cblas, math, TestRegistry, OneAPI, Types, fftw3;
+  Classes, SysUtils, cblas, math, TestRegistry, OneAPI, Types, fftw3, newVMI;
 
 Const
   MaxDimS = 65536;    //maximum dimensions of any array
@@ -96,6 +96,10 @@ function MatMultS( const A, B: TVMObjS): TVMobjS;
 function LinearSolveS(var A, B: TVMObjS):integer;
 function CopyObjS(Const A : TVMObjS):TVMobjS;
 function InvertS(const A: TVMobjS): TVMobjS;  //matrix inverse, via LAPACKE_sgetrf+sgetri; leaves A untouched
+{ Find - see newVM.pas's Find for the full description. Marked "overload"
+  since newVM.pas declares the TVMobj analogue of the same name. }
+function Find(const A: TVMobjS; Op: TVMCompareOp; Value: Single): TVMobjI; overload;
+function KronS(const A, B: TVMobjS): TVMobjS;  //Kronecker product - see Kron in newVM.pas
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vs* routines
   in OneAPI.pas). Each returns a new TVMobjS of the same dimensions as A,
@@ -311,6 +315,41 @@ begin
   assert(info = 0, s+'LAPACKE_sgetrf failed (singular matrix?), info='+IntToStr(info));
   info := lapacke_sgetri(CBlasRowMajor, A.rows, result.DataPtr, A.cols, @ipiv[0]);
   assert(info = 0, s+'LAPACKE_sgetri failed (singular matrix?), info='+IntToStr(info));
+end;
+
+function Find(const A: TVMobjS; Op: TVMCompareOp; Value: Single): TVMobjI;
+var
+  i, j : integer;
+  matched : Boolean;
+begin
+  result := TVMobjI.Create(A.Rows, A.Cols);
+  for i := 0 to A.Rows-1 do
+    for j := 0 to A.Cols-1 do begin
+      case Op of
+        cmpEQ: matched := A[i,j] = Value;
+        cmpLT: matched := A[i,j] < Value;
+        cmpLE: matched := A[i,j] <= Value;
+        cmpGT: matched := A[i,j] > Value;
+        cmpGE: matched := A[i,j] >= Value;
+      else
+        matched := False;
+      end;
+      if matched then result[i,j] := 1 else result[i,j] := 0;
+    end;
+end;
+
+function KronS(const A, B: TVMobjS): TVMobjS;
+var
+  i, j, k, rowdest, coldest : integer;
+begin
+  result := TVMobjS.Create(A.Rows*B.Rows, A.Cols*B.Cols);
+  for i := 0 to A.Rows-1 do
+    for j := 0 to A.Cols-1 do
+      for k := 0 to B.Rows-1 do begin
+        rowdest := i*B.Rows + k;
+        coldest := j*B.Cols;
+        cblas_saxpy(B.Cols, A[i,j], @B.FData[k*B.Cols], 1, @result.FData[rowdest*result.Cols + coldest], 1);
+      end;
 end;
 
 class operator TVMobjS.+(const A, B: TVMobjS): TVMobjS;

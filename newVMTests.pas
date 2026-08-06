@@ -90,6 +90,8 @@ type
     procedure TestDST1SelfInverseRoundTrip;
     procedure TestDST2DST3InverseRoundTrip;
     procedure TestDST4SelfInverseRoundTrip;
+    procedure TestFindKnownValues;
+    procedure TestKronKnownValues;
   end;
 
   { TVMobjSTests - newVMSingle.pas, real single }
@@ -143,6 +145,8 @@ type
     procedure TestDST1SelfInverseRoundTrip;
     procedure TestDST2DST3InverseRoundTrip;
     procedure TestDST4SelfInverseRoundTrip;
+    procedure TestFindKnownValues;
+    procedure TestKronKnownValues;
   end;
 
   { TVMobjZTests - newVMComplex.pas, complex double }
@@ -197,6 +201,7 @@ type
     procedure TestFFTR2CC2RRoundTrip;
     procedure TestFFTC2CRoundTrip;
     procedure TestFFTR2CKnownDCValue;
+    procedure TestKronKnownValues;
   end;
 
   { TVMobjCTests - newVMComplexSingle.pas, complex single }
@@ -251,6 +256,7 @@ type
     procedure TestFFTR2CC2RRoundTrip;
     procedure TestFFTC2CRoundTrip;
     procedure TestFFTR2CKnownDCValue;
+    procedure TestKronKnownValues;
   end;
 
   { TVMobjITests - newVMI.pas, integer index array/matrix }
@@ -264,6 +270,7 @@ type
     procedure Raise_ElementColOutOfRange;
     procedure Raise_IdNonSquare;
     procedure Raise_FillRandomBadBounds;
+    procedure Raise_GatherNoMatches;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -281,6 +288,8 @@ type
     procedure TestCopyObjIndependence;
     procedure TestTransposeSwapsDimsAndElements;
     procedure TestLinspaceKnownValues;
+    procedure TestGatherReturnsIndexes;
+    procedure TestGatherNoMatchesAsserts;
   end;
 
 implementation
@@ -716,6 +725,38 @@ begin
   for i := 0 to N-1 do AssertEquals(A[0, i], C[0, i], DblTol);
 end;
 
+procedure TVMobjTests.TestFindKnownValues;
+var A: TVMobj; R: TVMobjI; i, j: Integer;
+begin
+  A := TVMobj.Create(2, 3, [1, 2, 3, 4, 5, 6]);
+  R := Find(A, cmpGT, 3);
+  AssertEquals('Rows', A.Rows, R.Rows);
+  AssertEquals('Cols', A.Cols, R.Cols);
+  for i := 0 to 1 do
+    for j := 0 to 2 do
+      if A[i, j] > 3 then AssertEquals(Format('[%d,%d]', [i, j]), 1, R[i, j])
+      else AssertEquals(Format('[%d,%d]', [i, j]), 0, R[i, j]);
+  R := Find(A, cmpEQ, 4);
+  AssertEquals(0, R[0, 0]); AssertEquals(0, R[0, 1]); AssertEquals(0, R[0, 2]);
+  AssertEquals(1, R[1, 0]); AssertEquals(0, R[1, 1]); AssertEquals(0, R[1, 2]);
+  R := Find(A, cmpLE, 2);
+  AssertEquals(1, R[0, 0]); AssertEquals(1, R[0, 1]); AssertEquals(0, R[0, 2]);
+end;
+
+procedure TVMobjTests.TestKronKnownValues;
+var A, B, K: TVMobj;
+begin
+  A := TVMobj.Create(2, 2, [1, 2, 3, 4]);
+  B := TVMobj.Create(2, 2, [0, 5, 6, 7]);
+  K := Kron(A, B);
+  AssertEquals('Rows', 4, K.Rows);
+  AssertEquals('Cols', 4, K.Cols);
+  AssertEquals(0, K[0,0], DblTol);  AssertEquals(5, K[0,1], DblTol);  AssertEquals(0, K[0,2], DblTol);  AssertEquals(10, K[0,3], DblTol);
+  AssertEquals(6, K[1,0], DblTol);  AssertEquals(7, K[1,1], DblTol);  AssertEquals(12, K[1,2], DblTol); AssertEquals(14, K[1,3], DblTol);
+  AssertEquals(0, K[2,0], DblTol);  AssertEquals(15, K[2,1], DblTol); AssertEquals(0, K[2,2], DblTol);  AssertEquals(20, K[2,3], DblTol);
+  AssertEquals(18, K[3,0], DblTol); AssertEquals(21, K[3,1], DblTol); AssertEquals(24, K[3,2], DblTol); AssertEquals(28, K[3,3], DblTol);
+end;
+
 {===========================================================================
   TVMobjSTests  (real single)
 ===========================================================================}
@@ -1132,6 +1173,38 @@ begin
   B := DST4(A);
   C := DST4(B) / (2*N);
   for i := 0 to N-1 do AssertEquals(A[0, i], C[0, i], SngTol);
+end;
+
+procedure TVMobjSTests.TestFindKnownValues;
+var A: TVMobjS; R: TVMobjI; i, j: Integer;
+begin
+  A := TVMobjS.Create(2, 3, [1, 2, 3, 4, 5, 6]);
+  R := Find(A, cmpGT, 3);
+  AssertEquals('Rows', A.Rows, R.Rows);
+  AssertEquals('Cols', A.Cols, R.Cols);
+  for i := 0 to 1 do
+    for j := 0 to 2 do
+      if A[i, j] > 3 then AssertEquals(Format('[%d,%d]', [i, j]), 1, R[i, j])
+      else AssertEquals(Format('[%d,%d]', [i, j]), 0, R[i, j]);
+  R := Find(A, cmpEQ, 4);
+  AssertEquals(0, R[0, 0]); AssertEquals(0, R[0, 1]); AssertEquals(0, R[0, 2]);
+  AssertEquals(1, R[1, 0]); AssertEquals(0, R[1, 1]); AssertEquals(0, R[1, 2]);
+  R := Find(A, cmpLE, 2);
+  AssertEquals(1, R[0, 0]); AssertEquals(1, R[0, 1]); AssertEquals(0, R[0, 2]);
+end;
+
+procedure TVMobjSTests.TestKronKnownValues;
+var A, B, K: TVMobjS;
+begin
+  A := TVMobjS.Create(2, 2, [1, 2, 3, 4]);
+  B := TVMobjS.Create(2, 2, [0, 5, 6, 7]);
+  K := KronS(A, B);
+  AssertEquals('Rows', 4, K.Rows);
+  AssertEquals('Cols', 4, K.Cols);
+  AssertEquals(0, K[0,0], SngTol);  AssertEquals(5, K[0,1], SngTol);  AssertEquals(0, K[0,2], SngTol);  AssertEquals(10, K[0,3], SngTol);
+  AssertEquals(6, K[1,0], SngTol);  AssertEquals(7, K[1,1], SngTol);  AssertEquals(12, K[1,2], SngTol); AssertEquals(14, K[1,3], SngTol);
+  AssertEquals(0, K[2,0], SngTol);  AssertEquals(15, K[2,1], SngTol); AssertEquals(0, K[2,2], SngTol);  AssertEquals(20, K[2,3], SngTol);
+  AssertEquals(18, K[3,0], SngTol); AssertEquals(21, K[3,1], SngTol); AssertEquals(24, K[3,2], SngTol); AssertEquals(28, K[3,3], SngTol);
 end;
 
 {===========================================================================
@@ -1615,6 +1688,36 @@ begin
   AssertEquals(0.0, Z[0, 1].im, DblTol);
 end;
 
+procedure TVMobjZTests.TestKronKnownValues;
+var A, B, K: TVMobjZ;
+begin
+  A := TVMobjZ.Create(2, 2, [Cplx(1,1), Cplx(2,0), Cplx(0,1), Cplx(1,0)]);
+  B := TVMobjZ.Create(2, 2, [Cplx(1,0), Cplx(0,0), Cplx(2,0), Cplx(-1,0)]);
+  K := KronZ(A, B);
+  AssertEquals('Rows', 4, K.Rows);
+  AssertEquals('Cols', 4, K.Cols);
+  //Row0: [1+1i, 0, 2, 0]
+  AssertEquals(1, K[0,0].re, DblTol); AssertEquals(1, K[0,0].im, DblTol);
+  AssertEquals(0, K[0,1].re, DblTol); AssertEquals(0, K[0,1].im, DblTol);
+  AssertEquals(2, K[0,2].re, DblTol); AssertEquals(0, K[0,2].im, DblTol);
+  AssertEquals(0, K[0,3].re, DblTol); AssertEquals(0, K[0,3].im, DblTol);
+  //Row1: [2+2i, -1-1i, 4, -2]
+  AssertEquals(2, K[1,0].re, DblTol);  AssertEquals(2, K[1,0].im, DblTol);
+  AssertEquals(-1, K[1,1].re, DblTol); AssertEquals(-1, K[1,1].im, DblTol);
+  AssertEquals(4, K[1,2].re, DblTol);  AssertEquals(0, K[1,2].im, DblTol);
+  AssertEquals(-2, K[1,3].re, DblTol); AssertEquals(0, K[1,3].im, DblTol);
+  //Row2: [0+1i, 0, 1, 0]
+  AssertEquals(0, K[2,0].re, DblTol); AssertEquals(1, K[2,0].im, DblTol);
+  AssertEquals(0, K[2,1].re, DblTol); AssertEquals(0, K[2,1].im, DblTol);
+  AssertEquals(1, K[2,2].re, DblTol); AssertEquals(0, K[2,2].im, DblTol);
+  AssertEquals(0, K[2,3].re, DblTol); AssertEquals(0, K[2,3].im, DblTol);
+  //Row3: [0+2i, 0-1i, 2, -1]
+  AssertEquals(0, K[3,0].re, DblTol);  AssertEquals(2, K[3,0].im, DblTol);
+  AssertEquals(0, K[3,1].re, DblTol);  AssertEquals(-1, K[3,1].im, DblTol);
+  AssertEquals(2, K[3,2].re, DblTol);  AssertEquals(0, K[3,2].im, DblTol);
+  AssertEquals(-1, K[3,3].re, DblTol); AssertEquals(0, K[3,3].im, DblTol);
+end;
+
 {===========================================================================
   TVMobjCTests  (complex single)
 ===========================================================================}
@@ -2087,6 +2190,36 @@ begin
   AssertEquals(0.0, Z[0, 1].im, SngTol);
 end;
 
+procedure TVMobjCTests.TestKronKnownValues;
+var A, B, K: TVMobjC;
+begin
+  A := TVMobjC.Create(2, 2, [Cplx8(1,1), Cplx8(2,0), Cplx8(0,1), Cplx8(1,0)]);
+  B := TVMobjC.Create(2, 2, [Cplx8(1,0), Cplx8(0,0), Cplx8(2,0), Cplx8(-1,0)]);
+  K := KronC(A, B);
+  AssertEquals('Rows', 4, K.Rows);
+  AssertEquals('Cols', 4, K.Cols);
+  //Row0: [1+1i, 0, 2, 0]
+  AssertEquals(1, K[0,0].re, SngTol); AssertEquals(1, K[0,0].im, SngTol);
+  AssertEquals(0, K[0,1].re, SngTol); AssertEquals(0, K[0,1].im, SngTol);
+  AssertEquals(2, K[0,2].re, SngTol); AssertEquals(0, K[0,2].im, SngTol);
+  AssertEquals(0, K[0,3].re, SngTol); AssertEquals(0, K[0,3].im, SngTol);
+  //Row1: [2+2i, -1-1i, 4, -2]
+  AssertEquals(2, K[1,0].re, SngTol);  AssertEquals(2, K[1,0].im, SngTol);
+  AssertEquals(-1, K[1,1].re, SngTol); AssertEquals(-1, K[1,1].im, SngTol);
+  AssertEquals(4, K[1,2].re, SngTol);  AssertEquals(0, K[1,2].im, SngTol);
+  AssertEquals(-2, K[1,3].re, SngTol); AssertEquals(0, K[1,3].im, SngTol);
+  //Row2: [0+1i, 0, 1, 0]
+  AssertEquals(0, K[2,0].re, SngTol); AssertEquals(1, K[2,0].im, SngTol);
+  AssertEquals(0, K[2,1].re, SngTol); AssertEquals(0, K[2,1].im, SngTol);
+  AssertEquals(1, K[2,2].re, SngTol); AssertEquals(0, K[2,2].im, SngTol);
+  AssertEquals(0, K[2,3].re, SngTol); AssertEquals(0, K[2,3].im, SngTol);
+  //Row3: [0+2i, 0-1i, 2, -1]
+  AssertEquals(0, K[3,0].re, SngTol);  AssertEquals(2, K[3,0].im, SngTol);
+  AssertEquals(0, K[3,1].re, SngTol);  AssertEquals(-1, K[3,1].im, SngTol);
+  AssertEquals(2, K[3,2].re, SngTol);  AssertEquals(0, K[3,2].im, SngTol);
+  AssertEquals(-1, K[3,3].re, SngTol); AssertEquals(0, K[3,3].im, SngTol);
+end;
+
 {===========================================================================
   TVMobjITests  (integer index array/matrix, newVMI.pas)
 ===========================================================================}
@@ -2135,6 +2268,13 @@ var A: TVMobjI;
 begin
   A := TVMobjI.Create(2, 2);
   A.fillRandom(5, 5);   //hiBound must be > loBound
+end;
+
+procedure TVMobjITests.Raise_GatherNoMatches;
+var A, R: TVMobjI;
+begin
+  A := TVMobjI.Create(2, 2);   //all-zero, so nothing for Gather to find
+  R := Gather(A);
 end;
 
 procedure TVMobjITests.TestCreateZeroFills;
@@ -2288,6 +2428,24 @@ begin
   A.linspace(10, 2);
   for i := 0 to 4 do
     AssertEquals(Format('[0,%d]', [i]), 10 + i*2, A[0, i]);
+end;
+
+procedure TVMobjITests.TestGatherReturnsIndexes;
+var A, R: TVMobjI;
+begin
+  //row-major linear indexes: [0,0]=0 [0,1]=1 [0,2]=2 [1,0]=3 [1,1]=4 [1,2]=5
+  A := TVMobjI.Create(2, 3, [0, 5, 0, 3, 0, 7]);
+  R := Gather(A);
+  AssertEquals('Rows', 1, R.Rows);
+  AssertEquals('Cols', 3, R.Cols);
+  AssertEquals(1, R[0, 0]);
+  AssertEquals(3, R[0, 1]);
+  AssertEquals(5, R[0, 2]);
+end;
+
+procedure TVMobjITests.TestGatherNoMatchesAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_GatherNoMatches);
 end;
 
 initialization

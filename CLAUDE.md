@@ -203,6 +203,28 @@ What backs each operator, and why:
   same-type complex operator — these can only live in the complex units
   since only they `uses` the real sibling unit.
 
+### `Kron`/`KronS`/`KronZ`/`KronC` (Kronecker product)
+
+Each of the four `TVMobj*` units declares a Kronecker-product function
+following the `Invert`/`InvertS`/`InvertZ`/`InvertC` per-unit naming
+convention: `Kron(const A, B: TVMobj): TVMobj` in `newVM.pas`, `KronS` in
+`newVMSingle.pas`, `KronZ` in `newVMComplex.pas`, `KronC` in
+`newVMComplexSingle.pas`. For A (m,n) and B (p,q), returns an (m*p, n*q)
+result whose (i,j) block (each p×q) is `A[i,j]*B`.
+
+No BLAS/LAPACK routine computes a Kronecker product directly, so each
+block is placed via `cblas_?axpy` (`Y := alpha*X + Y`) called once per
+source row of B — a block's rows aren't contiguous in the result's
+row-major layout, so the single whole-buffer axpy trick `+`/`-` use
+doesn't apply here. The result buffer starts zero-filled (from `Create`),
+so `alpha = A[i,j]` directly deposits the scaled row with nothing to add
+onto. Real units pass alpha by value (`cblas_daxpy`/`cblas_saxpy`);
+complex units pass alpha by pointer to a local `TComplex16`/`TComplex8`
+holding `A[i,j]` (`cblas_zaxpy`/`cblas_caxpy`), per the CBLAS complex
+scalar convention noted in "CBLAS/LAPACKE calling convention gotchas"
+below. Unlike `MatMult`, no dimension-compatibility assert is needed —
+Kronecker product is defined for any A/B shapes.
+
 ### Elementwise math functions
 
 Each unit also declares plain (non-operator) functions `Sin`, `Cos`, `Tan`,
@@ -277,7 +299,8 @@ Ported the original raw-FFTW3 spectral-differentiation demo
 rather than linear algebra. It mirrors as much of the "core object shape"
 (see above) as MKL/IPP's integer support allows - `create`, `Element[r,c]`
 (via its own `calcoffsetI`), `writeMatrix`, `DataPtr`, `Rows`/`Cols`,
-`fillRandom`, `Id`, `Transpose`, `CopyObjI`, `linspace` - but is
+`fillRandom`, `Id`, `Transpose`, `CopyObjI`, `linspace` - plus `Gather`
+(see below), which has no analogue in the other four units - but is
 *deliberately not* a fifth member of the four-way duplicated family above:
 there is no `MatMult`/`LinearSolve`/`Invert`, no operator overloads, and no
 elementwise VML functions, since BLAS/LAPACK/VML have no integer datatype
@@ -310,6 +333,35 @@ because it's a calling-convention/register-class mismatch, not a type
 error the compiler can catch. If a future integer-typed IPP/MKL binding
 misbehaves the same way (right value shape, wrong values), check the real
 header for this pattern before assuming the bug is somewhere else.
+
+`newVMI.pas` also declares `TVMCompareOp` (`cmpEQ`/`cmpLT`/`cmpLE`/
+`cmpGT`/`cmpGE`) here rather than duplicating it in each real unit, since
+two same-named enums declared in units used together (as `newVMTests.pas`
+does — `uses ... newVM, newVMSingle, ... newVMI`) would collide. See
+"`Find`/`Gather` (element search)" below for what uses it.
+
+### `Find`/`Gather` (element search)
+
+`newVM.pas`/`newVMSingle.pas` each declare `Find(const A: TVMobj*; Op:
+TVMCompareOp; Value: Double/Single): TVMobjI` (marked `overload`, same
+reason as `Sin`/`Cos`/etc above — both units' versions are visible
+together in `newVMTests.pas`). It compares every element of A against
+Value using Op and returns a same-shape `TVMobjI` with 1 where the
+criterion holds, 0 elsewhere. No IPP/MKL primitive produces a comparison
+mask — IPP's `ippsThreshold*` family clips values in place, it doesn't
+emit a 0/1 mask — so this is a plain element loop, same rationale as this
+unit's own `Id`/`Transpose` loop fallbacks. Both real units `uses newVMI`
+for `TVMobjI`/`TVMCompareOp` (no cycle: `newVMI.pas` doesn't depend on
+either real unit).
+
+`Gather(const A: TVMobjI): TVMobjI`, in `newVMI.pas` itself, is the
+complement — typically fed `Find`'s output, it returns a 1-row `TVMobjI`
+containing the row-major linear index (`calcoffsetI` convention) of every
+non-zero element of A, in ascending order. Also a plain loop (no MKL/IPP
+compaction primitive exists either). It lives here rather than in the
+real units since it operates purely on `TVMobjI`. Asserts if A has no
+non-zero elements, since `TVMobjI.Create` disallows a zero-length result
+— there is no "empty index list" representation in this type.
 
 ### External bindings
 
@@ -435,11 +487,14 @@ out-of-range and non-square addressing), `writeMatrix`, `fillRandom`
 (exploits the hard-coded seed — see below), `Id`, `DataPtr` (real types),
 `CopyObj*` independence, `MatMult*`, `LinearSolve*`, `Invert*` (verified
 via `A*Invert(A) ≈ Identity`, and that `A` itself is left untouched),
-every operator overload including the assertion paths, the elementwise
-VML functions, and `DCT1`..`DCT4`/`DST1`..`DST4` (each verified as a
+`Kron*` (a small known-value 2×2⊗2×2 case, checked block-by-block), every
+operator overload including the assertion paths, the elementwise VML
+functions, and `DCT1`..`DCT4`/`DST1`..`DST4` (each verified as a
 self-inverse or mutual-inverse round trip at the exact FFTW scale factor
 for that kind - see the "FFT/DCT/DST functions" architecture section
-above). The two complex types additionally cover
+above). The two real types (`TVMobjTests`/`TVMobjSTests`) additionally
+cover `Find` (known-value checks against each `TVMCompareOp`). The two
+complex types additionally cover
 `RealToComplex*`/`GetRealPart*`/`GetImagPart*`/`SplitComplex*`,
 `EigDecompose*` (verified via the defining equation `A*v = lambda*v`, not
 hard-coded eigenvectors, since LAPACK doesn't guarantee a particular
@@ -448,8 +503,9 @@ sign/normalisation), the mixed real/complex operators, and
 check). `TVMobjITests` covers the narrower subset that actually applies to
 `TVMobjI` (see "`newVMI.pas`" above) — construction, `Element[r,c]`,
 `writeMatrix`, `fillRandom` (both determinism and bounds), `Id`, `DataPtr`,
-`CopyObjI`, `Transpose`, `linspace` — with no operator/MatMult/LinearSolve/
-Invert/VML coverage, since `TVMobjI` has no such members.
+`CopyObjI`, `Transpose`, `linspace`, `Gather` (including the
+no-non-zero-elements assertion path) — with no operator/MatMult/
+LinearSolve/Invert/VML coverage, since `TVMobjI` has no such members.
 
 One reusable trick worth knowing: `fillRandom` seeds a fresh VSL stream
 with a hard-coded constant (777) on every call, so two same-sized
