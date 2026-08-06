@@ -2,20 +2,28 @@ unit newVMTests;
 
 {*******************************************************************************
 
-     FPCUnit test suite for the four TVMobj* types (newVM.pas, newVMSingle.pas,
-     newVMComplex.pas, newVMComplexSingle.pas).
+     FPCUnit test suite for the five TVMobj* types (newVM.pas, newVMSingle.pas,
+     newVMComplex.pas, newVMComplexSingle.pas, newVMI.pas).
 
      One TTestCase per type - TVMobjTests / TVMobjSTests / TVMobjZTests /
      TVMobjCTests - covering: construction and dimension validation, Element
      get/set (including out-of-range and the non-square addressing that
      calcoffset* used to get wrong), writeMatrix, fillRandom, Id, DataPtr
-     (real types only), CopyObj* independence, MatMult*, LinearSolve*, every
-     operator overload (+, -, unary -, *, /, =) including the assertion paths,
-     and the elementwise VML functions (Sin/Cos/Tan/Sinh/Sqr/Sqrt/Exp/Ln). The
-     two complex types additionally cover RealToComplex*/GetRealPart*/
+     (real types only), CopyObj* independence, MatMult*, LinearSolve*, Invert*,
+     every operator overload (+, -, unary -, *, /, =) including the assertion
+     paths, and the elementwise VML functions (Sin/Cos/Tan/Sinh/Sqr/Sqrt/Exp/Ln).
+     The two complex types additionally cover RealToComplex*/GetRealPart*/
      GetImagPart*/SplitComplex*, EigDecompose* (verified via A*v = lambda*v,
      not hard-coded eigenvectors, since LAPACK doesn't guarantee a particular
      sign/normalisation), and the mixed real/complex operators.
+
+     TVMobjITests (newVMI.pas, integer index array/matrix) covers the same
+     "core object shape" subset - construction, Element get/set, writeMatrix,
+     fillRandom (now bounded: TVMobjI.fillRandom takes explicit loBound/
+     hiBound, unlike the fixed N(0,1) fillRandom on the other four types),
+     Id, DataPtr, CopyObjI, plus Transpose and linspace - but none of
+     MatMult/LinearSolve/Invert/operators/VML functions, since newVMI has no
+     equivalents (BLAS/LAPACK/VML don't operate on plain integers).
 
      Run via the console test runner in newVMtest.lpr.
 
@@ -27,7 +35,7 @@ interface
 
 uses
   Classes, SysUtils, fpcunit, testregistry,
-  OneAPI, newVM, newVMSingle, newVMComplex, newVMComplexSingle;
+  OneAPI, newVM, newVMSingle, newVMComplex, newVMComplexSingle, newVMI;
 
 type
 
@@ -243,6 +251,36 @@ type
     procedure TestFFTR2CC2RRoundTrip;
     procedure TestFFTC2CRoundTrip;
     procedure TestFFTR2CKnownDCValue;
+  end;
+
+  { TVMobjITests - newVMI.pas, integer index array/matrix }
+
+  TVMobjITests = class(TTestCase)
+  private
+    procedure Raise_CreateZeroRows;
+    procedure Raise_CreateZeroCols;
+    procedure Raise_CreateValuesMismatch;
+    procedure Raise_ElementRowOutOfRange;
+    procedure Raise_ElementColOutOfRange;
+    procedure Raise_IdNonSquare;
+    procedure Raise_FillRandomBadBounds;
+  published
+    procedure TestCreateZeroFills;
+    procedure TestCreateInvalidDimsAssert;
+    procedure TestCreateWithValues;
+    procedure TestCreateWithValuesMismatchAsserts;
+    procedure TestElementRoundTripNonSquare;
+    procedure TestElementOutOfRangeAsserts;
+    procedure TestWriteMatrixRowCount;
+    procedure TestFillRandomDeterministic;
+    procedure TestFillRandomWithinBounds;
+    procedure TestFillRandomBadBoundsAsserts;
+    procedure TestIdIdentity;
+    procedure TestIdNonSquareAsserts;
+    procedure TestDataPtrAddressable;
+    procedure TestCopyObjIndependence;
+    procedure TestTransposeSwapsDimsAndElements;
+    procedure TestLinspaceKnownValues;
   end;
 
 implementation
@@ -2049,10 +2087,214 @@ begin
   AssertEquals(0.0, Z[0, 1].im, SngTol);
 end;
 
+{===========================================================================
+  TVMobjITests  (integer index array/matrix, newVMI.pas)
+===========================================================================}
+
+procedure TVMobjITests.Raise_CreateZeroRows;
+var X: TVMobjI;
+begin
+  X := TVMobjI.Create(0, 3);
+end;
+
+procedure TVMobjITests.Raise_CreateZeroCols;
+var X: TVMobjI;
+begin
+  X := TVMobjI.Create(3, 0);
+end;
+
+procedure TVMobjITests.Raise_CreateValuesMismatch;
+var X: TVMobjI;
+begin
+  X := TVMobjI.Create(2, 2, [1, 2, 3]);
+end;
+
+procedure TVMobjITests.Raise_ElementRowOutOfRange;
+var X: TVMobjI; V: Integer;
+begin
+  X := TVMobjI.Create(2, 2);
+  V := X[2, 0];
+end;
+
+procedure TVMobjITests.Raise_ElementColOutOfRange;
+var X: TVMobjI; V: Integer;
+begin
+  X := TVMobjI.Create(2, 2);
+  V := X[0, 2];
+end;
+
+procedure TVMobjITests.Raise_IdNonSquare;
+var X: TVMobjI;
+begin
+  X := TVMobjI.Create(2, 3);
+  X.Id;
+end;
+
+procedure TVMobjITests.Raise_FillRandomBadBounds;
+var A: TVMobjI;
+begin
+  A := TVMobjI.Create(2, 2);
+  A.fillRandom(5, 5);   //hiBound must be > loBound
+end;
+
+procedure TVMobjITests.TestCreateZeroFills;
+var A: TVMobjI; r, c: Integer;
+begin
+  A := TVMobjI.Create(2, 3);
+  AssertEquals('Rows', 2, A.Rows);
+  AssertEquals('Cols', 3, A.Cols);
+  for r := 0 to 1 do
+    for c := 0 to 2 do
+      AssertEquals('zero-fill', 0, A[r, c]);
+end;
+
+procedure TVMobjITests.TestCreateInvalidDimsAssert;
+begin
+  AssertException('zero rows', EAssertionFailed, @Raise_CreateZeroRows);
+  AssertException('zero cols', EAssertionFailed, @Raise_CreateZeroCols);
+end;
+
+procedure TVMobjITests.TestCreateWithValues;
+var A: TVMobjI;
+begin
+  A := TVMobjI.Create(2, 2, [1, 2, 3, 4]);
+  AssertEquals(1, A[0, 0]);
+  AssertEquals(2, A[0, 1]);
+  AssertEquals(3, A[1, 0]);
+  AssertEquals(4, A[1, 1]);
+end;
+
+procedure TVMobjITests.TestCreateWithValuesMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_CreateValuesMismatch);
+end;
+
+procedure TVMobjITests.TestElementRoundTripNonSquare;
+var A: TVMobjI; r, c: Integer;
+begin
+  A := TVMobjI.Create(3, 4, [1,2,3,4, 5,6,7,8, 9,10,11,12]);
+  for r := 0 to 2 do
+    for c := 0 to 3 do
+      AssertEquals(Format('[%d,%d]', [r, c]), r*4 + c + 1, A[r, c]);
+end;
+
+procedure TVMobjITests.TestElementOutOfRangeAsserts;
+begin
+  AssertException('row out of range', EAssertionFailed, @Raise_ElementRowOutOfRange);
+  AssertException('col out of range', EAssertionFailed, @Raise_ElementColOutOfRange);
+end;
+
+procedure TVMobjITests.TestWriteMatrixRowCount;
+var A: TVMobjI; S: TStringList;
+begin
+  A := TVMobjI.Create(3, 4);
+  S := A.writeMatrix;
+  try
+    AssertEquals(3, S.Count);
+  finally
+    S.Free;
+  end;
+end;
+
+procedure TVMobjITests.TestFillRandomDeterministic;
+var A, B: TVMobjI; r, c: Integer;
+begin
+  //fillRandom seeds a fresh VSL stream with a hard-coded seed (777) every
+  //call, so two same-sized/same-bounds fills are bit-for-bit identical -
+  //same trick TestFillRandomDeterministic exploits in the other units,
+  //just checked element-by-element since TVMobjI has no "=" operator.
+  A := TVMobjI.Create(3, 3);
+  A.fillRandom(0, 1000);
+  B := TVMobjI.Create(3, 3);
+  B.fillRandom(0, 1000);
+  for r := 0 to 2 do
+    for c := 0 to 2 do
+      AssertEquals(Format('[%d,%d]', [r, c]), A[r, c], B[r, c]);
+end;
+
+procedure TVMobjITests.TestFillRandomWithinBounds;
+var A: TVMobjI; r, c: Integer;
+begin
+  A := TVMobjI.Create(4, 4);
+  A.fillRandom(10, 20);
+  for r := 0 to 3 do
+    for c := 0 to 3 do begin
+      AssertTrue(Format('[%d,%d] >= loBound', [r, c]), A[r, c] >= 10);
+      AssertTrue(Format('[%d,%d] < hiBound', [r, c]), A[r, c] < 20);
+    end;
+end;
+
+procedure TVMobjITests.TestFillRandomBadBoundsAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_FillRandomBadBounds);
+end;
+
+procedure TVMobjITests.TestIdIdentity;
+var A: TVMobjI; r, c: Integer;
+begin
+  A := TVMobjI.Create(3, 3);
+  A.Id;
+  for r := 0 to 2 do
+    for c := 0 to 2 do
+      if r = c then
+        AssertEquals(1, A[r, c])
+      else
+        AssertEquals(0, A[r, c]);
+end;
+
+procedure TVMobjITests.TestIdNonSquareAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_IdNonSquare);
+end;
+
+procedure TVMobjITests.TestDataPtrAddressable;
+var A: TVMobjI; P: PInteger;
+begin
+  A := TVMobjI.Create(2, 2);
+  P := A.DataPtr;
+  P^ := 42;
+  AssertEquals(42, A[0, 0]);
+end;
+
+procedure TVMobjITests.TestCopyObjIndependence;
+var A, B: TVMobjI; r, c: Integer;
+begin
+  A := TVMobjI.Create(2, 2);
+  A.fillRandom(0, 1000);
+  B := CopyObjI(A);
+  for r := 0 to 1 do
+    for c := 0 to 1 do
+      AssertEquals(Format('[%d,%d]', [r, c]), A[r, c], B[r, c]);
+  B[1, 1] := B[1, 1] + 1;
+  AssertFalse(A[1, 1] = B[1, 1]);
+end;
+
+procedure TVMobjITests.TestTransposeSwapsDimsAndElements;
+var A, T: TVMobjI; r, c: Integer;
+begin
+  A := TVMobjI.Create(2, 3, [1,2,3, 4,5,6]);
+  T := A.Transpose;
+  AssertEquals('Rows', 3, T.Rows);
+  AssertEquals('Cols', 2, T.Cols);
+  for r := 0 to 1 do
+    for c := 0 to 2 do
+      AssertEquals(Format('[%d,%d]', [r, c]), A[r, c], T[c, r]);
+end;
+
+procedure TVMobjITests.TestLinspaceKnownValues;
+var A: TVMobjI; i: Integer;
+begin
+  A := TVMobjI.Create(1, 5);
+  A.linspace(10, 2);
+  for i := 0 to 4 do
+    AssertEquals(Format('[0,%d]', [i]), 10 + i*2, A[0, i]);
+end;
+
 initialization
   RegisterTest(TVMobjTests);
   RegisterTest(TVMobjSTests);
   RegisterTest(TVMobjZTests);
   RegisterTest(TVMobjCTests);
+  RegisterTest(TVMobjITests);
 
 end.

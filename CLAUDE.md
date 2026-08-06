@@ -9,7 +9,10 @@ wrap Intel MKL (BLAS/LAPACK/VSL) and Intel IPP for linear algebra. It is
 explicitly inspired by the Dew MtxVec library for FPC, but — unlike Dew —
 does not distinguish matrix and vector types: a vector is just an (N,1) or
 (1,N) matrix. There are four parallel "flavors" of the same object model for
-real/complex × double/single precision (see Architecture below).
+real/complex × double/single precision (see Architecture below), plus a
+fifth, non-duplicated companion unit (`newVMI.pas`) providing an integer
+array/matrix type for index operations (pivot vectors, index lists) on the
+other four.
 
 There is no README and no CI, but there is a real automated test suite:
 `newVMTests.pas` (FPCUnit `TTestCase`s, one per `TVMobj*` type) plus
@@ -101,6 +104,9 @@ Complex units `uses` their same-precision real sibling (`newVMComplex`
 depends on `newVM`, `newVMComplexSingle` depends on `newVMSingle`) to support
 real→complex promotion (`RealToComplex`) and part extraction
 (`GetRealPart`/`GetImagPart`/`SplitComplex`).
+
+`newVMI.pas` is a fifth unit but deliberately *not* a fifth member of this
+duplicated family — see "`newVMI.pas` (integer index array/matrix)" below.
 
 ### Core object shape (`TVMobj` and siblings)
 
@@ -264,6 +270,47 @@ Ported the original raw-FFTW3 spectral-differentiation demo
 (`/home/howard/projects/Lazarus/fftw3`) to `DCT1` for
 `demos/SpectralDiff/` - see the "`demos/`" section below.
 
+### `newVMI.pas` (integer index array/matrix)
+
+`newVMI.pas` provides `TVMobjI`, an integer-valued companion to the four
+`TVMobj*` types above, for index operations (pivot vectors, index lists)
+rather than linear algebra. It mirrors as much of the "core object shape"
+(see above) as MKL/IPP's integer support allows - `create`, `Element[r,c]`
+(via its own `calcoffsetI`), `writeMatrix`, `DataPtr`, `Rows`/`Cols`,
+`fillRandom`, `Id`, `Transpose`, `CopyObjI`, `linspace` - but is
+*deliberately not* a fifth member of the four-way duplicated family above:
+there is no `MatMult`/`LinearSolve`/`Invert`, no operator overloads, and no
+elementwise VML functions, since BLAS/LAPACK/VML have no integer datatype
+to back them with.
+
+Where the underlying library has no integer entry point, the method falls
+back to a plain Pascal loop instead of an MKL/IPP call, unlike the other
+four units' equivalents:
+- `Id` and `Transpose` are plain loops - there is no `LAPACKE_?laset` or
+  `MKL_?imatcopy` for integers (only s/d/c/z exist for the latter).
+- `fillRandom(loBound, hiBound: Integer)` - unlike the other units'
+  no-argument `fillRandom` (always fixed-seed continuous N(0,1)), integers
+  have no such continuous fill, so this takes explicit bounds and generates
+  fixed-seed (777) uniform integers in `[loBound, hiBound)` via MKL VSL's
+  `viRngUniform` - the integer analogue of `vdRngGaussian`/`vsRngGaussian`.
+- `linspace(Start, increment: Integer)` - integer arithmetic sequence via
+  IPP's `ippsVectorSlope_32s`, the integer sibling of
+  `ippsVectorSlope_64f`/`_32f` used by `newVM.pas`/`newVMSingle.pas`.
+- `CopyObjI` - via IPP's `ippsCopy_32s`, the integer sibling of
+  `ippsCopy_64f`.
+
+**Gotcha, confirmed against the real `ipps.h`:** unlike
+`ippsVectorSlope_64f`/`_32f` (whose `offset`/`slope` match the output
+type), `ippsVectorSlope_32s`'s `offset`/`slope` parameters are `Ipp64f`
+(**Double**), not `Ipp32s` - only the destination buffer is `Ipp32s`
+(`PInteger`). Declaring them as `Integer` compiles fine but silently
+corrupts the result (observed: asking for `linspace(10, 2)` produced
+`46241` instead of `10` in element 0) rather than raising any error,
+because it's a calling-convention/register-class mismatch, not a type
+error the compiler can catch. If a future integer-typed IPP/MKL binding
+misbehaves the same way (right value shape, wrong values), check the real
+header for this pattern before assuming the bug is somewhere else.
+
 ### External bindings
 
 - `cblas.pas` — machine-generated (`h2pas`) BLAS declarations bound against
@@ -380,22 +427,29 @@ column-major LAPACK. Keep new routines consistent with this.
 (`fpcunit`/`testregistry` — the `TestRegistry` unit already pulled into
 every `newVM*` unit's `uses` clause turned out to be exactly this
 framework). One `TTestCase` per type — `TVMobjTests`, `TVMobjSTests`,
-`TVMobjZTests`, `TVMobjCTests` — each registered via `RegisterTest` in the
-unit's `initialization` section. Coverage per type: construction and
+`TVMobjZTests`, `TVMobjCTests`, `TVMobjITests` — each registered via
+`RegisterTest` in the unit's `initialization` section. Coverage per
+`TVMobj`/`TVMobjS`/`TVMobjZ`/`TVMobjC` type: construction and
 dimension-validation asserts, `Element[r,c]` get/set (including
 out-of-range and non-square addressing), `writeMatrix`, `fillRandom`
 (exploits the hard-coded seed — see below), `Id`, `DataPtr` (real types),
-`CopyObj*` independence, `MatMult*`, `LinearSolve*`, every operator
-overload including the assertion paths, the elementwise VML functions,
-and `DCT1`..`DCT4`/`DST1`..`DST4` (each verified as a self-inverse or
-mutual-inverse round trip at the exact FFTW scale factor for that kind -
-see the "FFT/DCT/DST functions" architecture section above). The two
-complex types additionally cover `RealToComplex*`/`GetRealPart*`/
-`GetImagPart*`/`SplitComplex*`, `EigDecompose*` (verified via the defining
-equation `A*v = lambda*v`, not hard-coded eigenvectors, since LAPACK
-doesn't guarantee a particular sign/normalisation), the mixed real/complex
-operators, and `FFT_R2C`/`FFT_C2R`/`FFT`/`IFFT` (round-trip and a
-known-value DC-component check).
+`CopyObj*` independence, `MatMult*`, `LinearSolve*`, `Invert*` (verified
+via `A*Invert(A) ≈ Identity`, and that `A` itself is left untouched),
+every operator overload including the assertion paths, the elementwise
+VML functions, and `DCT1`..`DCT4`/`DST1`..`DST4` (each verified as a
+self-inverse or mutual-inverse round trip at the exact FFTW scale factor
+for that kind - see the "FFT/DCT/DST functions" architecture section
+above). The two complex types additionally cover
+`RealToComplex*`/`GetRealPart*`/`GetImagPart*`/`SplitComplex*`,
+`EigDecompose*` (verified via the defining equation `A*v = lambda*v`, not
+hard-coded eigenvectors, since LAPACK doesn't guarantee a particular
+sign/normalisation), the mixed real/complex operators, and
+`FFT_R2C`/`FFT_C2R`/`FFT`/`IFFT` (round-trip and a known-value DC-component
+check). `TVMobjITests` covers the narrower subset that actually applies to
+`TVMobjI` (see "`newVMI.pas`" above) — construction, `Element[r,c]`,
+`writeMatrix`, `fillRandom` (both determinism and bounds), `Id`, `DataPtr`,
+`CopyObjI`, `Transpose`, `linspace` — with no operator/MatMult/LinearSolve/
+Invert/VML coverage, since `TVMobjI` has no such members.
 
 One reusable trick worth knowing: `fillRandom` seeds a fresh VSL stream
 with a hard-coded constant (777) on every call, so two same-sized

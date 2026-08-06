@@ -372,7 +372,18 @@ function ippsVectorSlope_32f( a : PSingle; len: Integer; offset: Single; slope: 
 //forms exist), so newVMComplex's/newVMComplexSingle's linspace fill their
 //complex arithmetic sequence with a plain Pascal loop instead - see there.
 
+//integer analogue of ippsVectorSlope_64f/_32f, for newVMI's linspace.
+//NOTE: unlike the 64f/32f forms, IPP's 32s variant takes offset/slope as
+//Ipp64f (Double), not Ipp32s - confirmed in ipps.h ("IPPAPI(IppStatus,
+//ippsVectorSlope_32s, (Ipp32s* pDst, int len, Ipp64f offset, Ipp64f slope))").
+//Only the destination buffer is Ipp32s (PInteger); get this wrong and the
+//call reads garbage off the calling convention's float/int register split.
+function ippsVectorSlope_32s( a : PInteger; len: Integer; offset: Double; slope: Double): Integer; cdecl;external;
+
 function ippsCopy_64f(const pSrc: PDouble; pDst: PDouble; len: Integer): Integer; cdecl;external;
+
+//integer analogue of ippsCopy_64f, for newVMI's CopyObjI.
+function ippsCopy_32s(const pSrc: PInteger; pDst: PInteger; len: Integer): Integer; cdecl;external;
 
 function ippsMulC_64f_I_L(val: double; pSrcDst: PDouble; len: Integer): Integer; cdecl;external;
 
@@ -425,6 +436,9 @@ function vdRngGaussian(const p1: Integer; p2: Pointer; const p3: Integer; p4: PD
 
 {single precision}
 function vsRngGaussian(const p1: Integer; p2: Pointer; const p3: Integer; p4: PSingle; const p5: Single; const p6: Single): Integer; cdecl;external;
+
+{integer, bounded uniform - for newVMI's fillRandom}
+function viRngUniform(const p1: Integer; p2: Pointer; const p3: Integer; p4: PInteger; const p5: Integer; const p6: Integer): Integer; cdecl;external;
 {$ENDIF}
 
 {$IFDEF WINDOWS}
@@ -470,7 +484,9 @@ type
   Tippscos_64f_a50     = function(a: PDouble; r: PDouble; n: Integer): Integer; cdecl;
   Tippsvectorslope_64f = function(a: PDouble; len: Integer; offset: Double; slope: Double): Integer; cdecl;
   Tippsvectorslope_32f = function(a: PSingle; len: Integer; offset: Single; slope: Single): Integer; cdecl;
+  Tippsvectorslope_32s = function(a: PInteger; len: Integer; offset: Double; slope: Double): Integer; cdecl;
   Tippscopy_64f        = function(const pSrc: PDouble; pDst: PDouble; len: Integer): Integer; cdecl;
+  Tippscopy_32s        = function(const pSrc: PInteger; pDst: PInteger; len: Integer): Integer; cdecl;
   Tippsmulc_64f_i_l    = function(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;
   Tippsmulc_64f        = function(const pSrc: PIpp64f; val: Ipp64f; pDst: PIpp64f; len: Integer): Integer; cdecl;
   Tippsaddc_64f_i      = function(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;
@@ -496,6 +512,7 @@ type
   Tvsldeletestream = function(p1: Pointer): Integer; cdecl;
   Tvdrnggaussian   = function(const p1: Integer; p2: Pointer; const p3: Integer; p4: PDouble; const p5: Double; const p6: Double): Integer; cdecl;
   Tvsrnggaussian   = function(const p1: Integer; p2: Pointer; const p3: Integer; p4: PSingle; const p5: Single; const p6: Single): Integer; cdecl;
+  Tvirnguniform    = function(const p1: Integer; p2: Pointer; const p3: Integer; p4: PInteger; const p5: Integer; const p6: Integer): Integer; cdecl;
 
 var
   lapacke_dgetrf : Tlapacke_dgetrf;
@@ -571,7 +588,9 @@ var
   ippsCos_64f_A50     : Tippscos_64f_a50;
   ippsVectorSlope_64f : Tippsvectorslope_64f;
   ippsVectorSlope_32f : Tippsvectorslope_32f;
+  ippsVectorSlope_32s : Tippsvectorslope_32s;
   ippsCopy_64f        : Tippscopy_64f;
+  ippsCopy_32s        : Tippscopy_32s;
   ippsMulC_64f_I_L    : Tippsmulc_64f_i_l;
   ippsMulC_64f        : Tippsmulc_64f;
   ippsAddC_64f_I      : Tippsaddc_64f_i;
@@ -597,6 +616,7 @@ var
   vslDeleteStream : Tvsldeletestream;
   vdRngGaussian   : Tvdrnggaussian;
   vsRngGaussian   : Tvsrnggaussian;
+  viRngUniform    : Tvirnguniform;
 
 procedure LoadMKLFunctions;
 procedure LoadIPPFunctions;
@@ -746,6 +766,7 @@ begin
   pointer(vslDeleteStream) := MKLProc('vslDeleteStream');
   pointer(vdRngGaussian)   := MKLProc('vdRngGaussian');
   pointer(vsRngGaussian)   := MKLProc('vsRngGaussian');
+  pointer(viRngUniform)    := MKLProc('viRngUniform');
 end;
 
 function IPPProc(const FuncName: AnsiString): Pointer;
@@ -778,7 +799,9 @@ begin
   pointer(ippsCos_64f_A50)     := IPPProc('ippsCos_64f_A50');
   pointer(ippsVectorSlope_64f) := IPPProc('ippsVectorSlope_64f');
   pointer(ippsVectorSlope_32f) := IPPProc('ippsVectorSlope_32f');
+  pointer(ippsVectorSlope_32s) := IPPProc('ippsVectorSlope_32s');
   pointer(ippsCopy_64f)        := IPPProc('ippsCopy_64f');
+  pointer(ippsCopy_32s)        := IPPProc('ippsCopy_32s');
   pointer(ippsMulC_64f_I_L)    := IPPProc('ippsMulC_64f_I_L');
   pointer(ippsMulC_64f)        := IPPProc('ippsMulC_64f');
   pointer(ippsAddC_64f_I)      := IPPProc('ippsAddC_64f_I');

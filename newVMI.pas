@@ -1,0 +1,237 @@
+unit newVMI;
+
+{*******************************************************************************
+
+     Integer array / matrix object leveraging Intel MKL/IPP libraries
+
+     Dr H. Dent uk. email howard@hgrd.co.uk             06 Aug 2026
+
+     Companion to newVM.pas/newVMSingle.pas/newVMComplex.pas/
+     newVMComplexSingle.pas, for INDEX operations - pivot vectors, index
+     lists, and other places that need an integer-valued (N,1)/(1,N)/
+     (M,N) array built the same way as the other four TVMobj* types,
+     rather than a full linear-algebra type. There is deliberately no
+     MatMult/LinearSolve/operator-overload set here: BLAS/LAPACK don't
+     operate on plain integers, and arithmetic on index arrays isn't
+     needed for that role - just construction, element access, and
+     integer-only initialisation.
+
+     Mirrors the "core object shape" of TVMobj (see newVM.pas) as closely
+     as MKL/IPP's integer support allows:
+       - Element[r,c] get/set, calcoffsetI row-major addressing - same
+         formula and conventions as calcoffset/calcoffsetS/Z/C.
+       - fillRandom(loBound,hiBound) - fixed-seed (777) uniform integers
+         in [loBound,hiBound), via MKL VSL's viRngUniform. This is the
+         integer analogue of vdRngGaussian/vsRngGaussian used by the
+         other units' fillRandom, but takes explicit bounds since a
+         continuous N(0,1) fill (what the other units' no-argument
+         fillRandom does) has no integer equivalent.
+       - linspace(Start,increment) - integer arithmetic sequence, via
+         IPP's ippsVectorSlope_32s, the integer sibling of
+         ippsVectorSlope_64f/_32f used by newVM.pas/newVMSingle.pas.
+       - Id - identity matrix. There is no LAPACKE_?laset for integers
+         (LAPACK has no integer datatype), so this is a plain Pascal
+         loop instead of a LAPACKE call.
+       - Transpose - likewise, there is no MKL_?imatcopy for integers
+         (only s/d/c/z exist), so this is also a plain loop rather than
+         delegating to MKL_Dimatcopy/etc like the other units' Transpose.
+       - CopyObjI - via IPP's ippsCopy_32s, the integer sibling of
+         ippsCopy_64f.
+       - DataPtr / Rows / Cols - same public accessors as the other
+         units, for interop (e.g. handing an index vector's raw buffer
+         to another routine without needing friend access).
+
+*******************************************************************************}
+
+{$mode delphi}{$H+}
+{$Align 8}
+{$IFDEF UNIX}
+{$Linklib 'mkl_rt.so'}
+{$Linklib 'pthread'}
+{$Linklib 'm'}
+{$Linklib 'dl'}
+//mkl_rt.so dlopen's libmkl_core.so (and friends) at runtime, which
+//expects libm/pthread/dl to already be loaded into the process's
+//global symbol table - without this you get errors like:
+//  symbol lookup error: .../libmkl_core.so: undefined symbol: log10
+//Unix/ELF dynamic-linker quirk only - not needed for mkl_rt.dll on Windows.
+{$ENDIF}
+
+interface
+
+uses
+  Classes, SysUtils, OneAPI;
+
+Const
+  MaxDimI = 65536;    //maximum dimensions of any array
+
+Type
+  TDimI = 0..MaxDimI-1;
+  TDataSizeI = 1..MaxDimI*MaxDimI;
+  TVectorI = Array of Integer;
+
+type
+
+  { TVMobjI }
+
+  TVMobjI = record
+    private
+      fData : TVectorI;  //Holds data for object
+      frows, fcols : TDimI;
+      function getelement(r,c: TDimI): Integer;
+      procedure setelement(r,c: TDimI; AValue: Integer);
+    public
+      constructor create(r,c :TDimI);Overload;
+      Constructor create(r,c: TDimI; const Values : TVectorI); overload;
+      function writeMatrix: TStringList;
+      property Element[r,c:TDimI]:Integer read getelement write setelement; default;
+      procedure fillRandom(loBound, hiBound: Integer);
+      procedure Id;
+      procedure linspace(Start, increment: Integer);
+      function Transpose: TVMObjI;
+      function DataPtr: PInteger;   //raw buffer, for interop from other units
+      property Rows: TDimI read frows;              //read-only dimension accessors
+      property Cols: TDimI read fcols;
+    end;
+
+function calcoffsetI(r,c,cols :TDimI):integer;inline;
+function CopyObjI(Const A : TVMObjI):TVMobjI;
+
+implementation
+
+function calcoffsetI(r, c, cols: TDimI): integer;
+begin
+  result := r*cols+c;
+end;
+
+{ TVMobjI }
+
+function TVMobjI.getelement(r,c: TDimI): Integer;
+var
+   Ix : Integer;
+begin
+   assert((r<rows) and (c<cols),'Dimensions don''t match in getelement');
+   Ix := calcoffsetI(r,c,cols);
+   assert(Ix<= high(fdata),'Index out of range in get element');
+   result := fdata[Ix];
+end;
+
+procedure TVMobjI.setelement(r,c:TDimI; AValue: Integer);
+var
+ Ix : Integer;
+begin
+   assert((r<rows) and (c<cols),'Dimensions don''t match in setelement');
+   Ix := calcoffsetI(r,c,cols);
+   assert(Ix <= high(fdata),'Index out of range in set element');
+   fdata[Ix] := Avalue;
+end;
+
+constructor TVMobjI.create(r,c :TDimI);
+var
+  i,N : integer;
+begin
+  assert((r>0) and (c>0),'rows and columns must be > 0');
+  frows := r;
+  fcols := c;
+  N := r*c;
+  setLength(fData,N);
+  for i := low(fdata) to high(fdata) do fdata[i] := 0;
+end;
+
+constructor TVMobjI.create(r,c : TDimI; const Values: TVectorI);
+begin
+  assert((r>0) and (c>0),'rows and columns must be > 0');
+  assert( (r*c) = high(values)+1,'Incompatible dimensions ');
+  frows := r;
+  fcols := c;
+  fdata := copy(Values,0,high(values)+1);
+end;
+
+function TVMobjI.writeMatrix: TStringList;
+const
+  fieldwidth = 10;
+var
+   i,j,k,l: integer;
+   s,t : String;
+begin
+  result:= TStringList.create;
+  for i:=0 to rows-1 do begin // row by row
+    s := '    ['+chr(9);
+    for j:=0 to cols-1 do begin
+      t := IntToStr(FData[i*cols+j]);
+      s := s + t;
+      l := length(t);    // pad t to get constant length
+     if l < fieldwidth then
+      for k := 1 to fieldwidth-l do s := s +' ';
+    end;
+    s := s +']';
+    result.add(s);
+  end;
+end;
+
+procedure TVMobjI.fillRandom(loBound, hiBound: Integer);
+//
+// Fixed-seed (777) uniform integers in [loBound,hiBound), via MKL VSL's
+// viRngUniform - same seeding convention as the other units' fillRandom,
+// so two same-sized/same-bounds fillRandom calls produce bit-identical
+// data (exploited by tests via the deterministic-fill trick).
+//
+const
+  s : string = 'Routine fillRandom : ';
+  vslConst = 8388608;
+  VSL_RNG_METHOD_UNIFORM_STD = 0;
+var
+  vsSTream : pointer;
+begin
+  assert(hiBound > loBound, s+'hiBound must be > loBound');
+  vslNewStream(@vsStream,vslConst,777);
+  viRngUniform(VSL_RNG_METHOD_UNIFORM_STD,vsStream,high(fdata)+1,@Fdata[0],loBound,hiBound);
+  vsldeleteStream(@vsStream);
+end;
+
+procedure TVMobjI.Id;
+const
+  s : string = 'Routine Id :';
+var
+  i, j : integer;
+begin
+  //Check dimensions of matrices are compatible - A must be square
+  assert(cols=rows,s +'Matrix A must be square');
+  for i := 0 to rows-1 do
+    for j := 0 to cols-1 do
+      if i=j then fdata[calcoffsetI(i,j,cols)] := 1
+      else fdata[calcoffsetI(i,j,cols)] := 0;
+end;
+
+function TVMobjI.DataPtr: PInteger;
+begin
+  result := @fdata[0];
+end;
+
+procedure TVMObjI.linspace(Start, increment: Integer);
+const
+  s : String ='routine linspace';
+begin
+  assert(fdata <>nil,s+  ': MVObj Not Initialized');
+  ippsVectorSlope_32s(@FData[0],high(fdata)+1,start,increment);
+end;
+
+function TVMObjI.Transpose:TVMObjI;
+var
+  i, j : integer;
+begin
+  //No MKL_?imatcopy exists for integers, so transpose via a plain loop
+  //into a freshly-shaped result rather than an in-place swap.
+  result := TVMObjI.Create(cols, rows);
+  for i := 0 to rows-1 do
+    for j := 0 to cols-1 do
+      result.fdata[calcoffsetI(j,i,result.cols)] := fdata[calcoffsetI(i,j,cols)];
+end;
+
+function CopyObjI(const A: TVMObjI): TVMobjI;
+begin
+  result := TVMObjI.Create(A.rows,A.cols);
+  ippsCopy_32s(A.DataPtr,result.DataPtr,A.rows*A.cols);
+end;
+
+end.
