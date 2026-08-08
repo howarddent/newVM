@@ -103,6 +103,7 @@ function KronS(const A, B: TVMobjS): TVMobjS;  //Kronecker product - see Kron in
 function DiagS(const A: TVMobjS): TVMobjS;  //column vector (n,1) -> (n,n) diagonal matrix - see Diag in newVM.pas
 function NormS(const A: TVMobjS): Single;  //Euclidean norm - see Norm in newVM.pas
 function TraceS(const A: TVMobjS): Single;  //sum of A's leading-diagonal elements - see Trace in newVM.pas
+function DetS(const A: TVMobjS): Single;  //determinant, via LAPACKE_sgetrf - see Det in newVM.pas
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vs* routines
   in OneAPI.pas). Each returns a new TVMobjS of the same dimensions as A,
@@ -382,6 +383,27 @@ begin
   result := 0;
   for i := 0 to A.Rows-1 do
     result := result + A[i,i];
+end;
+
+function DetS(const A: TVMobjS): Single;
+const
+  s : String = 'Function DetS : ';
+var
+  ipiv : array of integer;
+  info, i, sign : integer;
+  scratch : TVMobjS;
+begin
+  assert(A.Cols = A.Rows, s+'Matrix A must be square');
+  scratch := CopyObjS(A);
+  setlength(ipiv, A.rows);
+  info := lapacke_sgetrf(CBlasRowMajor, A.rows, A.cols, scratch.DataPtr, A.cols, @ipiv[0]);
+  assert(info >= 0, s+'LAPACKE_sgetrf reported an illegal argument, info='+IntToStr(info));
+  sign := 1;
+  for i := 0 to A.rows-1 do
+    if ipiv[i] <> i+1 then sign := -sign;
+  result := sign;
+  for i := 0 to A.rows-1 do
+    result := result * scratch[i,i];
 end;
 
 class operator TVMobjS.+(const A, B: TVMobjS): TVMobjS;

@@ -267,6 +267,38 @@ over `A[i,i]`. The complex units' `TraceZ`/`TraceC` return
 matrix's trace is generally complex, not real) accumulated by summing
 `.re`/`.im` separately.
 
+### `Det`/`DetS`/`DetZ`/`DetC` (determinant)
+
+Determinant of a square matrix (asserts `A.Cols = A.Rows`), same suffix
+naming convention as `Invert`/`Diag`/`Norm`/`Trace`. Computed via
+`LAPACKE_?getrf` — the same LU factorisation (`A = P*L*U`, partial
+pivoting) `Invert` already uses for `?getri` — run on a `CopyObj*`
+scratch buffer so `A` itself is left untouched:
+
+- `det(A) = det(P) * det(L) * det(U)`. `det(L) = 1` (unit lower
+  triangular, never stored). `det(U)` is the product of the diagonal
+  entries `getrf` leaves in the scratch buffer (L\U combined storage puts
+  U, including its diagonal, in the upper triangle). `det(P) = -1` per
+  row actually interchanged — checked via `ipiv[i] <> i+1`, using
+  `getrf`'s pivot-array convention (1-based, matching Fortran LAPACK, even
+  though the surrounding call is the row-major LAPACKE C interface).
+- Unlike `Invert`, there's **no `info = 0` assert**: `Invert` must reject
+  a singular matrix because the follow-up `?getri` call would fail on
+  one, but `Det` has no such follow-up call, and a singular matrix has a
+  perfectly well-defined determinant (zero). `getrf` reports singularity
+  via `info > 0` without failing the factorisation itself, and the
+  singular row's diagonal entry in the scratch buffer comes out exactly
+  0, so the running product naturally lands on the correct answer with no
+  special-casing (see `TestDetSingularIsZero`). The only assert is
+  `info >= 0`, which only fires on an illegal-argument LAPACKE call —
+  something this codebase's own dimension checks should already prevent.
+- The complex units' `DetZ`/`DetC` accumulate the running product as
+  `TComplex16`/`TComplex8` by hand (`result := Cplx(re*d.re - im*d.im,
+  re*d.im + im*d.re)` per diagonal entry `d`), since no complex-multiply
+  helper exists for raw `TComplex16`/`TComplex8` values outside the
+  `TVMobjZ`/`TVMobjC` operator overloads (which operate on whole
+  matrices, not two loose scalars).
+
 ### Elementwise math functions
 
 Each unit also declares plain (non-operator) functions `Sin`, `Cos`, `Tan`,
@@ -533,11 +565,14 @@ via `A*Invert(A) ≈ Identity`, and that `A` itself is left untouched),
 `Diag*` (known-value column-vector-to-diagonal-matrix check, plus the
 non-column-vector assertion path), `Norm*` (a classic 3-4-5 known value,
 complex-valued via two purely-real/purely-imaginary components so
-`|3|²+|4i|²=25`) and `Trace*` (a known-value 3×3 case, plus the
-non-square assertion path — the complex types' cases check both `.re`
-and `.im` of the summed diagonal), every operator overload including the
-assertion paths, the elementwise VML functions, and
-`DCT1`..`DCT4`/`DST1`..`DST4` (each verified as a
+`|3|²+|4i|²=25`), `Trace*` (a known-value 3×3 case, plus the non-square
+assertion path — the complex types' cases check both `.re` and `.im` of
+the summed diagonal), and `Det*` (a known-value 2×2 case checked against
+`ad-bc`, plus a deliberately-singular 2×2 case verifying the determinant
+comes out exactly 0 with no special-casing, and the non-square assertion
+path), every operator overload including the assertion paths, the
+elementwise VML functions, and `DCT1`..`DCT4`/`DST1`..`DST4` (each
+verified as a
 self-inverse or mutual-inverse round trip at the exact FFTW scale factor
 for that kind - see the "FFT/DCT/DST functions" architecture section
 above). The two real types (`TVMobjTests`/`TVMobjSTests`) additionally

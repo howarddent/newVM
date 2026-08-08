@@ -135,6 +135,7 @@ function KronC(const A, B: TVMobjC): TVMobjC;  //Kronecker product - see Kron in
 function DiagC(const A: TVMobjC): TVMobjC;  //column vector (n,1) -> (n,n) diagonal matrix - see Diag in newVM.pas
 function NormC(const A: TVMobjC): Single;  //Euclidean norm (real-valued), via cblas_scnrm2 - see Norm in newVM.pas
 function TraceC(const A: TVMobjC): TComplex8;  //sum of A's leading-diagonal elements - see Trace in newVM.pas
+function DetC(const A: TVMobjC): TComplex8;  //determinant, via LAPACKE_cgetrf - see Det in newVM.pas
 function Cplx8(re,im : Single): TComplex8;inline;
 function RealToComplexS(const A : TVMobjS): TVMobjC;    //promotes a real single TVMobjS to a complex TVMobjC, im = 0
 function GetRealPartS(const A : TVMobjC): TVMobjS;      //extracts the real component of A into a real single TVMobjS
@@ -426,6 +427,30 @@ begin
   for i := 0 to A.Rows-1 do begin
     result.re := result.re + A[i,i].re;
     result.im := result.im + A[i,i].im;
+  end;
+end;
+
+function DetC(const A: TVMobjC): TComplex8;
+const
+  s : String = 'Function DetC : ';
+var
+  ipiv : array of integer;
+  info, i, sign : integer;
+  scratch : TVMobjC;
+  d : TComplex8;
+begin
+  assert(A.Cols = A.Rows, s+'Matrix A must be square');
+  scratch := CopyObjC(A);
+  setlength(ipiv, A.rows);
+  info := lapacke_cgetrf(CBlasRowMajor, A.rows, A.cols, @scratch.Fdata[0], A.cols, @ipiv[0]);
+  assert(info >= 0, s+'LAPACKE_cgetrf reported an illegal argument, info='+IntToStr(info));
+  sign := 1;
+  for i := 0 to A.rows-1 do
+    if ipiv[i] <> i+1 then sign := -sign;
+  result := Cplx8(sign, 0);
+  for i := 0 to A.rows-1 do begin
+    d := scratch[i,i];
+    result := Cplx8(result.re*d.re - result.im*d.im, result.re*d.im + result.im*d.re);
   end;
 end;
 

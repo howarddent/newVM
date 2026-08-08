@@ -128,6 +128,17 @@ function Norm(const A: TVMobj): Double;  //Euclidean (L2) norm of vector A (Rows
   benefit over just summing in the loop), so this is a plain loop, same
   rationale as newVMI.pas's Id/Transpose or this unit's own Find/Gather. }
 function Trace(const A: TVMobj): Double;
+{ Det - determinant of A (must be square), via LAPACKE_dgetrf (LU
+  factorisation with partial pivoting, A = P*L*U, run on a CopyObj scratch
+  buffer so A itself is left untouched, same convention as Invert). det(A)
+  = det(P)*det(L)*det(U): det(L) = 1 (unit lower triangular, not stored),
+  det(U) is the product of the diagonal entries getrf leaves in the
+  scratch buffer, and det(P) = -1 per row actually interchanged (ipiv[i]
+  <> i+1, using getrf's 1-based Fortran pivot convention). No info=0
+  assert like Invert's - a singular A (info>0) naturally yields a zero
+  diagonal entry, so the product comes out to exactly 0, the correct
+  determinant, without special-casing. }
+function Det(const A: TVMobj): Double;
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vd* routines
   in OneAPI.pas). Each returns a new TVMobj of the same dimensions as A,
@@ -416,6 +427,27 @@ begin
   result := 0;
   for i := 0 to A.Rows-1 do
     result := result + A[i,i];
+end;
+
+function Det(const A: TVMobj): Double;
+const
+  s : String = 'Function Det : ';
+var
+  ipiv : array of integer;
+  info, i, sign : integer;
+  scratch : TVMobj;
+begin
+  assert(A.Cols = A.Rows, s+'Matrix A must be square');
+  scratch := CopyObj(A);
+  setlength(ipiv, A.rows);
+  info := lapacke_dgetrf(CBlasRowMajor, A.rows, A.cols, scratch.DataPtr, A.cols, @ipiv[0]);
+  assert(info >= 0, s+'LAPACKE_dgetrf reported an illegal argument, info='+IntToStr(info));
+  sign := 1;
+  for i := 0 to A.rows-1 do
+    if ipiv[i] <> i+1 then sign := -sign;
+  result := sign;
+  for i := 0 to A.rows-1 do
+    result := result * scratch[i,i];
 end;
 
 class operator TVMobj.+(const A, B: TVMobj): TVMobj;
