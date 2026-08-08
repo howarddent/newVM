@@ -225,6 +225,34 @@ scalar convention noted in "CBLAS/LAPACKE calling convention gotchas"
 below. Unlike `MatMult`, no dimension-compatibility assert is needed —
 Kronecker product is defined for any A/B shapes.
 
+### `Diag`/`DiagS`/`DiagZ`/`DiagC` and `Norm`/`NormS`/`NormZ`/`NormC`
+
+Two more single-argument, per-unit functions following the same
+`Invert`/`Kron` suffix naming convention (base name in `newVM.pas`, `S`/
+`Z`/`C` suffixes elsewhere) rather than `overload` — unlike `Sin`/`Find`,
+these aren't a shared elementwise-function family visible together under
+one name in `newVMTests.pas`, they're one-argument transforms like
+`Invert`.
+
+- `Diag` turns a column vector A (n,1) into an (n,n) diagonal matrix with
+  A's elements on the leading diagonal (asserts `A.Cols = 1`). No loop
+  needed: diagonal element i sits at flat row-major offset `i*n+i =
+  i*(n+1)`, so this is a single `cblas_?copy(n, A, 1, result, n+1)` —
+  copying the source at stride 1 into the zero-filled result (from
+  `Create`) at stride `(n+1)` deposits exactly the diagonal entries and
+  nothing else.
+- `Norm` computes the Euclidean (L2) norm of a vector A (`Rows=1` or
+  `Cols=1`, same vector-only assert convention as the DCT/DST functions
+  above), via `cblas_?nrm2`. The complex units' `NormZ`/`NormC` use
+  `cblas_dznrm2`/`cblas_scnrm2` — CBLAS's complex-vector norm functions,
+  which correctly return a real-valued `Double`/`Single` (not a complex
+  number), since a Euclidean norm is always a non-negative real.
+- Both `cblas_?copy` and `cblas_?nrm2` were already declared and
+  cross-platform bound in `cblas.pas` (unconditionally, not gated by
+  `{$IFDEF UNIX}`/`{$IFDEF WINDOWS}` the way `OneAPI.pas`'s MKL/IPP
+  bindings are — see "Cross-platform library binding" below) before this
+  addition, so no new external bindings were needed for either function.
+
 ### Elementwise math functions
 
 Each unit also declares plain (non-operator) functions `Sin`, `Cos`, `Tan`,
@@ -487,9 +515,13 @@ out-of-range and non-square addressing), `writeMatrix`, `fillRandom`
 (exploits the hard-coded seed — see below), `Id`, `DataPtr` (real types),
 `CopyObj*` independence, `MatMult*`, `LinearSolve*`, `Invert*` (verified
 via `A*Invert(A) ≈ Identity`, and that `A` itself is left untouched),
-`Kron*` (a small known-value 2×2⊗2×2 case, checked block-by-block), every
-operator overload including the assertion paths, the elementwise VML
-functions, and `DCT1`..`DCT4`/`DST1`..`DST4` (each verified as a
+`Kron*` (a small known-value 2×2⊗2×2 case, checked block-by-block),
+`Diag*` (known-value column-vector-to-diagonal-matrix check, plus the
+non-column-vector assertion path) and `Norm*` (a classic 3-4-5 known
+value, complex-valued via two purely-real/purely-imaginary components so
+`|3|²+|4i|²=25`), every operator overload including the assertion paths,
+the elementwise VML functions, and `DCT1`..`DCT4`/`DST1`..`DST4` (each
+verified as a
 self-inverse or mutual-inverse round trip at the exact FFTW scale factor
 for that kind - see the "FFT/DCT/DST functions" architecture section
 above). The two real types (`TVMobjTests`/`TVMobjSTests`) additionally

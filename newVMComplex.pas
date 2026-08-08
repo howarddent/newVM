@@ -147,6 +147,8 @@ function LinearSolveZ(var A, B: TVMObjZ):integer;
 function CopyObjZ(Const A : TVMObjZ):TVMobjZ;
 function InvertZ(const A: TVMobjZ): TVMobjZ;  //matrix inverse, via LAPACKE_zgetrf+zgetri; leaves A untouched
 function KronZ(const A, B: TVMobjZ): TVMobjZ;  //Kronecker product - see Kron in newVM.pas
+function DiagZ(const A: TVMobjZ): TVMobjZ;  //column vector (n,1) -> (n,n) diagonal matrix - see Diag in newVM.pas
+function NormZ(const A: TVMobjZ): Double;  //Euclidean norm (real-valued), via cblas_dznrm2 - see Norm in newVM.pas
 function Cplx(re,im : Double): TComplex16;inline;
 function RealToComplex(const A : TVMobj): TVMobjZ;    //promotes a real double TVMobj to a complex TVMobjZ, im = 0
 function GetRealPart(const A : TVMobjZ): TVMobj;      //extracts the real component of A into a real double TVMobj
@@ -413,6 +415,23 @@ begin
         cblas_zaxpy(B.Cols, @aval, @B.FData[k*B.Cols], 1, @result.FData[rowdest*result.Cols + coldest], 1);
       end;
     end;
+end;
+
+function DiagZ(const A: TVMobjZ): TVMobjZ;
+const
+  s : String = 'Function DiagZ : ';
+begin
+  assert(A.Cols = 1, s+'A must be a column vector (n,1)');
+  result := TVMobjZ.Create(A.Rows, A.Rows);
+  cblas_zcopy(A.Rows, @A.FData[0], 1, @result.FData[0], A.Rows+1);
+end;
+
+function NormZ(const A: TVMobjZ): Double;
+const
+  s : String = 'Function NormZ : ';
+begin
+  assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
+  result := cblas_dznrm2(A.Rows*A.Cols, @A.FData[0], 1);
 end;
 
 function RealToComplex(const A: TVMobj): TVMobjZ;

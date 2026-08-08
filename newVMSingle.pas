@@ -100,6 +100,8 @@ function InvertS(const A: TVMobjS): TVMobjS;  //matrix inverse, via LAPACKE_sget
   since newVM.pas declares the TVMobj analogue of the same name. }
 function Find(const A: TVMobjS; Op: TVMCompareOp; Value: Single): TVMobjI; overload;
 function KronS(const A, B: TVMobjS): TVMobjS;  //Kronecker product - see Kron in newVM.pas
+function DiagS(const A: TVMobjS): TVMobjS;  //column vector (n,1) -> (n,n) diagonal matrix - see Diag in newVM.pas
+function NormS(const A: TVMobjS): Single;  //Euclidean norm - see Norm in newVM.pas
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vs* routines
   in OneAPI.pas). Each returns a new TVMobjS of the same dimensions as A,
@@ -350,6 +352,23 @@ begin
         coldest := j*B.Cols;
         cblas_saxpy(B.Cols, A[i,j], @B.FData[k*B.Cols], 1, @result.FData[rowdest*result.Cols + coldest], 1);
       end;
+end;
+
+function DiagS(const A: TVMobjS): TVMobjS;
+const
+  s : String = 'Function DiagS : ';
+begin
+  assert(A.Cols = 1, s+'A must be a column vector (n,1)');
+  result := TVMobjS.Create(A.Rows, A.Rows);
+  cblas_scopy(A.Rows, A.DataPtr, 1, result.DataPtr, A.Rows+1);
+end;
+
+function NormS(const A: TVMobjS): Single;
+const
+  s : String = 'Function NormS : ';
+begin
+  assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
+  result := cblas_snrm2(A.Rows*A.Cols, A.DataPtr, 1);
 end;
 
 class operator TVMobjS.+(const A, B: TVMobjS): TVMobjS;

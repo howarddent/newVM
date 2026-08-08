@@ -54,6 +54,7 @@ type
     procedure Raise_InvertNonSquare;
     procedure Raise_OperatorAddDimMismatch;
     procedure Raise_ScalarDivByZero;
+    procedure Raise_DiagNotColumnVector;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -92,6 +93,9 @@ type
     procedure TestDST4SelfInverseRoundTrip;
     procedure TestFindKnownValues;
     procedure TestKronKnownValues;
+    procedure TestDiagKnownValues;
+    procedure TestDiagNonColumnVectorAsserts;
+    procedure TestNormKnownValues;
   end;
 
   { TVMobjSTests - newVMSingle.pas, real single }
@@ -109,6 +113,7 @@ type
     procedure Raise_InvertNonSquare;
     procedure Raise_OperatorAddDimMismatch;
     procedure Raise_ScalarDivByZero;
+    procedure Raise_DiagNotColumnVector;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -147,6 +152,9 @@ type
     procedure TestDST4SelfInverseRoundTrip;
     procedure TestFindKnownValues;
     procedure TestKronKnownValues;
+    procedure TestDiagKnownValues;
+    procedure TestDiagNonColumnVectorAsserts;
+    procedure TestNormKnownValues;
   end;
 
   { TVMobjZTests - newVMComplex.pas, complex double }
@@ -164,6 +172,7 @@ type
     procedure Raise_InvertNonSquare;
     procedure Raise_OperatorAddDimMismatch;
     procedure Raise_ScalarDivByZero;
+    procedure Raise_DiagNotColumnVector;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -202,6 +211,9 @@ type
     procedure TestFFTC2CRoundTrip;
     procedure TestFFTR2CKnownDCValue;
     procedure TestKronKnownValues;
+    procedure TestDiagKnownValues;
+    procedure TestDiagNonColumnVectorAsserts;
+    procedure TestNormKnownValues;
   end;
 
   { TVMobjCTests - newVMComplexSingle.pas, complex single }
@@ -219,6 +231,7 @@ type
     procedure Raise_InvertNonSquare;
     procedure Raise_OperatorAddDimMismatch;
     procedure Raise_ScalarDivByZero;
+    procedure Raise_DiagNotColumnVector;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -257,6 +270,9 @@ type
     procedure TestFFTC2CRoundTrip;
     procedure TestFFTR2CKnownDCValue;
     procedure TestKronKnownValues;
+    procedure TestDiagKnownValues;
+    procedure TestDiagNonColumnVectorAsserts;
+    procedure TestNormKnownValues;
   end;
 
   { TVMobjITests - newVMI.pas, integer index array/matrix }
@@ -379,6 +395,13 @@ var A, B: TVMobj;
 begin
   A := TVMobj.Create(2, 2, [1, 2, 3, 4]);
   B := A / 0.0;
+end;
+
+procedure TVMobjTests.Raise_DiagNotColumnVector;
+var A, D: TVMobj;
+begin
+  A := TVMobj.Create(1, 3, [1, 2, 3]);  //row vector, not a column vector
+  D := Diag(A);
 end;
 
 procedure TVMobjTests.TestCreateZeroFills;
@@ -757,6 +780,31 @@ begin
   AssertEquals(18, K[3,0], DblTol); AssertEquals(21, K[3,1], DblTol); AssertEquals(24, K[3,2], DblTol); AssertEquals(28, K[3,3], DblTol);
 end;
 
+procedure TVMobjTests.TestDiagKnownValues;
+var A, D: TVMobj; r, c: Integer;
+begin
+  A := TVMobj.Create(3, 1, [1, 2, 3]);
+  D := Diag(A);
+  AssertEquals('Rows', 3, D.Rows);
+  AssertEquals('Cols', 3, D.Cols);
+  for r := 0 to 2 do
+    for c := 0 to 2 do
+      if r = c then AssertEquals(A[r, 0], D[r, c], DblTol)
+      else AssertEquals(0, D[r, c], DblTol);
+end;
+
+procedure TVMobjTests.TestDiagNonColumnVectorAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_DiagNotColumnVector);
+end;
+
+procedure TVMobjTests.TestNormKnownValues;
+var A: TVMobj;
+begin
+  A := TVMobj.Create(1, 2, [3, 4]);  //classic 3-4-5 triangle
+  AssertEquals(5, Norm(A), DblTol);
+end;
+
 {===========================================================================
   TVMobjSTests  (real single)
 ===========================================================================}
@@ -836,6 +884,13 @@ var A, B: TVMobjS;
 begin
   A := TVMobjS.Create(2, 2, [1, 2, 3, 4]);
   B := A / 0.0;
+end;
+
+procedure TVMobjSTests.Raise_DiagNotColumnVector;
+var A, D: TVMobjS;
+begin
+  A := TVMobjS.Create(1, 3, [1, 2, 3]);  //row vector, not a column vector
+  D := DiagS(A);
 end;
 
 procedure TVMobjSTests.TestCreateZeroFills;
@@ -1207,6 +1262,31 @@ begin
   AssertEquals(18, K[3,0], SngTol); AssertEquals(21, K[3,1], SngTol); AssertEquals(24, K[3,2], SngTol); AssertEquals(28, K[3,3], SngTol);
 end;
 
+procedure TVMobjSTests.TestDiagKnownValues;
+var A, D: TVMobjS; r, c: Integer;
+begin
+  A := TVMobjS.Create(3, 1, [1, 2, 3]);
+  D := DiagS(A);
+  AssertEquals('Rows', 3, D.Rows);
+  AssertEquals('Cols', 3, D.Cols);
+  for r := 0 to 2 do
+    for c := 0 to 2 do
+      if r = c then AssertEquals(A[r, 0], D[r, c], SngTol)
+      else AssertEquals(0, D[r, c], SngTol);
+end;
+
+procedure TVMobjSTests.TestDiagNonColumnVectorAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_DiagNotColumnVector);
+end;
+
+procedure TVMobjSTests.TestNormKnownValues;
+var A: TVMobjS;
+begin
+  A := TVMobjS.Create(1, 2, [3, 4]);  //classic 3-4-5 triangle
+  AssertEquals(5, NormS(A), SngTol);
+end;
+
 {===========================================================================
   TVMobjZTests  (complex double)
 ===========================================================================}
@@ -1286,6 +1366,13 @@ var A, B: TVMobjZ;
 begin
   A := TVMobjZ.Create(2, 2, [Cplx(1,0), Cplx(2,0), Cplx(3,0), Cplx(4,0)]);
   B := A / 0.0;
+end;
+
+procedure TVMobjZTests.Raise_DiagNotColumnVector;
+var A, D: TVMobjZ;
+begin
+  A := TVMobjZ.Create(1, 3, [Cplx(1,0), Cplx(2,0), Cplx(3,0)]);  //row vector
+  D := DiagZ(A);
 end;
 
 procedure TVMobjZTests.TestCreateZeroFills;
@@ -1718,6 +1805,36 @@ begin
   AssertEquals(-1, K[3,3].re, DblTol); AssertEquals(0, K[3,3].im, DblTol);
 end;
 
+procedure TVMobjZTests.TestDiagKnownValues;
+var A, D: TVMobjZ; r, c: Integer;
+begin
+  A := TVMobjZ.Create(3, 1, [Cplx(1,1), Cplx(2,-1), Cplx(0,3)]);
+  D := DiagZ(A);
+  AssertEquals('Rows', 3, D.Rows);
+  AssertEquals('Cols', 3, D.Cols);
+  for r := 0 to 2 do
+    for c := 0 to 2 do
+      if r = c then begin
+        AssertEquals(A[r, 0].re, D[r, c].re, DblTol);
+        AssertEquals(A[r, 0].im, D[r, c].im, DblTol);
+      end else begin
+        AssertEquals(0, D[r, c].re, DblTol);
+        AssertEquals(0, D[r, c].im, DblTol);
+      end;
+end;
+
+procedure TVMobjZTests.TestDiagNonColumnVectorAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_DiagNotColumnVector);
+end;
+
+procedure TVMobjZTests.TestNormKnownValues;
+var A: TVMobjZ;
+begin
+  A := TVMobjZ.Create(1, 2, [Cplx(3,0), Cplx(0,4)]);  //|3|^2+|4i|^2 = 25
+  AssertEquals(5, NormZ(A), DblTol);
+end;
+
 {===========================================================================
   TVMobjCTests  (complex single)
 ===========================================================================}
@@ -1797,6 +1914,13 @@ var A, B: TVMobjC;
 begin
   A := TVMobjC.Create(2, 2, [Cplx8(1,0), Cplx8(2,0), Cplx8(3,0), Cplx8(4,0)]);
   B := A / 0.0;
+end;
+
+procedure TVMobjCTests.Raise_DiagNotColumnVector;
+var A, D: TVMobjC;
+begin
+  A := TVMobjC.Create(1, 3, [Cplx8(1,0), Cplx8(2,0), Cplx8(3,0)]);  //row vector
+  D := DiagC(A);
 end;
 
 procedure TVMobjCTests.TestCreateZeroFills;
@@ -2218,6 +2342,36 @@ begin
   AssertEquals(0, K[3,1].re, SngTol);  AssertEquals(-1, K[3,1].im, SngTol);
   AssertEquals(2, K[3,2].re, SngTol);  AssertEquals(0, K[3,2].im, SngTol);
   AssertEquals(-1, K[3,3].re, SngTol); AssertEquals(0, K[3,3].im, SngTol);
+end;
+
+procedure TVMobjCTests.TestDiagKnownValues;
+var A, D: TVMobjC; r, c: Integer;
+begin
+  A := TVMobjC.Create(3, 1, [Cplx8(1,1), Cplx8(2,-1), Cplx8(0,3)]);
+  D := DiagC(A);
+  AssertEquals('Rows', 3, D.Rows);
+  AssertEquals('Cols', 3, D.Cols);
+  for r := 0 to 2 do
+    for c := 0 to 2 do
+      if r = c then begin
+        AssertEquals(A[r, 0].re, D[r, c].re, SngTol);
+        AssertEquals(A[r, 0].im, D[r, c].im, SngTol);
+      end else begin
+        AssertEquals(0, D[r, c].re, SngTol);
+        AssertEquals(0, D[r, c].im, SngTol);
+      end;
+end;
+
+procedure TVMobjCTests.TestDiagNonColumnVectorAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_DiagNotColumnVector);
+end;
+
+procedure TVMobjCTests.TestNormKnownValues;
+var A: TVMobjC;
+begin
+  A := TVMobjC.Create(1, 2, [Cplx8(3,0), Cplx8(0,4)]);  //|3|^2+|4i|^2 = 25
+  AssertEquals(5, NormC(A), SngTol);
 end;
 
 {===========================================================================

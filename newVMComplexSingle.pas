@@ -132,6 +132,8 @@ function LinearSolveC(var A, B: TVMObjC):integer;
 function CopyObjC(Const A : TVMObjC):TVMobjC;
 function InvertC(const A: TVMobjC): TVMobjC;  //matrix inverse, via LAPACKE_cgetrf+cgetri; leaves A untouched
 function KronC(const A, B: TVMobjC): TVMobjC;  //Kronecker product - see Kron in newVM.pas
+function DiagC(const A: TVMobjC): TVMobjC;  //column vector (n,1) -> (n,n) diagonal matrix - see Diag in newVM.pas
+function NormC(const A: TVMobjC): Single;  //Euclidean norm (real-valued), via cblas_scnrm2 - see Norm in newVM.pas
 function Cplx8(re,im : Single): TComplex8;inline;
 function RealToComplexS(const A : TVMobjS): TVMobjC;    //promotes a real single TVMobjS to a complex TVMobjC, im = 0
 function GetRealPartS(const A : TVMobjC): TVMobjS;      //extracts the real component of A into a real single TVMobjS
@@ -392,6 +394,23 @@ begin
         cblas_caxpy(B.Cols, @aval, @B.FData[k*B.Cols], 1, @result.FData[rowdest*result.Cols + coldest], 1);
       end;
     end;
+end;
+
+function DiagC(const A: TVMobjC): TVMobjC;
+const
+  s : String = 'Function DiagC : ';
+begin
+  assert(A.Cols = 1, s+'A must be a column vector (n,1)');
+  result := TVMobjC.Create(A.Rows, A.Rows);
+  cblas_ccopy(A.Rows, @A.FData[0], 1, @result.FData[0], A.Rows+1);
+end;
+
+function NormC(const A: TVMobjC): Single;
+const
+  s : String = 'Function NormC : ';
+begin
+  assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
+  result := cblas_scnrm2(A.Rows*A.Cols, @A.FData[0], 1);
 end;
 
 function RealToComplexS(const A: TVMobjS): TVMobjC;

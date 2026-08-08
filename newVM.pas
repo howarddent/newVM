@@ -114,6 +114,13 @@ function Find(const A: TVMobj; Op: TVMCompareOp; Value: Double): TVMobjI; overlo
   buffer at once, since a block's rows aren't contiguous in the result's
   row-major layout. }
 function Kron(const A, B: TVMobj): TVMobj;
+{ Diag - turns a column vector A (n,1) into an (n,n) diagonal matrix with
+  A's elements on the leading diagonal. Diagonal element i sits at flat
+  row-major offset i*n+i = i*(n+1), so this is a single cblas_dcopy from
+  A (stride 1) into the zero-filled result buffer at stride (n+1) - no
+  loop needed. }
+function Diag(const A: TVMobj): TVMobj;
+function Norm(const A: TVMobj): Double;  //Euclidean (L2) norm of vector A (Rows=1 or Cols=1), via cblas_dnrm2
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vd* routines
   in OneAPI.pas). Each returns a new TVMobj of the same dimensions as A,
@@ -373,6 +380,23 @@ begin
         coldest := j*B.Cols;
         cblas_daxpy(B.Cols, A[i,j], @B.FData[k*B.Cols], 1, @result.FData[rowdest*result.Cols + coldest], 1);
       end;
+end;
+
+function Diag(const A: TVMobj): TVMobj;
+const
+  s : String = 'Function Diag : ';
+begin
+  assert(A.Cols = 1, s+'A must be a column vector (n,1)');
+  result := TVMobj.Create(A.Rows, A.Rows);
+  cblas_dcopy(A.Rows, A.DataPtr, 1, result.DataPtr, A.Rows+1);
+end;
+
+function Norm(const A: TVMobj): Double;
+const
+  s : String = 'Function Norm : ';
+begin
+  assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
+  result := cblas_dnrm2(A.Rows*A.Cols, A.DataPtr, 1);
 end;
 
 class operator TVMobj.+(const A, B: TVMobj): TVMobj;
