@@ -155,6 +155,8 @@ function FlipUDZ(const A: TVMobjZ): TVMobjZ;  //reverses row order - see FlipUD 
 function FlipLRZ(const A: TVMobjZ): TVMobjZ;  //reverses each row's element order, via ippsFlip_64fc - see FlipLR in newVM.pas
 function MergeUDZ(const A, B: TVMobjZ): TVMobjZ;  //stacks A above B - see MergeUD in newVM.pas
 function MergeLRZ(const A, B: TVMobjZ): TVMobjZ;  //places A left of B - see MergeLR in newVM.pas
+function ReshapeZ(const A: TVMobjZ; NewRows, NewCols: TDimZ): TVMobjZ;  //reinterprets A's elements with new dims - see Reshape in newVM.pas
+function RepmatZ(const A: TVMobjZ; RowReps, ColReps: Integer): TVMobjZ;  //tiles A RowReps x ColReps - see Repmat in newVM.pas
 function Cplx(re,im : Double): TComplex16;inline;
 function RealToComplex(const A : TVMobj): TVMobjZ;    //promotes a real double TVMobj to a complex TVMobjZ, im = 0
 function GetRealPart(const A : TVMobjZ): TVMobj;      //extracts the real component of A into a real double TVMobj
@@ -519,6 +521,31 @@ begin
     cblas_zcopy(A.Cols, @A.FData[i*A.Cols], 1, @result.FData[i*result.Cols], 1);
     cblas_zcopy(B.Cols, @B.FData[i*B.Cols], 1, @result.FData[i*result.Cols + A.Cols], 1);
   end;
+end;
+
+function ReshapeZ(const A: TVMobjZ; NewRows, NewCols: TDimZ): TVMobjZ;
+const
+  s : String = 'Function ReshapeZ : ';
+begin
+  assert(NewRows*NewCols = A.Rows*A.Cols, s+'NewRows*NewCols must equal A.Rows*A.Cols');
+  result := TVMobjZ.Create(NewRows, NewCols);
+  cblas_zcopy(A.Rows*A.Cols, @A.FData[0], 1, @result.FData[0], 1);
+end;
+
+function RepmatZ(const A: TVMobjZ; RowReps, ColReps: Integer): TVMobjZ;
+const
+  s : String = 'Function RepmatZ : ';
+var
+  i, j, r, destRow : integer;
+begin
+  assert((RowReps > 0) and (ColReps > 0), s+'RowReps and ColReps must be > 0');
+  result := TVMobjZ.Create(A.Rows*RowReps, A.Cols*ColReps);
+  for i := 0 to RowReps-1 do
+    for r := 0 to A.Rows-1 do begin
+      destRow := i*A.Rows + r;
+      for j := 0 to ColReps-1 do
+        cblas_zcopy(A.Cols, @A.FData[r*A.Cols], 1, @result.FData[destRow*result.Cols + j*A.Cols], 1);
+    end;
 end;
 
 function RealToComplex(const A: TVMobj): TVMobjZ;

@@ -351,6 +351,30 @@ and `B` are combined into one larger result; unlike `Kron`, dimensions
   `cblas_?copy`, already cross-platform bound (see `Diag`/`Norm` above for
   why that means zero Windows-specific work).
 
+### `Reshape`/`ReshapeS`/`ReshapeZ`/`ReshapeC` and `Repmat`/`RepmatS`/`RepmatZ`/`RepmatC`
+
+Two more per-unit functions, same suffix convention as `Diag`/`Kron`.
+
+- `Reshape(A, NewRows, NewCols)` reinterprets `A`'s `Rows*Cols` elements as
+  a `(NewRows,NewCols)` matrix (asserts `NewRows*NewCols = A.Rows*A.Cols`).
+  `NewRows`/`NewCols` are typed as each unit's own `TDim`/`TDimS`/`TDimZ`/
+  `TDimC` (matching what `Create` itself takes), not a plain `Integer`.
+  Row-major storage means the flat element order never changes, only how
+  it's carved into rows, so this is a single whole-buffer `cblas_?copy`
+  into a differently-shaped result - the same "reinterpret the contiguous
+  buffer" trick half of `MergeUD` already uses.
+- `Repmat(A, RowReps, ColReps)` tiles `A` into a `(A.Rows*RowReps,
+  A.Cols*ColReps)` result, `RowReps` copies down and `ColReps` copies
+  across (asserts `RowReps > 0` and `ColReps > 0`). No BLAS/LAPACK/IPP
+  primitive tiles a block, and unlike `Reshape` a tile's rows aren't
+  contiguous with the next tile's, so this copies each source row into
+  every `(row-tile, col-tile)` destination slot via `cblas_?copy` - the
+  same "no block primitive -> loop of per-row BLAS calls" idiom
+  `Kron`/`MergeLR` use, just with an extra nesting level for the two tile
+  axes.
+- No new external bindings needed for either - both are built entirely on
+  `cblas_?copy`, same rationale as `MergeUD`/`MergeLR` above.
+
 ### Elementwise math functions
 
 Each unit also declares plain (non-operator) functions `Sin`, `Cos`, `Tan`,
@@ -626,8 +650,12 @@ comes out exactly 0 with no special-casing, and the non-square assertion
 path), `FlipUD*`/`FlipLR*` (a known-value non-square 2×3 case each,
 checked element-by-element), `MergeUD*`/`MergeLR*` (a known-value case
 each checked element-by-element plus the result's `Rows`/`Cols`, and the
-column/row-mismatch assertion path respectively), every operator overload
-including the assertion paths, the elementwise VML functions, and
+column/row-mismatch assertion path respectively), `Reshape*` (a known-value
+2×3 -> 3×2 case verifying the row-major element order is preserved, plus
+the element-count-mismatch assertion path) and `Repmat*` (a known-value
+1×2 tiled 2×2 case, plus the non-positive-repetition assertion path),
+every operator overload including the assertion paths, the elementwise VML
+functions, and
 `DCT1`..`DCT4`/`DST1`..`DST4` (each verified as a self-inverse or
 mutual-inverse round trip at the exact FFTW scale factor for that kind -
 see the "FFT/DCT/DST functions" architecture section above). The two real

@@ -59,6 +59,8 @@ type
     procedure Raise_DetNonSquare;
     procedure Raise_MergeUDColMismatch;
     procedure Raise_MergeLRRowMismatch;
+    procedure Raise_ReshapeElementCountMismatch;
+    procedure Raise_RepmatBadReps;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -111,6 +113,10 @@ type
     procedure TestMergeUDColMismatchAsserts;
     procedure TestMergeLRKnownValues;
     procedure TestMergeLRRowMismatchAsserts;
+    procedure TestReshapeKnownValues;
+    procedure TestReshapeElementCountMismatchAsserts;
+    procedure TestRepmatKnownValues;
+    procedure TestRepmatBadRepsAsserts;
   end;
 
   { TVMobjSTests - newVMSingle.pas, real single }
@@ -133,6 +139,8 @@ type
     procedure Raise_DetNonSquare;
     procedure Raise_MergeUDColMismatch;
     procedure Raise_MergeLRRowMismatch;
+    procedure Raise_ReshapeElementCountMismatch;
+    procedure Raise_RepmatBadReps;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -185,6 +193,10 @@ type
     procedure TestMergeUDColMismatchAsserts;
     procedure TestMergeLRKnownValues;
     procedure TestMergeLRRowMismatchAsserts;
+    procedure TestReshapeKnownValues;
+    procedure TestReshapeElementCountMismatchAsserts;
+    procedure TestRepmatKnownValues;
+    procedure TestRepmatBadRepsAsserts;
   end;
 
   { TVMobjZTests - newVMComplex.pas, complex double }
@@ -207,6 +219,8 @@ type
     procedure Raise_DetNonSquare;
     procedure Raise_MergeUDColMismatch;
     procedure Raise_MergeLRRowMismatch;
+    procedure Raise_ReshapeElementCountMismatch;
+    procedure Raise_RepmatBadReps;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -259,6 +273,10 @@ type
     procedure TestMergeUDColMismatchAsserts;
     procedure TestMergeLRKnownValues;
     procedure TestMergeLRRowMismatchAsserts;
+    procedure TestReshapeKnownValues;
+    procedure TestReshapeElementCountMismatchAsserts;
+    procedure TestRepmatKnownValues;
+    procedure TestRepmatBadRepsAsserts;
   end;
 
   { TVMobjCTests - newVMComplexSingle.pas, complex single }
@@ -281,6 +299,8 @@ type
     procedure Raise_DetNonSquare;
     procedure Raise_MergeUDColMismatch;
     procedure Raise_MergeLRRowMismatch;
+    procedure Raise_ReshapeElementCountMismatch;
+    procedure Raise_RepmatBadReps;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -333,6 +353,10 @@ type
     procedure TestMergeUDColMismatchAsserts;
     procedure TestMergeLRKnownValues;
     procedure TestMergeLRRowMismatchAsserts;
+    procedure TestReshapeKnownValues;
+    procedure TestReshapeElementCountMismatchAsserts;
+    procedure TestRepmatKnownValues;
+    procedure TestRepmatBadRepsAsserts;
   end;
 
   { TVMobjITests - newVMI.pas, integer index array/matrix }
@@ -492,6 +516,20 @@ begin
   A := TVMobj.Create(2, 1, [1, 2]);
   B := TVMobj.Create(3, 1, [1, 2, 3]);
   M := MergeLR(A, B);
+end;
+
+procedure TVMobjTests.Raise_ReshapeElementCountMismatch;
+var A, R: TVMobj;
+begin
+  A := TVMobj.Create(2, 3, [1, 2, 3, 4, 5, 6]);
+  R := Reshape(A, 2, 2);
+end;
+
+procedure TVMobjTests.Raise_RepmatBadReps;
+var A, R: TVMobj;
+begin
+  A := TVMobj.Create(1, 2, [1, 2]);
+  R := Repmat(A, 0, 1);
 end;
 
 procedure TVMobjTests.TestCreateZeroFills;
@@ -979,6 +1017,39 @@ begin
   AssertException(EAssertionFailed, @Raise_MergeLRRowMismatch);
 end;
 
+procedure TVMobjTests.TestReshapeKnownValues;
+var A, R: TVMobj;
+begin
+  A := TVMobj.Create(2, 3, [1, 2, 3, 4, 5, 6]);
+  R := Reshape(A, 3, 2);
+  AssertEquals('Rows', 3, R.Rows);
+  AssertEquals('Cols', 2, R.Cols);
+  AssertEquals(1, R[0,0], DblTol); AssertEquals(2, R[0,1], DblTol);
+  AssertEquals(3, R[1,0], DblTol); AssertEquals(4, R[1,1], DblTol);
+  AssertEquals(5, R[2,0], DblTol); AssertEquals(6, R[2,1], DblTol);
+end;
+
+procedure TVMobjTests.TestReshapeElementCountMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_ReshapeElementCountMismatch);
+end;
+
+procedure TVMobjTests.TestRepmatKnownValues;
+var A, R: TVMobj;
+begin
+  A := TVMobj.Create(1, 2, [1, 2]);
+  R := Repmat(A, 2, 2);
+  AssertEquals('Rows', 2, R.Rows);
+  AssertEquals('Cols', 4, R.Cols);
+  AssertEquals(1, R[0,0], DblTol); AssertEquals(2, R[0,1], DblTol); AssertEquals(1, R[0,2], DblTol); AssertEquals(2, R[0,3], DblTol);
+  AssertEquals(1, R[1,0], DblTol); AssertEquals(2, R[1,1], DblTol); AssertEquals(1, R[1,2], DblTol); AssertEquals(2, R[1,3], DblTol);
+end;
+
+procedure TVMobjTests.TestRepmatBadRepsAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_RepmatBadReps);
+end;
+
 {===========================================================================
   TVMobjSTests  (real single)
 ===========================================================================}
@@ -1095,6 +1166,20 @@ begin
   A := TVMobjS.Create(2, 1, [1, 2]);
   B := TVMobjS.Create(3, 1, [1, 2, 3]);
   M := MergeLRS(A, B);
+end;
+
+procedure TVMobjSTests.Raise_ReshapeElementCountMismatch;
+var A, R: TVMobjS;
+begin
+  A := TVMobjS.Create(2, 3, [1, 2, 3, 4, 5, 6]);
+  R := ReshapeS(A, 2, 2);
+end;
+
+procedure TVMobjSTests.Raise_RepmatBadReps;
+var A, R: TVMobjS;
+begin
+  A := TVMobjS.Create(1, 2, [1, 2]);
+  R := RepmatS(A, 0, 1);
 end;
 
 procedure TVMobjSTests.TestCreateZeroFills;
@@ -1575,6 +1660,39 @@ begin
   AssertException(EAssertionFailed, @Raise_MergeLRRowMismatch);
 end;
 
+procedure TVMobjSTests.TestReshapeKnownValues;
+var A, R: TVMobjS;
+begin
+  A := TVMobjS.Create(2, 3, [1, 2, 3, 4, 5, 6]);
+  R := ReshapeS(A, 3, 2);
+  AssertEquals('Rows', 3, R.Rows);
+  AssertEquals('Cols', 2, R.Cols);
+  AssertEquals(1, R[0,0], SngTol); AssertEquals(2, R[0,1], SngTol);
+  AssertEquals(3, R[1,0], SngTol); AssertEquals(4, R[1,1], SngTol);
+  AssertEquals(5, R[2,0], SngTol); AssertEquals(6, R[2,1], SngTol);
+end;
+
+procedure TVMobjSTests.TestReshapeElementCountMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_ReshapeElementCountMismatch);
+end;
+
+procedure TVMobjSTests.TestRepmatKnownValues;
+var A, R: TVMobjS;
+begin
+  A := TVMobjS.Create(1, 2, [1, 2]);
+  R := RepmatS(A, 2, 2);
+  AssertEquals('Rows', 2, R.Rows);
+  AssertEquals('Cols', 4, R.Cols);
+  AssertEquals(1, R[0,0], SngTol); AssertEquals(2, R[0,1], SngTol); AssertEquals(1, R[0,2], SngTol); AssertEquals(2, R[0,3], SngTol);
+  AssertEquals(1, R[1,0], SngTol); AssertEquals(2, R[1,1], SngTol); AssertEquals(1, R[1,2], SngTol); AssertEquals(2, R[1,3], SngTol);
+end;
+
+procedure TVMobjSTests.TestRepmatBadRepsAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_RepmatBadReps);
+end;
+
 {===========================================================================
   TVMobjZTests  (complex double)
 ===========================================================================}
@@ -1691,6 +1809,20 @@ begin
   A := TVMobjZ.Create(2, 1, [Cplx(1,0), Cplx(2,0)]);
   B := TVMobjZ.Create(3, 1, [Cplx(1,0), Cplx(2,0), Cplx(3,0)]);
   M := MergeLRZ(A, B);
+end;
+
+procedure TVMobjZTests.Raise_ReshapeElementCountMismatch;
+var A, R: TVMobjZ;
+begin
+  A := TVMobjZ.Create(2, 3, [Cplx(1,0), Cplx(2,0), Cplx(3,0), Cplx(4,0), Cplx(5,0), Cplx(6,0)]);
+  R := ReshapeZ(A, 2, 2);
+end;
+
+procedure TVMobjZTests.Raise_RepmatBadReps;
+var A, R: TVMobjZ;
+begin
+  A := TVMobjZ.Create(1, 2, [Cplx(1,0), Cplx(2,0)]);
+  R := RepmatZ(A, 0, 1);
 end;
 
 procedure TVMobjZTests.TestCreateZeroFills;
@@ -2255,6 +2387,46 @@ begin
   AssertException(EAssertionFailed, @Raise_MergeLRRowMismatch);
 end;
 
+procedure TVMobjZTests.TestReshapeKnownValues;
+var A, R: TVMobjZ;
+begin
+  A := TVMobjZ.Create(2, 3, [Cplx(1,10), Cplx(2,20), Cplx(3,30), Cplx(4,40), Cplx(5,50), Cplx(6,60)]);
+  R := ReshapeZ(A, 3, 2);
+  AssertEquals('Rows', 3, R.Rows);
+  AssertEquals('Cols', 2, R.Cols);
+  AssertEquals(1, R[0,0].re, DblTol); AssertEquals(10, R[0,0].im, DblTol);
+  AssertEquals(2, R[0,1].re, DblTol); AssertEquals(20, R[0,1].im, DblTol);
+  AssertEquals(3, R[1,0].re, DblTol); AssertEquals(30, R[1,0].im, DblTol);
+  AssertEquals(4, R[1,1].re, DblTol); AssertEquals(40, R[1,1].im, DblTol);
+  AssertEquals(5, R[2,0].re, DblTol); AssertEquals(50, R[2,0].im, DblTol);
+  AssertEquals(6, R[2,1].re, DblTol); AssertEquals(60, R[2,1].im, DblTol);
+end;
+
+procedure TVMobjZTests.TestReshapeElementCountMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_ReshapeElementCountMismatch);
+end;
+
+procedure TVMobjZTests.TestRepmatKnownValues;
+var A, R: TVMobjZ;
+begin
+  A := TVMobjZ.Create(1, 2, [Cplx(1,10), Cplx(2,20)]);
+  R := RepmatZ(A, 2, 2);
+  AssertEquals('Rows', 2, R.Rows);
+  AssertEquals('Cols', 4, R.Cols);
+  AssertEquals(1, R[0,0].re, DblTol); AssertEquals(10, R[0,0].im, DblTol);
+  AssertEquals(2, R[0,1].re, DblTol); AssertEquals(20, R[0,1].im, DblTol);
+  AssertEquals(1, R[0,2].re, DblTol); AssertEquals(10, R[0,2].im, DblTol);
+  AssertEquals(2, R[0,3].re, DblTol); AssertEquals(20, R[0,3].im, DblTol);
+  AssertEquals(1, R[1,0].re, DblTol); AssertEquals(10, R[1,0].im, DblTol);
+  AssertEquals(2, R[1,3].re, DblTol); AssertEquals(20, R[1,3].im, DblTol);
+end;
+
+procedure TVMobjZTests.TestRepmatBadRepsAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_RepmatBadReps);
+end;
+
 {===========================================================================
   TVMobjCTests  (complex single)
 ===========================================================================}
@@ -2371,6 +2543,20 @@ begin
   A := TVMobjC.Create(2, 1, [Cplx8(1,0), Cplx8(2,0)]);
   B := TVMobjC.Create(3, 1, [Cplx8(1,0), Cplx8(2,0), Cplx8(3,0)]);
   M := MergeLRC(A, B);
+end;
+
+procedure TVMobjCTests.Raise_ReshapeElementCountMismatch;
+var A, R: TVMobjC;
+begin
+  A := TVMobjC.Create(2, 3, [Cplx8(1,0), Cplx8(2,0), Cplx8(3,0), Cplx8(4,0), Cplx8(5,0), Cplx8(6,0)]);
+  R := ReshapeC(A, 2, 2);
+end;
+
+procedure TVMobjCTests.Raise_RepmatBadReps;
+var A, R: TVMobjC;
+begin
+  A := TVMobjC.Create(1, 2, [Cplx8(1,0), Cplx8(2,0)]);
+  R := RepmatC(A, 0, 1);
 end;
 
 procedure TVMobjCTests.TestCreateZeroFills;
@@ -2924,6 +3110,46 @@ end;
 procedure TVMobjCTests.TestMergeLRRowMismatchAsserts;
 begin
   AssertException(EAssertionFailed, @Raise_MergeLRRowMismatch);
+end;
+
+procedure TVMobjCTests.TestReshapeKnownValues;
+var A, R: TVMobjC;
+begin
+  A := TVMobjC.Create(2, 3, [Cplx8(1,10), Cplx8(2,20), Cplx8(3,30), Cplx8(4,40), Cplx8(5,50), Cplx8(6,60)]);
+  R := ReshapeC(A, 3, 2);
+  AssertEquals('Rows', 3, R.Rows);
+  AssertEquals('Cols', 2, R.Cols);
+  AssertEquals(1, R[0,0].re, SngTol); AssertEquals(10, R[0,0].im, SngTol);
+  AssertEquals(2, R[0,1].re, SngTol); AssertEquals(20, R[0,1].im, SngTol);
+  AssertEquals(3, R[1,0].re, SngTol); AssertEquals(30, R[1,0].im, SngTol);
+  AssertEquals(4, R[1,1].re, SngTol); AssertEquals(40, R[1,1].im, SngTol);
+  AssertEquals(5, R[2,0].re, SngTol); AssertEquals(50, R[2,0].im, SngTol);
+  AssertEquals(6, R[2,1].re, SngTol); AssertEquals(60, R[2,1].im, SngTol);
+end;
+
+procedure TVMobjCTests.TestReshapeElementCountMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_ReshapeElementCountMismatch);
+end;
+
+procedure TVMobjCTests.TestRepmatKnownValues;
+var A, R: TVMobjC;
+begin
+  A := TVMobjC.Create(1, 2, [Cplx8(1,10), Cplx8(2,20)]);
+  R := RepmatC(A, 2, 2);
+  AssertEquals('Rows', 2, R.Rows);
+  AssertEquals('Cols', 4, R.Cols);
+  AssertEquals(1, R[0,0].re, SngTol); AssertEquals(10, R[0,0].im, SngTol);
+  AssertEquals(2, R[0,1].re, SngTol); AssertEquals(20, R[0,1].im, SngTol);
+  AssertEquals(1, R[0,2].re, SngTol); AssertEquals(10, R[0,2].im, SngTol);
+  AssertEquals(2, R[0,3].re, SngTol); AssertEquals(20, R[0,3].im, SngTol);
+  AssertEquals(1, R[1,0].re, SngTol); AssertEquals(10, R[1,0].im, SngTol);
+  AssertEquals(2, R[1,3].re, SngTol); AssertEquals(20, R[1,3].im, SngTol);
+end;
+
+procedure TVMobjCTests.TestRepmatBadRepsAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_RepmatBadReps);
 end;
 
 {===========================================================================

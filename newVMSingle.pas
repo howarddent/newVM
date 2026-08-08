@@ -108,6 +108,8 @@ function FlipUDS(const A: TVMobjS): TVMobjS;  //reverses row order - see FlipUD 
 function FlipLRS(const A: TVMobjS): TVMobjS;  //reverses each row's element order, via ippsFlip_32f - see FlipLR in newVM.pas
 function MergeUDS(const A, B: TVMobjS): TVMobjS;  //stacks A above B - see MergeUD in newVM.pas
 function MergeLRS(const A, B: TVMobjS): TVMobjS;  //places A left of B - see MergeLR in newVM.pas
+function ReshapeS(const A: TVMobjS; NewRows, NewCols: TDimS): TVMobjS;  //reinterprets A's elements with new dims - see Reshape in newVM.pas
+function RepmatS(const A: TVMobjS; RowReps, ColReps: Integer): TVMobjS;  //tiles A RowReps x ColReps - see Repmat in newVM.pas
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vs* routines
   in OneAPI.pas). Each returns a new TVMobjS of the same dimensions as A,
@@ -450,6 +452,31 @@ begin
     cblas_scopy(A.Cols, @A.FData[i*A.Cols], 1, @result.FData[i*result.Cols], 1);
     cblas_scopy(B.Cols, @B.FData[i*B.Cols], 1, @result.FData[i*result.Cols + A.Cols], 1);
   end;
+end;
+
+function ReshapeS(const A: TVMobjS; NewRows, NewCols: TDimS): TVMobjS;
+const
+  s : String = 'Function ReshapeS : ';
+begin
+  assert(NewRows*NewCols = A.Rows*A.Cols, s+'NewRows*NewCols must equal A.Rows*A.Cols');
+  result := TVMobjS.Create(NewRows, NewCols);
+  cblas_scopy(A.Rows*A.Cols, A.DataPtr, 1, result.DataPtr, 1);
+end;
+
+function RepmatS(const A: TVMobjS; RowReps, ColReps: Integer): TVMobjS;
+const
+  s : String = 'Function RepmatS : ';
+var
+  i, j, r, destRow : integer;
+begin
+  assert((RowReps > 0) and (ColReps > 0), s+'RowReps and ColReps must be > 0');
+  result := TVMobjS.Create(A.Rows*RowReps, A.Cols*ColReps);
+  for i := 0 to RowReps-1 do
+    for r := 0 to A.Rows-1 do begin
+      destRow := i*A.Rows + r;
+      for j := 0 to ColReps-1 do
+        cblas_scopy(A.Cols, @A.FData[r*A.Cols], 1, @result.FData[destRow*result.Cols + j*A.Cols], 1);
+    end;
 end;
 
 class operator TVMobjS.+(const A, B: TVMobjS): TVMobjS;

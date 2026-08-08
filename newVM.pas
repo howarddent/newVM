@@ -164,6 +164,20 @@ function MergeUD(const A, B: TVMobj): TVMobj;
   halves of each row separately via cblas_dcopy - two calls per row, same
   "no block primitive -> loop of per-row BLAS calls" idiom Kron/FlipUD use. }
 function MergeLR(const A, B: TVMobj): TVMobj;
+{ Reshape - reinterprets A's Rows*Cols elements as a (NewRows,NewCols)
+  matrix (asserts NewRows*NewCols = A.Rows*A.Cols). Row-major storage means
+  the flat element order never changes, only how it's carved into rows, so
+  this is a single whole-buffer cblas_dcopy into a differently-shaped
+  result - the same "reinterpret the contiguous buffer" trick MergeUD's
+  half of the copy uses. }
+function Reshape(const A: TVMobj; NewRows, NewCols: TDim): TVMobj;
+{ Repmat - tiles A into a (A.Rows*RowReps, A.Cols*ColReps) result, RowReps
+  copies down and ColReps copies across (asserts RowReps>0, ColReps>0). No
+  BLAS/LAPACK/IPP primitive tiles a block, and unlike Reshape a tile's rows
+  aren't contiguous with the next tile's, so this copies each source row
+  into every (row-tile, col-tile) destination slot via cblas_dcopy - same
+  "no block primitive -> loop of per-row BLAS calls" idiom Kron/MergeLR use. }
+function Repmat(const A: TVMobj; RowReps, ColReps: Integer): TVMobj;
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vd* routines
   in OneAPI.pas). Each returns a new TVMobj of the same dimensions as A,
@@ -515,6 +529,31 @@ begin
     cblas_dcopy(A.Cols, @A.FData[i*A.Cols], 1, @result.FData[i*result.Cols], 1);
     cblas_dcopy(B.Cols, @B.FData[i*B.Cols], 1, @result.FData[i*result.Cols + A.Cols], 1);
   end;
+end;
+
+function Reshape(const A: TVMobj; NewRows, NewCols: TDim): TVMobj;
+const
+  s : String = 'Function Reshape : ';
+begin
+  assert(NewRows*NewCols = A.Rows*A.Cols, s+'NewRows*NewCols must equal A.Rows*A.Cols');
+  result := TVMobj.Create(NewRows, NewCols);
+  cblas_dcopy(A.Rows*A.Cols, A.DataPtr, 1, result.DataPtr, 1);
+end;
+
+function Repmat(const A: TVMobj; RowReps, ColReps: Integer): TVMobj;
+const
+  s : String = 'Function Repmat : ';
+var
+  i, j, r, destRow : integer;
+begin
+  assert((RowReps > 0) and (ColReps > 0), s+'RowReps and ColReps must be > 0');
+  result := TVMobj.Create(A.Rows*RowReps, A.Cols*ColReps);
+  for i := 0 to RowReps-1 do
+    for r := 0 to A.Rows-1 do begin
+      destRow := i*A.Rows + r;
+      for j := 0 to ColReps-1 do
+        cblas_dcopy(A.Cols, @A.FData[r*A.Cols], 1, @result.FData[destRow*result.Cols + j*A.Cols], 1);
+    end;
 end;
 
 class operator TVMobj.+(const A, B: TVMobj): TVMobj;
