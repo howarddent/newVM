@@ -136,6 +136,10 @@ function DiagC(const A: TVMobjC): TVMobjC;  //column vector (n,1) -> (n,n) diago
 function NormC(const A: TVMobjC): Single;  //Euclidean norm (real-valued), via cblas_scnrm2 - see Norm in newVM.pas
 function TraceC(const A: TVMobjC): TComplex8;  //sum of A's leading-diagonal elements - see Trace in newVM.pas
 function DetC(const A: TVMobjC): TComplex8;  //determinant, via LAPACKE_cgetrf - see Det in newVM.pas
+function FlipUDC(const A: TVMobjC): TVMobjC;  //reverses row order - see FlipUD in newVM.pas
+function FlipLRC(const A: TVMobjC): TVMobjC;  //reverses each row's element order, via ippsFlip_32fc - see FlipLR in newVM.pas
+function MergeUDC(const A, B: TVMobjC): TVMobjC;  //stacks A above B - see MergeUD in newVM.pas
+function MergeLRC(const A, B: TVMobjC): TVMobjC;  //places A left of B - see MergeLR in newVM.pas
 function Cplx8(re,im : Single): TComplex8;inline;
 function RealToComplexS(const A : TVMobjS): TVMobjC;    //promotes a real single TVMobjS to a complex TVMobjC, im = 0
 function GetRealPartS(const A : TVMobjC): TVMobjS;      //extracts the real component of A into a real single TVMobjS
@@ -451,6 +455,48 @@ begin
   for i := 0 to A.rows-1 do begin
     d := scratch[i,i];
     result := Cplx8(result.re*d.re - result.im*d.im, result.re*d.im + result.im*d.re);
+  end;
+end;
+
+function FlipUDC(const A: TVMobjC): TVMobjC;
+var
+  i : integer;
+begin
+  result := TVMobjC.Create(A.Rows, A.Cols);
+  for i := 0 to A.Rows-1 do
+    cblas_ccopy(A.Cols, @A.FData[i*A.Cols], 1, @result.FData[(A.Rows-1-i)*A.Cols], 1);
+end;
+
+function FlipLRC(const A: TVMobjC): TVMobjC;
+var
+  i : integer;
+begin
+  result := TVMobjC.Create(A.Rows, A.Cols);
+  for i := 0 to A.Rows-1 do
+    ippsFlip_32fc(@A.FData[i*A.Cols], @result.FData[i*A.Cols], A.Cols);
+end;
+
+function MergeUDC(const A, B: TVMobjC): TVMobjC;
+const
+  s : String = 'Function MergeUDC : ';
+begin
+  assert(A.Cols = B.Cols, s+'A and B must have the same number of columns');
+  result := TVMobjC.Create(A.Rows+B.Rows, A.Cols);
+  cblas_ccopy(A.Rows*A.Cols, @A.FData[0], 1, @result.FData[0], 1);
+  cblas_ccopy(B.Rows*B.Cols, @B.FData[0], 1, @result.FData[A.Rows*A.Cols], 1);
+end;
+
+function MergeLRC(const A, B: TVMobjC): TVMobjC;
+const
+  s : String = 'Function MergeLRC : ';
+var
+  i : integer;
+begin
+  assert(A.Rows = B.Rows, s+'A and B must have the same number of rows');
+  result := TVMobjC.Create(A.Rows, A.Cols+B.Cols);
+  for i := 0 to A.Rows-1 do begin
+    cblas_ccopy(A.Cols, @A.FData[i*A.Cols], 1, @result.FData[i*result.Cols], 1);
+    cblas_ccopy(B.Cols, @B.FData[i*B.Cols], 1, @result.FData[i*result.Cols + A.Cols], 1);
   end;
 end;
 

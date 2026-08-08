@@ -57,6 +57,8 @@ type
     procedure Raise_DiagNotColumnVector;
     procedure Raise_TraceNonSquare;
     procedure Raise_DetNonSquare;
+    procedure Raise_MergeUDColMismatch;
+    procedure Raise_MergeLRRowMismatch;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -103,6 +105,12 @@ type
     procedure TestDetKnownValues;
     procedure TestDetSingularIsZero;
     procedure TestDetNonSquareAsserts;
+    procedure TestFlipUDKnownValues;
+    procedure TestFlipLRKnownValues;
+    procedure TestMergeUDKnownValues;
+    procedure TestMergeUDColMismatchAsserts;
+    procedure TestMergeLRKnownValues;
+    procedure TestMergeLRRowMismatchAsserts;
   end;
 
   { TVMobjSTests - newVMSingle.pas, real single }
@@ -123,6 +131,8 @@ type
     procedure Raise_DiagNotColumnVector;
     procedure Raise_TraceNonSquare;
     procedure Raise_DetNonSquare;
+    procedure Raise_MergeUDColMismatch;
+    procedure Raise_MergeLRRowMismatch;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -169,6 +179,12 @@ type
     procedure TestDetKnownValues;
     procedure TestDetSingularIsZero;
     procedure TestDetNonSquareAsserts;
+    procedure TestFlipUDKnownValues;
+    procedure TestFlipLRKnownValues;
+    procedure TestMergeUDKnownValues;
+    procedure TestMergeUDColMismatchAsserts;
+    procedure TestMergeLRKnownValues;
+    procedure TestMergeLRRowMismatchAsserts;
   end;
 
   { TVMobjZTests - newVMComplex.pas, complex double }
@@ -189,6 +205,8 @@ type
     procedure Raise_DiagNotColumnVector;
     procedure Raise_TraceNonSquare;
     procedure Raise_DetNonSquare;
+    procedure Raise_MergeUDColMismatch;
+    procedure Raise_MergeLRRowMismatch;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -235,6 +253,12 @@ type
     procedure TestDetKnownValues;
     procedure TestDetSingularIsZero;
     procedure TestDetNonSquareAsserts;
+    procedure TestFlipUDKnownValues;
+    procedure TestFlipLRKnownValues;
+    procedure TestMergeUDKnownValues;
+    procedure TestMergeUDColMismatchAsserts;
+    procedure TestMergeLRKnownValues;
+    procedure TestMergeLRRowMismatchAsserts;
   end;
 
   { TVMobjCTests - newVMComplexSingle.pas, complex single }
@@ -255,6 +279,8 @@ type
     procedure Raise_DiagNotColumnVector;
     procedure Raise_TraceNonSquare;
     procedure Raise_DetNonSquare;
+    procedure Raise_MergeUDColMismatch;
+    procedure Raise_MergeLRRowMismatch;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -301,6 +327,12 @@ type
     procedure TestDetKnownValues;
     procedure TestDetSingularIsZero;
     procedure TestDetNonSquareAsserts;
+    procedure TestFlipUDKnownValues;
+    procedure TestFlipLRKnownValues;
+    procedure TestMergeUDKnownValues;
+    procedure TestMergeUDColMismatchAsserts;
+    procedure TestMergeLRKnownValues;
+    procedure TestMergeLRRowMismatchAsserts;
   end;
 
   { TVMobjITests - newVMI.pas, integer index array/matrix }
@@ -444,6 +476,22 @@ var A: TVMobj; D: Double;
 begin
   A := TVMobj.Create(2, 3, [1, 2, 3, 4, 5, 6]);
   D := Det(A);
+end;
+
+procedure TVMobjTests.Raise_MergeUDColMismatch;
+var A, B, M: TVMobj;
+begin
+  A := TVMobj.Create(1, 2, [1, 2]);
+  B := TVMobj.Create(1, 3, [1, 2, 3]);
+  M := MergeUD(A, B);
+end;
+
+procedure TVMobjTests.Raise_MergeLRRowMismatch;
+var A, B, M: TVMobj;
+begin
+  A := TVMobj.Create(2, 1, [1, 2]);
+  B := TVMobj.Create(3, 1, [1, 2, 3]);
+  M := MergeLR(A, B);
 end;
 
 procedure TVMobjTests.TestCreateZeroFills;
@@ -878,6 +926,59 @@ begin
   AssertException(EAssertionFailed, @Raise_DetNonSquare);
 end;
 
+procedure TVMobjTests.TestFlipUDKnownValues;
+var A, R: TVMobj;
+begin
+  A := TVMobj.Create(2, 3, [1, 2, 3, 4, 5, 6]);
+  R := FlipUD(A);
+  AssertEquals(4, R[0,0], DblTol); AssertEquals(5, R[0,1], DblTol); AssertEquals(6, R[0,2], DblTol);
+  AssertEquals(1, R[1,0], DblTol); AssertEquals(2, R[1,1], DblTol); AssertEquals(3, R[1,2], DblTol);
+end;
+
+procedure TVMobjTests.TestFlipLRKnownValues;
+var A, R: TVMobj;
+begin
+  A := TVMobj.Create(2, 3, [1, 2, 3, 4, 5, 6]);
+  R := FlipLR(A);
+  AssertEquals(3, R[0,0], DblTol); AssertEquals(2, R[0,1], DblTol); AssertEquals(1, R[0,2], DblTol);
+  AssertEquals(6, R[1,0], DblTol); AssertEquals(5, R[1,1], DblTol); AssertEquals(4, R[1,2], DblTol);
+end;
+
+procedure TVMobjTests.TestMergeUDKnownValues;
+var A, B, M: TVMobj;
+begin
+  A := TVMobj.Create(1, 3, [1, 2, 3]);
+  B := TVMobj.Create(2, 3, [4, 5, 6, 7, 8, 9]);
+  M := MergeUD(A, B);
+  AssertEquals('Rows', 3, M.Rows);
+  AssertEquals('Cols', 3, M.Cols);
+  AssertEquals(1, M[0,0], DblTol); AssertEquals(2, M[0,1], DblTol); AssertEquals(3, M[0,2], DblTol);
+  AssertEquals(4, M[1,0], DblTol); AssertEquals(5, M[1,1], DblTol); AssertEquals(6, M[1,2], DblTol);
+  AssertEquals(7, M[2,0], DblTol); AssertEquals(8, M[2,1], DblTol); AssertEquals(9, M[2,2], DblTol);
+end;
+
+procedure TVMobjTests.TestMergeUDColMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_MergeUDColMismatch);
+end;
+
+procedure TVMobjTests.TestMergeLRKnownValues;
+var A, B, M: TVMobj;
+begin
+  A := TVMobj.Create(2, 1, [1, 4]);
+  B := TVMobj.Create(2, 2, [2, 3, 5, 6]);
+  M := MergeLR(A, B);
+  AssertEquals('Rows', 2, M.Rows);
+  AssertEquals('Cols', 3, M.Cols);
+  AssertEquals(1, M[0,0], DblTol); AssertEquals(2, M[0,1], DblTol); AssertEquals(3, M[0,2], DblTol);
+  AssertEquals(4, M[1,0], DblTol); AssertEquals(5, M[1,1], DblTol); AssertEquals(6, M[1,2], DblTol);
+end;
+
+procedure TVMobjTests.TestMergeLRRowMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_MergeLRRowMismatch);
+end;
+
 {===========================================================================
   TVMobjSTests  (real single)
 ===========================================================================}
@@ -978,6 +1079,22 @@ var A: TVMobjS; D: Single;
 begin
   A := TVMobjS.Create(2, 3, [1, 2, 3, 4, 5, 6]);
   D := DetS(A);
+end;
+
+procedure TVMobjSTests.Raise_MergeUDColMismatch;
+var A, B, M: TVMobjS;
+begin
+  A := TVMobjS.Create(1, 2, [1, 2]);
+  B := TVMobjS.Create(1, 3, [1, 2, 3]);
+  M := MergeUDS(A, B);
+end;
+
+procedure TVMobjSTests.Raise_MergeLRRowMismatch;
+var A, B, M: TVMobjS;
+begin
+  A := TVMobjS.Create(2, 1, [1, 2]);
+  B := TVMobjS.Create(3, 1, [1, 2, 3]);
+  M := MergeLRS(A, B);
 end;
 
 procedure TVMobjSTests.TestCreateZeroFills;
@@ -1405,6 +1522,59 @@ begin
   AssertException(EAssertionFailed, @Raise_DetNonSquare);
 end;
 
+procedure TVMobjSTests.TestFlipUDKnownValues;
+var A, R: TVMobjS;
+begin
+  A := TVMobjS.Create(2, 3, [1, 2, 3, 4, 5, 6]);
+  R := FlipUDS(A);
+  AssertEquals(4, R[0,0], SngTol); AssertEquals(5, R[0,1], SngTol); AssertEquals(6, R[0,2], SngTol);
+  AssertEquals(1, R[1,0], SngTol); AssertEquals(2, R[1,1], SngTol); AssertEquals(3, R[1,2], SngTol);
+end;
+
+procedure TVMobjSTests.TestFlipLRKnownValues;
+var A, R: TVMobjS;
+begin
+  A := TVMobjS.Create(2, 3, [1, 2, 3, 4, 5, 6]);
+  R := FlipLRS(A);
+  AssertEquals(3, R[0,0], SngTol); AssertEquals(2, R[0,1], SngTol); AssertEquals(1, R[0,2], SngTol);
+  AssertEquals(6, R[1,0], SngTol); AssertEquals(5, R[1,1], SngTol); AssertEquals(4, R[1,2], SngTol);
+end;
+
+procedure TVMobjSTests.TestMergeUDKnownValues;
+var A, B, M: TVMobjS;
+begin
+  A := TVMobjS.Create(1, 3, [1, 2, 3]);
+  B := TVMobjS.Create(2, 3, [4, 5, 6, 7, 8, 9]);
+  M := MergeUDS(A, B);
+  AssertEquals('Rows', 3, M.Rows);
+  AssertEquals('Cols', 3, M.Cols);
+  AssertEquals(1, M[0,0], SngTol); AssertEquals(2, M[0,1], SngTol); AssertEquals(3, M[0,2], SngTol);
+  AssertEquals(4, M[1,0], SngTol); AssertEquals(5, M[1,1], SngTol); AssertEquals(6, M[1,2], SngTol);
+  AssertEquals(7, M[2,0], SngTol); AssertEquals(8, M[2,1], SngTol); AssertEquals(9, M[2,2], SngTol);
+end;
+
+procedure TVMobjSTests.TestMergeUDColMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_MergeUDColMismatch);
+end;
+
+procedure TVMobjSTests.TestMergeLRKnownValues;
+var A, B, M: TVMobjS;
+begin
+  A := TVMobjS.Create(2, 1, [1, 4]);
+  B := TVMobjS.Create(2, 2, [2, 3, 5, 6]);
+  M := MergeLRS(A, B);
+  AssertEquals('Rows', 2, M.Rows);
+  AssertEquals('Cols', 3, M.Cols);
+  AssertEquals(1, M[0,0], SngTol); AssertEquals(2, M[0,1], SngTol); AssertEquals(3, M[0,2], SngTol);
+  AssertEquals(4, M[1,0], SngTol); AssertEquals(5, M[1,1], SngTol); AssertEquals(6, M[1,2], SngTol);
+end;
+
+procedure TVMobjSTests.TestMergeLRRowMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_MergeLRRowMismatch);
+end;
+
 {===========================================================================
   TVMobjZTests  (complex double)
 ===========================================================================}
@@ -1505,6 +1675,22 @@ var A: TVMobjZ; D: TComplex16;
 begin
   A := TVMobjZ.Create(2, 3, [Cplx(1,0), Cplx(2,0), Cplx(3,0), Cplx(4,0), Cplx(5,0), Cplx(6,0)]);
   D := DetZ(A);
+end;
+
+procedure TVMobjZTests.Raise_MergeUDColMismatch;
+var A, B, M: TVMobjZ;
+begin
+  A := TVMobjZ.Create(1, 2, [Cplx(1,0), Cplx(2,0)]);
+  B := TVMobjZ.Create(1, 3, [Cplx(1,0), Cplx(2,0), Cplx(3,0)]);
+  M := MergeUDZ(A, B);
+end;
+
+procedure TVMobjZTests.Raise_MergeLRRowMismatch;
+var A, B, M: TVMobjZ;
+begin
+  A := TVMobjZ.Create(2, 1, [Cplx(1,0), Cplx(2,0)]);
+  B := TVMobjZ.Create(3, 1, [Cplx(1,0), Cplx(2,0), Cplx(3,0)]);
+  M := MergeLRZ(A, B);
 end;
 
 procedure TVMobjZTests.TestCreateZeroFills;
@@ -2007,6 +2193,68 @@ begin
   AssertException(EAssertionFailed, @Raise_DetNonSquare);
 end;
 
+procedure TVMobjZTests.TestFlipUDKnownValues;
+var A, R: TVMobjZ;
+begin
+  A := TVMobjZ.Create(2, 2, [Cplx(1,1), Cplx(2,2), Cplx(3,3), Cplx(4,4)]);
+  R := FlipUDZ(A);
+  AssertEquals(3, R[0,0].re, DblTol); AssertEquals(3, R[0,0].im, DblTol);
+  AssertEquals(4, R[0,1].re, DblTol); AssertEquals(4, R[0,1].im, DblTol);
+  AssertEquals(1, R[1,0].re, DblTol); AssertEquals(1, R[1,0].im, DblTol);
+  AssertEquals(2, R[1,1].re, DblTol); AssertEquals(2, R[1,1].im, DblTol);
+end;
+
+procedure TVMobjZTests.TestFlipLRKnownValues;
+var A, R: TVMobjZ;
+begin
+  A := TVMobjZ.Create(2, 2, [Cplx(1,1), Cplx(2,2), Cplx(3,3), Cplx(4,4)]);
+  R := FlipLRZ(A);
+  AssertEquals(2, R[0,0].re, DblTol); AssertEquals(2, R[0,0].im, DblTol);
+  AssertEquals(1, R[0,1].re, DblTol); AssertEquals(1, R[0,1].im, DblTol);
+  AssertEquals(4, R[1,0].re, DblTol); AssertEquals(4, R[1,0].im, DblTol);
+  AssertEquals(3, R[1,1].re, DblTol); AssertEquals(3, R[1,1].im, DblTol);
+end;
+
+procedure TVMobjZTests.TestMergeUDKnownValues;
+var A, B, M: TVMobjZ;
+begin
+  A := TVMobjZ.Create(1, 3, [Cplx(1,10), Cplx(2,20), Cplx(3,30)]);
+  B := TVMobjZ.Create(2, 3, [Cplx(4,40), Cplx(5,50), Cplx(6,60), Cplx(7,70), Cplx(8,80), Cplx(9,90)]);
+  M := MergeUDZ(A, B);
+  AssertEquals('Rows', 3, M.Rows);
+  AssertEquals('Cols', 3, M.Cols);
+  AssertEquals(1, M[0,0].re, DblTol); AssertEquals(10, M[0,0].im, DblTol);
+  AssertEquals(3, M[0,2].re, DblTol); AssertEquals(30, M[0,2].im, DblTol);
+  AssertEquals(4, M[1,0].re, DblTol); AssertEquals(40, M[1,0].im, DblTol);
+  AssertEquals(9, M[2,2].re, DblTol); AssertEquals(90, M[2,2].im, DblTol);
+end;
+
+procedure TVMobjZTests.TestMergeUDColMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_MergeUDColMismatch);
+end;
+
+procedure TVMobjZTests.TestMergeLRKnownValues;
+var A, B, M: TVMobjZ;
+begin
+  A := TVMobjZ.Create(2, 1, [Cplx(1,10), Cplx(4,40)]);
+  B := TVMobjZ.Create(2, 2, [Cplx(2,20), Cplx(3,30), Cplx(5,50), Cplx(6,60)]);
+  M := MergeLRZ(A, B);
+  AssertEquals('Rows', 2, M.Rows);
+  AssertEquals('Cols', 3, M.Cols);
+  AssertEquals(1, M[0,0].re, DblTol); AssertEquals(10, M[0,0].im, DblTol);
+  AssertEquals(2, M[0,1].re, DblTol); AssertEquals(20, M[0,1].im, DblTol);
+  AssertEquals(3, M[0,2].re, DblTol); AssertEquals(30, M[0,2].im, DblTol);
+  AssertEquals(4, M[1,0].re, DblTol); AssertEquals(40, M[1,0].im, DblTol);
+  AssertEquals(5, M[1,1].re, DblTol); AssertEquals(50, M[1,1].im, DblTol);
+  AssertEquals(6, M[1,2].re, DblTol); AssertEquals(60, M[1,2].im, DblTol);
+end;
+
+procedure TVMobjZTests.TestMergeLRRowMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_MergeLRRowMismatch);
+end;
+
 {===========================================================================
   TVMobjCTests  (complex single)
 ===========================================================================}
@@ -2107,6 +2355,22 @@ var A: TVMobjC; D: TComplex8;
 begin
   A := TVMobjC.Create(2, 3, [Cplx8(1,0), Cplx8(2,0), Cplx8(3,0), Cplx8(4,0), Cplx8(5,0), Cplx8(6,0)]);
   D := DetC(A);
+end;
+
+procedure TVMobjCTests.Raise_MergeUDColMismatch;
+var A, B, M: TVMobjC;
+begin
+  A := TVMobjC.Create(1, 2, [Cplx8(1,0), Cplx8(2,0)]);
+  B := TVMobjC.Create(1, 3, [Cplx8(1,0), Cplx8(2,0), Cplx8(3,0)]);
+  M := MergeUDC(A, B);
+end;
+
+procedure TVMobjCTests.Raise_MergeLRRowMismatch;
+var A, B, M: TVMobjC;
+begin
+  A := TVMobjC.Create(2, 1, [Cplx8(1,0), Cplx8(2,0)]);
+  B := TVMobjC.Create(3, 1, [Cplx8(1,0), Cplx8(2,0), Cplx8(3,0)]);
+  M := MergeLRC(A, B);
 end;
 
 procedure TVMobjCTests.TestCreateZeroFills;
@@ -2598,6 +2862,68 @@ end;
 procedure TVMobjCTests.TestDetNonSquareAsserts;
 begin
   AssertException(EAssertionFailed, @Raise_DetNonSquare);
+end;
+
+procedure TVMobjCTests.TestFlipUDKnownValues;
+var A, R: TVMobjC;
+begin
+  A := TVMobjC.Create(2, 2, [Cplx8(1,1), Cplx8(2,2), Cplx8(3,3), Cplx8(4,4)]);
+  R := FlipUDC(A);
+  AssertEquals(3, R[0,0].re, SngTol); AssertEquals(3, R[0,0].im, SngTol);
+  AssertEquals(4, R[0,1].re, SngTol); AssertEquals(4, R[0,1].im, SngTol);
+  AssertEquals(1, R[1,0].re, SngTol); AssertEquals(1, R[1,0].im, SngTol);
+  AssertEquals(2, R[1,1].re, SngTol); AssertEquals(2, R[1,1].im, SngTol);
+end;
+
+procedure TVMobjCTests.TestFlipLRKnownValues;
+var A, R: TVMobjC;
+begin
+  A := TVMobjC.Create(2, 2, [Cplx8(1,1), Cplx8(2,2), Cplx8(3,3), Cplx8(4,4)]);
+  R := FlipLRC(A);
+  AssertEquals(2, R[0,0].re, SngTol); AssertEquals(2, R[0,0].im, SngTol);
+  AssertEquals(1, R[0,1].re, SngTol); AssertEquals(1, R[0,1].im, SngTol);
+  AssertEquals(4, R[1,0].re, SngTol); AssertEquals(4, R[1,0].im, SngTol);
+  AssertEquals(3, R[1,1].re, SngTol); AssertEquals(3, R[1,1].im, SngTol);
+end;
+
+procedure TVMobjCTests.TestMergeUDKnownValues;
+var A, B, M: TVMobjC;
+begin
+  A := TVMobjC.Create(1, 3, [Cplx8(1,10), Cplx8(2,20), Cplx8(3,30)]);
+  B := TVMobjC.Create(2, 3, [Cplx8(4,40), Cplx8(5,50), Cplx8(6,60), Cplx8(7,70), Cplx8(8,80), Cplx8(9,90)]);
+  M := MergeUDC(A, B);
+  AssertEquals('Rows', 3, M.Rows);
+  AssertEquals('Cols', 3, M.Cols);
+  AssertEquals(1, M[0,0].re, SngTol); AssertEquals(10, M[0,0].im, SngTol);
+  AssertEquals(3, M[0,2].re, SngTol); AssertEquals(30, M[0,2].im, SngTol);
+  AssertEquals(4, M[1,0].re, SngTol); AssertEquals(40, M[1,0].im, SngTol);
+  AssertEquals(9, M[2,2].re, SngTol); AssertEquals(90, M[2,2].im, SngTol);
+end;
+
+procedure TVMobjCTests.TestMergeUDColMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_MergeUDColMismatch);
+end;
+
+procedure TVMobjCTests.TestMergeLRKnownValues;
+var A, B, M: TVMobjC;
+begin
+  A := TVMobjC.Create(2, 1, [Cplx8(1,10), Cplx8(4,40)]);
+  B := TVMobjC.Create(2, 2, [Cplx8(2,20), Cplx8(3,30), Cplx8(5,50), Cplx8(6,60)]);
+  M := MergeLRC(A, B);
+  AssertEquals('Rows', 2, M.Rows);
+  AssertEquals('Cols', 3, M.Cols);
+  AssertEquals(1, M[0,0].re, SngTol); AssertEquals(10, M[0,0].im, SngTol);
+  AssertEquals(2, M[0,1].re, SngTol); AssertEquals(20, M[0,1].im, SngTol);
+  AssertEquals(3, M[0,2].re, SngTol); AssertEquals(30, M[0,2].im, SngTol);
+  AssertEquals(4, M[1,0].re, SngTol); AssertEquals(40, M[1,0].im, SngTol);
+  AssertEquals(5, M[1,1].re, SngTol); AssertEquals(50, M[1,1].im, SngTol);
+  AssertEquals(6, M[1,2].re, SngTol); AssertEquals(60, M[1,2].im, SngTol);
+end;
+
+procedure TVMobjCTests.TestMergeLRRowMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_MergeLRRowMismatch);
 end;
 
 {===========================================================================

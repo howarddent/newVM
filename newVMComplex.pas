@@ -151,6 +151,10 @@ function DiagZ(const A: TVMobjZ): TVMobjZ;  //column vector (n,1) -> (n,n) diago
 function NormZ(const A: TVMobjZ): Double;  //Euclidean norm (real-valued), via cblas_dznrm2 - see Norm in newVM.pas
 function TraceZ(const A: TVMobjZ): TComplex16;  //sum of A's leading-diagonal elements - see Trace in newVM.pas
 function DetZ(const A: TVMobjZ): TComplex16;  //determinant, via LAPACKE_zgetrf - see Det in newVM.pas
+function FlipUDZ(const A: TVMobjZ): TVMobjZ;  //reverses row order - see FlipUD in newVM.pas
+function FlipLRZ(const A: TVMobjZ): TVMobjZ;  //reverses each row's element order, via ippsFlip_64fc - see FlipLR in newVM.pas
+function MergeUDZ(const A, B: TVMobjZ): TVMobjZ;  //stacks A above B - see MergeUD in newVM.pas
+function MergeLRZ(const A, B: TVMobjZ): TVMobjZ;  //places A left of B - see MergeLR in newVM.pas
 function Cplx(re,im : Double): TComplex16;inline;
 function RealToComplex(const A : TVMobj): TVMobjZ;    //promotes a real double TVMobj to a complex TVMobjZ, im = 0
 function GetRealPart(const A : TVMobjZ): TVMobj;      //extracts the real component of A into a real double TVMobj
@@ -472,6 +476,48 @@ begin
   for i := 0 to A.rows-1 do begin
     d := scratch[i,i];
     result := Cplx(result.re*d.re - result.im*d.im, result.re*d.im + result.im*d.re);
+  end;
+end;
+
+function FlipUDZ(const A: TVMobjZ): TVMobjZ;
+var
+  i : integer;
+begin
+  result := TVMobjZ.Create(A.Rows, A.Cols);
+  for i := 0 to A.Rows-1 do
+    cblas_zcopy(A.Cols, @A.FData[i*A.Cols], 1, @result.FData[(A.Rows-1-i)*A.Cols], 1);
+end;
+
+function FlipLRZ(const A: TVMobjZ): TVMobjZ;
+var
+  i : integer;
+begin
+  result := TVMobjZ.Create(A.Rows, A.Cols);
+  for i := 0 to A.Rows-1 do
+    ippsFlip_64fc(@A.FData[i*A.Cols], @result.FData[i*A.Cols], A.Cols);
+end;
+
+function MergeUDZ(const A, B: TVMobjZ): TVMobjZ;
+const
+  s : String = 'Function MergeUDZ : ';
+begin
+  assert(A.Cols = B.Cols, s+'A and B must have the same number of columns');
+  result := TVMobjZ.Create(A.Rows+B.Rows, A.Cols);
+  cblas_zcopy(A.Rows*A.Cols, @A.FData[0], 1, @result.FData[0], 1);
+  cblas_zcopy(B.Rows*B.Cols, @B.FData[0], 1, @result.FData[A.Rows*A.Cols], 1);
+end;
+
+function MergeLRZ(const A, B: TVMobjZ): TVMobjZ;
+const
+  s : String = 'Function MergeLRZ : ';
+var
+  i : integer;
+begin
+  assert(A.Rows = B.Rows, s+'A and B must have the same number of rows');
+  result := TVMobjZ.Create(A.Rows, A.Cols+B.Cols);
+  for i := 0 to A.Rows-1 do begin
+    cblas_zcopy(A.Cols, @A.FData[i*A.Cols], 1, @result.FData[i*result.Cols], 1);
+    cblas_zcopy(B.Cols, @B.FData[i*B.Cols], 1, @result.FData[i*result.Cols + A.Cols], 1);
   end;
 end;
 

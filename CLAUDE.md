@@ -299,6 +299,58 @@ scratch buffer so `A` itself is left untouched:
   `TVMobjZ`/`TVMobjC` operator overloads (which operate on whole
   matrices, not two loose scalars).
 
+### `FlipUD`/`FlipUDS`/`FlipUDZ`/`FlipUDC` and `FlipLR`/`FlipLRS`/`FlipLRZ`/`FlipLRC`
+
+Two more single-argument, per-unit functions following the `Diag`/`Norm`/
+`Trace`/`Det` suffix naming convention. Both return a new object of the
+same shape as `A`; neither has a dimension assert, since row/column
+reversal is defined for any shape.
+
+- `FlipUD` reverses the order of `A`'s rows (row 0 swaps with row
+  `Rows-1`, etc). No BLAS/LAPACK/IPP primitive reverses whole rows as a
+  block - IPP's `ippsFlip` (see `FlipLR` below) reverses individual
+  elements, not row-sized chunks, and a block's source/dest rows aren't
+  related by a single fixed stride the way `Diag`'s diagonal is - so this
+  copies each source row to its mirrored destination row via
+  `cblas_?copy`, one call per row, the same "no block primitive -> loop of
+  per-row BLAS calls" idiom `Kron` uses.
+- `FlipLR` reverses the order of elements *within* each row. Unlike
+  `FlipUD`, IPP has an exact primitive for this: `ippsFlip_64f`/`_32f`/
+  `_64fc`/`_32fc` reverses a vector's element order into a (possibly
+  different) destination buffer, so this calls it once per row with
+  `len=Cols`. These four `ippsFlip_*` bindings were newly added to
+  `OneAPI.pas` for this (both the Unix `external` declarations and the
+  Windows procedural-type/`LoadIPPFunctions` bindings - see "Cross-platform
+  library binding" below) since nothing before `FlipLR` needed them; no
+  other new bindings were required. The complex variants take
+  `PComplex16`/`PComplex8` in place of IPP's own `Ipp64fc`/`Ipp32fc`
+  pointer types - bit-identical layout, the same interop trick used
+  throughout (see `TComplex16`/`TComplex8` in "External bindings" below).
+
+### `MergeUD`/`MergeUDS`/`MergeUDZ`/`MergeUDC` and `MergeLR`/`MergeLRS`/`MergeLRZ`/`MergeLRC`
+
+Two-argument, per-unit functions, same suffix convention as `Kron`. `A`
+and `B` are combined into one larger result; unlike `Kron`, dimensions
+*do* have to agree along the non-merged axis, so each asserts that.
+
+- `MergeUD(A, B)` stacks `A` above `B` into an `(A.Rows+B.Rows, Cols)`
+  result (asserts `A.Cols = B.Cols`). Row-major storage makes this
+  trivial: `A`'s rows and `B`'s rows are each already one contiguous
+  block in memory, so the whole operation is just two whole-buffer
+  `cblas_?copy` calls - `A`'s buffer straight into the start of the
+  result, `B`'s straight after - no per-row loop needed, unlike every
+  other multi-row routine in this file (`Kron`, `FlipUD`, `MergeLR`).
+- `MergeLR(A, B)` places `A` to the left of `B` into an `(Rows,
+  A.Cols+B.Cols)` result (asserts `A.Rows = B.Rows`). Here a source row's
+  data is *not* contiguous with the next row's in the merged result
+  (each result row is `A`'s row immediately followed by `B`'s row), so
+  this copies both halves of each row separately via `cblas_?copy` - two
+  calls per row, the same "no block primitive -> loop of per-row BLAS
+  calls" idiom `Kron`/`FlipUD` use.
+- No new external bindings needed for either - both are built entirely on
+  `cblas_?copy`, already cross-platform bound (see `Diag`/`Norm` above for
+  why that means zero Windows-specific work).
+
 ### Elementwise math functions
 
 Each unit also declares plain (non-operator) functions `Sin`, `Cos`, `Tan`,
@@ -506,7 +558,8 @@ external function.
   symbol from that one handle via `MKLProc`. If a future oneAPI release
   bumps the suffix past 10, extend `MKLCandidateLibs`.
 - **IPP** (`ippsCos_64f_A50`, `ippsVectorSlope_64f`/`_32f`, `ippsCopy_64f`,
-  `ippsMulC_64f`/`_I_L`, `ippsAddC_64f_I`, `ippsSubC_64f_I`,
+  `ippsFlip_64f`/`_32f`/`_64fc`/`_32fc`, `ippsMulC_64f`/`_I_L`,
+  `ippsAddC_64f_I`, `ippsSubC_64f_I`,
   `ippsDivC_64f_I`/`_32f_I`, `ippsSqr_64f_I`, `ippsExp_64f_I`, `ippInit`,
   `ippMalloc`, `ippFree`) is split across three separate DLLs even on
   Windows (`ippcore.dll`/`ippvm.dll`/`ipps.dll`, mirroring the Linux
@@ -567,15 +620,18 @@ non-column-vector assertion path), `Norm*` (a classic 3-4-5 known value,
 complex-valued via two purely-real/purely-imaginary components so
 `|3|²+|4i|²=25`), `Trace*` (a known-value 3×3 case, plus the non-square
 assertion path — the complex types' cases check both `.re` and `.im` of
-the summed diagonal), and `Det*` (a known-value 2×2 case checked against
+the summed diagonal), `Det*` (a known-value 2×2 case checked against
 `ad-bc`, plus a deliberately-singular 2×2 case verifying the determinant
 comes out exactly 0 with no special-casing, and the non-square assertion
-path), every operator overload including the assertion paths, the
-elementwise VML functions, and `DCT1`..`DCT4`/`DST1`..`DST4` (each
-verified as a
-self-inverse or mutual-inverse round trip at the exact FFTW scale factor
-for that kind - see the "FFT/DCT/DST functions" architecture section
-above). The two real types (`TVMobjTests`/`TVMobjSTests`) additionally
+path), `FlipUD*`/`FlipLR*` (a known-value non-square 2×3 case each,
+checked element-by-element), `MergeUD*`/`MergeLR*` (a known-value case
+each checked element-by-element plus the result's `Rows`/`Cols`, and the
+column/row-mismatch assertion path respectively), every operator overload
+including the assertion paths, the elementwise VML functions, and
+`DCT1`..`DCT4`/`DST1`..`DST4` (each verified as a self-inverse or
+mutual-inverse round trip at the exact FFTW scale factor for that kind -
+see the "FFT/DCT/DST functions" architecture section above). The two real
+types (`TVMobjTests`/`TVMobjSTests`) additionally
 cover `Find` (known-value checks against each `TVMCompareOp`). The two
 complex types additionally cover
 `RealToComplex*`/`GetRealPart*`/`GetImagPart*`/`SplitComplex*`,

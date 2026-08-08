@@ -104,6 +104,10 @@ function DiagS(const A: TVMobjS): TVMobjS;  //column vector (n,1) -> (n,n) diago
 function NormS(const A: TVMobjS): Single;  //Euclidean norm - see Norm in newVM.pas
 function TraceS(const A: TVMobjS): Single;  //sum of A's leading-diagonal elements - see Trace in newVM.pas
 function DetS(const A: TVMobjS): Single;  //determinant, via LAPACKE_sgetrf - see Det in newVM.pas
+function FlipUDS(const A: TVMobjS): TVMobjS;  //reverses row order - see FlipUD in newVM.pas
+function FlipLRS(const A: TVMobjS): TVMobjS;  //reverses each row's element order, via ippsFlip_32f - see FlipLR in newVM.pas
+function MergeUDS(const A, B: TVMobjS): TVMobjS;  //stacks A above B - see MergeUD in newVM.pas
+function MergeLRS(const A, B: TVMobjS): TVMobjS;  //places A left of B - see MergeLR in newVM.pas
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vs* routines
   in OneAPI.pas). Each returns a new TVMobjS of the same dimensions as A,
@@ -404,6 +408,48 @@ begin
   result := sign;
   for i := 0 to A.rows-1 do
     result := result * scratch[i,i];
+end;
+
+function FlipUDS(const A: TVMobjS): TVMobjS;
+var
+  i : integer;
+begin
+  result := TVMobjS.Create(A.Rows, A.Cols);
+  for i := 0 to A.Rows-1 do
+    cblas_scopy(A.Cols, @A.FData[i*A.Cols], 1, @result.FData[(A.Rows-1-i)*A.Cols], 1);
+end;
+
+function FlipLRS(const A: TVMobjS): TVMobjS;
+var
+  i : integer;
+begin
+  result := TVMobjS.Create(A.Rows, A.Cols);
+  for i := 0 to A.Rows-1 do
+    ippsFlip_32f(@A.FData[i*A.Cols], @result.FData[i*A.Cols], A.Cols);
+end;
+
+function MergeUDS(const A, B: TVMobjS): TVMobjS;
+const
+  s : String = 'Function MergeUDS : ';
+begin
+  assert(A.Cols = B.Cols, s+'A and B must have the same number of columns');
+  result := TVMobjS.Create(A.Rows+B.Rows, A.Cols);
+  cblas_scopy(A.Rows*A.Cols, A.DataPtr, 1, result.DataPtr, 1);
+  cblas_scopy(B.Rows*B.Cols, B.DataPtr, 1, @result.FData[A.Rows*A.Cols], 1);
+end;
+
+function MergeLRS(const A, B: TVMobjS): TVMobjS;
+const
+  s : String = 'Function MergeLRS : ';
+var
+  i : integer;
+begin
+  assert(A.Rows = B.Rows, s+'A and B must have the same number of rows');
+  result := TVMobjS.Create(A.Rows, A.Cols+B.Cols);
+  for i := 0 to A.Rows-1 do begin
+    cblas_scopy(A.Cols, @A.FData[i*A.Cols], 1, @result.FData[i*result.Cols], 1);
+    cblas_scopy(B.Cols, @B.FData[i*B.Cols], 1, @result.FData[i*result.Cols + A.Cols], 1);
+  end;
 end;
 
 class operator TVMobjS.+(const A, B: TVMobjS): TVMobjS;

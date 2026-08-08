@@ -385,6 +385,19 @@ function ippsCopy_64f(const pSrc: PDouble; pDst: PDouble; len: Integer): Integer
 //integer analogue of ippsCopy_64f, for newVMI's CopyObjI.
 function ippsCopy_32s(const pSrc: PInteger; pDst: PInteger; len: Integer): Integer; cdecl;external;
 
+//ippsFlip - reverses the element order of a vector into a (possibly
+//different) destination buffer, for newVM.pas's/newVMSingle.pas's/
+//newVMComplex.pas's/newVMComplexSingle.pas's FlipLR (reverses each row's
+//elements). PComplex16/PComplex8 stand in for Ipp64fc/Ipp32fc - bit-identical
+//layout, same trick used throughout for MKL/IPP complex interop.
+function ippsFlip_64f(const pSrc: PDouble; pDst: PDouble; len: Integer): Integer; cdecl;external;
+
+function ippsFlip_32f(const pSrc: PSingle; pDst: PSingle; len: Integer): Integer; cdecl;external;
+
+function ippsFlip_64fc(const pSrc: PComplex16; pDst: PComplex16; len: Integer): Integer; cdecl;external;
+
+function ippsFlip_32fc(const pSrc: PComplex8; pDst: PComplex8; len: Integer): Integer; cdecl;external;
+
 function ippsMulC_64f_I_L(val: double; pSrcDst: PDouble; len: Integer): Integer; cdecl;external;
 
 function ippsMulC_64f(const pSrc: PIpp64f; val: Ipp64f; pDst: PIpp64f; len: Integer): Integer; cdecl;external;
@@ -487,6 +500,10 @@ type
   Tippsvectorslope_32s = function(a: PInteger; len: Integer; offset: Double; slope: Double): Integer; cdecl;
   Tippscopy_64f        = function(const pSrc: PDouble; pDst: PDouble; len: Integer): Integer; cdecl;
   Tippscopy_32s        = function(const pSrc: PInteger; pDst: PInteger; len: Integer): Integer; cdecl;
+  Tippsflip_64f        = function(const pSrc: PDouble; pDst: PDouble; len: Integer): Integer; cdecl;
+  Tippsflip_32f        = function(const pSrc: PSingle; pDst: PSingle; len: Integer): Integer; cdecl;
+  Tippsflip_64fc       = function(const pSrc: PComplex16; pDst: PComplex16; len: Integer): Integer; cdecl;
+  Tippsflip_32fc       = function(const pSrc: PComplex8; pDst: PComplex8; len: Integer): Integer; cdecl;
   Tippsmulc_64f_i_l    = function(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;
   Tippsmulc_64f        = function(const pSrc: PIpp64f; val: Ipp64f; pDst: PIpp64f; len: Integer): Integer; cdecl;
   Tippsaddc_64f_i      = function(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;
@@ -591,6 +608,10 @@ var
   ippsVectorSlope_32s : Tippsvectorslope_32s;
   ippsCopy_64f        : Tippscopy_64f;
   ippsCopy_32s        : Tippscopy_32s;
+  ippsFlip_64f        : Tippsflip_64f;
+  ippsFlip_32f        : Tippsflip_32f;
+  ippsFlip_64fc       : Tippsflip_64fc;
+  ippsFlip_32fc       : Tippsflip_32fc;
   ippsMulC_64f_I_L    : Tippsmulc_64f_i_l;
   ippsMulC_64f        : Tippsmulc_64f;
   ippsAddC_64f_I      : Tippsaddc_64f_i;
@@ -802,6 +823,10 @@ begin
   pointer(ippsVectorSlope_32s) := IPPProc('ippsVectorSlope_32s');
   pointer(ippsCopy_64f)        := IPPProc('ippsCopy_64f');
   pointer(ippsCopy_32s)        := IPPProc('ippsCopy_32s');
+  pointer(ippsFlip_64f)        := IPPProc('ippsFlip_64f');
+  pointer(ippsFlip_32f)        := IPPProc('ippsFlip_32f');
+  pointer(ippsFlip_64fc)       := IPPProc('ippsFlip_64fc');
+  pointer(ippsFlip_32fc)       := IPPProc('ippsFlip_32fc');
   pointer(ippsMulC_64f_I_L)    := IPPProc('ippsMulC_64f_I_L');
   pointer(ippsMulC_64f)        := IPPProc('ippsMulC_64f');
   pointer(ippsAddC_64f_I)      := IPPProc('ippsAddC_64f_I');

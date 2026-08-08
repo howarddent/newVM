@@ -139,6 +139,31 @@ function Trace(const A: TVMobj): Double;
   diagonal entry, so the product comes out to exactly 0, the correct
   determinant, without special-casing. }
 function Det(const A: TVMobj): Double;
+{ FlipUD - reverses the order of A's rows (row 0 <-> row Rows-1, etc), same
+  shape as A. No BLAS/LAPACK/IPP primitive reverses whole rows as a block
+  (IPP's ippsFlip reverses individual elements, not row-sized chunks), so
+  this copies each source row to its mirrored destination row via
+  cblas_dcopy - one call per row, same "no block primitive -> loop of
+  per-row BLAS calls" idiom Kron uses. }
+function FlipUD(const A: TVMobj): TVMobj;
+{ FlipLR - reverses the order of elements within each row of A, same shape
+  as A. Unlike FlipUD, IPP has an exact primitive for this: ippsFlip_64f
+  reverses a vector's element order into a (possibly different) destination
+  buffer, so this calls it once per row with len=Cols. }
+function FlipLR(const A: TVMobj): TVMobj;
+{ MergeUD - stacks A above B into an (A.Rows+B.Rows, Cols) result (A and B
+  must have the same Cols). Row-major storage makes this trivial: A's rows
+  and B's rows are each already contiguous blocks, so this is just two
+  whole-buffer cblas_dcopy calls, A's buffer straight into the start of the
+  result and B's straight after - no per-row loop needed, unlike MergeLR. }
+function MergeUD(const A, B: TVMobj): TVMobj;
+{ MergeLR - places A to the left of B into an (Rows, A.Cols+B.Cols) result
+  (A and B must have the same Rows). Unlike MergeUD, a source row's data
+  isn't contiguous with the next row's in the merged result (each result
+  row is A's row immediately followed by B's row), so this copies both
+  halves of each row separately via cblas_dcopy - two calls per row, same
+  "no block primitive -> loop of per-row BLAS calls" idiom Kron/FlipUD use. }
+function MergeLR(const A, B: TVMobj): TVMobj;
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vd* routines
   in OneAPI.pas). Each returns a new TVMobj of the same dimensions as A,
@@ -448,6 +473,48 @@ begin
   result := sign;
   for i := 0 to A.rows-1 do
     result := result * scratch[i,i];
+end;
+
+function FlipUD(const A: TVMobj): TVMobj;
+var
+  i : integer;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  for i := 0 to A.Rows-1 do
+    cblas_dcopy(A.Cols, @A.FData[i*A.Cols], 1, @result.FData[(A.Rows-1-i)*A.Cols], 1);
+end;
+
+function FlipLR(const A: TVMobj): TVMobj;
+var
+  i : integer;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  for i := 0 to A.Rows-1 do
+    ippsFlip_64f(@A.FData[i*A.Cols], @result.FData[i*A.Cols], A.Cols);
+end;
+
+function MergeUD(const A, B: TVMobj): TVMobj;
+const
+  s : String = 'Function MergeUD : ';
+begin
+  assert(A.Cols = B.Cols, s+'A and B must have the same number of columns');
+  result := TVMobj.Create(A.Rows+B.Rows, A.Cols);
+  cblas_dcopy(A.Rows*A.Cols, A.DataPtr, 1, result.DataPtr, 1);
+  cblas_dcopy(B.Rows*B.Cols, B.DataPtr, 1, @result.FData[A.Rows*A.Cols], 1);
+end;
+
+function MergeLR(const A, B: TVMobj): TVMobj;
+const
+  s : String = 'Function MergeLR : ';
+var
+  i : integer;
+begin
+  assert(A.Rows = B.Rows, s+'A and B must have the same number of rows');
+  result := TVMobj.Create(A.Rows, A.Cols+B.Cols);
+  for i := 0 to A.Rows-1 do begin
+    cblas_dcopy(A.Cols, @A.FData[i*A.Cols], 1, @result.FData[i*result.Cols], 1);
+    cblas_dcopy(B.Cols, @B.FData[i*B.Cols], 1, @result.FData[i*result.Cols + A.Cols], 1);
+  end;
 end;
 
 class operator TVMobj.+(const A, B: TVMobj): TVMobj;
