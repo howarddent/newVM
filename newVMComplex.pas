@@ -149,6 +149,7 @@ function InvertZ(const A: TVMobjZ): TVMobjZ;  //matrix inverse, via LAPACKE_zget
 function KronZ(const A, B: TVMobjZ): TVMobjZ;  //Kronecker product - see Kron in newVM.pas
 function DiagZ(const A: TVMobjZ): TVMobjZ;  //column vector (n,1) -> (n,n) diagonal matrix - see Diag in newVM.pas
 function NormZ(const A: TVMobjZ): Double;  //Euclidean norm (real-valued), via cblas_dznrm2 - see Norm in newVM.pas
+function TraceZ(const A: TVMobjZ): TComplex16;  //sum of A's leading-diagonal elements - see Trace in newVM.pas
 function Cplx(re,im : Double): TComplex16;inline;
 function RealToComplex(const A : TVMobj): TVMobjZ;    //promotes a real double TVMobj to a complex TVMobjZ, im = 0
 function GetRealPart(const A : TVMobjZ): TVMobj;      //extracts the real component of A into a real double TVMobj
@@ -432,6 +433,21 @@ const
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
   result := cblas_dznrm2(A.Rows*A.Cols, @A.FData[0], 1);
+end;
+
+function TraceZ(const A: TVMobjZ): TComplex16;
+const
+  s : String = 'Function TraceZ : ';
+var
+  i : integer;
+begin
+  assert(A.Rows = A.Cols, s+'Matrix A must be square');
+  result.re := 0;
+  result.im := 0;
+  for i := 0 to A.Rows-1 do begin
+    result.re := result.re + A[i,i].re;
+    result.im := result.im + A[i,i].im;
+  end;
 end;
 
 function RealToComplex(const A: TVMobj): TVMobjZ;

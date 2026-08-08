@@ -253,6 +253,20 @@ one name in `newVMTests.pas`, they're one-argument transforms like
   bindings are — see "Cross-platform library binding" below) before this
   addition, so no new external bindings were needed for either function.
 
+### `Trace`/`TraceS`/`TraceZ`/`TraceC`
+
+Sum of a square matrix's leading-diagonal elements (asserts `A.Rows =
+A.Cols`), same suffix naming convention as `Diag`/`Norm` above. No
+BLAS/LAPACK/IPP routine computes a trace directly, and IPP's `ippsSum`
+only sums a *contiguous* buffer — extracting the diagonal into one first
+via `cblas_?copy` (the trick `Diag` uses, in reverse) would cost an
+allocation for no benefit over just summing in a loop directly - so, like
+`Find`/`Gather` and `newVMI.pas`'s `Id`/`Transpose`, this is a plain loop
+over `A[i,i]`. The complex units' `TraceZ`/`TraceC` return
+`TComplex16`/`TComplex8` (unlike `Norm`'s always-real result, a complex
+matrix's trace is generally complex, not real) accumulated by summing
+`.re`/`.im` separately.
+
 ### Elementwise math functions
 
 Each unit also declares plain (non-operator) functions `Sin`, `Cos`, `Tan`,
@@ -517,11 +531,13 @@ out-of-range and non-square addressing), `writeMatrix`, `fillRandom`
 via `A*Invert(A) ≈ Identity`, and that `A` itself is left untouched),
 `Kron*` (a small known-value 2×2⊗2×2 case, checked block-by-block),
 `Diag*` (known-value column-vector-to-diagonal-matrix check, plus the
-non-column-vector assertion path) and `Norm*` (a classic 3-4-5 known
-value, complex-valued via two purely-real/purely-imaginary components so
-`|3|²+|4i|²=25`), every operator overload including the assertion paths,
-the elementwise VML functions, and `DCT1`..`DCT4`/`DST1`..`DST4` (each
-verified as a
+non-column-vector assertion path), `Norm*` (a classic 3-4-5 known value,
+complex-valued via two purely-real/purely-imaginary components so
+`|3|²+|4i|²=25`) and `Trace*` (a known-value 3×3 case, plus the
+non-square assertion path — the complex types' cases check both `.re`
+and `.im` of the summed diagonal), every operator overload including the
+assertion paths, the elementwise VML functions, and
+`DCT1`..`DCT4`/`DST1`..`DST4` (each verified as a
 self-inverse or mutual-inverse round trip at the exact FFTW scale factor
 for that kind - see the "FFT/DCT/DST functions" architecture section
 above). The two real types (`TVMobjTests`/`TVMobjSTests`) additionally

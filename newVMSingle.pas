@@ -102,6 +102,7 @@ function Find(const A: TVMobjS; Op: TVMCompareOp; Value: Single): TVMobjI; overl
 function KronS(const A, B: TVMobjS): TVMobjS;  //Kronecker product - see Kron in newVM.pas
 function DiagS(const A: TVMobjS): TVMobjS;  //column vector (n,1) -> (n,n) diagonal matrix - see Diag in newVM.pas
 function NormS(const A: TVMobjS): Single;  //Euclidean norm - see Norm in newVM.pas
+function TraceS(const A: TVMobjS): Single;  //sum of A's leading-diagonal elements - see Trace in newVM.pas
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vs* routines
   in OneAPI.pas). Each returns a new TVMobjS of the same dimensions as A,
@@ -369,6 +370,18 @@ const
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
   result := cblas_snrm2(A.Rows*A.Cols, A.DataPtr, 1);
+end;
+
+function TraceS(const A: TVMobjS): Single;
+const
+  s : String = 'Function TraceS : ';
+var
+  i : integer;
+begin
+  assert(A.Rows = A.Cols, s+'Matrix A must be square');
+  result := 0;
+  for i := 0 to A.Rows-1 do
+    result := result + A[i,i];
 end;
 
 class operator TVMobjS.+(const A, B: TVMobjS): TVMobjS;

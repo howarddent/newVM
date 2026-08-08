@@ -121,6 +121,13 @@ function Kron(const A, B: TVMobj): TVMobj;
   loop needed. }
 function Diag(const A: TVMobj): TVMobj;
 function Norm(const A: TVMobj): Double;  //Euclidean (L2) norm of vector A (Rows=1 or Cols=1), via cblas_dnrm2
+{ Trace - sum of A's leading-diagonal elements (A must be square). No
+  BLAS/LAPACK/IPP routine computes a trace directly (IPP's ippsSum only
+  sums a contiguous buffer, and the diagonal isn't contiguous - extracting
+  it first via cblas_?copy, as Diag does, would cost an allocation for no
+  benefit over just summing in the loop), so this is a plain loop, same
+  rationale as newVMI.pas's Id/Transpose or this unit's own Find/Gather. }
+function Trace(const A: TVMobj): Double;
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vd* routines
   in OneAPI.pas). Each returns a new TVMobj of the same dimensions as A,
@@ -397,6 +404,18 @@ const
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
   result := cblas_dnrm2(A.Rows*A.Cols, A.DataPtr, 1);
+end;
+
+function Trace(const A: TVMobj): Double;
+const
+  s : String = 'Function Trace : ';
+var
+  i : integer;
+begin
+  assert(A.Rows = A.Cols, s+'Matrix A must be square');
+  result := 0;
+  for i := 0 to A.Rows-1 do
+    result := result + A[i,i];
 end;
 
 class operator TVMobj.+(const A, B: TVMobj): TVMobj;

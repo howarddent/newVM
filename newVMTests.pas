@@ -55,6 +55,7 @@ type
     procedure Raise_OperatorAddDimMismatch;
     procedure Raise_ScalarDivByZero;
     procedure Raise_DiagNotColumnVector;
+    procedure Raise_TraceNonSquare;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -96,6 +97,8 @@ type
     procedure TestDiagKnownValues;
     procedure TestDiagNonColumnVectorAsserts;
     procedure TestNormKnownValues;
+    procedure TestTraceKnownValues;
+    procedure TestTraceNonSquareAsserts;
   end;
 
   { TVMobjSTests - newVMSingle.pas, real single }
@@ -114,6 +117,7 @@ type
     procedure Raise_OperatorAddDimMismatch;
     procedure Raise_ScalarDivByZero;
     procedure Raise_DiagNotColumnVector;
+    procedure Raise_TraceNonSquare;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -155,6 +159,8 @@ type
     procedure TestDiagKnownValues;
     procedure TestDiagNonColumnVectorAsserts;
     procedure TestNormKnownValues;
+    procedure TestTraceKnownValues;
+    procedure TestTraceNonSquareAsserts;
   end;
 
   { TVMobjZTests - newVMComplex.pas, complex double }
@@ -173,6 +179,7 @@ type
     procedure Raise_OperatorAddDimMismatch;
     procedure Raise_ScalarDivByZero;
     procedure Raise_DiagNotColumnVector;
+    procedure Raise_TraceNonSquare;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -214,6 +221,8 @@ type
     procedure TestDiagKnownValues;
     procedure TestDiagNonColumnVectorAsserts;
     procedure TestNormKnownValues;
+    procedure TestTraceKnownValues;
+    procedure TestTraceNonSquareAsserts;
   end;
 
   { TVMobjCTests - newVMComplexSingle.pas, complex single }
@@ -232,6 +241,7 @@ type
     procedure Raise_OperatorAddDimMismatch;
     procedure Raise_ScalarDivByZero;
     procedure Raise_DiagNotColumnVector;
+    procedure Raise_TraceNonSquare;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -273,6 +283,8 @@ type
     procedure TestDiagKnownValues;
     procedure TestDiagNonColumnVectorAsserts;
     procedure TestNormKnownValues;
+    procedure TestTraceKnownValues;
+    procedure TestTraceNonSquareAsserts;
   end;
 
   { TVMobjITests - newVMI.pas, integer index array/matrix }
@@ -402,6 +414,13 @@ var A, D: TVMobj;
 begin
   A := TVMobj.Create(1, 3, [1, 2, 3]);  //row vector, not a column vector
   D := Diag(A);
+end;
+
+procedure TVMobjTests.Raise_TraceNonSquare;
+var A: TVMobj; T: Double;
+begin
+  A := TVMobj.Create(2, 3, [1, 2, 3, 4, 5, 6]);
+  T := Trace(A);
 end;
 
 procedure TVMobjTests.TestCreateZeroFills;
@@ -805,6 +824,18 @@ begin
   AssertEquals(5, Norm(A), DblTol);
 end;
 
+procedure TVMobjTests.TestTraceKnownValues;
+var A: TVMobj;
+begin
+  A := TVMobj.Create(3, 3, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  AssertEquals(15, Trace(A), DblTol);  //1 + 5 + 9
+end;
+
+procedure TVMobjTests.TestTraceNonSquareAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_TraceNonSquare);
+end;
+
 {===========================================================================
   TVMobjSTests  (real single)
 ===========================================================================}
@@ -891,6 +922,13 @@ var A, D: TVMobjS;
 begin
   A := TVMobjS.Create(1, 3, [1, 2, 3]);  //row vector, not a column vector
   D := DiagS(A);
+end;
+
+procedure TVMobjSTests.Raise_TraceNonSquare;
+var A: TVMobjS; T: Single;
+begin
+  A := TVMobjS.Create(2, 3, [1, 2, 3, 4, 5, 6]);
+  T := TraceS(A);
 end;
 
 procedure TVMobjSTests.TestCreateZeroFills;
@@ -1287,6 +1325,18 @@ begin
   AssertEquals(5, NormS(A), SngTol);
 end;
 
+procedure TVMobjSTests.TestTraceKnownValues;
+var A: TVMobjS;
+begin
+  A := TVMobjS.Create(3, 3, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  AssertEquals(15, TraceS(A), SngTol);  //1 + 5 + 9
+end;
+
+procedure TVMobjSTests.TestTraceNonSquareAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_TraceNonSquare);
+end;
+
 {===========================================================================
   TVMobjZTests  (complex double)
 ===========================================================================}
@@ -1373,6 +1423,13 @@ var A, D: TVMobjZ;
 begin
   A := TVMobjZ.Create(1, 3, [Cplx(1,0), Cplx(2,0), Cplx(3,0)]);  //row vector
   D := DiagZ(A);
+end;
+
+procedure TVMobjZTests.Raise_TraceNonSquare;
+var A: TVMobjZ; T: TComplex16;
+begin
+  A := TVMobjZ.Create(2, 3, [Cplx(1,0), Cplx(2,0), Cplx(3,0), Cplx(4,0), Cplx(5,0), Cplx(6,0)]);
+  T := TraceZ(A);
 end;
 
 procedure TVMobjZTests.TestCreateZeroFills;
@@ -1835,6 +1892,23 @@ begin
   AssertEquals(5, NormZ(A), DblTol);
 end;
 
+procedure TVMobjZTests.TestTraceKnownValues;
+var A: TVMobjZ; T: TComplex16;
+begin
+  A := TVMobjZ.Create(3, 3, [
+    Cplx(1,1),  Cplx(9,9), Cplx(9,9),
+    Cplx(9,9),  Cplx(2,-1), Cplx(9,9),
+    Cplx(9,9),  Cplx(9,9), Cplx(3,2)]);
+  T := TraceZ(A);
+  AssertEquals(6, T.re, DblTol);  //1 + 2 + 3
+  AssertEquals(2, T.im, DblTol);  //1 - 1 + 2
+end;
+
+procedure TVMobjZTests.TestTraceNonSquareAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_TraceNonSquare);
+end;
+
 {===========================================================================
   TVMobjCTests  (complex single)
 ===========================================================================}
@@ -1921,6 +1995,13 @@ var A, D: TVMobjC;
 begin
   A := TVMobjC.Create(1, 3, [Cplx8(1,0), Cplx8(2,0), Cplx8(3,0)]);  //row vector
   D := DiagC(A);
+end;
+
+procedure TVMobjCTests.Raise_TraceNonSquare;
+var A: TVMobjC; T: TComplex8;
+begin
+  A := TVMobjC.Create(2, 3, [Cplx8(1,0), Cplx8(2,0), Cplx8(3,0), Cplx8(4,0), Cplx8(5,0), Cplx8(6,0)]);
+  T := TraceC(A);
 end;
 
 procedure TVMobjCTests.TestCreateZeroFills;
@@ -2372,6 +2453,23 @@ var A: TVMobjC;
 begin
   A := TVMobjC.Create(1, 2, [Cplx8(3,0), Cplx8(0,4)]);  //|3|^2+|4i|^2 = 25
   AssertEquals(5, NormC(A), SngTol);
+end;
+
+procedure TVMobjCTests.TestTraceKnownValues;
+var A: TVMobjC; T: TComplex8;
+begin
+  A := TVMobjC.Create(3, 3, [
+    Cplx8(1,1),  Cplx8(9,9), Cplx8(9,9),
+    Cplx8(9,9),  Cplx8(2,-1), Cplx8(9,9),
+    Cplx8(9,9),  Cplx8(9,9), Cplx8(3,2)]);
+  T := TraceC(A);
+  AssertEquals(6, T.re, SngTol);  //1 + 2 + 3
+  AssertEquals(2, T.im, SngTol);  //1 - 1 + 2
+end;
+
+procedure TVMobjCTests.TestTraceNonSquareAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_TraceNonSquare);
 end;
 
 {===========================================================================
