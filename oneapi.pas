@@ -279,6 +279,19 @@ function lapacke_zgetri(matrix_layout: CBLAS_ORDER; n: Integer; a: PComplex16; l
 
 function lapacke_cgetri(matrix_layout: CBLAS_ORDER; n: Integer; a: PComplex8; lda: Integer; const ipiv: PInteger): Integer; cdecl;external;
 
+{lapacke solve using an already-computed LU factorisation (from lapacke_?getrf,
+ or the A left behind by a prior lapacke_?gesv call) - for LinearSolve*'s
+ "factorise once, solve many" reuse path. Much cheaper than lapacke_?gesv
+ when solving the same A against several different B's in turn, since it
+ skips re-factorising A.}
+function lapacke_dgetrs(matrix_layout: CBLAS_ORDER; trans: UTF8Char; n: Integer; nrhs: Integer; const a: PDouble; lda: Integer; const ipiv: PInteger; b: PDouble; ldb: Integer): Integer; cdecl;external;
+
+function lapacke_sgetrs(matrix_layout: CBLAS_ORDER; trans: UTF8Char; n: Integer; nrhs: Integer; const a: PSingle; lda: Integer; const ipiv: PInteger; b: PSingle; ldb: Integer): Integer; cdecl;external;
+
+function lapacke_zgetrs(matrix_layout: CBLAS_ORDER; trans: UTF8Char; n: Integer; nrhs: Integer; const a: PComplex16; lda: Integer; const ipiv: PInteger; b: PComplex16; ldb: Integer): Integer; cdecl;external;
+
+function lapacke_cgetrs(matrix_layout: CBLAS_ORDER; trans: UTF8Char; n: Integer; nrhs: Integer; const a: PComplex8; lda: Integer; const ipiv: PInteger; b: PComplex8; ldb: Integer): Integer; cdecl;external;
+
 {eigen values, eigenvector routines}
 
 function lapacke_dgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PDouble; lda : Integer;
@@ -476,6 +489,10 @@ type
   Tlapacke_sgetri = function(matrix_layout: CBLAS_ORDER; n: Integer; a: PSingle; lda: Integer; const ipiv: PInteger): Integer; cdecl;
   Tlapacke_zgetri = function(matrix_layout: CBLAS_ORDER; n: Integer; a: PComplex16; lda: Integer; const ipiv: PInteger): Integer; cdecl;
   Tlapacke_cgetri = function(matrix_layout: CBLAS_ORDER; n: Integer; a: PComplex8; lda: Integer; const ipiv: PInteger): Integer; cdecl;
+  Tlapacke_dgetrs = function(matrix_layout: CBLAS_ORDER; trans: UTF8Char; n: Integer; nrhs: Integer; const a: PDouble; lda: Integer; const ipiv: PInteger; b: PDouble; ldb: Integer): Integer; cdecl;
+  Tlapacke_sgetrs = function(matrix_layout: CBLAS_ORDER; trans: UTF8Char; n: Integer; nrhs: Integer; const a: PSingle; lda: Integer; const ipiv: PInteger; b: PSingle; ldb: Integer): Integer; cdecl;
+  Tlapacke_zgetrs = function(matrix_layout: CBLAS_ORDER; trans: UTF8Char; n: Integer; nrhs: Integer; const a: PComplex16; lda: Integer; const ipiv: PInteger; b: PComplex16; ldb: Integer): Integer; cdecl;
+  Tlapacke_cgetrs = function(matrix_layout: CBLAS_ORDER; trans: UTF8Char; n: Integer; nrhs: Integer; const a: PComplex8; lda: Integer; const ipiv: PInteger; b: PComplex8; ldb: Integer): Integer; cdecl;
   Tlapacke_dgeev  = function(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PDouble; lda : Integer;
                         wr ,wi : PDouble; vl : PDouble; ldvl :integer; vr : PDouble; ldvr : Integer):Integer; cdecl;
   Tlapacke_sgeev  = function(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
@@ -552,6 +569,10 @@ var
   lapacke_sgetri : Tlapacke_sgetri;
   lapacke_zgetri : Tlapacke_zgetri;
   lapacke_cgetri : Tlapacke_cgetri;
+  lapacke_dgetrs : Tlapacke_dgetrs;
+  lapacke_sgetrs : Tlapacke_sgetrs;
+  lapacke_zgetrs : Tlapacke_zgetrs;
+  lapacke_cgetrs : Tlapacke_cgetrs;
   lapacke_dgeev  : Tlapacke_dgeev;
   lapacke_sgeev  : Tlapacke_sgeev;
 
@@ -724,6 +745,10 @@ begin
   pointer(lapacke_sgetri) := MKLProc('LAPACKE_sgetri');
   pointer(lapacke_zgetri) := MKLProc('LAPACKE_zgetri');
   pointer(lapacke_cgetri) := MKLProc('LAPACKE_cgetri');
+  pointer(lapacke_dgetrs) := MKLProc('LAPACKE_dgetrs');
+  pointer(lapacke_sgetrs) := MKLProc('LAPACKE_sgetrs');
+  pointer(lapacke_zgetrs) := MKLProc('LAPACKE_zgetrs');
+  pointer(lapacke_cgetrs) := MKLProc('LAPACKE_cgetrs');
   pointer(lapacke_dgeev)  := MKLProc('LAPACKE_dgeev');
   pointer(lapacke_sgeev)  := MKLProc('LAPACKE_sgeev');
 

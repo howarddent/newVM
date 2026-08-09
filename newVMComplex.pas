@@ -103,6 +103,8 @@ type
     private
       fData : TVectorZ;  //Holds data for object
       frows, fcols : TDimZ;
+      fIpiv : array of Integer;  //cached LU pivot indices from LinearSolveZ, valid iff fLUFactored
+      fLUFactored : Boolean;     //True once LinearSolveZ has LU-factorised this object in place (see LinearSolveZ)
       function getelement(r,c: TDimZ): TComplex16;
       procedure setelement(r,c: TDimZ; AValue: TComplex16);
     public
@@ -116,6 +118,7 @@ type
       function Transpose: TVMObjZ;
       property Rows: TDimZ read frows;              //read-only dimension accessors
       property Cols: TDimZ read fcols;
+      property LU: Boolean read fLUFactored;  //True once LinearSolveZ has cached an LU factorisation of this object
 
       { Operator overloads - see OPERATOR OVERLOADS note in the header above.
         Mode Delphi only supports operator overloading as "class operator"
@@ -241,6 +244,7 @@ begin
   N := r*c;
   setLength(fData,N);
   for i := low(fdata) to high(fdata) do fdata[i] := Cplx(0,0);
+  fLUFactored := False;
 end;
 
 constructor TVMobjZ.create(r,c : TDimZ; const Values: TVectorZ);
@@ -250,6 +254,7 @@ begin
   frows := r;
   fcols := c;
   fdata := copy(Values,0,high(values)+1);
+  fLUFactored := False;
 end;
 
 function TVMobjZ.writeMatrix: TStringList;
@@ -371,15 +376,25 @@ end;
 function LinearSolveZ(var A, B: TVMObjZ):integer;
 const
   s : String = 'Function LinearSolveZ : ';
-var
-  ipiv : array of integer;
-{ Direct linear solve for matrix A and Vectors B. On return A is in LU
-  factored form and solution matrix is in B. Returns info from Lapacke}
+{ Direct linear solve for matrix A and Vectors B. On the first call for a
+  given A, this LU-factorises A in place and solves for B via the combined
+  LAPACKE_zgesv, caching the pivot indices on A and setting A.LU := True.
+  A subsequent call against the same (already-factorised) A skips
+  re-factorisation and reuses the cached LU factors/pivots via the cheaper
+  LAPACKE_zgetrs (solve only) - much less work when the same A is solved
+  against several different B's in turn. On return, A holds its LU-factored
+  form (not the original matrix) and the solution is in B. Returns info
+  from the underlying LAPACKE call. }
 begin
   assert(A.Cols = A.Rows,s+'Matrix A must be square');
   assert(A.Rows = B.Rows, s+'Matrix A and B have incompatible dimensions');
-  setlength(ipiv,A.rows);
-  LinearSolveZ:= lapacke_zgesv(CBlasRowMajor,A.rows,B.cols,@A.Fdata[0],A.cols,@ipiv[0],@B.FData[0],B.cols);
+  if A.LU then
+    result := lapacke_zgetrs(CBlasRowMajor,'N',A.rows,B.cols,@A.Fdata[0],A.cols,@A.fIpiv[0],@B.FData[0],B.cols)
+  else begin
+    setlength(A.fIpiv,A.rows);
+    result := lapacke_zgesv(CBlasRowMajor,A.rows,B.cols,@A.Fdata[0],A.cols,@A.fIpiv[0],@B.FData[0],B.cols);
+    if result = 0 then A.fLUFactored := True;
+  end;
 end;
 
 function CopyObjZ(const A: TVMObjZ): TVMobjZ;

@@ -69,6 +69,8 @@ type
     private
       fData : tVector;  //Holds data for object
       frows, fcols : TDim;
+      fIpiv : array of Integer;  //cached LU pivot indices from LinearSolve, valid iff fLUFactored
+      fLUFactored : Boolean;     //True once LinearSolve has LU-factorised this object in place (see LinearSolve)
       function getelement(r,c: TDim): Double;
       procedure setelement(r,c: TDim; AValue: Double);
     public
@@ -83,6 +85,7 @@ type
       function DataPtr: PDouble;   //raw buffer, for MKL interop from other units
       property Rows: TDim read frows;              //read-only dimension accessors
       property Cols: TDim read fcols;
+      property LU: Boolean read fLUFactored;  //True once LinearSolve has cached an LU factorisation of this object
       class operator +(const A, B: TVMobj): TVMobj;
       class operator -(const A, B: TVMobj): TVMobj;
       class operator -(const A: TVMobj): TVMobj;
@@ -251,6 +254,7 @@ begin
   N := r*c;
   setLength(fData,N);
   for i := low(fdata) to high(fdata) do fdata[i] := 0;
+  fLUFactored := False;
 end;
 
 constructor TVMobj.create(r,c : TDim; const Values: TVector);
@@ -260,6 +264,7 @@ begin
   frows := r;
   fcols := c;
   fdata := copy(Values,0,high(values)+1);
+  fLUFactored := False;
 end;
 
 function TVMobj.writeMatrix: TStringList;
@@ -365,17 +370,27 @@ end;
 function LinearSolve(var A, B: TVMObj):integer;
 const
   s : String = 'Function linear Solve : ';
-var
-  ipiv : array of integer;
-{ Direct linear solve for matrix A and Vectors B. On return A is in LU
-  factored form and solution matrix is in B. Returns info from Lapacke}
+{ Direct linear solve for matrix A and Vectors B. On the first call for a
+  given A, this LU-factorises A in place and solves for B via the combined
+  LAPACKE_dgesv, caching the pivot indices on A and setting A.LU := True.
+  A subsequent call against the same (already-factorised) A skips
+  re-factorisation and reuses the cached LU factors/pivots via the cheaper
+  LAPACKE_dgetrs (solve only) - much less work when the same A is solved
+  against several different B's in turn. On return, A holds its LU-factored
+  form (not the original matrix) and the solution is in B. Returns info
+  from the underlying LAPACKE call. }
 begin
   //Check dimensions of matrices are compatible. A must be square and A.cols =
   // B.rows
   assert(A.Cols = A.Rows,s+'Matrix A must be square');
   assert(A.Rows = B.Rows, s+'Matrix A and B have incompatible dimensions');
-  setlength(ipiv,A.rows);
- linearSolve:= lapacke_dgesv(CBlasRowMajor,A.rows,B.cols,@A.Fdata[0],A.cols,@ipiv[0],@B.FData[0],B.cols);
+  if A.LU then
+    result := lapacke_dgetrs(CBlasRowMajor,'N',A.rows,B.cols,@A.Fdata[0],A.cols,@A.fIpiv[0],@B.FData[0],B.cols)
+  else begin
+    setlength(A.fIpiv,A.rows);
+    result := lapacke_dgesv(CBlasRowMajor,A.rows,B.cols,@A.Fdata[0],A.cols,@A.fIpiv[0],@B.FData[0],B.cols);
+    if result = 0 then A.fLUFactored := True;
+  end;
 end;
 
 function CopyObj(const A: TVMObj): TVMobj;

@@ -78,6 +78,7 @@ type
     procedure TestMatMultKnownValues;
     procedure TestMatMultDimMismatchAsserts;
     procedure TestLinearSolveRecoversRHS;
+    procedure TestLinearSolveReusesFactorization;
     procedure TestLinearSolveNonSquareAsserts;
     procedure TestInvertRecoversIdentity;
     procedure TestInvertNonSquareAsserts;
@@ -158,6 +159,7 @@ type
     procedure TestMatMultKnownValues;
     procedure TestMatMultDimMismatchAsserts;
     procedure TestLinearSolveRecoversRHS;
+    procedure TestLinearSolveReusesFactorization;
     procedure TestLinearSolveNonSquareAsserts;
     procedure TestInvertRecoversIdentity;
     procedure TestInvertNonSquareAsserts;
@@ -237,6 +239,7 @@ type
     procedure TestMatMultKnownValues;
     procedure TestMatMultDimMismatchAsserts;
     procedure TestLinearSolveRecoversRHS;
+    procedure TestLinearSolveReusesFactorization;
     procedure TestLinearSolveNonSquareAsserts;
     procedure TestInvertRecoversIdentity;
     procedure TestInvertNonSquareAsserts;
@@ -317,6 +320,7 @@ type
     procedure TestMatMultKnownValues;
     procedure TestMatMultDimMismatchAsserts;
     procedure TestLinearSolveRecoversRHS;
+    procedure TestLinearSolveReusesFactorization;
     procedure TestLinearSolveNonSquareAsserts;
     procedure TestInvertRecoversIdentity;
     procedure TestInvertNonSquareAsserts;
@@ -683,6 +687,40 @@ begin
   X := MatMult(Akeep, B);
   for i := 0 to N-1 do
     AssertEquals(Format('row %d', [i]), Bkeep[i, 0], X[i, 0], DblSolveTol);
+end;
+
+procedure TVMobjTests.TestLinearSolveReusesFactorization;
+const N = 3;
+var A, B1, B2, Akeep, Bkeep1, Bkeep2, X1, X2: TVMobj; info1, info2, i: Integer;
+{ Verifies LinearSolve's "factorise once, solve many" reuse path: the first
+  call LU-factorises A in place and sets A.LU; a second call against the
+  same A with a different RHS must take the cheaper LAPACKE_dgetrs path
+  (see LinearSolve) rather than re-factorising A as if it were fresh, and
+  still recover the correct solution against the ORIGINAL (pre-factorisation)
+  A. }
+begin
+  A := TVMobj.Create(N, N);
+  A.fillRandom;
+  B1 := TVMobj.Create(N, 1);
+  B1.fillRandom;
+  Akeep := CopyObj(A);
+  Bkeep1 := CopyObj(B1);
+  AssertFalse('A.LU should be False before any solve', A.LU);
+  info1 := LinearSolve(A, B1);
+  AssertEquals('LAPACKE_dgesv info', 0, info1);
+  AssertTrue('A.LU should be set after first solve', A.LU);
+  X1 := MatMult(Akeep, B1);
+  for i := 0 to N-1 do
+    AssertEquals(Format('B1 row %d', [i]), Bkeep1[i, 0], X1[i, 0], DblSolveTol);
+
+  B2 := Bkeep1 * 2.0;   //a different RHS from B1
+  Bkeep2 := CopyObj(B2);
+  info2 := LinearSolve(A, B2);
+  AssertEquals('LAPACKE_dgetrs info', 0, info2);
+  AssertTrue('A.LU should remain set after reuse', A.LU);
+  X2 := MatMult(Akeep, B2);
+  for i := 0 to N-1 do
+    AssertEquals(Format('B2 row %d', [i]), Bkeep2[i, 0], X2[i, 0], DblSolveTol);
 end;
 
 procedure TVMobjTests.TestLinearSolveNonSquareAsserts;
@@ -1331,6 +1369,36 @@ begin
     AssertEquals(Format('row %d', [i]), Bkeep[i, 0], X[i, 0], SngSolveTol);
 end;
 
+procedure TVMobjSTests.TestLinearSolveReusesFactorization;
+const N = 3;
+var A, B1, B2, Akeep, Bkeep1, Bkeep2, X1, X2: TVMobjS; info1, info2, i: Integer;
+{ See TVMobjTests.TestLinearSolveReusesFactorization - same reuse-path check
+  for the single-precision real type. }
+begin
+  A := TVMobjS.Create(N, N);
+  A.fillRandom;
+  B1 := TVMobjS.Create(N, 1);
+  B1.fillRandom;
+  Akeep := CopyObjS(A);
+  Bkeep1 := CopyObjS(B1);
+  AssertFalse('A.LU should be False before any solve', A.LU);
+  info1 := LinearSolveS(A, B1);
+  AssertEquals('LAPACKE_sgesv info', 0, info1);
+  AssertTrue('A.LU should be set after first solve', A.LU);
+  X1 := MatMultS(Akeep, B1);
+  for i := 0 to N-1 do
+    AssertEquals(Format('B1 row %d', [i]), Bkeep1[i, 0], X1[i, 0], SngSolveTol);
+
+  B2 := Bkeep1 * 2.0;   //a different RHS from B1
+  Bkeep2 := CopyObjS(B2);
+  info2 := LinearSolveS(A, B2);
+  AssertEquals('LAPACKE_sgetrs info', 0, info2);
+  AssertTrue('A.LU should remain set after reuse', A.LU);
+  X2 := MatMultS(Akeep, B2);
+  for i := 0 to N-1 do
+    AssertEquals(Format('B2 row %d', [i]), Bkeep2[i, 0], X2[i, 0], SngSolveTol);
+end;
+
 procedure TVMobjSTests.TestLinearSolveNonSquareAsserts;
 begin
   AssertException(EAssertionFailed, @Raise_LinearSolveNonSquare);
@@ -1973,6 +2041,40 @@ begin
   for i := 0 to N-1 do begin
     AssertEquals(Format('row %d re', [i]), Bkeep[i, 0].re, X[i, 0].re, DblSolveTol);
     AssertEquals(Format('row %d im', [i]), Bkeep[i, 0].im, X[i, 0].im, DblSolveTol);
+  end;
+end;
+
+procedure TVMobjZTests.TestLinearSolveReusesFactorization;
+const N = 3;
+var A, B1, B2, Akeep, Bkeep1, Bkeep2, X1, X2: TVMobjZ; info1, info2, i: Integer;
+{ See TVMobjTests.TestLinearSolveReusesFactorization - same reuse-path check
+  for the complex double type. }
+begin
+  A := TVMobjZ.Create(N, N);
+  A.fillRandom;
+  B1 := TVMobjZ.Create(N, 1);
+  B1.fillRandom;
+  Akeep := CopyObjZ(A);
+  Bkeep1 := CopyObjZ(B1);
+  AssertFalse('A.LU should be False before any solve', A.LU);
+  info1 := LinearSolveZ(A, B1);
+  AssertEquals('LAPACKE_zgesv info', 0, info1);
+  AssertTrue('A.LU should be set after first solve', A.LU);
+  X1 := MatMultZ(Akeep, B1);
+  for i := 0 to N-1 do begin
+    AssertEquals(Format('B1 row %d re', [i]), Bkeep1[i, 0].re, X1[i, 0].re, DblSolveTol);
+    AssertEquals(Format('B1 row %d im', [i]), Bkeep1[i, 0].im, X1[i, 0].im, DblSolveTol);
+  end;
+
+  B2 := Bkeep1 * 2.0;   //a different RHS from B1
+  Bkeep2 := CopyObjZ(B2);
+  info2 := LinearSolveZ(A, B2);
+  AssertEquals('LAPACKE_zgetrs info', 0, info2);
+  AssertTrue('A.LU should remain set after reuse', A.LU);
+  X2 := MatMultZ(Akeep, B2);
+  for i := 0 to N-1 do begin
+    AssertEquals(Format('B2 row %d re', [i]), Bkeep2[i, 0].re, X2[i, 0].re, DblSolveTol);
+    AssertEquals(Format('B2 row %d im', [i]), Bkeep2[i, 0].im, X2[i, 0].im, DblSolveTol);
   end;
 end;
 
@@ -2707,6 +2809,40 @@ begin
   for i := 0 to N-1 do begin
     AssertEquals(Format('row %d re', [i]), Bkeep[i, 0].re, X[i, 0].re, SngSolveTol);
     AssertEquals(Format('row %d im', [i]), Bkeep[i, 0].im, X[i, 0].im, SngSolveTol);
+  end;
+end;
+
+procedure TVMobjCTests.TestLinearSolveReusesFactorization;
+const N = 3;
+var A, B1, B2, Akeep, Bkeep1, Bkeep2, X1, X2: TVMobjC; info1, info2, i: Integer;
+{ See TVMobjTests.TestLinearSolveReusesFactorization - same reuse-path check
+  for the complex single type. }
+begin
+  A := TVMobjC.Create(N, N);
+  A.fillRandom;
+  B1 := TVMobjC.Create(N, 1);
+  B1.fillRandom;
+  Akeep := CopyObjC(A);
+  Bkeep1 := CopyObjC(B1);
+  AssertFalse('A.LU should be False before any solve', A.LU);
+  info1 := LinearSolveC(A, B1);
+  AssertEquals('LAPACKE_cgesv info', 0, info1);
+  AssertTrue('A.LU should be set after first solve', A.LU);
+  X1 := MatMultC(Akeep, B1);
+  for i := 0 to N-1 do begin
+    AssertEquals(Format('B1 row %d re', [i]), Bkeep1[i, 0].re, X1[i, 0].re, SngSolveTol);
+    AssertEquals(Format('B1 row %d im', [i]), Bkeep1[i, 0].im, X1[i, 0].im, SngSolveTol);
+  end;
+
+  B2 := Bkeep1 * 2.0;   //a different RHS from B1
+  Bkeep2 := CopyObjC(B2);
+  info2 := LinearSolveC(A, B2);
+  AssertEquals('LAPACKE_cgetrs info', 0, info2);
+  AssertTrue('A.LU should remain set after reuse', A.LU);
+  X2 := MatMultC(Akeep, B2);
+  for i := 0 to N-1 do begin
+    AssertEquals(Format('B2 row %d re', [i]), Bkeep2[i, 0].re, X2[i, 0].re, SngSolveTol);
+    AssertEquals(Format('B2 row %d im', [i]), Bkeep2[i, 0].im, X2[i, 0].im, SngSolveTol);
   end;
 end;
 
