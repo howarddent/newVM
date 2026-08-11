@@ -31,11 +31,13 @@ type
   TForm1 = class(TForm)
     ControlPanel: TPanel;
     WireframeCheckBox: TCheckBox;
+    ShowAxesCheckBox: TCheckBox;
     ResetViewButton: TButton;
     HintLabel: TLabel;
     procedure FormCreate(Sender: TObject);
     procedure ResetViewButtonClick(Sender: TObject);
     procedure WireframeCheckBoxChange(Sender: TObject);
+    procedure ShowAxesCheckBoxChange(Sender: TObject);
   private
     FPlot: TVMPlot3D;
     function BuildDemoMatrix: TVMobj;
@@ -55,6 +57,10 @@ begin
   FPlot := TVMPlot3D.Create(Self);
   FPlot.Parent := Self;
   FPlot.Align := alClient;
+  FPlot.Title := 'z = sin(r)/r  (sinc ripple)';
+  FPlot.XAxisTitle := 'Column';
+  FPlot.YAxisTitle := 'Row';
+  FPlot.ZAxisTitle := 'Value';
   FPlot.SetData(BuildDemoMatrix);
 end;
 
@@ -93,6 +99,11 @@ end;
 procedure TForm1.WireframeCheckBoxChange(Sender: TObject);
 begin
   FPlot.Wireframe := WireframeCheckBox.Checked;
+end;
+
+procedure TForm1.ShowAxesCheckBoxChange(Sender: TObject);
+begin
+  FPlot.ShowAxes := ShowAxesCheckBox.Checked;
 end;
 
 end.

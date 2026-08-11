@@ -951,12 +951,13 @@ always-available `TVMPlotN.Create(Owner)` code path both demos use.
   as a real `TVMobj` matrix (`TForm1.BuildDemoMatrix`, `r=0`'s removable
   singularity still handled explicitly). As with `Plot2D`, the form's
   `.lfm` no longer contains a `TOpenGLControl` at all - `TVMPlot3D` is
-  created and `Parent`ed to the form in code (`FormCreate`), and the
-  surviving `WireframeCheckBox`/`ResetViewButton` controls (still declared
-  in the `.lfm`, since they're ordinary `TCheckBox`/`TButton` chrome
-  outside the plot itself) now just forward to the component's
-  `Wireframe` property and `ResetView` method instead of reading/writing
-  form-level fields directly.
+  created and `Parent`ed to the form in code (`FormCreate`, which also
+  sets `Title`/`XAxisTitle`/`YAxisTitle`/`ZAxisTitle` before `SetData`),
+  and the `WireframeCheckBox`/`ShowAxesCheckBox`/`ResetViewButton`
+  controls (still declared in the `.lfm`, since they're ordinary
+  `TCheckBox`/`TButton` chrome outside the plot itself) just forward to
+  the component's `Wireframe`/`ShowAxes` properties and `ResetView`
+  method instead of reading/writing form-level fields directly.
 
 ### `Graphs/uVMPlot3D.pas` (`TVMPlot3D` component)
 
@@ -987,15 +988,85 @@ not part of the `LazOpenGLContext` Lazarus package, so no extra
   which wired `OpenGLControl1`'s `OnMouseDown`/`OnMouseMove`/`OnMouseUp`/
   `OnMouseWheel` events by hand in the form - `TVMPlot3D` overrides
   `MouseDown`/`MouseMove`/`MouseUp`/`DoMouseWheel` directly so the camera
-  works with zero wiring: drag rotates (yaw/pitch, pitch clamped to ±89°
-  to avoid gimbal flip via `EnsureRange`), wheel zooms (`FDistance`,
-  clamped to `[3,40]`). `ResetView` (a public method) restores the
-  original demo's tuned default framing (`Yaw=35, Pitch=45, Distance=16`
-  - see the `Plot3D` bullet above for how those constants were arrived
-  at); there's no published `Yaw`/`Pitch`/`Distance` property, since those
-  are live interactive camera state driven by mouse input, not meaningful
-  design-time configuration - `ResetView` is the supported way to
-  reset them programmatically.
+  works with zero wiring: drag rotates (yaw/pitch, pitch clamped to
+  ±179° via `EnsureRange` - see below for why this isn't the tighter ±89°
+  a first glance might expect), wheel zooms (`FDistance`, clamped to
+  `[3,40]`). `ResetView` (a public method) restores the tuned default
+  framing (`DefaultYaw=20, DefaultPitch=-45, DefaultDistance=16`);
+  there's no published `Yaw`/`Pitch`/`Distance` property, since those are
+  live interactive camera state driven by mouse input, not meaningful
+  design-time configuration - `ResetView` is the supported way to reset
+  them programmatically.
+
+  Getting the camera to actually show the *top* of the height field,
+  correctly lit, took several screenshotted iterations and two real wrong
+  turns worth recording so they aren't retried. The underlying fact that
+  resolves all of them: the camera's own WORLD-space position, given the
+  `glTranslatef(0,0,-FDistance); glRotatef(FPitch,1,0,0);
+  glRotatef(FYaw,0,1,0)` transform `Paint` applies to the *scene* (not the
+  camera - so it has to be un-transformed to find where the camera itself
+  actually sits), works out to `(-D*cos(pitch)*sin(yaw), D*sin(pitch),
+  D*cos(pitch)*cos(yaw))`. With the original `FYaw=35, FPitch=45`, that Z
+  component is negative - the camera is genuinely *below* the surface
+  (whose own Z only spans roughly ±1.25), not just apparently so from a
+  bad viewing angle.
+  - First wrong turn: shrinking yaw towards 0 (tried at `FYaw=20`,
+    `FPitch` still `45`) only reduces the Value/Z axis's on-screen
+    horizontal drift (`WorldToScreen`'s sign for that direction is
+    `-cos(yaw)*sin(pitch)`) - it doesn't flip which vertical direction
+    Value points, and it doesn't fix the camera-Z sign either. A
+    more-vertical *downward* line is easy to mistake for an upward one at
+    a glance, which is what made this look like a fix at the time.
+  - Second wrong turn: pushing `FYaw` on to `-160` instead (keeping
+    `FPitch=45`) does correctly flip Value's vertical sign and gives a
+    well-proportioned view - but `cos(pitch)*cos(yaw)` is still negative
+    at that combination, so the camera is *still* below the surface. Two
+    lighting-side attempts to paper over this - `GL_LIGHT_MODEL_TWO_SIDE`
+    (relying on GL's winding-based front/back test to auto-flip the
+    normal for back-facing triangles) and then `FPitch=135` (a further
+    +90, on the theory that it flips the same sign `FPitch=-45` would
+    have) - both fell short: the two-sided-lighting flip isn't guaranteed
+    to agree with `ComputeNormal`'s own sign convention, so it didn't
+    reliably fix the reported "lit from underneath" symptom; and
+    `sin(135)=sin(45)` exactly (a supplementary-angle identity), so that
+    pitch change left Value's direction completely unchanged and instead
+    flipped *Row's* (which depends on `cos(pitch)`) from up to down -
+    worse, not better, and *still* doesn't touch the camera-Z sign either.
+
+  The fix that actually works, arrived at by solving `cos(pitch)*cos(yaw)
+  > 0` (camera above the surface) simultaneously with `cos(pitch) > 0`
+  (Row points up) and `-cos(yaw)*sin(pitch) > 0` (Value points up):
+  `FYaw=20, FPitch=-45`. Because this needs `FPitch` well past the
+  original ±89° drag clamp, that clamp is widened to ±179° (`MouseMove`) -
+  avoiding only the exact poles at ±180°, where this simple sequential-
+  Euler-angle camera would degenerate into gimbal lock. `Paint` also now
+  positions the light in EYE space (i.e. specifies it before the camera
+  rotate/translate calls run, while `GL_MODELVIEW` is still identity)
+  rather than in the same scene-fixed space as the geometry - a "headlamp"
+  that shines from the viewer's own position, so whatever face is actually
+  visible is - by construction, regardless of which side of the mesh that
+  turns out to be - the one facing the light. `GL_LIGHT_MODEL_TWO_SIDE`
+  is kept as a second line of defence alongside it. The headlamp's
+  direction is deliberately offset up and to one side
+  (`lightPos=(0.5,-0.6,0.65,0)`) rather than aimed straight down the view
+  axis (`(0,0,1,0)`, tried first): a light aimed exactly along the view
+  direction lights every visible triangle almost head-on, which is
+  technically correct but reads as flat and dim, since there's no `N.L`
+  falloff left to create the light/dark contrast that makes a
+  Gouraud-shaded surface read as three-dimensional. `Paint` also raises
+  `GL_LIGHT_MODEL_AMBIENT` from GL's own default `(0.2,0.2,0.2,1)` to
+  `(0.35,0.35,0.35,1)` - purely a brightness floor for whatever the
+  angled directional light doesn't reach, independent of the
+  directionality fix above. `lightPos[1]` (Y) is negative despite that
+  being meant to place the light "above" the viewer - confirmed
+  empirically rather than derived, since reasoning through eye-space sign
+  conventions for this light kept not matching what actually rendered: a
+  positive Y showed the surface's actual peak (which `HeightToColor`
+  should render as the most saturated red) dark/muted while a lower
+  side-slope lit up instead - the signature of light hitting the
+  underside of the slopes - and only flipping the sign to negative, then
+  re-screenshotting to confirm the peak became the brightest point as
+  expected, actually fixed it.
 - **Published toggles**: `Wireframe: Boolean` (drives
   `glPolygonMode(GL_FRONT_AND_BACK, GL_LINE/GL_FILL)` - previously the
   paint handler read an external `WireframeCheckBox.Checked` directly,
@@ -1003,8 +1074,52 @@ not part of the `LazOpenGLContext` Lazarus package, so no extra
   checkbox; a reusable component needs its own field, with a host
   `TCheckBox`'s `OnChange` forwarding into it instead, same as `Plot3D`'s
   demo now does) and `ShowAxes: Boolean` (default `True`, matching the
-  original always-on behaviour) toggling the small RGB X/Y/Z orientation
-  axes (`DrawAxes`).
+  original always-on behaviour) toggling the X/Y/Z axis lines
+  (`DrawAxisLines`) plus their tick marks/labels and axis titles
+  (`DrawAxisLabels`) - the main `Title` stays visible either way, since it
+  isn't part of the axis gizmo.
+- **Title/axis titles and axis scales**: `Title`/`XAxisTitle`/
+  `YAxisTitle`/`ZAxisTitle` are published string properties (each setter
+  calls `InvalidateTextures` + `Invalidate`, mirroring `TVMPlot2D`'s
+  `Title`/`XAxisTitle`/`YAxisTitle`), plus full-span axis lines with a
+  point marker and "nice"-rounded value label at each tick
+  (`ComputeTicks`/`NiceNum`, ported the same as `TVMPlot2D`'s). Since
+  `SetData` only ever sees a plain `Rows x Cols` matrix - not whatever
+  domain, if any, the caller sampled it over - the X/Y ticks are labelled
+  by column/row index (the one thing always knowable about an arbitrary
+  matrix) and the Z ticks by `M`'s actual value range (`FZMin`/`FZMax`,
+  persisted as fields precisely so the tick/label code can use them after
+  `SetData` returns).
+- **Text rendering** reuses `TVMPlot2D`'s texture-based technique (each
+  title/tick-label string rendered once via the LCL font engine to a
+  `TVMPlotTextTexture`, with the same `Built`-flag/`FreeAllTextures`/
+  `InvalidateTextures` lifecycle and the same termination-safe
+  `destructor Destroy` guard - `if HandleAllocated and MakeCurrent then
+  FreeAllTextures`, see `TVMPlot2D.Destroy`'s comment for why) - with one
+  deliberate difference: `TVMPlot2D`'s plot background is white, so its
+  `CreateTextTexture` bakes in always-black text, but this control's
+  background is dark (`glClearColor 0.12,0.12,0.16`), so black text there
+  would be nearly invisible - `CreateTextTexture` here takes an explicit
+  `TR,TG,TB` colour parameter instead, and `BuildTextures` uses yellow for
+  `Title` and light grey for the axis titles/tick labels.
+- **`WorldToScreen`**: unlike `TVMPlot2D`'s fixed pixel-space label
+  positions, this control's axes rotate with the mouse-driven camera, so
+  tick/title screen positions must be recomputed every frame.
+  `WorldToScreen` projects a 3D world point to screen pixel coordinates by
+  replaying - in plain Pascal, not via a GL matrix query - the exact
+  camera transform `Paint` sets up on the GL matrix stack
+  (`glTranslatef(0,0,-FDistance); glRotatef(FPitch,1,0,0);
+  glRotatef(FYaw,0,1,0)`, then `gluPerspective`), by hand: deliberate,
+  over calling `gluProject` to read the GL matrices back out, since GLU's
+  exact FPC signature isn't available to check locally (only a compiled
+  `glu.ppu`, no bundled `.pas` source) and this camera transform is simple
+  enough to duplicate directly with no ambiguity about what it computes.
+  `Paint` therefore does *not* switch to a pixel-space `glOrtho`/
+  `glViewport` before computing label positions - `DrawAxisLabels` runs
+  and calls `WorldToScreen` for every tick/title while the 3D camera
+  transform is still the active `GL_MODELVIEW`/`GL_PROJECTION` state, and
+  only the final `glOrtho(0,Width,0,Height,...)`/`glViewport` switch (for
+  actually drawing the resulting 2D label quads) happens afterward.
 - `Paint` unconditionally clears/lights the scene and draws the axis
   gizmo (if `ShowAxes`) even before any `SetData` call (`FHasData` only
   gates the actual surface `GL_TRIANGLE_STRIP` draw), so a freshly-dropped

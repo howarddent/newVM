@@ -36,11 +36,14 @@ unit uVMPlot3D;
 interface
 
 uses
-  Classes, SysUtils, Math, Controls, LCLType,
+  Classes, SysUtils, Math, Controls, LCLType, Graphics,
+  IntfGraphics, FPImage,
   GL, GLU, OpenGLContext,
   newVM;
 
 type
+  TVMPlotDoubleArray = array of Double;
+
   // One surface grid point's render-ready state: world-space position,
   // unit normal (for lighting) and height-mapped colour - all precomputed
   // once in SetData rather than recomputed every frame. Ported unchanged
@@ -51,23 +54,56 @@ type
     R, G, B: Double;
   end;
 
+  // A title/axis-title/tick-label string rendered once to a GL texture -
+  // see uVMPlot2D.pas's TEXT RENDERING note (same technique; Built tracks
+  // whether TexID is a live GL resource, so FreeAllTextures/the destructor
+  // can skip ones that were never (re)built).
+  TVMPlotTextTexture = record
+    TexID: GLuint;
+    W, H: Integer;
+    Built: Boolean;
+  end;
+
   { TVMPlot3D }
 
   TVMPlot3D = class(TOpenGLControl)
   private
     FRows, FCols: Integer;
     FVerts: array of array of TVMPlotSurfaceVertex;
+    FZMin, FZMax: Double;
     FHasData: Boolean;
     FYaw, FPitch, FDistance: Double;
     FWireframe, FShowAxes: Boolean;
     FDragging: Boolean;
     FLastMouseX, FLastMouseY: Integer;
+
+    FTitle, FXAxisTitle, FYAxisTitle, FZAxisTitle: string;
+    FXTicks, FYTicks, FZTicks: TVMPlotDoubleArray;
+    FTexturesBuilt: Boolean;
+    FTitleTex, FXAxisTitleTex, FYAxisTitleTex, FZAxisTitleTex: TVMPlotTextTexture;
+    FXTickTex, FYTickTex, FZTickTex: array of TVMPlotTextTexture;
+
     procedure SetWireframe(AValue: Boolean);
     procedure SetShowAxes(AValue: Boolean);
+    procedure SetTitle(const AValue: string);
+    procedure SetXAxisTitle(const AValue: string);
+    procedure SetYAxisTitle(const AValue: string);
+    procedure SetZAxisTitle(const AValue: string);
     procedure ComputeNormal(r, c: Integer);
     procedure HeightToColor(t: Double; out r, g, b: Double);
-    procedure DrawAxes;
+    procedure DrawAxisLines;
+    procedure DrawAxisLabels;
     procedure EmitVertex(r, c: Integer);
+    procedure WorldToScreen(wx, wy, wz: Double; VW, VH: Integer;
+      out sx, sy: Double; out infront: Boolean);
+    procedure InvalidateTextures;
+    procedure FreeTextTexture(var Tex: TVMPlotTextTexture);
+    procedure FreeAllTextures;
+    function CreateTextTexture(const S: string; FontSize: Integer;
+      Bold: Boolean; TR, TG, TB: Byte): TVMPlotTextTexture;
+    procedure BuildTextures;
+    procedure DrawTextTexture(const Tex: TVMPlotTextTexture;
+      X, Y, AngleDeg, HAlign, VAlign: Double);
   protected
     procedure Resize; override;
     procedure MouseDown(Button: TMouseButton; Shift: TShiftState;
@@ -79,12 +115,17 @@ type
       MousePos: TPoint): Boolean; override;
   public
     constructor Create(TheOwner: TComponent); override;
+    destructor Destroy; override;
     procedure Paint; override;
     procedure SetData(const M: TVMobj);
     procedure ResetView;
   published
     property Wireframe: Boolean read FWireframe write SetWireframe;
     property ShowAxes: Boolean read FShowAxes write SetShowAxes;
+    property Title: string read FTitle write SetTitle;
+    property XAxisTitle: string read FXAxisTitle write SetXAxisTitle;
+    property YAxisTitle: string read FYAxisTitle write SetYAxisTitle;
+    property ZAxisTitle: string read FZAxisTitle write SetZAxisTitle;
   end;
 
 procedure Register;
@@ -92,12 +133,69 @@ procedure Register;
 implementation
 
 const
-  // Initial/reset camera framing - matches uplot3dmain.pas's FormCreate
-  // and ResetViewButtonClick constants, tuned there by actually
-  // screenshotting the running demo (see CLAUDE.md).
-  DefaultYaw = 35.0;
-  DefaultPitch = 45.0;
+  // Initial/reset camera framing - see CLAUDE.md's Graphs/ section for the
+  // full story of how this was arrived at (several screenshotted
+  // iterations, including wrong turns worth not retrying). In short: the
+  // camera's actual WORLD position works out to
+  // (-D*cos(pitch)*sin(yaw), D*sin(pitch), D*cos(pitch)*cos(yaw)) - see
+  // Paint's headlamp-lighting comment for the derivation - and the
+  // original FYaw=35, FPitch=45 gives a negative (below-the-surface) Z
+  // there, which is the actual "looks like the underside" cause. FYaw=20,
+  // FPitch=-45 makes that Z positive (camera above the surface) while
+  // still keeping both Row's and Value's on-screen vertical directions
+  // pointing up (their signs depend on cos(pitch) and
+  // -cos(yaw)*sin(pitch) respectively - see WorldToScreen).
+  DefaultYaw = 20.0;
+  DefaultPitch = -45.0;
   DefaultDistance = 16.0;
+
+  // World-space size of the rendered surface/axes, shared by SetData,
+  // DrawAxisLines and WorldToScreen's world-position calculations.
+  WorldSize = 8.0;
+  ZScale = 2.5;
+
+// "Nice" round tick step (1/2/5 x 10^n) closest to x - Heckbert's classic
+// "Nice Numbers for Graph Labels" algorithm. Ported unchanged from
+// uplot3dmain.pas (itself ported from uVMPlot2D.pas's NiceNum).
+function NiceNum(x: Double): Double;
+var
+  e: Integer;
+  f, nf: Double;
+begin
+  if x <= 0 then begin result := 1; Exit; end;
+  e := Floor(Log10(x));
+  f := x / Power(10, e);
+  if f < 1.5 then nf := 1
+  else if f < 3 then nf := 2
+  else if f < 7 then nf := 5
+  else nf := 10;
+  result := nf * Power(10, e);
+end;
+
+// Tick values spaced at a "nice" step, covering [lo,hi]. Ported unchanged
+// from uplot3dmain.pas.
+function ComputeTicks(lo, hi: Double; TargetCount: Integer): TVMPlotDoubleArray;
+var
+  step, first, v: Double;
+  n: Integer;
+begin
+  step := NiceNum((hi - lo) / Max(TargetCount - 1, 1));
+  first := Ceil(lo / step) * step;
+  n := 0;
+  SetLength(result, 0);
+  v := first;
+  while v <= hi + step * 1e-9 do begin
+    SetLength(result, n + 1);
+    result[n] := v;
+    Inc(n);
+    v := v + step;
+  end;
+end;
+
+function FormatTick(v: Double): string;
+begin
+  result := FloatToStrF(v, ffGeneral, 4, 0);
+end;
 
 { TVMPlot3D }
 
@@ -110,6 +208,16 @@ begin
   FWireframe := False;
   FShowAxes := True;
   FHasData := False;
+  FTexturesBuilt := False;
+end;
+
+destructor TVMPlot3D.Destroy;
+begin
+  // See TVMPlot2D.Destroy's comment (uVMPlot2D.pas) for why this guards on
+  // HandleAllocated - the same app-termination crash applies here, since
+  // this component now also owns GL texture resources.
+  if HandleAllocated and MakeCurrent then FreeAllTextures;
+  inherited Destroy;
 end;
 
 procedure TVMPlot3D.SetWireframe(AValue: Boolean);
@@ -126,6 +234,38 @@ begin
   Invalidate;
 end;
 
+procedure TVMPlot3D.SetTitle(const AValue: string);
+begin
+  if FTitle = AValue then Exit;
+  FTitle := AValue;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlot3D.SetXAxisTitle(const AValue: string);
+begin
+  if FXAxisTitle = AValue then Exit;
+  FXAxisTitle := AValue;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlot3D.SetYAxisTitle(const AValue: string);
+begin
+  if FYAxisTitle = AValue then Exit;
+  FYAxisTitle := AValue;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlot3D.SetZAxisTitle(const AValue: string);
+begin
+  if FZAxisTitle = AValue then Exit;
+  FZAxisTitle := AValue;
+  InvalidateTextures;
+  Invalidate;
+end;
+
 procedure TVMPlot3D.ResetView;
 begin
   FYaw := DefaultYaw;
@@ -136,31 +276,31 @@ end;
 
 // Populates FVerts from M: world X/Y form a grid of fixed total extent
 // (WorldSize) centred on the origin regardless of M.Rows/M.Cols, and
-// world Z is M's values linearly rescaled from [ZMin,ZMax] to
+// world Z is M's values linearly rescaled from [FZMin,FZMax] to
 // [-ZScale/2,+ZScale/2] regardless of M's actual magnitude - so any real
 // matrix, of any size or value range, renders at the same on-screen
-// scale. Ported unchanged from uplot3dmain.pas's BuildSurface, renamed to
-// SetData for parity with TVMPlot2D's public entry point.
+// scale. Also computes the X/Y/Z axis tick values - the X/Y axes are
+// labelled by column/row index (the one thing this can always know about
+// an arbitrary matrix) and Z by M's actual value range. Ported from
+// uplot3dmain.pas's BuildSurface, renamed to SetData for parity with
+// TVMPlot2D's public entry point.
 procedure TVMPlot3D.SetData(const M: TVMobj);
-const
-  WorldSize = 8.0;
-  ZScale = 2.5;
 var
   r, c: Integer;
-  ZMin, ZMax, ZRange, v, dxWorld, dyWorld: Double;
+  ZRange, v, dxWorld, dyWorld: Double;
 begin
   FRows := M.Rows;
   FCols := M.Cols;
   SetLength(FVerts, FRows, FCols);
 
-  ZMin := M[0, 0]; ZMax := M[0, 0];
+  FZMin := M[0, 0]; FZMax := M[0, 0];
   for r := 0 to FRows - 1 do
     for c := 0 to FCols - 1 do begin
       v := M[r, c];
-      if v < ZMin then ZMin := v;
-      if v > ZMax then ZMax := v;
+      if v < FZMin then FZMin := v;
+      if v > FZMax then FZMax := v;
     end;
-  ZRange := ZMax - ZMin;
+  ZRange := FZMax - FZMin;
   if ZRange = 0 then ZRange := 1;   // guard a constant matrix
 
   dxWorld := WorldSize / (FCols - 1);
@@ -170,7 +310,7 @@ begin
     for c := 0 to FCols - 1 do begin
       FVerts[r, c].X := (c - (FCols - 1) / 2) * dxWorld;
       FVerts[r, c].Y := (r - (FRows - 1) / 2) * dyWorld;
-      FVerts[r, c].Z := ((M[r, c] - ZMin) / ZRange - 0.5) * ZScale;
+      FVerts[r, c].Z := ((M[r, c] - FZMin) / ZRange - 0.5) * ZScale;
     end;
 
   for r := 0 to FRows - 1 do
@@ -182,7 +322,12 @@ begin
         FVerts[r, c].R, FVerts[r, c].G, FVerts[r, c].B);
     end;
 
+  FXTicks := ComputeTicks(0, FCols - 1, 5);
+  FYTicks := ComputeTicks(0, FRows - 1, 5);
+  FZTicks := ComputeTicks(FZMin, FZMax, 5);
+
   FHasData := True;
+  InvalidateTextures;
   Invalidate;
 end;
 
@@ -233,21 +378,301 @@ begin
   end;
 end;
 
-// Three short RGB lines from the origin along X/Y/Z, for orientation
-// reference while dragging the view around. Ported unchanged from
-// uplot3dmain.pas.
-procedure TVMPlot3D.DrawAxes;
+// Full-span X/Y/Z axis lines through the actual rendered extent (rather
+// than a fixed short reference stub), plus a small point marker at each
+// tick's exact 3D position - the numeric tick labels themselves are
+// drawn separately in pixel space by DrawAxisLabels, once this frame's
+// camera transform is known. Ported from uplot3dmain.pas's DrawAxisLines.
+procedure TVMPlot3D.DrawAxisLines;
 const
-  AxisLen = 3.0;
+  HalfW = WorldSize / 2;
+  HalfZ = ZScale / 2;
+var
+  i: Integer;
+  zRangeForTicks: Double;
 begin
+  zRangeForTicks := Max(FZMax - FZMin, 1e-9);
+
   glDisable(GL_LIGHTING);
-  glLineWidth(2.0);
+  glLineWidth(1.5);
   glBegin(GL_LINES);
-    glColor3f(1, 0, 0); glVertex3d(0, 0, 0); glVertex3d(AxisLen, 0, 0);
-    glColor3f(0, 1, 0); glVertex3d(0, 0, 0); glVertex3d(0, AxisLen, 0);
-    glColor3f(0, 0, 1); glVertex3d(0, 0, 0); glVertex3d(0, 0, AxisLen);
+    glColor3f(0.85, 0.25, 0.25); glVertex3d(-HalfW, 0, 0); glVertex3d(HalfW, 0, 0);
+    glColor3f(0.25, 0.75, 0.25); glVertex3d(0, -HalfW, 0); glVertex3d(0, HalfW, 0);
+    glColor3f(0.35, 0.55, 1.0);  glVertex3d(0, 0, -HalfZ); glVertex3d(0, 0, HalfZ);
   glEnd;
+
+  glPointSize(4);
+  glBegin(GL_POINTS);
+    glColor3f(0.85, 0.25, 0.25);
+    for i := 0 to High(FXTicks) do
+      glVertex3d((FXTicks[i] - (FCols - 1) / 2) * (WorldSize / (FCols - 1)), 0, 0);
+    glColor3f(0.25, 0.75, 0.25);
+    for i := 0 to High(FYTicks) do
+      glVertex3d(0, (FYTicks[i] - (FRows - 1) / 2) * (WorldSize / (FRows - 1)), 0);
+    glColor3f(0.35, 0.55, 1.0);
+    for i := 0 to High(FZTicks) do
+      glVertex3d(0, 0, ((FZTicks[i] - FZMin) / zRangeForTicks - 0.5) * ZScale);
+  glEnd;
+
   glEnable(GL_LIGHTING);
+end;
+
+// Projects a 3D world point to this frame's screen pixel coordinates by
+// replaying - in plain Pascal, not via a GL matrix query - the exact
+// camera transform Paint sets up on the GL matrix stack:
+// glTranslatef(0,0,-FDistance); glRotatef(FPitch,1,0,0);
+// glRotatef(FYaw,0,1,0); then gluPerspective(45,aspect,0.1,100). Done by
+// hand rather than via gluProject since GLU's exact FPC signature isn't
+// available to check locally (only a compiled glu.ppu, no bundled .pas
+// source) and this camera transform is simple enough to duplicate
+// directly with no ambiguity about what it computes. Ported unchanged
+// from uplot3dmain.pas.
+procedure TVMPlot3D.WorldToScreen(wx, wy, wz: Double; VW, VH: Integer;
+  out sx, sy: Double; out infront: Boolean);
+const
+  FovYDeg = 45.0;
+var
+  yawRad, pitchRad, fovRad, tanHalfFov, aspect: Double;
+  x1, y1, z1, x2, y2, z2, camZ, ndcX, ndcY: Double;
+begin
+  yawRad := FYaw * Pi / 180;
+  pitchRad := FPitch * Pi / 180;
+
+  // Ry(yaw) - matches glRotatef(FYaw,0,1,0), applied to the model first
+  // (rightmost on the GL matrix stack = first to affect the vertex).
+  x1 := wx * Cos(yawRad) + wz * Sin(yawRad);
+  y1 := wy;
+  z1 := -wx * Sin(yawRad) + wz * Cos(yawRad);
+
+  // Rx(pitch) - matches glRotatef(FPitch,1,0,0), applied second.
+  x2 := x1;
+  y2 := y1 * Cos(pitchRad) - z1 * Sin(pitchRad);
+  z2 := y1 * Sin(pitchRad) + z1 * Cos(pitchRad);
+
+  // Translate by (0,0,-FDistance) - applied last (leftmost on the stack).
+  camZ := z2 - FDistance;
+  infront := camZ < -0.1;
+  if not infront then Exit;   // behind/at the camera - sx/sy meaningless
+
+  fovRad := FovYDeg * Pi / 180;
+  tanHalfFov := Tan(fovRad / 2);
+  aspect := VW / VH;
+
+  ndcX := x2 / (-camZ * tanHalfFov * aspect);
+  ndcY := y2 / (-camZ * tanHalfFov);
+
+  sx := (ndcX * 0.5 + 0.5) * VW;
+  sy := (ndcY * 0.5 + 0.5) * VH;
+end;
+
+// Marks cached title/tick GL textures for rebuild on the next paint -
+// called whenever the title strings or the tick set (i.e. the data)
+// change. Mirrors TVMPlot2D.InvalidateTextures.
+procedure TVMPlot3D.InvalidateTextures;
+begin
+  FTexturesBuilt := False;
+end;
+
+procedure TVMPlot3D.FreeTextTexture(var Tex: TVMPlotTextTexture);
+begin
+  if Tex.Built then begin
+    glDeleteTextures(1, @Tex.TexID);
+    Tex.Built := False;
+  end;
+end;
+
+procedure TVMPlot3D.FreeAllTextures;
+var
+  i: Integer;
+begin
+  FreeTextTexture(FTitleTex);
+  FreeTextTexture(FXAxisTitleTex);
+  FreeTextTexture(FYAxisTitleTex);
+  FreeTextTexture(FZAxisTitleTex);
+  for i := 0 to High(FXTickTex) do FreeTextTexture(FXTickTex[i]);
+  for i := 0 to High(FYTickTex) do FreeTextTexture(FYTickTex[i]);
+  for i := 0 to High(FZTickTex) do FreeTextTexture(FZTickTex[i]);
+end;
+
+// Renders S once via the LCL's font engine into a TBitmap, converts it to
+// an RGBA buffer ((TR,TG,TB) text colour, alpha = 255-luminance so the
+// white background drops out under normal alpha blending), and uploads it
+// as a GL texture - see uVMPlot2D.pas's TEXT RENDERING note for the full
+// rationale (same technique; unlike TVMPlot2D's always-black text, which
+// suits its white plot background, this control's background is dark -
+// glClearColor 0.12,0.12,0.16 - so the caller picks a colour instead, see
+// BuildTextures). Must run with a current GL context.
+function TVMPlot3D.CreateTextTexture(const S: string; FontSize: Integer;
+  Bold: Boolean; TR, TG, TB: Byte): TVMPlotTextTexture;
+var
+  Bmp: TBitmap;
+  IntfImg: TLazIntfImage;
+  x, y, W, H: Integer;
+  c: TFPColor;
+  lum: Byte;
+  TexPixels: array of Byte;
+begin
+  Bmp := TBitmap.Create;
+  try
+    Bmp.Canvas.Font.Size := FontSize;
+    if Bold then Bmp.Canvas.Font.Style := [fsBold];
+    W := Bmp.Canvas.TextWidth(S) + 4;
+    H := Bmp.Canvas.TextHeight(S) + 4;
+    if W < 1 then W := 1;
+    if H < 1 then H := 1;
+    Bmp.SetSize(W, H);
+
+    Bmp.Canvas.Brush.Color := clWhite;
+    Bmp.Canvas.Brush.Style := bsSolid;
+    Bmp.Canvas.FillRect(0, 0, W, H);
+    Bmp.Canvas.Font.Size := FontSize;
+    if Bold then Bmp.Canvas.Font.Style := [fsBold];
+    Bmp.Canvas.Font.Color := clBlack;
+    Bmp.Canvas.Brush.Style := bsClear;
+    Bmp.Canvas.TextOut(2, 2, S);
+
+    IntfImg := Bmp.CreateIntfImage;
+    try
+      SetLength(TexPixels, W * H * 4);
+      for y := 0 to H - 1 do
+        for x := 0 to W - 1 do begin
+          c := IntfImg.Colors[x, y];
+          lum := (c.red shr 8 + c.green shr 8 + c.blue shr 8) div 3;
+          TexPixels[(y * W + x) * 4 + 0] := TR;
+          TexPixels[(y * W + x) * 4 + 1] := TG;
+          TexPixels[(y * W + x) * 4 + 2] := TB;
+          TexPixels[(y * W + x) * 4 + 3] := 255 - lum;
+        end;
+    finally
+      IntfImg.Free;
+    end;
+
+    glGenTextures(1, @result.TexID);
+    glBindTexture(GL_TEXTURE_2D, result.TexID);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, W, H, 0, GL_RGBA,
+      GL_UNSIGNED_BYTE, @TexPixels[0]);
+    result.W := W;
+    result.H := H;
+    result.Built := True;
+  finally
+    Bmp.Free;
+  end;
+end;
+
+// Builds every text texture the paint handler needs. Frees any previously
+// built set first (FreeAllTextures) - Title/XAxisTitle/.../the data (hence
+// tick labels) can change any number of times over this component's life.
+// TitleR/G/B is yellow and LabelR/G/B a light grey - both chosen for
+// contrast against the dark background (see CreateTextTexture's note);
+// this was in fact a reported bug (the title used to render invisibly,
+// black-on-black, before CreateTextTexture took a colour parameter at
+// all).
+procedure TVMPlot3D.BuildTextures;
+const
+  TitleR = 255; TitleG = 220; TitleB = 40;
+  LabelR = 225; LabelG = 225; LabelB = 225;
+var
+  i: Integer;
+begin
+  FreeAllTextures;
+  FTitleTex := CreateTextTexture(FTitle, 14, True, TitleR, TitleG, TitleB);
+  FXAxisTitleTex := CreateTextTexture(FXAxisTitle, 10, False, LabelR, LabelG, LabelB);
+  FYAxisTitleTex := CreateTextTexture(FYAxisTitle, 10, False, LabelR, LabelG, LabelB);
+  FZAxisTitleTex := CreateTextTexture(FZAxisTitle, 10, False, LabelR, LabelG, LabelB);
+
+  SetLength(FXTickTex, Length(FXTicks));
+  for i := 0 to High(FXTicks) do
+    FXTickTex[i] := CreateTextTexture(FormatTick(FXTicks[i]), 9, False, LabelR, LabelG, LabelB);
+
+  SetLength(FYTickTex, Length(FYTicks));
+  for i := 0 to High(FYTicks) do
+    FYTickTex[i] := CreateTextTexture(FormatTick(FYTicks[i]), 9, False, LabelR, LabelG, LabelB);
+
+  SetLength(FZTickTex, Length(FZTicks));
+  for i := 0 to High(FZTicks) do
+    FZTickTex[i] := CreateTextTexture(FormatTick(FZTicks[i]), 9, False, LabelR, LabelG, LabelB);
+end;
+
+// Draws Tex as a textured quad anchored at (X,Y) in the current (pixel-
+// space) coordinate system, optionally rotated AngleDeg counterclockwise
+// about that anchor. Ported unchanged from uVMPlot2D.pas/uplot3dmain.pas.
+procedure TVMPlot3D.DrawTextTexture(const Tex: TVMPlotTextTexture;
+  X, Y, AngleDeg, HAlign, VAlign: Double);
+var
+  x0, y0: Double;
+begin
+  x0 := -Tex.W * HAlign;
+  y0 := -Tex.H * VAlign;
+  glPushMatrix;
+  glTranslated(X, Y, 0);
+  if AngleDeg <> 0 then glRotated(AngleDeg, 0, 0, 1);
+  glBindTexture(GL_TEXTURE_2D, Tex.TexID);
+  glBegin(GL_QUADS);
+    glTexCoord2f(0, 1); glVertex2d(x0, y0);
+    glTexCoord2f(1, 1); glVertex2d(x0 + Tex.W, y0);
+    glTexCoord2f(1, 0); glVertex2d(x0 + Tex.W, y0 + Tex.H);
+    glTexCoord2f(0, 0); glVertex2d(x0, y0 + Tex.H);
+  glEnd;
+  glPopMatrix;
+end;
+
+// Draws the fixed-position main title, plus - when FShowAxes is set -
+// every tick label and axis title at its current-frame screen position
+// (WorldToScreen). Must run in a pixel-space glOrtho(0,VW,0,VH,...) pass -
+// see Paint. Ported unchanged from uplot3dmain.pas.
+procedure TVMPlot3D.DrawAxisLabels;
+const
+  HalfW = WorldSize / 2;
+  HalfZ = ZScale / 2;
+var
+  i, VW, VH: Integer;
+  sx, sy: Double;
+  infront: Boolean;
+begin
+  VW := Width;
+  VH := Height;
+
+  glEnable(GL_TEXTURE_2D);
+  glColor4f(1, 1, 1, 1);
+
+  if FTitle <> '' then
+    DrawTextTexture(FTitleTex, VW / 2, VH - 18, 0, 0.5, 0.5);
+
+  if FShowAxes then begin
+    for i := 0 to High(FXTicks) do begin
+      WorldToScreen((FXTicks[i] - (FCols - 1) / 2) * (WorldSize / (FCols - 1)),
+        0, 0, VW, VH, sx, sy, infront);
+      if infront then DrawTextTexture(FXTickTex[i], sx, sy - 8, 0, 0.5, 1);
+    end;
+    for i := 0 to High(FYTicks) do begin
+      WorldToScreen(0, (FYTicks[i] - (FRows - 1) / 2) * (WorldSize / (FRows - 1)),
+        0, VW, VH, sx, sy, infront);
+      if infront then DrawTextTexture(FYTickTex[i], sx + 8, sy, 0, 0, 0.5);
+    end;
+    for i := 0 to High(FZTicks) do begin
+      WorldToScreen(0, 0,
+        ((FZTicks[i] - FZMin) / Max(FZMax - FZMin, 1e-9) - 0.5) * ZScale,
+        VW, VH, sx, sy, infront);
+      if infront then DrawTextTexture(FZTickTex[i], sx - 8, sy, 0, 1, 0.5);
+    end;
+
+    if FXAxisTitle <> '' then begin
+      WorldToScreen(HalfW * 1.15, 0, 0, VW, VH, sx, sy, infront);
+      if infront then DrawTextTexture(FXAxisTitleTex, sx, sy, 0, 0.5, 0.5);
+    end;
+    if FYAxisTitle <> '' then begin
+      WorldToScreen(0, HalfW * 1.15, 0, VW, VH, sx, sy, infront);
+      if infront then DrawTextTexture(FYAxisTitleTex, sx, sy, 0, 0.5, 0.5);
+    end;
+    if FZAxisTitle <> '' then begin
+      WorldToScreen(0, 0, HalfZ * 1.2, VW, VH, sx, sy, infront);
+      if infront then DrawTextTexture(FZAxisTitleTex, sx, sy, 0, 0.5, 0.5);
+    end;
+  end;
+
+  glDisable(GL_TEXTURE_2D);
 end;
 
 procedure TVMPlot3D.Paint;
@@ -255,9 +680,15 @@ var
   aspect: Double;
   r, c: Integer;
   lightPos: array[0..3] of GLfloat;
+  ambient: array[0..3] of GLfloat;
 begin
   if not MakeCurrent then Exit;
   if (Width = 0) or (Height = 0) then Exit;
+
+  if not FTexturesBuilt then begin
+    BuildTextures;
+    FTexturesBuilt := True;
+  end;
 
   glViewport(0, 0, Width, Height);
   aspect := Width / Height;
@@ -268,6 +699,46 @@ begin
 
   glMatrixMode(GL_MODELVIEW);
   glLoadIdentity;
+
+  // Light position is specified while GL_MODELVIEW is still identity - i.e.
+  // in EYE space, before the camera rotate/translate below is applied - so
+  // it behaves as a "headlamp" fixed to the viewer rather than to the
+  // scene: this is a directional light (w=0) specified in eye space, which
+  // in eye space is relative to the camera (which looks down -Z), so it
+  // always shines on whatever face is actually visible, regardless of
+  // where the camera ends up in world space. This replaced an earlier
+  // attempt at fixing "the surface looks like its underside" from some
+  // camera angles by relying on GL_LIGHT_MODEL_TWO_SIDE with a scene-fixed
+  // light instead: that flip is driven by GL's own winding-order-based
+  // front/back test, which isn't guaranteed to agree with the normal
+  // direction ComputeNormal computes independently, so it did not reliably
+  // fix the reported symptom (lit from underneath, correct/topside not
+  // lit). A camera-relative light sidesteps that mismatch entirely -
+  // whichever face the camera actually sees is, by construction, the one
+  // facing the light.
+  //
+  // The direction is offset up and to one side (rather than straight down
+  // the view axis, i.e. (0,0,1,0)) deliberately: a headlamp aimed exactly
+  // along the view direction lights every visible surface almost head-on,
+  // which is technically correct but reads as flat/dim - there is no N.L
+  // falloff to create the light/dark contrast that makes a Gouraud-shaded
+  // surface look three-dimensional. Offsetting it keeps the "always lights
+  // whatever's visible" guarantee (still eye-space-relative) while
+  // restoring that directional shading.
+  //
+  // lightPos[1] is NEGATIVE despite that being meant to place the light
+  // "above" the viewer - confirmed empirically (screenshotting +0.6 showed
+  // the surface's actual peak, which HeightToColor should render as the
+  // most saturated red, rendering dark/muted while a lower side-slope lit
+  // up instead - the signature of light hitting the underside of the
+  // slopes; flipping the sign to -0.6 fixed it, the peak now reading as
+  // the brightest point as expected) rather than derived, since reasoning
+  // through eye-space sign conventions here has repeatedly not matched
+  // what actually renders - see CLAUDE.md's Graphs/ section. Don't
+  // "correct" this back to a positive value without re-screenshotting.
+  lightPos[0] := 0.5; lightPos[1] := -0.6; lightPos[2] := 0.65; lightPos[3] := 0;
+  glLightfv(GL_LIGHT0, GL_POSITION, @lightPos[0]);
+
   glTranslatef(0, 0, -FDistance);
   glRotatef(FPitch, 1, 0, 0);
   glRotatef(FYaw, 0, 1, 0);
@@ -275,6 +746,8 @@ begin
   glClearColor(0.12, 0.12, 0.16, 1.0);
   glClear(GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT);
   glEnable(GL_DEPTH_TEST);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glShadeModel(GL_SMOOTH);
 
   glEnable(GL_LIGHTING);
@@ -282,10 +755,20 @@ begin
   glEnable(GL_COLOR_MATERIAL);
   glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
   glEnable(GL_NORMALIZE);
-  lightPos[0] := 4; lightPos[1] := 6; lightPos[2] := 8; lightPos[3] := 1;
-  glLightfv(GL_LIGHT0, GL_POSITION, @lightPos[0]);
+  // Kept as a second line of defence alongside the headlamp above: still
+  // correctly flips the normal GL uses for any triangle whose winding
+  // comes out back-facing to the camera, in case that ever disagrees with
+  // ComputeNormal's own sign convention for some viewing angle.
+  glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, GL_TRUE);
+  // GL's own default scene ambient (0.2,0.2,0.2,1) plus a single angled
+  // directional light leaves parts of the surface facing away from that
+  // light quite dark - raised here so the whole surface reads clearly
+  // without flattening out the directional shading the angled light (see
+  // above) provides.
+  ambient[0] := 0.35; ambient[1] := 0.35; ambient[2] := 0.35; ambient[3] := 1;
+  glLightModelfv(GL_LIGHT_MODEL_AMBIENT, @ambient[0]);
 
-  if FShowAxes then DrawAxes;
+  if FShowAxes then DrawAxisLines;
 
   if FHasData then begin
     if FWireframe then
@@ -304,6 +787,25 @@ begin
   end;
 
   glDisable(GL_LIGHTING);
+  glDisable(GL_DEPTH_TEST);
+
+  // --- pixel-space pass: main title, axis titles, tick labels - see
+  // DrawAxisLabels, which projects each 3D tick/title position through
+  // this frame's camera transform (still on the matrix stack above) by
+  // hand rather than switching to a pixel-space glOrtho/glViewport (as
+  // uVMPlot2D.pas does) before computing positions, since WorldToScreen
+  // needs FYaw/FPitch/FDistance/aspect, not the GL matrix state itself -
+  // only the FINAL glOrtho/glViewport below (for drawing the resulting 2D
+  // label quads) needs to be pixel-space. ---
+  glViewport(0, 0, Width, Height);
+  glMatrixMode(GL_PROJECTION);
+  glLoadIdentity;
+  glOrtho(0, Width, 0, Height, -1, 1);
+  glMatrixMode(GL_MODELVIEW);
+  glLoadIdentity;
+
+  DrawAxisLabels;
+
   SwapBuffers;
 end;
 
@@ -329,7 +831,15 @@ begin
   inherited MouseMove(Shift, X, Y);
   if not FDragging then Exit;
   FYaw := FYaw + (X - FLastMouseX) * 0.5;
-  FPitch := EnsureRange(FPitch + (Y - FLastMouseY) * 0.5, -89.0, 89.0);
+  // Was clamped to [-89,89] (avoiding the exact poles at +-90, where a
+  // simple sequential-Euler-angle camera like this one degenerates into
+  // gimbal lock) back when DefaultPitch was 45 - now that DefaultPitch is
+  // 135 (see its own comment), that range would clamp the very first drag
+  // down to 89 immediately, a jarring ~46 degree jump. Widened to
+  // [-179,179], which comfortably includes both defaults with room to
+  // drag either way; GL_LIGHT_MODEL_TWO_SIDE (see Paint) means the wider
+  // range crossing +-90 no longer risks the surface looking wrongly lit.
+  FPitch := EnsureRange(FPitch + (Y - FLastMouseY) * 0.5, -179.0, 179.0);
   FLastMouseX := X;
   FLastMouseY := Y;
   Invalidate;
