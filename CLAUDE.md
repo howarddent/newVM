@@ -794,9 +794,36 @@ OpenGL in Lazarus, requiring no GLScene dependency at all. Leave
   auto-fitted to the data's bounding box (`BuildPlotData`, with an 8%
   margin), plus a border rectangle and `x=0`/`y=0` gridlines drawn in GL.
   `BuildPlotData` accepts any real `TVMobj` vector pair (row *or* column
-  shaped, per newVM's `(1,N)`/`(N,1)` convention) - the one concrete
-  function plotted is a demonstration of that general path, the same way
-  `FunctionPlot`'s `y=f(x)` is one concrete use of `TAChart`.
+  shaped, per newVM's `(1,N)`/`(N,1)` convention) plus title strings - the
+  one concrete function plotted is a demonstration of that general path,
+  the same way `FunctionPlot`'s `y=f(x)` is one concrete use of `TAChart`.
+
+  Also renders a main title, axis titles, and axis scales (tick marks plus
+  "nice" round-number value labels, via `ComputeTicks`/`NiceNum` -
+  Heckbert's classic *Nice Numbers for Graph Labels* algorithm). OpenGL 1.x
+  has no built-in text, and rather than depend on a platform-specific font
+  API (Windows' `wglUseFontBitmaps`) or guess at the exact signatures of
+  FPC's compiled-only `glut.ppu` (no `.pas` source for it is bundled to
+  check against), every title/label string is rendered *once* via the
+  LCL's own font engine into a `TBitmap`, converted to an RGBA buffer
+  (`alpha := 255 - luminance`, so the white background drops out and black
+  text stays opaque under normal alpha blending - the same
+  `TLazIntfImage`-based pixel-reading trick
+  `examples/openglcontrol/exampleform.pp`'s `LoadglTexImage2DFromPNG` uses
+  to load a PNG texture), uploaded as a GL texture, and cached
+  (`CreateTextTexture`/`BuildTextures`, run once on the first paint, same
+  once-only-init pattern as that example's `AreaInitialized` flag) - then
+  drawn every frame as a small textured, alpha-blended quad
+  (`DrawTextTexture`), which also handles the Y axis title's 90-degree
+  rotation trivially, since a textured quad is just ordinary GL geometry
+  unlike a rotated bitmap font. The paint handler renders in two passes to
+  make room for this chrome: a data-space pass (`glOrtho` over the data's
+  bounding box, restricted to a `glViewport` shrunk by fixed pixel
+  margins) for the border/gridlines/line-strip exactly as before, then a
+  pixel-space pass (`glOrtho(0,Width,0,Height,...)` over the *full*
+  control) for the title/axis-titles/tick marks/labels, whose positions
+  are each tick's data value mapped through the same data-to-plot-
+  rectangle transform used for the data-space pass.
 - **`Plot3D`** — `z = sin(r)/r`, `r = sqrt(x^2+y^2)` (the classic "sinc
   ripple" surface, `r=0`'s removable singularity handled explicitly) over
   a 51x51 grid, built as a real `TVMobj` matrix (`BuildDemoMatrix`) then
