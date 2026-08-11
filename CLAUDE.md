@@ -896,20 +896,25 @@ Like the rest of `Graphs/`, it requires the `LazOpenGLContext` package and
 
 ### `Graphs/newvmgraphs.lpk` (`newVMGraphs` design-time package)
 
-The Lazarus package that gets `TVMPlot2D` into the IDE's component
-palette, following the same two-file shape every Lazarus package uses
-(compare `lazopenglcontext.lpk`/`.pas` in the Lazarus source tree itself,
-under `components/opengl/`): `newvmgraphs.lpk` is the package's XML
-definition (`Type=RunAndDesignTime`, `RequiredPkgs`: `LazOpenGLContext`
-and `LCL`, `OtherUnitFiles=..` so it can find `newVM.pas` and its sibling
-units one level up in the repo root); `newvmgraphs.pas` is the small
-auto-generated-style registration unit (`uses uVMPlot2D,
-LazarusPackageIntf`, calling `RegisterUnit`/`RegisterPackage`) - **do not
-hand-edit this file**, the same "Do not edit!" comment Lazarus itself
-puts at the top of every package unit applies here too; if `Graphs/`
-grows more components later, add them to `uVMPlot2D.pas`'s
-`<Files>` sibling in the `.lpk`, not by editing this unit's `uses`
-clause by hand outside the IDE's package editor.
+The Lazarus package that gets `TVMPlot2D` and `TVMPlot3D` into the IDE's
+component palette, following the same two-file shape every Lazarus
+package uses (compare `lazopenglcontext.lpk`/`.pas` in the Lazarus source
+tree itself, under `components/opengl/`): `newvmgraphs.lpk` is the
+package's XML definition (`Type=RunAndDesignTime`, `RequiredPkgs`:
+`LazOpenGLContext` and `LCL`, `OtherUnitFiles=..` so it can find
+`newVM.pas` and its sibling units one level up in the repo root, plus
+`GL`/`GLU` for `TVMPlot3D` - see the `uVMPlot3D.pas` section above for why
+those need no extra `RequiredPkgs` entry of their own); `newvmgraphs.pas`
+is the small auto-generated-style registration unit (`uses uVMPlot2D,
+uVMPlot3D, LazarusPackageIntf`, calling `RegisterUnit`/`RegisterPackage`
+once per component) - **do not hand-edit this file**, the same "Do not
+edit!" comment Lazarus itself puts at the top of every package unit
+applies here too; when `TVMPlot3D` was added, both the `.lpk`'s `<Files>`
+list and this unit's `uses`/`RegisterUnit` calls needed the same
+one-line-per-component addition as `TVMPlot2D`'s existing entries - if
+`Graphs/` grows further components later, follow that same pattern rather
+than editing this unit's `uses` clause by hand outside the IDE's package
+editor.
 
 Only `<Files>` entries are actual component units - the package's own
 `newvmgraphs.pas` is *not* listed there (it's implicit: a package's main
@@ -928,36 +933,87 @@ lazbuild --lazarusdir=<path> --add-package-link Graphs/newvmgraphs.lpk
 lazbuild --lazarusdir=<path> --add-package newVMGraphs --build-ide=
 ```
 (equivalently: open `Graphs/newvmgraphs.lpk` in the IDE's Package Editor
-and use Install). `--build-ide=` backs up the previous IDE binary to
-`lazarus.old` before relinking - Lazarus's own safety net if a rebuilt
-IDE somehow fails to start, not something this repo manages. After
-installing, `TVMPlot2D` appears in the component palette under the
-"newVM" tab (`RegisterComponents('newVM', [TVMPlot2D])` in
-`uVMPlot2D.pas`) and can be dropped onto any form's `.lfm` directly, in
-addition to the always-available `TVMPlot2D.Create(Owner)` code path
-`Plot2D`'s demo uses.
-- **`Plot3D`** — `z = sin(r)/r`, `r = sqrt(x^2+y^2)` (the classic "sinc
-  ripple" surface, `r=0`'s removable singularity handled explicitly) over
-  a 51x51 grid, built as a real `TVMobj` matrix (`BuildDemoMatrix`) then
-  rendered as a lit, Gouraud-shaded height-field surface
-  (`BuildSurface`/`EmitVertex`, `GL_TRIANGLE_STRIP` per row-pair).
-  `BuildSurface` is written for any real `TVMobj` matrix, not just this
-  demo's data: it rescales `M`'s value range to a fixed on-screen height
-  (`ZScale`) and centres a fixed-extent `(row,col)` grid (`WorldSize`)
-  regardless of `M`'s actual magnitude or `Rows`/`Cols` - `BuildDemoMatrix`
-  is one concrete matrix fed through that general path. Per-vertex normals
-  come from central differences of the (already world-scaled) height grid,
-  clamped at the edges (`ComputeNormal`); per-vertex colour comes from a
-  4-stop height gradient - blue → green → yellow → red
-  (`HeightToColor`) - tinting the lit surface via `GL_COLOR_MATERIAL`
-  rather than a flat material colour. Mouse drag on the `TOpenGLControl`
-  orbits the camera (yaw/pitch, pitch clamped to ±89° to avoid gimbal
-  flip), the mouse wheel zooms (`FDistance`, clamped to `[3,40]`), and a
-  `WireframeCheckBox` switches `glPolygonMode` between `GL_FILL` and
-  `GL_LINE`. Default camera framing (`FYaw=35, FPitch=45, FDistance=16`,
-  matched by `ResetViewButton`) was tuned by actually screenshotting the
-  running demo - the first attempt (`FDistance=10`) was too close in and
-  clipped most of the surface out of frame.
+and use Install). Once the package link and install-list entry already
+exist (as they do after the first install), picking up a *newly added*
+component - as when `TVMPlot3D` joined `TVMPlot2D` here - only needs the
+second `--build-ide=` line rerun, not `--add-package-link`/`--add-package`
+again. `--build-ide=` backs up the previous IDE binary to `lazarus.old`
+before relinking - Lazarus's own safety net if a rebuilt IDE somehow fails
+to start, not something this repo manages. After installing, both
+components appear in the component palette under the "newVM" tab
+(`RegisterComponents('newVM', [TVMPlot2D])` in `uVMPlot2D.pas`,
+`RegisterComponents('newVM', [TVMPlot3D])` in `uVMPlot3D.pas`) and can be
+dropped onto any form's `.lfm` directly, in addition to the
+always-available `TVMPlotN.Create(Owner)` code path both demos use.
+- **`Plot3D`** — demonstrates `uVMPlot3D.pas`'s `TVMPlot3D` component (see
+  the dedicated section below) with the same `z = sin(r)/r`, `r =
+  sqrt(x^2+y^2)` "sinc ripple" surface as before, over a 51x51 grid, built
+  as a real `TVMobj` matrix (`TForm1.BuildDemoMatrix`, `r=0`'s removable
+  singularity still handled explicitly). As with `Plot2D`, the form's
+  `.lfm` no longer contains a `TOpenGLControl` at all - `TVMPlot3D` is
+  created and `Parent`ed to the form in code (`FormCreate`), and the
+  surviving `WireframeCheckBox`/`ResetViewButton` controls (still declared
+  in the `.lfm`, since they're ordinary `TCheckBox`/`TButton` chrome
+  outside the plot itself) now just forward to the component's
+  `Wireframe` property and `ResetView` method instead of reading/writing
+  form-level fields directly.
+
+### `Graphs/uVMPlot3D.pas` (`TVMPlot3D` component)
+
+A reusable `TOpenGLControl`-descended LCL component - not tied to the
+`Plot3D` demo, added to the `newVMGraphs` design-time package (see above)
+alongside `TVMPlot2D` - that renders a real `TVMobj` matrix as a lit,
+Gouraud-shaded height-field surface. Lifted out of the original
+single-form `Plot3D` demo code the same way `TVMPlot2D` was lifted out of
+`Plot2D`'s (see git history of `uplot3dmain.pas` for the pre-extraction
+version); requires `LazOpenGLContext` and `uses GL, GLU, OpenGLContext`
+(`GLU` only for `gluPerspective` - like `GL`, it's an FPC-bundled unit,
+not part of the `LazOpenGLContext` Lazarus package, so no extra
+`RequiredPkgs` entry was needed for it).
+
+- **Data**: `procedure SetData(const M: TVMobj)` - takes any real `TVMobj`
+  matrix (no shape assert - unlike `TVMPlot2D`'s vectors-only contract,
+  a height field is defined for any `Rows`x`Cols`, degenerate 1-row/1-col
+  cases included). Named `SetData` for parity with `TVMPlot2D`'s entry
+  point, though the underlying rescale-and-centre logic (`WorldSize`/
+  `ZScale` constants, per-vertex normal via `ComputeNormal`, per-vertex
+  colour via the 4-stop `HeightToColor` gradient) is ported unchanged
+  from the demo's original `BuildSurface` - see that function's own
+  comments for why it rescales any matrix to the same on-screen scale
+  regardless of actual magnitude or dimensions.
+- **Interactive camera, self-contained**: unlike `TVMPlot2D` (a static
+  orthographic view needing no interaction) a 3D height field is far less
+  legible without being able to orbit it, so - unlike the original demo,
+  which wired `OpenGLControl1`'s `OnMouseDown`/`OnMouseMove`/`OnMouseUp`/
+  `OnMouseWheel` events by hand in the form - `TVMPlot3D` overrides
+  `MouseDown`/`MouseMove`/`MouseUp`/`DoMouseWheel` directly so the camera
+  works with zero wiring: drag rotates (yaw/pitch, pitch clamped to ±89°
+  to avoid gimbal flip via `EnsureRange`), wheel zooms (`FDistance`,
+  clamped to `[3,40]`). `ResetView` (a public method) restores the
+  original demo's tuned default framing (`Yaw=35, Pitch=45, Distance=16`
+  - see the `Plot3D` bullet above for how those constants were arrived
+  at); there's no published `Yaw`/`Pitch`/`Distance` property, since those
+  are live interactive camera state driven by mouse input, not meaningful
+  design-time configuration - `ResetView` is the supported way to
+  reset them programmatically.
+- **Published toggles**: `Wireframe: Boolean` (drives
+  `glPolygonMode(GL_FRONT_AND_BACK, GL_LINE/GL_FILL)` - previously the
+  paint handler read an external `WireframeCheckBox.Checked` directly,
+  which only worked because the demo happened to have exactly that
+  checkbox; a reusable component needs its own field, with a host
+  `TCheckBox`'s `OnChange` forwarding into it instead, same as `Plot3D`'s
+  demo now does) and `ShowAxes: Boolean` (default `True`, matching the
+  original always-on behaviour) toggling the small RGB X/Y/Z orientation
+  axes (`DrawAxes`).
+- `Paint` unconditionally clears/lights the scene and draws the axis
+  gizmo (if `ShowAxes`) even before any `SetData` call (`FHasData` only
+  gates the actual surface `GL_TRIANGLE_STRIP` draw), so a freshly-dropped
+  component with no data yet still renders a sane, non-blank dark-grey
+  viewport rather than nothing.
+- `Resize` is overridden the same way as `TVMPlot2D`'s (`inherited
+  Resize; Invalidate;`), since `AutoResizeViewport` is left at its default
+  `False` and the viewport is instead recomputed by hand from `Width`/
+  `Height` at the top of every `Paint` call.
 
 ### `backup/`
 

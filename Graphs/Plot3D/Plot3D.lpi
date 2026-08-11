@@ -42,6 +42,10 @@
         <ResourceBaseClass Value="Form"/>
         <UnitName Value="uplot3dmain"/>
       </Unit>
+      <Unit>
+        <Filename Value="../uVMPlot3D.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
@@ -50,7 +54,7 @@
       <Filename Value="Plot3D"/>
     </Target>
     <SearchPaths>
-      <OtherUnitFiles Value="../.."/>
+      <OtherUnitFiles Value="../..;.."/>
       <IncludeFiles Value="$(ProjOutDir)"/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
