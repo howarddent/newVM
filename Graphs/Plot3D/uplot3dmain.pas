@@ -32,12 +32,14 @@ type
     ControlPanel: TPanel;
     WireframeCheckBox: TCheckBox;
     ShowAxesCheckBox: TCheckBox;
+    LevelCurvesCheckBox: TCheckBox;
     ResetViewButton: TButton;
     HintLabel: TLabel;
     procedure FormCreate(Sender: TObject);
     procedure ResetViewButtonClick(Sender: TObject);
     procedure WireframeCheckBoxChange(Sender: TObject);
     procedure ShowAxesCheckBoxChange(Sender: TObject);
+    procedure LevelCurvesCheckBoxChange(Sender: TObject);
   private
     FPlot: TVMPlot3D;
     function BuildDemoMatrix: TVMobj;
@@ -104,6 +106,11 @@ end;
 procedure TForm1.ShowAxesCheckBoxChange(Sender: TObject);
 begin
   FPlot.ShowAxes := ShowAxesCheckBox.Checked;
+end;
+
+procedure TForm1.LevelCurvesCheckBoxChange(Sender: TObject);
+begin
+  FPlot.ShowLevelCurves := LevelCurvesCheckBox.Checked;
 end;
 
 end.

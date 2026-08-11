@@ -953,11 +953,12 @@ always-available `TVMPlotN.Create(Owner)` code path both demos use.
   `.lfm` no longer contains a `TOpenGLControl` at all - `TVMPlot3D` is
   created and `Parent`ed to the form in code (`FormCreate`, which also
   sets `Title`/`XAxisTitle`/`YAxisTitle`/`ZAxisTitle` before `SetData`),
-  and the `WireframeCheckBox`/`ShowAxesCheckBox`/`ResetViewButton`
-  controls (still declared in the `.lfm`, since they're ordinary
-  `TCheckBox`/`TButton` chrome outside the plot itself) just forward to
-  the component's `Wireframe`/`ShowAxes` properties and `ResetView`
-  method instead of reading/writing form-level fields directly.
+  and the `WireframeCheckBox`/`ShowAxesCheckBox`/`LevelCurvesCheckBox`/
+  `ResetViewButton` controls (still declared in the `.lfm`, since they're
+  ordinary `TCheckBox`/`TButton` chrome outside the plot itself) just
+  forward to the component's `Wireframe`/`ShowAxes`/`ShowLevelCurves`
+  properties and `ResetView` method instead of reading/writing form-level
+  fields directly.
 
 ### `Graphs/uVMPlot3D.pas` (`TVMPlot3D` component)
 
@@ -1077,7 +1078,32 @@ not part of the `LazOpenGLContext` Lazarus package, so no extra
   original always-on behaviour) toggling the X/Y/Z axis lines
   (`DrawAxisLines`) plus their tick marks/labels and axis titles
   (`DrawAxisLabels`) - the main `Title` stays visible either way, since it
-  isn't part of the axis gizmo.
+  isn't part of the axis gizmo. A third toggle, `ShowLevelCurves: Boolean`
+  (default `False`), draws contour ("level curve") lines on the surface at
+  each of the same "nice" Z values already labelled on the Value axis
+  (`FZTicks`) - see `DrawLevelCurves` below. Skipped entirely in wireframe
+  mode (`if (not FWireframe) and FShowLevelCurves` in `Paint`), since a
+  contour line has no independent visual meaning against a mesh that
+  already shows every grid edge.
+- **`DrawLevelCurves`**: per-tick, per-quad marching-triangles contour
+  extraction - for each `FZTicks[i]` strictly between `FZMin`/`FZMax`
+  (converted to the same world-space Z the surface itself is drawn in, via
+  the `((tick-FZMin)/zRange - 0.5)*ZScale` formula used throughout this
+  unit), every grid quad is split into its two existing triangles
+  (matching the `GL_TRIANGLE_STRIP` winding `Paint` already draws) and each
+  triangle's three edges are tested for a sign change in `Z - level`
+  (`TryEdge`); exactly two edges of a triangle can cross a given level (a
+  triangle can't cross a plane on all three edges), so `ContourTriangle`
+  collects up to two linearly-interpolated crossing points and emits them
+  as one `GL_LINES` segment. No BLAS/LAPACK/IPP/GL primitive does contour
+  extraction, so - like `Find`/`Gather` in the main library - this is a
+  plain nested loop. Drawn unlit (`glDisable(GL_LIGHTING)`, dark grey,
+  `glLineWidth(1.5)`) directly on top of the already-drawn filled surface;
+  to avoid z-fighting between the contour lines and the coplanar filled
+  triangles, `Paint` enables `GL_POLYGON_OFFSET_FILL`/`glPolygonOffset(1.0,
+  1.0)` around the filled-surface draw call whenever `FShowLevelCurves` is
+  set (pushing the filled polygons back very slightly in depth), then
+  disables it before calling `DrawLevelCurves`.
 - **Title/axis titles and axis scales**: `Title`/`XAxisTitle`/
   `YAxisTitle`/`ZAxisTitle` are published string properties (each setter
   calls `InvalidateTextures` + `Invalidate`, mirroring `TVMPlot2D`'s

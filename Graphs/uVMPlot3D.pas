@@ -73,7 +73,7 @@ type
     FZMin, FZMax: Double;
     FHasData: Boolean;
     FYaw, FPitch, FDistance: Double;
-    FWireframe, FShowAxes: Boolean;
+    FWireframe, FShowAxes, FShowLevelCurves: Boolean;
     FDragging: Boolean;
     FLastMouseX, FLastMouseY: Integer;
 
@@ -85,6 +85,7 @@ type
 
     procedure SetWireframe(AValue: Boolean);
     procedure SetShowAxes(AValue: Boolean);
+    procedure SetShowLevelCurves(AValue: Boolean);
     procedure SetTitle(const AValue: string);
     procedure SetXAxisTitle(const AValue: string);
     procedure SetYAxisTitle(const AValue: string);
@@ -93,6 +94,7 @@ type
     procedure HeightToColor(t: Double; out r, g, b: Double);
     procedure DrawAxisLines;
     procedure DrawAxisLabels;
+    procedure DrawLevelCurves;
     procedure EmitVertex(r, c: Integer);
     procedure WorldToScreen(wx, wy, wz: Double; VW, VH: Integer;
       out sx, sy: Double; out infront: Boolean);
@@ -122,6 +124,7 @@ type
   published
     property Wireframe: Boolean read FWireframe write SetWireframe;
     property ShowAxes: Boolean read FShowAxes write SetShowAxes;
+    property ShowLevelCurves: Boolean read FShowLevelCurves write SetShowLevelCurves;
     property Title: string read FTitle write SetTitle;
     property XAxisTitle: string read FXAxisTitle write SetXAxisTitle;
     property YAxisTitle: string read FYAxisTitle write SetYAxisTitle;
@@ -207,6 +210,7 @@ begin
   FDistance := DefaultDistance;
   FWireframe := False;
   FShowAxes := True;
+  FShowLevelCurves := False;
   FHasData := False;
   FTexturesBuilt := False;
 end;
@@ -231,6 +235,13 @@ procedure TVMPlot3D.SetShowAxes(AValue: Boolean);
 begin
   if FShowAxes = AValue then Exit;
   FShowAxes := AValue;
+  Invalidate;
+end;
+
+procedure TVMPlot3D.SetShowLevelCurves(AValue: Boolean);
+begin
+  if FShowLevelCurves = AValue then Exit;
+  FShowLevelCurves := AValue;
   Invalidate;
 end;
 
@@ -376,6 +387,80 @@ begin
     glColor3d(R, G, B);
     glVertex3d(X, Y, Z);
   end;
+end;
+
+// Contour ("level curve") lines where the surface crosses each value in
+// FZTicks - the same "nice" values already labelled on the Value axis, so
+// a curve corresponds exactly to a value a viewer can read straight off
+// that axis, rather than an arbitrarily-spaced set. Classic "marching
+// triangles" contour extraction: each grid quad is split into two
+// triangles (independent of the shading pass's own GL_TRIANGLE_STRIP
+// topology in Paint - any consistent split works, since this is a
+// separate height-field-only overlay computed straight from FVerts, not
+// drawn as part of that triangle strip), and for each triangle/level
+// pair, the (up to two) triangle edges whose endpoints straddle that
+// level are linearly interpolated to find where Z=level crosses them -
+// the resulting two points are joined with one line segment.
+procedure TVMPlot3D.DrawLevelCurves;
+
+  // Finds where edge (A,B) crosses level L, if it does, and records the
+  // interpolated (X,Y) point into PX[Count]/PY[Count]. A perfectly flat
+  // edge sitting exactly on the level is skipped rather than specially
+  // handled - a vanishingly rare case for smooth data at a "nice" tick
+  // level, not worth the extra bookkeeping.
+  procedure TryEdge(const A, B: TVMPlotSurfaceVertex; L: Double;
+    var PX, PY: array of Double; var Count: Integer);
+  var
+    t: Double;
+  begin
+    if Count >= 2 then Exit;
+    if (A.Z < L) = (B.Z < L) then Exit;   // both above or both below - no crossing
+    if Abs(B.Z - A.Z) < 1e-12 then Exit;  // flat edge exactly at the level
+    t := (L - A.Z) / (B.Z - A.Z);
+    PX[Count] := A.X + t * (B.X - A.X);
+    PY[Count] := A.Y + t * (B.Y - A.Y);
+    Inc(Count);
+  end;
+
+  procedure ContourTriangle(const A, B, C: TVMPlotSurfaceVertex; L: Double);
+  var
+    PX, PY: array[0..1] of Double;
+    Count: Integer;
+  begin
+    Count := 0;
+    TryEdge(A, B, L, PX, PY, Count);
+    TryEdge(B, C, L, PX, PY, Count);
+    TryEdge(C, A, L, PX, PY, Count);
+    if Count = 2 then begin
+      glVertex3d(PX[0], PY[0], L);
+      glVertex3d(PX[1], PY[1], L);
+    end;
+  end;
+
+var
+  r, c, i: Integer;
+  zRangeForTicks, worldLevel: Double;
+begin
+  zRangeForTicks := Max(FZMax - FZMin, 1e-9);
+  glDisable(GL_LIGHTING);
+  glColor3f(0.05, 0.05, 0.05);
+  glLineWidth(1.5);
+  glBegin(GL_LINES);
+    for i := 0 to High(FZTicks) do begin
+      if (FZTicks[i] <= FZMin) or (FZTicks[i] >= FZMax) then Continue;
+      // FZTicks is in data space (M's actual values) - FVerts.Z is
+      // already world-scaled (see SetData), so the level being tested
+      // against needs the same [FZMin,FZMax] -> [-ZScale/2,+ZScale/2]
+      // mapping applied to it first.
+      worldLevel := ((FZTicks[i] - FZMin) / zRangeForTicks - 0.5) * ZScale;
+      for r := 0 to FRows - 2 do
+        for c := 0 to FCols - 2 do begin
+          ContourTriangle(FVerts[r, c], FVerts[r, c + 1], FVerts[r + 1, c], worldLevel);
+          ContourTriangle(FVerts[r, c + 1], FVerts[r + 1, c + 1], FVerts[r + 1, c], worldLevel);
+        end;
+    end;
+  glEnd;
+  glEnable(GL_LIGHTING);
 end;
 
 // Full-span X/Y/Z axis lines through the actual rendered extent (rather
@@ -773,8 +858,19 @@ begin
   if FHasData then begin
     if FWireframe then
       glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
-    else
+    else begin
       glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+      // Pushes the filled surface back very slightly in depth, so that
+      // DrawLevelCurves' contour lines - sitting at the exact same depth
+      // as the surface they're drawn on top of - don't z-fight with it
+      // (flicker as GL arbitrarily picks the surface or the line for a
+      // given pixel). Only needed in filled mode: GL_LINE mode has no
+      // coplanar fill underneath a contour line to fight with.
+      if FShowLevelCurves then begin
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(1.0, 1.0);
+      end;
+    end;
 
     for r := 0 to FRows - 2 do begin
       glBegin(GL_TRIANGLE_STRIP);
@@ -783,6 +879,16 @@ begin
           EmitVertex(r + 1, c);
         end;
       glEnd;
+    end;
+
+    // Skipped in wireframe mode: the mesh's own grid lines already show
+    // the surface's structure at least as clearly, and two independent
+    // sets of thin lines at the same depth (mesh edges, contour lines)
+    // would have the same z-fighting problem the polygon offset above
+    // solves for filled-vs-line, without an equally simple fix.
+    if (not FWireframe) and FShowLevelCurves then begin
+      glDisable(GL_POLYGON_OFFSET_FILL);
+      DrawLevelCurves;
     end;
   end;
 
