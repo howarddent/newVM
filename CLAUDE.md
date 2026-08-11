@@ -754,6 +754,72 @@ packages. Compiled binaries and each demo's own `lib/` output are
   first run (which pays FFTW's one-time internal setup cost and would
   otherwise skew a single-shot timing).
 
+### `Graphs/`
+
+Two standalone Lazarus GUI projects (same shape as `demos/` - own
+`.lpi`/`.lpr`/form unit/`.lfm`, built against the top-level units in place
+via `OtherUnitFiles=../..`) demonstrating OpenGL-rendered 2D/3D graphs of
+real (`TVMobj`) vectors and matrices, as opposed to `demos/FunctionPlot`'s
+`TAChart`-based 2D line plot. Build with `lazbuild --lazarusdir=<path>
+Graphs/<Name>/<Name>.lpi`, same as `demos/`. Both require the
+`LazOpenGLContext` package (not `TAChartLazarusPkg`) and `LCL`, and both
+`uses ... GL, ... OpenGLContext` (`Plot3D` additionally `uses GLU` for
+`gluPerspective`) - FPC's own bundled OpenGL 1.x bindings plus the LCL's
+`TOpenGLControl`, which creates/manages the GL context the same way
+`TChart` manages its own drawing surface. Compiled binaries and `lib/`
+output are already covered by the top-level `.gitignore`'s unscoped `*.exe`
+and `lib/` patterns - no `Graphs/*/`-specific entries were needed.
+
+`OpenGLAdapter.pas` (top level of `Graphs/`, not part of either project) is
+**not used by either demo** and can't currently be built into anything:
+despite the filename, it's actually `GLS.OpenGLAdapter.pas` from the
+GLScene engine, and it `uses` six further GLScene units (`Stage.Defines.inc`,
+`Stage.OpenGLTokens`, `Stage.Strings`, `Stage.Logger`,
+`Stage.VectorGeometry`, `Stage.VectorTypes`) that aren't present anywhere
+in this repo, plus Delphi-only namespaced units (`Winapi.OpenGL`,
+`Winapi.Windows`) that don't exist in Free Pascal at all - pulling in the
+rest of GLScene just to compile this one adapter file would be a large,
+fragile undertaking for no benefit over the units FPC/Lazarus already
+ship. Both demos use FPC's native `GL`/`GLU` units and the LCL's
+`TOpenGLControl` instead (confirmed present in this Lazarus install:
+`fpc/3.2.2/units/x86_64-win64/opengl/{gl,glu}.ppu`,
+`lazarus/components/opengl/`) - the standard, well-supported path for
+OpenGL in Lazarus, requiring no GLScene dependency at all. Leave
+`OpenGLAdapter.pas` alone rather than trying to wire it in.
+
+- **`Plot2D`** — the same `y = exp(-0.1*x^2) * sin(3*x)` function as
+  `demos/FunctionPlot` (`TVMobj.linspace` plus the elementwise
+  `Exp`/`Sin`/`Sqr`/`*` functions), rendered as an anti-aliased
+  `GL_LINE_STRIP` inside an orthographic projection (`glOrtho`)
+  auto-fitted to the data's bounding box (`BuildPlotData`, with an 8%
+  margin), plus a border rectangle and `x=0`/`y=0` gridlines drawn in GL.
+  `BuildPlotData` accepts any real `TVMobj` vector pair (row *or* column
+  shaped, per newVM's `(1,N)`/`(N,1)` convention) - the one concrete
+  function plotted is a demonstration of that general path, the same way
+  `FunctionPlot`'s `y=f(x)` is one concrete use of `TAChart`.
+- **`Plot3D`** — `z = sin(r)/r`, `r = sqrt(x^2+y^2)` (the classic "sinc
+  ripple" surface, `r=0`'s removable singularity handled explicitly) over
+  a 51x51 grid, built as a real `TVMobj` matrix (`BuildDemoMatrix`) then
+  rendered as a lit, Gouraud-shaded height-field surface
+  (`BuildSurface`/`EmitVertex`, `GL_TRIANGLE_STRIP` per row-pair).
+  `BuildSurface` is written for any real `TVMobj` matrix, not just this
+  demo's data: it rescales `M`'s value range to a fixed on-screen height
+  (`ZScale`) and centres a fixed-extent `(row,col)` grid (`WorldSize`)
+  regardless of `M`'s actual magnitude or `Rows`/`Cols` - `BuildDemoMatrix`
+  is one concrete matrix fed through that general path. Per-vertex normals
+  come from central differences of the (already world-scaled) height grid,
+  clamped at the edges (`ComputeNormal`); per-vertex colour comes from a
+  4-stop height gradient - blue → green → yellow → red
+  (`HeightToColor`) - tinting the lit surface via `GL_COLOR_MATERIAL`
+  rather than a flat material colour. Mouse drag on the `TOpenGLControl`
+  orbits the camera (yaw/pitch, pitch clamped to ±89° to avoid gimbal
+  flip), the mouse wheel zooms (`FDistance`, clamped to `[3,40]`), and a
+  `WireframeCheckBox` switches `glPolygonMode` between `GL_FILL` and
+  `GL_LINE`. Default camera framing (`FYaw=35, FPitch=45, FDistance=16`,
+  matched by `ResetViewButton`) was tuned by actually screenshotting the
+  running demo - the first attempt (`FDistance=10`) was too close in and
+  clipped most of the surface out of frame.
+
 ### `backup/`
 
 Contains earlier revisions of `newVM.pas`/`newVMComplex.pas` and an older
