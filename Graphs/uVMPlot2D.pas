@@ -18,21 +18,26 @@ unit uVMPlot2D;
        Plot.Parent := Self;
        Plot.Align := alClient;
        Plot.Title := 'y = sin(x), cos(x)';
-       Plot.SetSeriesStyle(0, clRed, 2.0, plsSolid);
-       Plot.SetSeriesStyle(1, clBlue, 1.5, plsDash);
+       Plot.SetSeriesStyle(0, clRed, 2.0, plsSolid, 'sin(x)');
+       Plot.SetSeriesStyle(1, clBlue, 1.5, plsDash, 'cos(x)');
        Plot.SetData(X, [YSin, YCos]);   // X, YSin, YCos: TVMobj row/col vectors
 
      SetData takes a single TVMobj for X and an open array of up to
      VMPlotMaxSeries (10) TVMobj vectors for Y - each must be the same
      length as X (row or column shaped, either is accepted, matching
      newVM's (1,N)/(N,1) vector convention). Per-series LineColor/
-     LineWidth/LineStyle (solid/dash/dot, via GL_LINE_STIPPLE) are exposed
-     both as a published `Series` collection (editable per-slot at design
-     time in the Object Inspector) and via the SetSeriesStyle convenience
-     method for runtime code. Title/XAxisTitle/YAxisTitle are plain
-     published string properties. All other published behaviour (Align,
-     Anchors, Color, mouse/key events, etc.) comes straight from the
-     inherited TOpenGLControl - nothing needs re-declaring for those.
+     LineWidth/LineStyle (solid/dash/dot, via GL_LINE_STIPPLE)/Name are
+     exposed both as a published `Series` collection (editable per-slot at
+     design time in the Object Inspector) and via the SetSeriesStyle
+     convenience method for runtime code. A series' Name, when non-empty,
+     both labels its line in the auto-sized legend panel drawn in the top
+     right of the plot rectangle (a colour/style-matched line swatch plus
+     the name) and is skipped from the legend entirely when left blank -
+     so the legend only appears once at least one series has a Name set,
+     and never needs disabling explicitly. Title/XAxisTitle/YAxisTitle are
+     plain published string properties. All other published behaviour
+     (Align, Anchors, Color, mouse/key events, etc.) comes straight from
+     the inherited TOpenGLControl - nothing needs re-declaring for those.
 
 *******************************************************************************}
 
@@ -59,9 +64,11 @@ type
     FLineColor: TColor;
     FLineWidth: Single;
     FLineStyle: TVMPlotLineStyle;
+    FName: string;
     procedure SetLineColor(AValue: TColor);
     procedure SetLineWidth(AValue: Single);
     procedure SetLineStyle(AValue: TVMPlotLineStyle);
+    procedure SetName(const AValue: string);
   public
     constructor Create(ACollection: TCollection); override;
     function GetDisplayName: string; override;
@@ -69,6 +76,10 @@ type
     property LineColor: TColor read FLineColor write SetLineColor;
     property LineWidth: Single read FLineWidth write SetLineWidth;
     property LineStyle: TVMPlotLineStyle read FLineStyle write SetLineStyle;
+    // Legend label for this series - see the DrawLegend note on TVMPlot2D.
+    // Left blank (the default), this series is simply omitted from the
+    // legend rather than appearing with an empty label.
+    property Name: string read FName write SetName;
   end;
 
   { TVMPlotSeriesStyles }
@@ -108,7 +119,7 @@ type
     FSeriesStyles: TVMPlotSeriesStyles;
     FTexturesBuilt: Boolean;
     FTitleTex, FXAxisTitleTex, FYAxisTitleTex: TVMPlotTextTexture;
-    FXTickTex, FYTickTex: array of TVMPlotTextTexture;
+    FXTickTex, FYTickTex, FLegendTex: array of TVMPlotTextTexture;
     procedure SetTitle(const AValue: string);
     procedure SetXAxisTitle(const AValue: string);
     procedure SetYAxisTitle(const AValue: string);
@@ -123,6 +134,7 @@ type
       X, Y, AngleDeg, HAlign, VAlign: Double);
     procedure DrawAxes;
     procedure ApplyLineStyle(const Style: TVMPlotSeriesStyle);
+    procedure DrawLegend(PlotLeft, PlotBottom, PlotW, PlotH: Integer);
   public
     constructor Create(TheOwner: TComponent); override;
     destructor Destroy; override;
@@ -130,7 +142,7 @@ type
     procedure Resize; override;
     procedure SetData(const X: TVMobj; const YSeries: array of TVMobj);
     procedure SetSeriesStyle(Index: Integer; AColor: TColor;
-      ALineWidth: Single; AStyle: TVMPlotLineStyle);
+      ALineWidth: Single; AStyle: TVMPlotLineStyle; const AName: string = '');
   published
     property Title: string read FTitle write SetTitle;
     property XAxisTitle: string read FXAxisTitle write SetXAxisTitle;
@@ -189,6 +201,13 @@ begin
   Changed(False);
 end;
 
+procedure TVMPlotSeriesStyle.SetName(const AValue: string);
+begin
+  if FName = AValue then Exit;
+  FName := AValue;
+  Changed(False);
+end;
+
 { TVMPlotSeriesStyles }
 
 constructor TVMPlotSeriesStyles.Create(AOwner: TPersistent);
@@ -204,8 +223,15 @@ end;
 procedure TVMPlotSeriesStyles.Update(Item: TCollectionItem);
 begin
   inherited Update(Item);
-  if (GetOwner is TVMPlot2D) then
+  if (GetOwner is TVMPlot2D) then begin
+    // Covers a Name edit (which needs its legend-label texture rebuilt),
+    // not just Color/Width/Style edits (which don't) - cheap enough that
+    // singling out Name here isn't worth the extra bookkeeping, since
+    // series style edits are rare (design time, or an explicit runtime
+    // SetSeriesStyle call), never a per-frame thing.
+    TVMPlot2D(GetOwner).InvalidateTextures;
     TVMPlot2D(GetOwner).Invalidate;
+  end;
 end;
 
 // "Nice" round tick step (1/2/5 x 10^n) closest to x - Heckbert's classic
@@ -273,7 +299,15 @@ end;
 
 destructor TVMPlot2D.Destroy;
 begin
-  if MakeCurrent then FreeAllTextures;
+  // MakeCurrent reads Handle, which forces (re-)creation of the native
+  // widget if not already allocated - fine during normal operation, but
+  // fatal during application termination, when the widget tree is already
+  // tearing down and handle (re-)creation fails, yielding Handle=0 and a
+  // 'LOpenGLSwapBuffers Handle=0' exception from the LCL's GLX backend.
+  // Only attempt the GL cleanup if a handle already exists; if it doesn't,
+  // there's no live GL context to leak from anyway - it's going away with
+  // the window.
+  if HandleAllocated and MakeCurrent then FreeAllTextures;
   FSeriesStyles.Free;
   inherited Destroy;
 end;
@@ -309,13 +343,14 @@ begin
 end;
 
 procedure TVMPlot2D.SetSeriesStyle(Index: Integer; AColor: TColor;
-  ALineWidth: Single; AStyle: TVMPlotLineStyle);
+  ALineWidth: Single; AStyle: TVMPlotLineStyle; const AName: string = '');
 begin
   assert((Index >= 0) and (Index < VMPlotMaxSeries),
     s + 'SetSeriesStyle : Index out of range');
   FSeriesStyles[Index].LineColor := AColor;
   FSeriesStyles[Index].LineWidth := ALineWidth;
   FSeriesStyles[Index].LineStyle := AStyle;
+  FSeriesStyles[Index].Name := AName;
 end;
 
 // Marks cached title/tick GL textures for rebuild on the next paint -
@@ -345,6 +380,7 @@ begin
   FreeTextTexture(FYAxisTitleTex);
   for i := 0 to High(FXTickTex) do FreeTextTexture(FXTickTex[i]);
   for i := 0 to High(FYTickTex) do FreeTextTexture(FYTickTex[i]);
+  for i := 0 to High(FLegendTex) do FreeTextTexture(FLegendTex[i]);
 end;
 
 // Extracts X and up to VMPlotMaxSeries Y TVMobj vectors into plain Double
@@ -545,6 +581,11 @@ begin
   SetLength(FYTickTex, Length(FYTicks));
   for i := 0 to High(FYTicks) do
     FYTickTex[i] := CreateTextTexture(FormatTick(FYTicks[i]), 8, False);
+
+  SetLength(FLegendTex, FSeriesCount);
+  for i := 0 to FSeriesCount - 1 do
+    if FSeriesStyles[i].Name <> '' then
+      FLegendTex[i] := CreateTextTexture(FSeriesStyles[i].Name, 9, False);
 end;
 
 // Draws Tex as a textured quad anchored at (X,Y) in the current (pixel-
@@ -568,6 +609,88 @@ begin
     glTexCoord2f(0, 0); glVertex2d(x0, y0 + Tex.H);
   glEnd;
   glPopMatrix;
+end;
+
+// Auto-sized legend panel anchored to the top right corner of the data
+// plot rectangle (PlotLeft/PlotBottom/PlotW/PlotH, in the same pixel-space
+// coordinates as pass 2's title/tick chrome, hence called from there - not
+// pass 1, since the panel and its text are a fixed pixel size regardless
+// of the data-space glOrtho zoom). One row per series whose Name is
+// non-empty, each a short colour/width/stipple-matched line swatch (via
+// ApplyLineStyle, the same routine the data-space line strips use) beside
+// its CreateTextTexture-rendered label (built into FLegendTex by
+// BuildTextures, alongside the title/tick textures). Series with a blank
+// Name are skipped entirely - both from sizing and from the row layout -
+// so the panel simply doesn't appear until at least one series has a
+// Name set. Two passes over the same series list (swatches, then labels)
+// rather than interleaving, since each needs a different GL_TEXTURE_2D
+// enable state and toggling it per-row would be wasteful.
+procedure TVMPlot2D.DrawLegend(PlotLeft, PlotBottom, PlotW, PlotH: Integer);
+const
+  PanelInset = 10;  // gap between the plot rectangle's edges and the panel
+  Padding = 8;      // gap between the panel's border and its content
+  SwatchW = 26;
+  SwatchGap = 6;
+  RowGap = 4;
+var
+  i, RowCount, RowH, ContentW, BoxW, BoxH, X0, Y0, RowY: Integer;
+begin
+  RowCount := 0;
+  ContentW := 0;
+  RowH := 0;
+  for i := 0 to FSeriesCount - 1 do
+    if FSeriesStyles[i].Name <> '' then begin
+      Inc(RowCount);
+      ContentW := Max(ContentW, SwatchW + SwatchGap + FLegendTex[i].W);
+      RowH := Max(RowH, FLegendTex[i].H);
+    end;
+  if RowCount = 0 then Exit;
+
+  BoxW := ContentW + Padding * 2;
+  BoxH := RowCount * RowH + (RowCount - 1) * RowGap + Padding * 2;
+  X0 := PlotLeft + PlotW - BoxW - PanelInset;
+  Y0 := PlotBottom + PlotH - BoxH - PanelInset;
+
+  glDisable(GL_TEXTURE_2D);
+  glColor4f(1, 1, 1, 0.75);
+  glBegin(GL_QUADS);
+    glVertex2d(X0, Y0);
+    glVertex2d(X0 + BoxW, Y0);
+    glVertex2d(X0 + BoxW, Y0 + BoxH);
+    glVertex2d(X0, Y0 + BoxH);
+  glEnd;
+  glColor3f(0.6, 0.6, 0.6);
+  glBegin(GL_LINE_LOOP);
+    glVertex2d(X0, Y0);
+    glVertex2d(X0 + BoxW, Y0);
+    glVertex2d(X0 + BoxW, Y0 + BoxH);
+    glVertex2d(X0, Y0 + BoxH);
+  glEnd;
+
+  RowY := Y0 + BoxH - Padding;
+  for i := 0 to FSeriesCount - 1 do begin
+    if FSeriesStyles[i].Name = '' then Continue;
+    RowY := RowY - RowH;
+    ApplyLineStyle(FSeriesStyles[i]);
+    glBegin(GL_LINES);
+      glVertex2d(X0 + Padding, RowY + RowH / 2);
+      glVertex2d(X0 + Padding + SwatchW, RowY + RowH / 2);
+    glEnd;
+    RowY := RowY - RowGap;
+  end;
+  glDisable(GL_LINE_STIPPLE);
+
+  glEnable(GL_TEXTURE_2D);
+  glColor4f(1, 1, 1, 1);
+  RowY := Y0 + BoxH - Padding;
+  for i := 0 to FSeriesCount - 1 do begin
+    if FSeriesStyles[i].Name = '' then Continue;
+    RowY := RowY - RowH;
+    DrawTextTexture(FLegendTex[i], X0 + Padding + SwatchW + SwatchGap,
+      RowY + RowH / 2, 0, 0, 0.5);
+    RowY := RowY - RowGap;
+  end;
+  glDisable(GL_TEXTURE_2D);
 end;
 
 procedure TVMPlot2D.Paint;
@@ -674,6 +797,10 @@ begin
       DrawTextTexture(FYTickTex[i], PlotLeft - 8, py, 0, 1, 0.5);
     end;
     glDisable(GL_TEXTURE_2D);
+
+    // Drawn last (on top of the border/gridlines/ticks/line strips already
+    // painted, all of which are further from the top-right corner anyway).
+    DrawLegend(PlotLeft, PlotBottom, PlotW, PlotH);
   end;
 
   SwapBuffers;

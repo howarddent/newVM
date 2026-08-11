@@ -64,9 +64,10 @@ begin
   FPlot.Title := 'y = exp(-0.1x^2) . {sin(3x), cos(3x)}';
   FPlot.XAxisTitle := 'x';
   FPlot.YAxisTitle := 'y';
-  FPlot.SetSeriesStyle(0, clRed, 2.0, plsSolid);
-  FPlot.SetSeriesStyle(1, clBlue, 1.5, plsDash);
+  FPlot.SetSeriesStyle(0, clRed, 2.0, plsSolid, 'exp(-0.1x^2).sin(3x)');
+  FPlot.SetSeriesStyle(1, clBlue, 1.5, plsDash, 'exp(-0.1x^2).cos(3x)');
   FPlot.SetData(X, [YSin, YCos]);
 end;
 
 end.
+
