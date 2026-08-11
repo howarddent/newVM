@@ -6,16 +6,7 @@ object Form1: TForm1
   Caption = 'newVM OpenGL 2D Plot Demo'
   ClientHeight = 600
   ClientWidth = 900
-  OnCreate = FormCreate
   Position = poScreenCenter
   LCLVersion = '4.99.0.0'
-  object OpenGLControl1: TOpenGLControl
-    Left = 0
-    Height = 600
-    Top = 0
-    Width = 900
-    Align = alClient
-    OnPaint = OpenGLControl1Paint
-    OnResize = OpenGLControl1Resize
-  end
+  OnCreate = FormCreate
 end

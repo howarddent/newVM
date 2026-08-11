@@ -18,8 +18,14 @@ openblas.dll
 demos/*/[A-Za-z]*
 !demos/*/*.*
 
-# Windows demo binaries do have an extension (.exe), so the negation above
-# re-includes them - this rule comes after that negation (later patterns
+# Same for Graphs/<Name>/ (Plot2D, Plot3D) - unlike demos/, these are only
+# ignored on Linux where the binary has no extension; Windows .exe builds
+# are caught by the unscoped *.exe rule below either way.
+Graphs/*/[A-Za-z]*
+!Graphs/*/*.*
+
+# Windows demo binaries do have an extension (.exe), so the negations above
+# re-include them - this rule comes after those negations (later patterns
 # win) to actually exclude them, e.g. demos/SpectralDiff/SpectralDiff.exe.
 *.exe
 

@@ -40,7 +40,10 @@
         <ComponentName Value="Form1"/>
         <HasResources Value="True"/>
         <ResourceBaseClass Value="Form"/>
-        <UnitName Value="uplot2dmain"/>
+      </Unit>
+      <Unit>
+        <Filename Value="../uVMPlot2D.pas"/>
+        <IsPartOfProject Value="True"/>
       </Unit>
     </Units>
   </ProjectOptions>
@@ -50,8 +53,8 @@
       <Filename Value="Plot2D"/>
     </Target>
     <SearchPaths>
-      <OtherUnitFiles Value="../.."/>
       <IncludeFiles Value="$(ProjOutDir)"/>
+      <OtherUnitFiles Value="../..;.."/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
     <Parsing>

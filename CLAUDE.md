@@ -766,9 +766,17 @@ Graphs/<Name>/<Name>.lpi`, same as `demos/`. Both require the
 `uses ... GL, ... OpenGLContext` (`Plot3D` additionally `uses GLU` for
 `gluPerspective`) - FPC's own bundled OpenGL 1.x bindings plus the LCL's
 `TOpenGLControl`, which creates/manages the GL context the same way
-`TChart` manages its own drawing surface. Compiled binaries and `lib/`
-output are already covered by the top-level `.gitignore`'s unscoped `*.exe`
-and `lib/` patterns - no `Graphs/*/`-specific entries were needed.
+`TChart` manages its own drawing surface. `lib/` output is covered by the
+top-level `.gitignore`'s unscoped `lib/` pattern; the extensionless Linux
+binaries (`Graphs/Plot2D/Plot2D`, `Graphs/Plot3D/Plot3D`) needed their own
+`Graphs/*/[A-Za-z]*` rule, mirroring the one `demos/*/` already has (the
+unscoped `*.exe` rule alone only catches Windows builds).
+
+`Plot2D`'s rendering logic no longer lives in the demo itself - it's a
+standalone, reusable component (`uVMPlot2D.pas`, top level of `Graphs/`,
+alongside `OpenGLAdapter.pas`) that any form can drop in; see the dedicated
+`Graphs/uVMPlot2D.pas` section below. `Plot3D` has not been componentised
+the same way and still keeps its rendering code directly in its form unit.
 
 `OpenGLAdapter.pas` (top level of `Graphs/`, not part of either project) is
 **not used by either demo** and can't currently be built into anything:
@@ -787,43 +795,104 @@ ship. Both demos use FPC's native `GL`/`GLU` units and the LCL's
 OpenGL in Lazarus, requiring no GLScene dependency at all. Leave
 `OpenGLAdapter.pas` alone rather than trying to wire it in.
 
-- **`Plot2D`** — the same `y = exp(-0.1*x^2) * sin(3*x)` function as
-  `demos/FunctionPlot` (`TVMobj.linspace` plus the elementwise
-  `Exp`/`Sin`/`Sqr`/`*` functions), rendered as an anti-aliased
-  `GL_LINE_STRIP` inside an orthographic projection (`glOrtho`)
-  auto-fitted to the data's bounding box (`BuildPlotData`, with an 8%
-  margin), plus a border rectangle and `x=0`/`y=0` gridlines drawn in GL.
-  `BuildPlotData` accepts any real `TVMobj` vector pair (row *or* column
-  shaped, per newVM's `(1,N)`/`(N,1)` convention) plus title strings - the
-  one concrete function plotted is a demonstration of that general path,
-  the same way `FunctionPlot`'s `y=f(x)` is one concrete use of `TAChart`.
+- **`Plot2D`** — demonstrates `uVMPlot2D.pas`'s `TVMPlot2D` component (see
+  the dedicated section below) by plotting two related series over the
+  same `x`: `y = exp(-0.1*x^2) * sin(3*x)` (same base function as
+  `demos/FunctionPlot`) and its cosine-phase sibling
+  `exp(-0.1*x^2) * cos(3*x)`, styled as a solid red line and a dashed blue
+  line respectively (`TForm1.FormCreate`, `uplot2dmain.pas`). The form
+  itself has no `TOpenGLControl` in its `.lfm` at all - `TVMPlot2D` is
+  created and `Parent`ed to the form entirely in code, the same way any
+  LCL component can be added to a form at runtime without a design-time
+  package installed. All the OpenGL rendering logic that used to live
+  directly in this demo's form unit (auto-fitted `glOrtho` projection,
+  GL-texture-cached title/tick text, the two-pass data/chrome paint
+  handler) has moved into the component; this unit now only builds the
+  `TVMobj` data and sets a few properties.
 
-  Also renders a main title, axis titles, and axis scales (tick marks plus
-  "nice" round-number value labels, via `ComputeTicks`/`NiceNum` -
-  Heckbert's classic *Nice Numbers for Graph Labels* algorithm). OpenGL 1.x
-  has no built-in text, and rather than depend on a platform-specific font
-  API (Windows' `wglUseFontBitmaps`) or guess at the exact signatures of
-  FPC's compiled-only `glut.ppu` (no `.pas` source for it is bundled to
-  check against), every title/label string is rendered *once* via the
-  LCL's own font engine into a `TBitmap`, converted to an RGBA buffer
-  (`alpha := 255 - luminance`, so the white background drops out and black
-  text stays opaque under normal alpha blending - the same
-  `TLazIntfImage`-based pixel-reading trick
-  `examples/openglcontrol/exampleform.pp`'s `LoadglTexImage2DFromPNG` uses
-  to load a PNG texture), uploaded as a GL texture, and cached
-  (`CreateTextTexture`/`BuildTextures`, run once on the first paint, same
-  once-only-init pattern as that example's `AreaInitialized` flag) - then
-  drawn every frame as a small textured, alpha-blended quad
-  (`DrawTextTexture`), which also handles the Y axis title's 90-degree
-  rotation trivially, since a textured quad is just ordinary GL geometry
-  unlike a rotated bitmap font. The paint handler renders in two passes to
-  make room for this chrome: a data-space pass (`glOrtho` over the data's
-  bounding box, restricted to a `glViewport` shrunk by fixed pixel
-  margins) for the border/gridlines/line-strip exactly as before, then a
-  pixel-space pass (`glOrtho(0,Width,0,Height,...)` over the *full*
-  control) for the title/axis-titles/tick marks/labels, whose positions
-  are each tick's data value mapped through the same data-to-plot-
-  rectangle transform used for the data-space pass.
+### `Graphs/uVMPlot2D.pas` (`TVMPlot2D` component)
+
+A reusable `TOpenGLControl`-descended LCL component - not tied to the
+`Plot2D` demo - that plots one shared `x` `TVMobj` vector against up to
+`VMPlotMaxSeries` (10) `y` `TVMobj` vectors, generalising what used to be
+`Plot2D`'s single-series, hand-rolled-per-form OpenGL code (see git history
+of `uplot2dmain.pas` for the original version this was lifted from) into
+something any form in this repo (or a future one) can drop in and reuse.
+Like the rest of `Graphs/`, it requires the `LazOpenGLContext` package and
+`uses GL, OpenGLContext`.
+
+- **Data**: `procedure SetData(const X: TVMobj; const YSeries: array of
+  TVMobj)` - a single call takes `X` plus an open array of 1..10 `Y`
+  vectors (asserted; `TVMPlot2D.SetData` rejects 0 or >10). Each vector may
+  be row `(1,N)` or column `(N,1)` shaped, per newVM's usual convention.
+  `TVMobj` is a record, not a class, so it can't be a published/streamable
+  property (Delphi/Lazarus property streaming only supports simple types,
+  sets, classes, and interfaces) - data assignment is necessarily a method
+  call, not something editable in the Object Inspector. The combined
+  bounding box (across `X` and *every* `Y` series, not just one) plus tick
+  positions are recomputed on every `SetData` call, so the auto-fit
+  `glOrtho` projection and axis labels always cover whichever series are
+  currently plotted.
+- **Per-series style**: `LineColor`/`LineWidth`/`LineStyle`
+  (`plsSolid`/`plsDash`/`plsDot`, drawn via `GL_LINE_STIPPLE` - the only
+  way to get non-solid `GL_LINE_STRIP` rendering in fixed-function OpenGL
+  1.x; `plsSolid` explicitly disables stippling rather than using an
+  all-ones pattern, since a stipple factor can still subtly affect
+  anti-aliased line rendering on some drivers) live on `TVMPlotSeriesStyle`
+  (a `TCollectionItem`), collected in the published `Series:
+  TVMPlotSeriesStyles` property (a `TOwnedCollection`) - editable per-slot
+  in the Object Inspector at design time regardless of whether data has
+  been assigned yet. The constructor pre-populates all 10 slots with a
+  fixed "tab10"-style categorical default palette
+  (`DefaultPaletteR`/`G`/`B`), so multiple series are already
+  distinguishable even if the caller never touches styling. For runtime
+  code, `procedure SetSeriesStyle(Index: Integer; AColor: TColor;
+  ALineWidth: Single; AStyle: TVMPlotLineStyle)` is a one-call convenience
+  wrapper over setting the three `TVMPlotSeriesStyle` properties
+  individually. `TVMPlotSeriesStyles.Update` (the standard
+  `TCollection`/`TOwnedCollection` change-notification hook) calls back
+  into the owning `TVMPlot2D.Invalidate` whenever any series property
+  changes, so edits - whether from the Object Inspector or from
+  `SetSeriesStyle` - repaint immediately without the caller needing to
+  call `Invalidate` themselves.
+- **Titles**: `Title`/`XAxisTitle`/`YAxisTitle` are plain published
+  `string` properties (unlike series data, ordinary types stream and
+  edit fine).
+- **Text rendering, layout, and everything else** (the GL-texture-cached
+  title/axis-title/tick-label approach, the two-pass data-space-then-
+  pixel-space paint handler, `ComputeTicks`/`NiceNum` for "nice"
+  round-number tick values) is unchanged from the original single-series
+  `Plot2D` demo code - see the TEXT RENDERING/LAYOUT notes in
+  `uVMPlot2D.pas`'s header comment for the full rationale, not repeated
+  here. Two things *did* need to change versus that original one-shot-demo
+  code, since a reusable component can have its data/titles changed
+  arbitrarily many times over its life rather than being set once in
+  `FormCreate`: text textures are rebuilt (`BuildTextures`, called lazily
+  from `Paint`) whenever `InvalidateTextures` marks them stale (on any
+  `SetData` or title-property change), and the old GL textures are
+  explicitly deleted first (`FreeAllTextures`, called from both
+  `BuildTextures` and `Destroy`) rather than only ever allocated once, to
+  avoid leaking a texture per change over the component's lifetime.
+- Overrides `Paint` (not `OnPaint`) and `Resize` directly rather than
+  wiring the `.lfm`-based `OnPaint`/`OnResize` event pattern the original
+  demo used, since a genuinely reusable component shouldn't require its
+  *user* to hook up paint/resize events by hand for it to work - it just
+  needs `Parent`/`Align` set and `SetData` called. `RegisterComponents`
+  is wired up via a `Register` procedure for IDE component-palette
+  installation into a design-time package, though no such package exists
+  in this repo yet; in the meantime (and always, as a fallback that needs
+  no package at all) it works exactly as `Plot2D`'s demo form uses it -
+  `TVMPlot2D.Create(Owner)` plus `Parent := SomeForm` in code.
+- One naming gotcha hit while writing this: a local variable in
+  `CreateTextTexture` was originally named `RGBA` (matching the original
+  demo code's variable name for its pixel buffer), which collides with
+  `TCustomOpenGLControl`'s own inherited `RGBA` property - FPC treats this
+  as a hard "duplicate identifier" compile error inside a method of a
+  descendant class, not a shadowing warning, because inherited class
+  members are in scope alongside locals there. Renamed to `TexPixels`.
+  Worth checking for if a future edit reintroduces a local/field named
+  after any `TCustomOpenGLControl` property (`RGBA`, `AlphaBits`,
+  `DepthBits`, etc.).
 - **`Plot3D`** — `z = sin(r)/r`, `r = sqrt(x^2+y^2)` (the classic "sinc
   ripple" surface, `r=0`'s removable singularity handled explicitly) over
   a 51x51 grid, built as a real `TVMobj` matrix (`BuildDemoMatrix`) then
