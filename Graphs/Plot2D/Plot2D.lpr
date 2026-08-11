@@ -17,7 +17,7 @@ uses
   cthreads,
   {$ENDIF}
   Interfaces, // this includes the LCL widgetset
-  Forms, cblas, uplot2dmain;
+  Forms, cblas, uplot2dmain, newvmgraphs;
 
 begin
   InitializeCBLAS;

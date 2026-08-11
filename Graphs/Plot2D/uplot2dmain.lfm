@@ -4,8 +4,6 @@ object Form1: TForm1
   Top = 200
   Width = 900
   Caption = 'newVM OpenGL 2D Plot Demo'
-  ClientHeight = 600
-  ClientWidth = 900
   Position = poScreenCenter
   LCLVersion = '4.99.0.0'
   OnCreate = FormCreate
