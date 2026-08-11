@@ -878,11 +878,11 @@ Like the rest of `Graphs/`, it requires the `LazOpenGLContext` package and
   demo used, since a genuinely reusable component shouldn't require its
   *user* to hook up paint/resize events by hand for it to work - it just
   needs `Parent`/`Align` set and `SetData` called. `RegisterComponents`
-  is wired up via a `Register` procedure for IDE component-palette
-  installation into a design-time package, though no such package exists
-  in this repo yet; in the meantime (and always, as a fallback that needs
-  no package at all) it works exactly as `Plot2D`'s demo form uses it -
-  `TVMPlot2D.Create(Owner)` plus `Parent := SomeForm` in code.
+  is wired up via a `Register` procedure, picked up by the `newVMGraphs`
+  design-time package (see below) for IDE component-palette installation;
+  it also still works exactly as `Plot2D`'s demo form uses it, with no
+  package involved at all - `TVMPlot2D.Create(Owner)` plus `Parent :=
+  SomeForm` in code.
 - One naming gotcha hit while writing this: a local variable in
   `CreateTextTexture` was originally named `RGBA` (matching the original
   demo code's variable name for its pixel buffer), which collides with
@@ -893,6 +893,49 @@ Like the rest of `Graphs/`, it requires the `LazOpenGLContext` package and
   Worth checking for if a future edit reintroduces a local/field named
   after any `TCustomOpenGLControl` property (`RGBA`, `AlphaBits`,
   `DepthBits`, etc.).
+
+### `Graphs/newvmgraphs.lpk` (`newVMGraphs` design-time package)
+
+The Lazarus package that gets `TVMPlot2D` into the IDE's component
+palette, following the same two-file shape every Lazarus package uses
+(compare `lazopenglcontext.lpk`/`.pas` in the Lazarus source tree itself,
+under `components/opengl/`): `newvmgraphs.lpk` is the package's XML
+definition (`Type=RunAndDesignTime`, `RequiredPkgs`: `LazOpenGLContext`
+and `LCL`, `OtherUnitFiles=..` so it can find `newVM.pas` and its sibling
+units one level up in the repo root); `newvmgraphs.pas` is the small
+auto-generated-style registration unit (`uses uVMPlot2D,
+LazarusPackageIntf`, calling `RegisterUnit`/`RegisterPackage`) - **do not
+hand-edit this file**, the same "Do not edit!" comment Lazarus itself
+puts at the top of every package unit applies here too; if `Graphs/`
+grows more components later, add them to `uVMPlot2D.pas`'s
+`<Files>` sibling in the `.lpk`, not by editing this unit's `uses`
+clause by hand outside the IDE's package editor.
+
+Only `<Files>` entries are actual component units - the package's own
+`newvmgraphs.pas` is *not* listed there (it's implicit: a package's main
+source file is always `<PackageName lowercased>.pas`, matching the
+`<Name>` in the `.lpk`), which was confirmed against several of Lazarus's
+own bundled packages (`lazopenglcontext.lpk`, `components/sdf/sdflaz.lpk`)
+before writing this one - a `.lpk` that also lists its own main unit under
+`<Files>` would double-compile it.
+
+Installing this **rebuilds the Lazarus IDE binary itself** (packages
+marked `RunAndDesignTime` get statically linked into the IDE executable,
+not `dlopen`'d at runtime) - a real, if routine and reversible, change to
+the local Lazarus install, done here via:
+```
+lazbuild --lazarusdir=<path> --add-package-link Graphs/newvmgraphs.lpk
+lazbuild --lazarusdir=<path> --add-package newVMGraphs --build-ide=
+```
+(equivalently: open `Graphs/newvmgraphs.lpk` in the IDE's Package Editor
+and use Install). `--build-ide=` backs up the previous IDE binary to
+`lazarus.old` before relinking - Lazarus's own safety net if a rebuilt
+IDE somehow fails to start, not something this repo manages. After
+installing, `TVMPlot2D` appears in the component palette under the
+"newVM" tab (`RegisterComponents('newVM', [TVMPlot2D])` in
+`uVMPlot2D.pas`) and can be dropped onto any form's `.lfm` directly, in
+addition to the always-available `TVMPlot2D.Create(Owner)` code path
+`Plot2D`'s demo uses.
 - **`Plot3D`** — `z = sin(r)/r`, `r = sqrt(x^2+y^2)` (the classic "sinc
   ripple" surface, `r=0`'s removable singularity handled explicitly) over
   a 51x51 grid, built as a real `TVMobj` matrix (`BuildDemoMatrix`) then
