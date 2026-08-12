@@ -36,7 +36,7 @@ unit uVMPlot3D;
 interface
 
 uses
-  Classes, SysUtils, Math, Controls, LCLType, Graphics,
+  Classes, SysUtils, Math, Controls, LCLType, Graphics, LResources,
   IntfGraphics, FPImage,
   GL, GLU, OpenGLContext,
   newVM;
@@ -95,6 +95,7 @@ type
     procedure DrawAxisLines;
     procedure DrawAxisLabels;
     procedure DrawLevelCurves;
+    function BuildDefaultDemoMatrix: TVMobj;
     procedure EmitVertex(r, c: Integer);
     procedure WorldToScreen(wx, wy, wz: Double; VW, VH: Integer;
       out sx, sy: Double; out infront: Boolean);
@@ -205,6 +206,12 @@ end;
 constructor TVMPlot3D.Create(TheOwner: TComponent);
 begin
   inherited Create(TheOwner);
+  // See uVMPlot2D.pas's constructor comment: without this,
+  // TCustomOpenGLControl (LazOpenGLContext) skips real GL rendering under
+  // csDesigning, so the Form Designer would show a blank/inert control
+  // even though SetData below succeeds and FHasData is True.
+  Options := Options + [ocoRenderAtDesignTime];
+
   FYaw := DefaultYaw;
   FPitch := DefaultPitch;
   FDistance := DefaultDistance;
@@ -213,6 +220,19 @@ begin
   FShowLevelCurves := False;
   FHasData := False;
   FTexturesBuilt := False;
+
+  // Default to the same "sinc ripple" surface the Graphs/Plot3D demo builds
+  // in its own FormCreate (uplot3dmain.pas's BuildDemoMatrix), so a
+  // freshly-dropped component already shows a representative surface -
+  // both in the Form Designer at design time and at runtime before any
+  // real SetData call - rather than a blank dark viewport. Harmless to
+  // overwrite later: a caller's own SetData (as the demo's FormCreate still
+  // does) simply replaces this.
+  Title := 'z = sin(r)/r  (sinc ripple)';
+  XAxisTitle := 'Column';
+  YAxisTitle := 'Row';
+  ZAxisTitle := 'Value';
+  SetData(BuildDefaultDemoMatrix);
 end;
 
 destructor TVMPlot3D.Destroy;
@@ -346,6 +366,34 @@ end;
 // world-scaled) Z grid, clamped to the grid edges; normalises (-dz/dx,
 // -dz/dy, 1) to a unit vector for correct Gouraud lighting. Ported
 // unchanged from uplot3dmain.pas.
+// Default demo data: the same 51x51 "sinc ripple" surface (z = sin(r)/r,
+// r = sqrt(x^2+y^2), r=0's removable singularity handled explicitly) built
+// by the Graphs/Plot3D demo's own TForm1.BuildDemoMatrix - see the
+// constructor's comment for why this exists.
+function TVMPlot3D.BuildDefaultDemoMatrix: TVMobj;
+const
+  DemoRows = 51; DemoCols = 51;
+  DemoExtent = 6.0;
+var
+  M: TVMobj;
+  r, c: Integer;
+  x, y, dist: Double;
+begin
+  M := TVMobj.Create(DemoRows, DemoCols);
+  for r := 0 to DemoRows - 1 do begin
+    y := -DemoExtent + 2 * DemoExtent * r / (DemoRows - 1);
+    for c := 0 to DemoCols - 1 do begin
+      x := -DemoExtent + 2 * DemoExtent * c / (DemoCols - 1);
+      dist := Sqrt(x * x + y * y);
+      if dist < 1e-6 then
+        M[r, c] := 1.0
+      else
+        M[r, c] := Sin(dist) / dist;
+    end;
+  end;
+  result := M;
+end;
+
 procedure TVMPlot3D.ComputeNormal(r, c: Integer);
 var
   cL, cR, rD, rU: Integer;
@@ -968,6 +1016,7 @@ end;
 
 procedure Register;
 begin
+  {$I uvmplot3d_icon.lrs}
   RegisterComponents('newVM', [TVMPlot3D]);
 end;
 

@@ -46,7 +46,7 @@ unit uVMPlot2D;
 interface
 
 uses
-  Classes, SysUtils, Math, Graphics,
+  Classes, SysUtils, Math, Graphics, LResources,
   IntfGraphics, FPImage,
   GL, OpenGLContext,
   newVM;
@@ -285,8 +285,21 @@ constructor TVMPlot2D.Create(TheOwner: TComponent);
 var
   i: Integer;
   Item: TVMPlotSeriesStyle;
+  X, YSin, YCos: TVMobj;
+  t, xv, env: Double;
+const
+  DemoPoints = 1000;
+  DemoXMin = -10.0;
+  DemoXMax = 10.0;
 begin
   inherited Create(TheOwner);
+  // TCustomOpenGLControl (LazOpenGLContext) skips real GL rendering under
+  // csDesigning unless this option is set (TCustomOpenGLControl.
+  // IsOpenGLRenderAllowed, openglcontext.pas) - without it, the component
+  // would build default data below but the Form Designer would still show
+  // a blank/inert control, never actually painting it.
+  Options := Options + [ocoRenderAtDesignTime];
+
   FSeriesStyles := TVMPlotSeriesStyles.Create(Self);
   for i := 0 to VMPlotMaxSeries - 1 do begin
     Item := TVMPlotSeriesStyle(FSeriesStyles.Add);
@@ -295,6 +308,41 @@ begin
   FSeriesCount := 0;
   FHasData := False;
   FTexturesBuilt := False;
+
+  // Default to the same "exp(-0.1x^2).{sin(3x),cos(3x)}" example the
+  // Graphs/Plot2D demo builds in its own FormCreate (uplot2dmain.pas), so a
+  // freshly-dropped component already shows a representative plot - both in
+  // the Form Designer at design time and at runtime before any real
+  // SetData call - rather than a blank white rectangle. Harmless to
+  // overwrite later: a caller's own SetData (as the demo's FormCreate still
+  // does) simply replaces this.
+  //
+  // Built via a plain per-element loop and scalar Math.Sin/Cos/Exp, NOT the
+  // demo's own linspace/elementwise-VML/operator-overload version (which
+  // calls into MKL/IPP) - this component's package is RunAndDesignTime, so
+  // this constructor also runs inside the Lazarus IDE's own process when a
+  // component is dropped from the palette, and calling into MKL/IPP from
+  // there was observed to crash the IDE with an access violation (unlike
+  // the standalone demo .exe, where the same MKL calls work fine). Plain
+  // scalar Math calls sidestep that entirely and are what TVMPlot3D's own
+  // BuildDefaultDemoMatrix already safely uses for the same reason.
+  Title := 'y = exp(-0.1x^2) . {sin(3x), cos(3x)}';
+  XAxisTitle := 'x';
+  YAxisTitle := 'y';
+  X := TVMobj.Create(1, DemoPoints);
+  YSin := TVMobj.Create(1, DemoPoints);
+  YCos := TVMobj.Create(1, DemoPoints);
+  for i := 0 to DemoPoints - 1 do begin
+    t := i / (DemoPoints - 1);
+    xv := DemoXMin + t * (DemoXMax - DemoXMin);
+    env := Exp(-0.1 * xv * xv);
+    X[0, i] := xv;
+    YSin[0, i] := env * Sin(3 * xv);
+    YCos[0, i] := env * Cos(3 * xv);
+  end;
+  SetSeriesStyle(0, clRed, 2.0, plsSolid, 'exp(-0.1x^2).sin(3x)');
+  SetSeriesStyle(1, clBlue, 1.5, plsDash, 'exp(-0.1x^2).cos(3x)');
+  SetData(X, [YSin, YCos]);
 end;
 
 destructor TVMPlot2D.Destroy;
@@ -814,6 +862,7 @@ end;
 
 procedure Register;
 begin
+  {$I uvmplot2d_icon.lrs}
   RegisterComponents('newVM', [TVMPlot2D]);
 end;
 

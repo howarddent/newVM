@@ -893,6 +893,68 @@ Like the rest of `Graphs/`, it requires the `LazOpenGLContext` package and
   Worth checking for if a future edit reintroduces a local/field named
   after any `TCustomOpenGLControl` property (`RGBA`, `AlphaBits`,
   `DepthBits`, etc.).
+- **Default demo data**: the constructor populates the same
+  `exp(-0.1x^2).{sin(3x),cos(3x)}` example `Plot2D`'s demo form builds in
+  `FormCreate`, calling `SetData`/`SetSeriesStyle` itself, so a
+  freshly-dropped component already shows a representative plot rather
+  than a blank white rectangle - both in the Form Designer at design time
+  and at runtime before any real `SetData` call (a caller's own `SetData`,
+  as the demo's `FormCreate` still does, simply replaces it). Built via a
+  plain per-element loop and scalar `Math.Sin`/`Cos`/`Exp`, **not** the
+  demo's own `linspace`/elementwise-VML/operator-overload version (which
+  calls into MKL/IPP) - see "Design-time rendering" below for why.
+- **Design-time rendering** (applies to `TVMPlot3D` too, see below): two
+  separate problems surfaced when first testing "drop the component in the
+  IDE and see the default plot live", both found by comparing why
+  `TVMPlot3D` (which never calls MKL/IPP for its default data - see its
+  own section below) behaved differently from `TVMPlot2D` (which
+  originally did):
+  1. Calling into MKL/IPP (`linspace`, elementwise VML `Exp`/`Sin`/`Cos`,
+     the `cblas`-backed operator overloads) from a constructor that also
+     runs *inside the Lazarus IDE's own process* - true for any
+     `RunAndDesignTime` package's components, since they're statically
+     linked into the IDE binary (see `newvmgraphs.lpk` below) - crashed
+     the IDE with an access violation the moment a `TVMPlot2D` was dropped
+     from the palette, even though the exact same MKL calls work fine in
+     the standalone `Plot2D.exe` demo. Root cause not pinned down further
+     (never got past "MKL/IPP calls are unsafe from inside this
+     particular host process"); the fix was to stop making those calls in
+     the constructor at all, converging on the same MKL/IPP-free
+     plain-loop approach `TVMPlot3D.BuildDefaultDemoMatrix` already used
+     (for an unrelated reason) - not just a workaround, since it's a
+     strictly simpler/safer implementation with identical numeric output.
+  2. Separately, `TCustomOpenGLControl` (`LazOpenGLContext`,
+     `openglcontext.pas`) deliberately skips real GL rendering under
+     `csDesigning` unless `ocoRenderAtDesignTime` is set in its `Options`
+     property (`TCustomOpenGLControl.IsOpenGLRenderAllowed`) - without
+     this, `TVMPlot3D` dropped onto a form with no crash, `SetData`
+     completed and `FHasData` was `True`, yet the Form Designer still
+     showed nothing (confirmed via testing: it *did* render correctly at
+     runtime, and resizing/reselecting the design-time control made no
+     difference - ruling out a simple missed-repaint theory). Fixed by
+     setting `Options := Options + [ocoRenderAtDesignTime];` early in each
+     component's constructor.
+  Both fixes are required together for the Form Designer preview to work
+  at all; either alone leaves one of the two components broken (crash, or
+  silently blank).
+- **Palette icon**: a 24x24 PNG (`Graphs/TVMPlot2D.png` - a small red
+  decaying-sine curve over grey axes) compiled to a Lazarus resource
+  include via `lazres` (`C:\Lazarus\tools\lazres.exe` on this machine):
+  `lazres uvmplot2d_icon.lrs "TVMPlot2D.png=TVMPlot2D"` - the explicit
+  `=TVMPlot2D` resource name (matching the class name exactly, `T`
+  included) is required since `lazres`'s default (derived from the input
+  filename) would otherwise be case-sensitive-fragile. The generated
+  `uvmplot2d_icon.lrs` is a *text* `LazarusResources.Add('TVMPlot2D',
+  'PNG', [...])` call (not a compiled binary resource), pulled in via
+  `{$I uvmplot2d_icon.lrs}` right before `RegisterComponents` inside
+  `Register` - this exact pattern (name/placement) was confirmed against
+  Lazarus's own bundled `components/anchordocking/anchordockpanel.pas`
+  before writing it here. Requires `LResources` in the `uses` clause (the
+  global `LazarusResources.Add` the generated file calls into) - omitted
+  at first, which fails to compile with "Identifier not found
+  'LazarusResources'". The source `.png` is kept in the repo alongside the
+  generated `.lrs` so the icon can be regenerated/edited later without
+  needing to reverse-engineer the resource file.
 
 ### `Graphs/newvmgraphs.lpk` (`newVMGraphs` design-time package)
 
@@ -1155,6 +1217,32 @@ not part of the `LazOpenGLContext` Lazarus package, so no extra
   Resize; Invalidate;`), since `AutoResizeViewport` is left at its default
   `False` and the viewport is instead recomputed by hand from `Width`/
   `Height` at the top of every `Paint` call.
+- **Default demo data**: the constructor calls a new `BuildDefaultDemoMatrix`
+  method (the same 51x51 `z = sin(r)/r` "sinc ripple" surface as the
+  `Plot3D` demo's own `TForm1.BuildDemoMatrix`) and feeds it straight into
+  `SetData`, plus sets the same `Title`/axis titles - same rationale and
+  same "harmless to overwrite, a caller's own `SetData` just replaces it"
+  caveat as `TVMPlot2D`'s default data (see that unit's section above).
+  Built entirely from a plain nested loop and scalar `Math.Sin`/`Sqrt` -
+  no MKL/IPP calls at all (`TVMobj.Create`/`Element[r,c]` are themselves
+  plain dynamic-array operations) - which is exactly why this component
+  never hit the MKL-in-the-IDE-process access violation `TVMPlot2D`'s
+  original (elementwise-VML) default-data version did; see that unit's
+  "Design-time rendering" note for the full story, including the separate
+  `ocoRenderAtDesignTime` fix this component also needed (confirmed by
+  testing: without it, this component dropped into the Form Designer
+  without crashing and `FHasData` genuinely was `True`, yet nothing
+  rendered - and it stayed blank even after resizing/reselecting the
+  control, which is what pointed at `TCustomOpenGLControl` suppressing GL
+  rendering under `csDesigning` rather than a missed-repaint).
+- **Palette icon**: same `lazres`-compiled, `{$I}`-included-in-`Register`
+  approach as `TVMPlot2D`'s (see that unit's section above for the full
+  mechanism) - `Graphs/TVMPlot3D.png`, a small rotated-square "mesh"
+  glyph (a bilinear-subdivided diamond, blue-to-red gradient fill echoing
+  `HeightToColor`'s own palette) compiled via `lazres uvmplot3d_icon.lrs
+  "TVMPlot3D.png=TVMPlot3D"` into `uvmplot3d_icon.lrs`, pulled in via
+  `{$I uvmplot3d_icon.lrs}` in `Register`. Also needed `LResources` added
+  to this unit's `uses` clause.
 
 ### `backup/`
 

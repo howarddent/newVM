@@ -31,6 +31,7 @@ Graphs/*/[A-Za-z]*
 
 # Lazarus IDE session state (per-user, not shared project config)
 *.lps
+Graphs/packagefiles.xml
 
 # Claude Code local settings
 .claude/settings.local.json
