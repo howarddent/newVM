@@ -142,7 +142,16 @@ begin
         FD.Element[I, J] := (Sgn * CI / CJ) / (FX.Element[I, 0] - FX.Element[J, 0]);
       end;
     end;
-  FD2 := FD * FD;
+  // MatMult, not '*': newVM's '*' between two same-shaped TVMobj is
+  // element-wise (mulObj/vdMul - see newVMTests.pas's own
+  // "AssertTrue(A * B = mulObj(A, B))" and Graphs/Plot2D's actual usage,
+  // both of which contradict newVM.pas's own header comment and
+  // CLAUDE.md's architecture notes, which still describe '*' as matrix
+  // multiplication - that's stale documentation, not the current,
+  // tested behaviour). FD * FD here would silently compute the
+  // element-wise square of D's entries instead of composing the
+  // differentiation operator with itself.
+  FD2 := MatMult(FD, FD);
   BuildWeights(N);
 end;
 
