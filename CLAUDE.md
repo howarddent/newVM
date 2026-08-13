@@ -515,6 +515,195 @@ Ported the original raw-FFTW3 spectral-differentiation demo
 (`/home/howard/projects/Lazarus/fftw3`) to `DCT1` for
 `demos/SpectralDiff/` - see the "`demos/`" section below.
 
+### `newvmconfigure.lpr`/`newVMConfig.inc` (platform/library detection, PUREPASCAL fallback)
+
+Every `newVM*.pas` unit's `{$IFDEF UNIX}{$Linklib 'mkl_rt.so'}...{$ENDIF}`
+block (and `OneAPI.pas`'s own `mkl_rt.so`/`ippcore.so`/`ippvm.so`/`ipps.so`
+ones) previously assumed MKL/IPP/OpenBLAS were simply present, unconditionally,
+on any machine that would ever build this project - true on this dev machine,
+but not guaranteed elsewhere (a different architecture, a machine without the
+Intel oneAPI runtime installed, etc). `{$IFDEF}`/`{$Linklib}` are resolved at
+*compile* time, but "is `libmkl_rt.so` actually installed on this machine" is
+a fact about the *build* machine - not something the compiler can know on its
+own. `newvmconfigure.lpr` bridges that gap:
+
+- It's a small standalone console program (only `uses SysUtils, DynLibs` -
+  deliberately no dependency on `cblas.pas`/`OneAPI.pas`/`fftw3.pas`/
+  `newVM*.pas` themselves, since it has to build and run on a machine that
+  might have *none* of MKL/IPP/OpenBLAS/FFTW installed) - build it once with
+  a plain `fpc newvmconfigure.lpr` (no `lazbuild`/`.lpi` needed, unlike the
+  rest of this project - see its own header comment for why), then run
+  `./newvmconfigure` from the repo root before building `newVMtest.lpi` (or
+  after installing/removing any of these libraries on this machine).
+- OS and CPU architecture detection is free at compile time via FPC's own
+  built-in macros (`WINDOWS`/`LINUX`/`DARWIN`, `CPUX86_64`/`CPUAARCH64`/
+  `CPUARM`/`CPUI386`) - the tool just relays them into `PLATFORM_*` defines
+  so the generated file documents what it was generated for. Library
+  presence is genuinely runtime-only, so it's probed via `LoadLibrary`
+  (`DynLibs`) - try to `dlopen` each candidate name, unload again
+  immediately if it succeeds - the exact same technique `cblas.pas` already
+  uses for OpenBLAS (`TryInitializeCBLAS`/`LoadAddresses`) and `fftw3.pas`
+  uses for FFTW, just run once ahead of the real build rather than every
+  time the built program starts. IPP requires all three of
+  `ippcore`/`ippvm`/`ipps` to be found; FFTW requires both the double
+  (`libfftw3`) and single (`libfftw3f`) libraries.
+- The result is written to `newVMConfig.inc`: `{$DEFINE HAVE_OPENBLAS}`/
+  `HAVE_MKL`/`HAVE_IPP`/`HAVE_FFTW` per library actually found, plus
+  `PLATFORM_*` defines, plus a derived `{$DEFINE PUREPASCAL}` set whenever
+  *any* of OpenBLAS/MKL/IPP (all three of which `newVM.pas`'s "core" linear
+  algebra genuinely calls into - `cblas_*`, `LAPACKE_*`/`vd*`/`vsl*`, and
+  `ipps*` respectively) is missing. FFTW absence does *not* set
+  `PUREPASCAL` - DCT/DST/FFT have no plain-Pascal fallback (see below) and
+  already degrade to a clear runtime assert on their own via
+  `r2rTransform`'s `assert(Assigned(fftw_plan_r2r_1d), ...)` regardless of
+  this define. The generated file uses `//` line comments throughout, never
+  a `{ ... }` block comment - Pascal block comments don't nest, so a
+  generated (or hand-written) comment that happens to mention a real
+  `{$IFDEF ...}` directive by name inside a `{ }` block truncates the
+  comment at its first `}` and feeds the rest of the sentence to the
+  compiler as code; hit and fixed (in both `newvmconfigure.lpr`'s own
+  comment-writing code and in `newVM.pas`'s hand-written header comment
+  introducing its `{$I newVMConfig.inc}`) while building this.
+- `newVMConfig.inc` is a per-machine build artifact in spirit (regenerate
+  it after moving to a different machine or changing what's installed) but
+  is currently committed with this dev machine's detected values (all four
+  libraries present) as a working default, so a fresh checkout still builds
+  out of the box without remembering to run `newvmconfigure` first; the
+  binary `newvmconfigure`/`newvmconfigure.exe` itself is `.gitignore`d,
+  same as `newVMtest`/`newVMtest.exe`.
+- `OneAPI.pas` and `newVM.pas` both `{$I newVMConfig.inc}` near their top
+  and additionally gate their pre-existing `{$IFDEF UNIX}{$Linklib ...}`
+  blocks on `HAVE_MKL`/`HAVE_IPP` (`OneAPI.pas` for its own MKL/IPP
+  `$Linklib`s; `newVM.pas` for its separate `mkl_rt.so`+`pthread`+`m`+`dl`
+  preload block - see "External bindings" above for why that one exists).
+  Harmless/unchanged on this machine, where both are always found true;
+  necessary groundwork for a machine where they aren't.
+
+`newVM.pas` (double-precision real) is the **reference implementation** of
+the resulting `PUREPASCAL` fallback - every routine that would otherwise
+call into `cblas`/`OneAPI` now has a second, plain-Pascal-only body,
+individually `{$IFDEF PUREPASCAL}`-guarded right next to the
+library-backed one, so both stay visible side by side rather than one
+replacing the other:
+
+- `LinearSolve`/`Invert`/`Det` (the three routines LAPACKE's `dgetrf`
+  backed) share a hand-written `PurePascalLU`/`PurePascalLUSolve` pair -
+  in-place LU decomposition with partial pivoting, deliberately matching
+  `LAPACKE_dgetrf`'s own storage convention (unit lower-triangular `L`
+  below the diagonal, `U` on/above it, both packed into one buffer) and
+  its 1-based `ipiv` convention, so `Det`'s sign-from-pivots logic
+  (`ipiv[i] <> i+1`) and `LinearSolve`'s `A.fIpiv`/`A.LU` caching contract
+  work unchanged regardless of which body actually ran. `Invert`'s
+  fallback solves `A*X=I` against an identity right-hand side via the same
+  two routines, rather than porting LAPACKE's dedicated `dgetri` algorithm.
+  A singular matrix surfaces as an exactly-zero pivot (matching
+  `LAPACKE_dgetrf`'s `info>0` case) that `Det` multiplies through to a
+  correct zero result with no special-casing, same as the library-backed
+  version; `LinearSolve`'s fallback has no illegal-argument path to report
+  (unlike `LAPACKE_dgesv`), so it always returns 0.
+- `fillRandom` has no VSL to call, so it generates via a fixed-seed
+  Box-Muller transform over FPC's own `Random()` instead of
+  `vdRngGaussian` - reseeding `RandSeed` to the same constant (777) on
+  every call preserves the tested contract (`TestFillRandomDeterministic`
+  et al: two same-sized `fillRandom` calls produce bit-identical data, via
+  `=`) even though the specific values differ from `vdRngGaussian`'s own.
+- Every other routine (`MatMult`, `Kron`, `Diag`, `Norm`, `Trace` -
+  already a plain loop either way -, `FlipUD`/`FlipLR`,
+  `MergeUD`/`MergeLR`, `Reshape`, `Repmat`, `AddScalar`, `SubMatrix`, `Id`,
+  `linspace`, `Transpose`, `CopyObj`, all six operators, `mulObj`, and the
+  elementwise `Sin`/`Cos`/`Tan`/`Sinh`/`Sqr`/`Sqrt`/`Exp`/`Ln` family) is a
+  direct triple/double/single loop or a `Move` in place of the
+  `cblas_?copy`/`LAPACKE_?lacpy` call it replaces - no LU dependency
+  needed. The elementwise functions call `System.Sin`/`Math.Tan`/etc
+  explicitly (rather than bare `Sin`/`Tan`) purely for readability at the
+  call site; Pascal's overload resolution already picks the scalar
+  `Double` version correctly either way, since the enclosing function's
+  own parameter type is `TVMobj`, not `Double` - no actual ambiguity.
+- **Verified**, not just written to compile: with `PUREPASCAL` forced on
+  in `newVMConfig.inc` (independent of what's actually installed - MKL/IPP/
+  OpenBLAS stay linked for the *other* three `TVMobj*` units regardless),
+  all 59 of `TVMobjTests`' own tests pass unchanged - the same known-value
+  and round-trip checks (`TestMatMultKnownValues`,
+  `TestLinearSolveReusesFactorization`, `TestInvertRecoversIdentity`,
+  `TestDetKnownValues`/`TestDetSingularIsZero`, `TestKronKnownValues`,
+  etc) that already exercise the library-backed path, now exercising the
+  plain-Pascal one instead. The full 256-test suite (all five `TVMobj*`/
+  `TVMobjI` type test cases together) passes both with `PUREPASCAL` forced
+  on and back in its normal (all-libraries-found) state.
+- DCT/DST/FFT (`r2rTransform` and everything built on it) deliberately have
+  **no** `PUREPASCAL` fallback - a correct pure-Pascal FFT is a
+  substantially larger undertaking than the rest of this list, out of
+  scope for this pass. They keep working exactly as before (FFTW is loaded
+  independently of `PUREPASCAL`) and already assert clearly if FFTW itself
+  isn't loaded.
+
+The same treatment has since been rolled out to all three sibling units -
+`newVM.pas` was the proof-of-concept, not the final scope:
+
+- **`newVMSingle.pas`** (single-precision real) mirrors `newVM.pas`
+  routine-for-routine, `Single`-typed throughout (`PurePascalLUS`/
+  `PurePascalLUSolveS`, the same fixed-seed-777 Box-Muller `fillRandom`,
+  etc) - there's no real conceptual difference from the double-precision
+  version, just the element type and the `cblas_s*`/`lapacke_s*`/`vs*`/
+  `ippsAddC_32f_I`/etc calls it replaces.
+- **`newVMComplex.pas`** (double-precision complex, `TVMobjZ`/
+  `TComplex16`) and **`newVMComplexSingle.pas`** (single-precision
+  complex, `TVMobjC`/`TComplex8`) needed genuinely new work, not just a
+  type-swapped copy: a small block of complex-arithmetic helpers
+  (`CAddZ`/`CSubZ`/`CMulZ`/`CDivZ`/`CAbsSqZ` and the `C`-suffixed
+  single-precision analogues - plain functions over `TComplex16`/
+  `TComplex8`, since those record types have no operator overloads of
+  their own outside `TVMobjZ`/`TVMobjC`'s whole-matrix operators)
+  underpins everything else in both units:
+  - `PurePascalLUZ`/`PurePascalLUC` use `CAbsSqZ`/`CAbsSqC` (magnitude
+    *squared*, monotonic in `|z|` so pivot-comparison order is unaffected,
+    and cheaper than an actual `Sqrt`) in place of `Abs()` for pivot
+    selection, and complex multiply/subtract/divide (`CDivZ`/`CDivC` -
+    the standard `a*conj(b)/|b|^2` formula, self-contained rather than
+    calling the unit's own later `ReciprocalZ`/`ReciprocalC`, since the LU
+    routines have to come before `LinearSolveZ`/`InvertZ`/`DetZ`, well
+    before those functions' own position further down each file) in place
+    of real division for the elimination step - otherwise an exact
+    structural match for `PurePascalLU`/`PurePascalLUSolve`.
+  - The elementwise complex transcendentals have no VML equivalent to
+    fall back from directly (`vzSin`/`vzCos`/etc take a complex buffer
+    in one call; there's no "give me the scalar formula" primitive), so
+    each got its own closed-form principal-branch implementation:
+    `Exp(a+bi) = e^a(cos b + i sin b)`, `Ln(a+bi) = ln|z| + i*atan2(b,a)`,
+    `Sin(a+bi) = sin(a)cosh(b) + i cos(a)sinh(b)`,
+    `Cos(a+bi) = cos(a)cosh(b) - i sin(a)sinh(b)`,
+    `Sinh(a+bi) = sinh(a)cos(b) + i cosh(a)sin(b)`,
+    `Tan(z) = Sin(z)/Cos(z)` (via `CDivZ`, no separate closed form), and
+    `Sqrt` via the standard `r=|z|, re=sqrt((r+a)/2),
+    im=sign(b)*sqrt((r-a)/2)` principal-square-root construction. `Sqr`
+    needed no new formula either way - both the library-backed body
+    (`vzMul(A,A,...)`, since MKL VM has no `vzSqr`) and the PUREPASCAL one
+    (`CMulZ(A[i],A[i])` in a loop) were already "multiply A by itself".
+  - `RealToComplex`/`GetRealPart`/`GetImagPart` (and their `S`-suffixed
+    single-precision analogues) - previously a `cblas_?copy` with a
+    stride-2 source/destination exploiting `TComplex16`/`TComplex8`'s
+    "two contiguous reals" layout - become a plain per-element loop
+    reading/writing `.re`/`.im` directly; `SplitComplex`/`SplitComplexS`
+    needed no change at all, since they're just a two-line wrapper calling
+    the other two.
+  - The **mixed** real/complex operators (`TVMobjZ + TVMobj`, `TVMobjZ *
+    TVMobj`, etc, and the `C`/`TVMobjS` analogues) needed **no changes** -
+    they already delegate to `RealToComplex`/`RealToComplexS` plus either
+    the same-type operator or `MatMultZ`/`MatMultC`, so once those have
+    PUREPASCAL bodies the mixed operators inherit correctness for free.
+  - `EigDecompose`/`EigDecomposeS` (`LAPACKE_dgeev`/`sgeev`) and
+    `FFT_R2C`/`FFT_C2R`/`FFT`/`IFFT` (FFTW-backed) have no fallback, same
+    rationale and same "already asserts cleanly if the library isn't
+    loaded" behaviour as `newVM.pas`'s own DCT/DST.
+- **Verified** the same way as `newVM.pas`: with `PUREPASCAL` forced on
+  for all four units simultaneously, the full 256-test suite (`TVMobjTests`
+  59, `TVMobjSTests` 59, `TVMobjZTests` 60 - including
+  `TestEigDecomposeSatisfiesEigenEquation`, which still exercises the
+  library-backed `EigDecompose` combined with a now-PUREPASCAL `MatMultZ`
+  via the mixed real*complex `*` operator - `TVMobjCTests` 60, `TVMobjITests`
+  18) passes with 0 errors/0 failures, and again passes unchanged back in
+  the normal (all-libraries-found) state.
+
 ### `newVMI.pas` (integer index array/matrix)
 
 `newVMI.pas` provides `TVMobjI`, an integer-valued companion to the four
