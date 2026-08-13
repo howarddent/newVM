@@ -11,6 +11,7 @@ program Plot3D;
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
+{$I ../../newVMConfig.inc}
 
 uses
   {$IFDEF UNIX}
@@ -20,7 +21,9 @@ uses
   Forms, cblas, uplot3dmain;
 
 begin
+  {$IFDEF HAVE_OPENBLAS}
   InitializeCBLAS;
+  {$ENDIF}
   RequireDerivedFormResource := True;
   Application.Scaled := True;
   Application.Initialize;

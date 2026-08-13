@@ -11,6 +11,7 @@ program SpectralDiff;
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
+{$I ../../newVMConfig.inc}
 
 uses
   {$IFDEF UNIX}
@@ -20,7 +21,9 @@ uses
   Forms, cblas, ufuncmain;
 
 begin
+  {$IFDEF HAVE_OPENBLAS}
   InitializeCBLAS;
+  {$ENDIF}
   RequireDerivedFormResource := True;
   Application.Scaled := True;
   Application.Initialize;

@@ -23,9 +23,6 @@
     </RunParams>
     <RequiredPackages>
       <Item>
-        <PackageName Value="newVMGraphs"/>
-      </Item>
-      <Item>
         <PackageName Value="LazOpenGLContext"/>
       </Item>
       <Item>

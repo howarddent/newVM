@@ -10,6 +10,7 @@ program NormalIntegration;
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
+{$I ../../../newVMConfig.inc}
 
 uses
   {$IFDEF UNIX}
@@ -19,7 +20,9 @@ uses
   Forms, cblas, uNormMain, newvmgraphs;
 
 begin
+  {$IFDEF HAVE_OPENBLAS}
   InitializeCBLAS;
+  {$ENDIF}
   RequireDerivedFormResource := True;
   Application.Scaled := True;
   Application.Initialize;

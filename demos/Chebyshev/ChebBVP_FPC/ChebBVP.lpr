@@ -11,6 +11,7 @@ program ChebBVP;
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
+{$I ../../../newVMConfig.inc}
 
 uses
   {$IFDEF UNIX}
@@ -20,7 +21,9 @@ uses
   Forms, cblas, uBVPMain, newvmgraphs;
 
 begin
+  {$IFDEF HAVE_OPENBLAS}
   InitializeCBLAS;
+  {$ENDIF}
   RequireDerivedFormResource := True;
   Application.Scaled := True;
   Application.Initialize;

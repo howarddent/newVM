@@ -11,6 +11,7 @@ program Plot2D;
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
+{$I ../../newVMConfig.inc}
 
 uses
   {$IFDEF UNIX}
@@ -20,7 +21,9 @@ uses
   Forms, cblas, uplot2dmain, newvmgraphs;
 
 begin
+  {$IFDEF HAVE_OPENBLAS}
   InitializeCBLAS;
+  {$ENDIF}
   RequireDerivedFormResource := True;
   Application.Scaled := True;
   Application.Initialize;
