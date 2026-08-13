@@ -44,6 +44,27 @@ Graphs/*/[A-Za-z]*
 # win) to actually exclude them, e.g. demos/SpectralDiff/SpectralDiff.exe.
 *.exe
 
+# Delphi/RAD Studio build artifacts and IDE-local state - demos/Chebyshev/
+# ChebBVP and demos/Chebyshev/Normal_Integration keep the original Delphi/
+# MtxVec sources these were ported from (see uCheb.pas/uBVPMain.pas's own
+# header comments for the newVM/FPC recodings), but not RAD Studio's own
+# compiled output or per-machine IDE state - same principle as the
+# Lazarus artifacts ignored above. Re-states *.res (already ignored
+# unscoped near the top of this file) since the "!demos/Chebyshev/*/*.*"
+# negation above would otherwise re-include it for anything under
+# demos/Chebyshev/ specifically - later patterns win, so it has to be
+# repeated here rather than relying on the earlier occurrence.
+*.res
+*.dcu
+*.rsm
+*.dproj.local
+*.identcache
+*.stat
+*.dsk
+*.~dsk
+__history/
+Win64/
+
 # Lazarus IDE session state (per-user, not shared project config)
 *.lps
 Graphs/packagefiles.xml
