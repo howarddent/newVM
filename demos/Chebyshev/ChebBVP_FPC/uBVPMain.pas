@@ -14,15 +14,26 @@ unit uBVPMain;
      are unknowns), solve the resulting (N-1)x(N-1) system directly via
      newVM's LinearSolve, zero-pad the result back up to N+1 points, and
      barycentrically interpolate (BaryInterpol, also from uCheb.pas) onto
-     a fine display grid for comparison against the problem's known
-     closed-form solution (built with newVM.pas's AddScalar, alongside the
-     existing '*'/'/' scalar operators, since there's no '+'/scalar
-     operator overload), displayed via TVMPlot2D as in the NormalIntegration
-     demo. AddScalar and SubMatrix both started out as demo-local helpers
-     here (AddScalar duplicated a second time in NormalIntegration's own
-     uNormMain.pas) before being promoted into newVM.pas itself - see that
-     unit's own header comment and CLAUDE.md's architecture notes for the
-     library-level version now used by both demos.
+     a fine 201-point display grid, plotted as a solid line - "the
+     interpolated line of the approximated function". The problem's known
+     closed-form solution (built with newVM.pas's AddScalar, alongside
+     the existing '*'/'/' scalar operators, since there's no '+'/scalar
+     operator overload) is evaluated on that same fine grid too, but only
+     internally, to compute the reported max-error figure - it isn't
+     plotted as a curve of its own. Instead, the exact solution is
+     evaluated directly at the N+1=17 Chebyshev points themselves and
+     plotted as square point markers via TVMPlot2D.PlotXY (one call per
+     node - see Graphs/uVMPlot2D.pas), overlaid on top of the
+     approximation's line: since PlotXY gives every series its own
+     independent X, this doesn't need to share a grid with the
+     interpolated line the way TVMPlot2D.SetData's series would - it's
+     exactly the discrete-points-alongside-a-different-resolution-line
+     case SetData alone can't do. AddScalar and SubMatrix both started
+     out as demo-local helpers here (AddScalar duplicated a second time
+     in NormalIntegration's own uNormMain.pas) before being promoted into
+     newVM.pas itself - see that unit's own header comment and CLAUDE.md's
+     architecture notes for the library-level version now used by both
+     demos.
 
      As with that demo, everything is computed once in FormCreate rather
      than behind a separate "Execute" button. The original's second tab
@@ -74,7 +85,7 @@ procedure TfmMain.FormCreate(Sender: TObject);
 var
   Xi, F, DD, U, V, IX, IY, Exact: TVMobj;
   I: Integer;
-  MaxErr, Err: Double;
+  MaxErr, Err, XNode: Double;
   ElapsedUs: Int64;
 begin
   Profiler.Start;
@@ -128,8 +139,16 @@ begin
   FPlot.XAxisTitle := 'x';
   FPlot.YAxisTitle := 'u';
   FPlot.SetSeriesStyle(0, clRed, 2.0, plsSolid, 'u (Chebyshev, N=' + IntToStr(ChebN) + ')');
-  FPlot.SetSeriesStyle(1, clBlue, 1.5, plsDash, 'u exact');
-  FPlot.SetData(IX, [IY, Exact]);
+  FPlot.SetSeriesStyle(1, clBlue, 1.5, plsNone, 'u exact (Chebyshev points)', pmsSquare);
+  FPlot.SetData(IX, [IY]);
+
+  // Exact solution at the N+1 Chebyshev points themselves, one PlotXY
+  // call per node - see the header comment for why this is PlotXY rather
+  // than a second SetData series.
+  for I := 0 to ChebN do begin
+    XNode := FCheb.X.Element[I, 0];
+    FPlot.PlotXY(XNode, (Exp(4 * XNode) - Sinh(4.0) * XNode - Cosh(4.0)) / 16, 1);
+  end;
 
   Memo1.Lines.Add('');
   Memo1.Lines.Add('Max error = ' + FloatToStr(MaxErr));

@@ -4,7 +4,8 @@ unit uVMPlot2D;
 
      TVMPlot2D - a reusable, droppable-on-a-form LCL component wrapping
      TOpenGLControl (LazOpenGLContext) that plots one or more newVM (TVMobj)
-     vectors against a shared X vector. This is the rendering engine of the
+     vectors, each against its own X vector (see SetData vs PlotXY below
+     for the two ways to get data in). This is the rendering engine of the
      Graphs/Plot2D demo (uplot2dmain.pas), lifted out into a standalone
      component so it isn't tied to that one form/function - see that unit's
      header for the original single-series version this was generalised
@@ -22,22 +23,50 @@ unit uVMPlot2D;
        Plot.SetSeriesStyle(1, clBlue, 1.5, plsDash, 'cos(x)');
        Plot.SetData(X, [YSin, YCos]);   // X, YSin, YCos: TVMobj row/col vectors
 
+       // a third series drawn as points only, no connecting line:
+       Plot.SetSeriesStyle(2, clGreen, 1.0, plsNone, 'samples', pmsCircle, 8.0);
+
+       // built up one point at a time instead - e.g. streaming data -
+       // rather than from a pre-built TVMobj vector:
+       Plot.PlotXY(0.1, 0.4, 3);
+       Plot.PlotXY(0.2, 0.55, 3);
+
      SetData takes a single TVMobj for X and an open array of up to
      VMPlotMaxSeries (10) TVMobj vectors for Y - each must be the same
      length as X (row or column shaped, either is accepted, matching
-     newVM's (1,N)/(N,1) vector convention). Per-series LineColor/
-     LineWidth/LineStyle (solid/dash/dot, via GL_LINE_STIPPLE)/Name are
-     exposed both as a published `Series` collection (editable per-slot at
-     design time in the Object Inspector) and via the SetSeriesStyle
-     convenience method for runtime code. A series' Name, when non-empty,
-     both labels its line in the auto-sized legend panel drawn in the top
-     right of the plot rectangle (a colour/style-matched line swatch plus
-     the name) and is skipped from the legend entirely when left blank -
-     so the legend only appears once at least one series has a Name set,
-     and never needs disabling explicitly. Title/XAxisTitle/YAxisTitle are
-     plain published string properties. All other published behaviour
-     (Align, Anchors, Color, mouse/key events, etc.) comes straight from
-     the inherited TOpenGLControl - nothing needs re-declaring for those.
+     newVM's (1,N)/(N,1) vector convention) - all sharing that one X for
+     this call. PlotXY(X, Y, PlotLine) is the incremental alternative:
+     appends a single (X,Y) point to series PlotLine, extending it by one
+     point rather than replacing its whole dataset - each series keeps its
+     own X internally, so PlotXY on one PlotLine never disturbs any other
+     series, whether that series came from SetData or its own PlotXY
+     calls (freely mixable on the same PlotLine too - it always appends to
+     whatever's already there). Both recompute the combined bounding box/
+     ticks from every series' data on every call, so either is fine for
+     interactive/streaming use at a reasonable point rate, but repeated
+     PlotXY calls against an already-large series aren't optimised for
+     very high-frequency appends. Per-series LineColor/
+     LineWidth/LineStyle (solid/dash/dot/none, via GL_LINE_STIPPLE)/
+     MarkerShape/MarkerSize/Name are exposed both as a published `Series`
+     collection (editable per-slot at design time in the Object Inspector)
+     and via the SetSeriesStyle convenience method for runtime code.
+     MarkerShape (square/diamond/circle, default none) draws a marker
+     glyph at every data vertex, filled with the series' LineColor and
+     outlined in black, at a constant pixel size set by MarkerSize -
+     independent of LineStyle, so a series can show a line, markers, or
+     both together; LineStyle=plsNone with a MarkerShape set gives a
+     points-only series (no connecting line), e.g. for a discrete/
+     collocation series plotted alongside a smooth interpolated one - see
+     DrawMarker/DrawMarkers. A series' Name, when non-empty, both labels
+     it in the auto-sized legend panel drawn in the top right of the plot
+     rectangle (a colour/style-matched line swatch, a marker glyph if one
+     is set, and the name) and is skipped from the legend entirely when
+     left blank - so the legend only appears once at least one series has
+     a Name set, and never needs disabling explicitly. Title/XAxisTitle/
+     YAxisTitle are plain published string properties. All other
+     published behaviour (Align, Anchors, Color, mouse/key events, etc.)
+     comes straight from the inherited TOpenGLControl - nothing needs
+     re-declaring for those.
 
 *******************************************************************************}
 
@@ -55,7 +84,21 @@ const
   VMPlotMaxSeries = 10;
 
 type
-  TVMPlotLineStyle = (plsSolid, plsDash, plsDot);
+  // plsNone suppresses the connecting line entirely (appended, not
+  // inserted, so it doesn't renumber the existing three - published
+  // enum properties stream by name in .lfm files, not ordinal, so this
+  // wasn't required for correctness, just tidiness). Combine with
+  // MarkerShape below: plsNone + a MarkerShape draws point markers with
+  // no connecting line ("display as a series of points"); a real
+  // LineStyle + a MarkerShape draws both, matching how most charting
+  // libraries combine markers with a line.
+  TVMPlotLineStyle = (plsSolid, plsDash, plsDot, plsNone);
+
+  // Point-marker glyphs drawn at each data vertex, independent of
+  // LineStyle above. pmsNone (the default) draws nothing, preserving
+  // every existing series' appearance exactly - markers are strictly
+  // opt-in.
+  TVMPlotMarkerShape = (pmsNone, pmsSquare, pmsDiamond, pmsCircle);
 
   { TVMPlotSeriesStyle }
 
@@ -64,10 +107,14 @@ type
     FLineColor: TColor;
     FLineWidth: Single;
     FLineStyle: TVMPlotLineStyle;
+    FMarkerShape: TVMPlotMarkerShape;
+    FMarkerSize: Single;
     FName: string;
     procedure SetLineColor(AValue: TColor);
     procedure SetLineWidth(AValue: Single);
     procedure SetLineStyle(AValue: TVMPlotLineStyle);
+    procedure SetMarkerShape(AValue: TVMPlotMarkerShape);
+    procedure SetMarkerSize(AValue: Single);
     procedure SetName(const AValue: string);
   public
     constructor Create(ACollection: TCollection); override;
@@ -76,6 +123,13 @@ type
     property LineColor: TColor read FLineColor write SetLineColor;
     property LineWidth: Single read FLineWidth write SetLineWidth;
     property LineStyle: TVMPlotLineStyle read FLineStyle write SetLineStyle;
+    // Marker fill is always LineColor (one colour per series, not a
+    // separate marker palette) with a fixed black outline - see
+    // TVMPlot2D.DrawMarker. MarkerSize is in pixels, constant regardless
+    // of the data-space zoom/axis scale, the same convention LineWidth
+    // already uses (glLineWidth is a pixel width too).
+    property MarkerShape: TVMPlotMarkerShape read FMarkerShape write SetMarkerShape;
+    property MarkerSize: Single read FMarkerSize write SetMarkerSize;
     // Legend label for this series - see the DrawLegend note on TVMPlot2D.
     // Left blank (the default), this series is simply omitted from the
     // legend rather than appearing with an empty label.
@@ -109,10 +163,15 @@ type
 
   TVMPlot2D = class(TOpenGLControl)
   private
-    FXData: TVMPlotDoubleArray;
+    FXData: array[0..VMPlotMaxSeries - 1] of TVMPlotSeriesData;
     FYData: array[0..VMPlotMaxSeries - 1] of TVMPlotSeriesData;
     FSeriesCount: Integer;
     FHasData: Boolean;
+    // False only for the constructor's own default-demo SetData call -
+    // see PlotXY's comment for why this matters (a fresh component's
+    // first real PlotXY call should replace that placeholder, not append
+    // to it).
+    FUserDataStarted: Boolean;
     FXMin, FXMax, FYMin, FYMax: Double;
     FXTicks, FYTicks: TVMPlotDoubleArray;
     FTitle, FXAxisTitle, FYAxisTitle: string;
@@ -134,7 +193,12 @@ type
       X, Y, AngleDeg, HAlign, VAlign: Double);
     procedure DrawAxes;
     procedure ApplyLineStyle(const Style: TVMPlotSeriesStyle);
+    procedure DrawMarker(PX, PY: Double; Shape: TVMPlotMarkerShape;
+      MarkerSize: Single; FillColor: TColor);
+    procedure DrawMarkers(PlotLeft, PlotBottom, PlotW, PlotH: Integer);
     procedure DrawLegend(PlotLeft, PlotBottom, PlotW, PlotH: Integer);
+    procedure RecomputeBounds;
+    procedure EnsureUserDataStarted;
   public
     constructor Create(TheOwner: TComponent); override;
     destructor Destroy; override;
@@ -142,7 +206,13 @@ type
     procedure Resize; override;
     procedure SetData(const X: TVMobj; const YSeries: array of TVMobj);
     procedure SetSeriesStyle(Index: Integer; AColor: TColor;
-      ALineWidth: Single; AStyle: TVMPlotLineStyle; const AName: string = '');
+      ALineWidth: Single; AStyle: TVMPlotLineStyle; const AName: string = '';
+      AMarkerShape: TVMPlotMarkerShape = pmsNone; AMarkerSize: Single = 6.0);
+    // Appends one (X,Y) point to PlotLine's own data, extending its length
+    // by one - the incremental, point-at-a-time counterpart to SetData's
+    // all-at-once TVMobj vectors. See the header comment and
+    // RecomputeBounds' own comment for the full contract.
+    procedure PlotXY(X, Y: Double; PlotLine: Integer);
   published
     property Title: string read FTitle write SetTitle;
     property XAxisTitle: string read FXAxisTitle write SetXAxisTitle;
@@ -173,6 +243,8 @@ begin
   FLineColor := clBlack;
   FLineWidth := 2.0;
   FLineStyle := plsSolid;
+  FMarkerShape := pmsNone;
+  FMarkerSize := 6.0;
 end;
 
 function TVMPlotSeriesStyle.GetDisplayName: string;
@@ -198,6 +270,20 @@ procedure TVMPlotSeriesStyle.SetLineStyle(AValue: TVMPlotLineStyle);
 begin
   if FLineStyle = AValue then Exit;
   FLineStyle := AValue;
+  Changed(False);
+end;
+
+procedure TVMPlotSeriesStyle.SetMarkerShape(AValue: TVMPlotMarkerShape);
+begin
+  if FMarkerShape = AValue then Exit;
+  FMarkerShape := AValue;
+  Changed(False);
+end;
+
+procedure TVMPlotSeriesStyle.SetMarkerSize(AValue: Single);
+begin
+  if FMarkerSize = AValue then Exit;
+  FMarkerSize := AValue;
   Changed(False);
 end;
 
@@ -343,6 +429,13 @@ begin
   SetSeriesStyle(0, clRed, 2.0, plsSolid, 'exp(-0.1x^2).sin(3x)');
   SetSeriesStyle(1, clBlue, 1.5, plsDash, 'exp(-0.1x^2).cos(3x)');
   SetData(X, [YSin, YCos]);
+  // SetData just marked FUserDataStarted via EnsureUserDataStarted, so a
+  // later real SetData/PlotXY call knows to append/replace rather than
+  // clear first - but this was the constructor's own placeholder data,
+  // not a real caller's, so undo that: the component should still look
+  // pristine to EnsureUserDataStarted's eyes until an actual caller does
+  // something.
+  FUserDataStarted := False;
 end;
 
 destructor TVMPlot2D.Destroy;
@@ -391,7 +484,8 @@ begin
 end;
 
 procedure TVMPlot2D.SetSeriesStyle(Index: Integer; AColor: TColor;
-  ALineWidth: Single; AStyle: TVMPlotLineStyle; const AName: string = '');
+  ALineWidth: Single; AStyle: TVMPlotLineStyle; const AName: string = '';
+  AMarkerShape: TVMPlotMarkerShape = pmsNone; AMarkerSize: Single = 6.0);
 begin
   assert((Index >= 0) and (Index < VMPlotMaxSeries),
     s + 'SetSeriesStyle : Index out of range');
@@ -399,6 +493,8 @@ begin
   FSeriesStyles[Index].LineWidth := ALineWidth;
   FSeriesStyles[Index].LineStyle := AStyle;
   FSeriesStyles[Index].Name := AName;
+  FSeriesStyles[Index].MarkerShape := AMarkerShape;
+  FSeriesStyles[Index].MarkerSize := AMarkerSize;
 end;
 
 // Marks cached title/tick GL textures for rebuild on the next paint -
@@ -431,15 +527,97 @@ begin
   for i := 0 to High(FLegendTex) do FreeTextTexture(FLegendTex[i]);
 end;
 
-// Extracts X and up to VMPlotMaxSeries Y TVMobj vectors into plain Double
-// arrays for the paint handler, computes the combined bounding box (X plus
-// every Y series) - with a margin - so the orthographic projection
-// auto-fits all series regardless of what they contain, and precomputes
-// "nice" tick values over that (padded) range. Each of X/YSeries[i] may be
-// either row (1,N) or column (N,1) shaped, per newVM's vector convention.
-procedure TVMPlot2D.SetData(const X: TVMobj; const YSeries: array of TVMobj);
+// Recomputes the combined bounding box (every series' X and Y alike) -
+// with a margin - so the orthographic projection auto-fits whatever's
+// currently plotted, and precomputes "nice" tick values over that
+// (padded) range. Shared by SetData and PlotXY - the only difference
+// between them is how FXData/FYData/FSeriesCount got populated before
+// this runs; from here on both are the same "replot everything" work.
+// Scans every point of every series from scratch each call, which is
+// fine for SetData (already O(total points) just to build FXData/FYData)
+// and for interactive/streaming PlotXY use at a reasonable point rate,
+// but isn't optimised for very high-frequency appends against an
+// already-large series (each call is itself O(total points so far)).
+procedure TVMPlot2D.RecomputeBounds;
 const
   MarginFrac = 0.08;
+var
+  i, iser: Integer;
+  XMargin, YMargin: Double;
+  HasAny: Boolean;
+begin
+  HasAny := False;
+  for iser := 0 to FSeriesCount - 1 do
+    for i := 0 to High(FXData[iser]) do begin
+      if not HasAny then begin
+        FXMin := FXData[iser][i]; FXMax := FXData[iser][i];
+        FYMin := FYData[iser][i]; FYMax := FYData[iser][i];
+        HasAny := True;
+      end else begin
+        if FXData[iser][i] < FXMin then FXMin := FXData[iser][i];
+        if FXData[iser][i] > FXMax then FXMax := FXData[iser][i];
+        if FYData[iser][i] < FYMin then FYMin := FYData[iser][i];
+        if FYData[iser][i] > FYMax then FYMax := FYData[iser][i];
+      end;
+    end;
+  if not HasAny then Exit;  // every series still empty - nothing to fit
+
+  XMargin := (FXMax - FXMin) * MarginFrac;
+  YMargin := (FYMax - FYMin) * MarginFrac;
+  if XMargin = 0 then XMargin := 1;   // guard a constant-X vector
+  if YMargin = 0 then YMargin := 1;   // guard a constant-Y vector
+  FXMin := FXMin - XMargin; FXMax := FXMax + XMargin;
+  FYMin := FYMin - YMargin; FYMax := FYMax + YMargin;
+
+  FXTicks := ComputeTicks(FXMin, FXMax, 8);
+  FYTicks := ComputeTicks(FYMin, FYMax, 6);
+end;
+
+// Clears every series (both SetData's and PlotXY's storage - the two
+// share the same FXData/FYData, there's no separate pool per method) the
+// first time either a real SetData or a real PlotXY call happens - i.e.
+// while FUserDataStarted is still False, meaning only the constructor's
+// own default-demo SetData call has ever run (see the constructor's own
+// comment: it explicitly resets FUserDataStarted to False again right
+// after that call, precisely so this trigger still fires for the first
+// real caller). Called from the very top of both SetData and PlotXY, so
+// whichever of the two a caller reaches for first, the constructor's
+// placeholder data is discarded in one shot rather than partially - a
+// SetData call for just series 0, say, would otherwise leave series 1's
+// old placeholder data (or a previous real caller's data - see below)
+// sitting there untouched, since SetData only ever touches the series
+// indices it's actually given. Without this shared trigger, a caller
+// mixing SetData (for some series) with PlotXY (for others) - the
+// combination the whole point of PlotXY was to support (see the header
+// comment) - would see PlotXY silently append its points onto the tail
+// of whatever stale data (constructor placeholder or otherwise) already
+// occupied that series index, instead of starting it from scratch.
+procedure TVMPlot2D.EnsureUserDataStarted;
+var
+  iser: Integer;
+begin
+  if FUserDataStarted then Exit;
+  for iser := 0 to VMPlotMaxSeries - 1 do begin
+    SetLength(FXData[iser], 0);
+    SetLength(FYData[iser], 0);
+  end;
+  FSeriesCount := 0;
+  FUserDataStarted := True;
+end;
+
+// Extracts X and up to VMPlotMaxSeries Y TVMobj vectors into plain Double
+// arrays for the paint handler. Each of X/YSeries[i] may be either row
+// (1,N) or column (N,1) shaped, per newVM's usual vector convention. X is
+// shared across every series in this call (SetData's own contract - see
+// PlotXY for the per-series-X alternative), so it's simply copied into
+// each series' own FXData[iser] slot; internally, a series' X and Y
+// values always live side by side, whichever of SetData/PlotXY put them
+// there. FSeriesCount only ever grows here (never shrinks to
+// Length(YSeries) if that's fewer than before) - the same "high water
+// mark" convention PlotXY's own FSeriesCount update already uses -
+// specifically so a SetData call that only touches, say, series 0 can't
+// un-render a higher-numbered series PlotXY separately populated.
+procedure TVMPlot2D.SetData(const X: TVMobj; const YSeries: array of TVMobj);
 
   function VecLen(const V: TVMobj): Integer;
   begin
@@ -453,43 +631,66 @@ const
 
 var
   N, i, iser: Integer;
-  XMargin, YMargin: Double;
+  XVals: TVMPlotSeriesData;
 begin
   assert((Length(YSeries) >= 1) and (Length(YSeries) <= VMPlotMaxSeries),
     s + 'SetData : between 1 and ' + IntToStr(VMPlotMaxSeries) + ' Y series required');
+  EnsureUserDataStarted;
   N := VecLen(X);
-  SetLength(FXData, N);
-  for i := 0 to N - 1 do FXData[i] := VecAt(X, i);
+  SetLength(XVals, N);
+  for i := 0 to N - 1 do XVals[i] := VecAt(X, i);
 
-  FSeriesCount := Length(YSeries);
-  for iser := 0 to FSeriesCount - 1 do begin
+  if Length(YSeries) > FSeriesCount then FSeriesCount := Length(YSeries);
+  for iser := 0 to Length(YSeries) - 1 do begin
     assert(VecLen(YSeries[iser]) = N,
       s + 'SetData : every Y series must be the same length as X');
+    FXData[iser] := Copy(XVals, 0, N);
     SetLength(FYData[iser], N);
     for i := 0 to N - 1 do FYData[iser][i] := VecAt(YSeries[iser], i);
   end;
 
-  FXMin := FXData[0]; FXMax := FXData[0];
-  FYMin := FYData[0][0]; FYMax := FYData[0][0];
-  for i := 0 to N - 1 do begin
-    if FXData[i] < FXMin then FXMin := FXData[i];
-    if FXData[i] > FXMax then FXMax := FXData[i];
-  end;
-  for iser := 0 to FSeriesCount - 1 do
-    for i := 0 to N - 1 do begin
-      if FYData[iser][i] < FYMin then FYMin := FYData[iser][i];
-      if FYData[iser][i] > FYMax then FYMax := FYData[iser][i];
-    end;
+  RecomputeBounds;
 
-  XMargin := (FXMax - FXMin) * MarginFrac;
-  YMargin := (FYMax - FYMin) * MarginFrac;
-  if XMargin = 0 then XMargin := 1;   // guard a constant-X vector
-  if YMargin = 0 then YMargin := 1;   // guard a constant-Y vector
-  FXMin := FXMin - XMargin; FXMax := FXMax + XMargin;
-  FYMin := FYMin - YMargin; FYMax := FYMax + YMargin;
+  FHasData := True;
+  InvalidateTextures;
+  Invalidate;
+end;
 
-  FXTicks := ComputeTicks(FXMin, FXMax, 8);
-  FYTicks := ComputeTicks(FYMin, FYMax, 6);
+// Appends one (X,Y) point to PlotLine's own data - the incremental,
+// point-at-a-time counterpart to SetData's all-at-once TVMobj vectors,
+// e.g. for building a series up over time (streaming/interactive data)
+// rather than from a pre-built vector. Unlike SetData, PlotLine's X isn't
+// shared with any other series - each series has always stored its own
+// FXData[iser] internally (see SetData above), so appending to just one
+// series here needs no special-casing. If PlotLine is beyond the current
+// FSeriesCount, this extends FSeriesCount to include it; any series in
+// between that has never been touched by SetData/PlotXY simply renders
+// as empty (no line, no markers) until it gets its own first call - the
+// same "just works" behaviour RecomputeBounds/Paint/DrawMarkers already
+// have for a zero-length series. Freely mixable with SetData (including
+// on a different PlotLine than SetData's own series - see
+// EnsureUserDataStarted for how the two share one "first real call"
+// trigger) or with itself on the same PlotLine: a call here always
+// appends to whatever's already there, regardless of which method put it
+// there, except - via EnsureUserDataStarted - the very first real call
+// this component has ever received.
+procedure TVMPlot2D.PlotXY(X, Y: Double; PlotLine: Integer);
+var
+  n: Integer;
+begin
+  assert((PlotLine >= 0) and (PlotLine < VMPlotMaxSeries),
+    s + 'PlotXY : PlotLine out of range');
+  EnsureUserDataStarted;
+
+  n := Length(FXData[PlotLine]) + 1;
+  SetLength(FXData[PlotLine], n);
+  SetLength(FYData[PlotLine], n);
+  FXData[PlotLine][n - 1] := X;
+  FYData[PlotLine][n - 1] := Y;
+
+  if PlotLine + 1 > FSeriesCount then FSeriesCount := PlotLine + 1;
+
+  RecomputeBounds;
 
   FHasData := True;
   InvalidateTextures;
@@ -541,6 +742,118 @@ begin
     plsDot: begin
       glEnable(GL_LINE_STIPPLE);
       glLineStipple(2, $1111);
+    end;
+    plsNone: ;  //caller skips the line strip entirely - see Paint/DrawLegend
+  end;
+end;
+
+// Draws one marker glyph centered at (PX,PY) in the current (pixel-space)
+// coordinate system - called once per data vertex from DrawMarkers below,
+// and once per row from DrawLegend for the legend's marker glyphs, so PX/
+// PY/MarkerSize are all already in pixels regardless of caller. Filled
+// with FillColor (a series' LineColor - markers don't get a separate fill
+// colour of their own), outlined in a fixed thin black line - "filled
+// according to linecolor with a black boundary" is the whole visual
+// contract, so neither colour is a per-marker property. Fill and outline
+// are two separate glBegin/glEnd passes (GL_POLYGON/GL_TRIANGLE_FAN for
+// the fill, GL_LINE_LOOP for the outline) rather than one, since a single
+// filled primitive can't also carry a differently-coloured edge in
+// OpenGL 1.x fixed-function rendering.
+procedure TVMPlot2D.DrawMarker(PX, PY: Double; Shape: TVMPlotMarkerShape;
+  MarkerSize: Single; FillColor: TColor);
+const
+  CircleSegments = 16;
+var
+  h: Double;
+  i: Integer;
+  ang: Double;
+  Clr: TColor;
+begin
+  if Shape = pmsNone then Exit;
+  h := MarkerSize / 2;
+  Clr := ColorToRGB(FillColor);
+
+  glColor3ub(Clr and $FF, (Clr shr 8) and $FF, (Clr shr 16) and $FF);
+  case Shape of
+    pmsSquare: begin
+      glBegin(GL_QUADS);
+        glVertex2d(PX - h, PY - h);
+        glVertex2d(PX + h, PY - h);
+        glVertex2d(PX + h, PY + h);
+        glVertex2d(PX - h, PY + h);
+      glEnd;
+    end;
+    pmsDiamond: begin
+      glBegin(GL_QUADS);
+        glVertex2d(PX, PY - h);
+        glVertex2d(PX + h, PY);
+        glVertex2d(PX, PY + h);
+        glVertex2d(PX - h, PY);
+      glEnd;
+    end;
+    pmsCircle: begin
+      glBegin(GL_TRIANGLE_FAN);
+        glVertex2d(PX, PY);
+        for i := 0 to CircleSegments do begin
+          ang := 2 * Pi * i / CircleSegments;
+          glVertex2d(PX + h * Cos(ang), PY + h * Sin(ang));
+        end;
+      glEnd;
+    end;
+  end;
+
+  glColor3ub(0, 0, 0);
+  glLineWidth(1.0);
+  case Shape of
+    pmsSquare: begin
+      glBegin(GL_LINE_LOOP);
+        glVertex2d(PX - h, PY - h);
+        glVertex2d(PX + h, PY - h);
+        glVertex2d(PX + h, PY + h);
+        glVertex2d(PX - h, PY + h);
+      glEnd;
+    end;
+    pmsDiamond: begin
+      glBegin(GL_LINE_LOOP);
+        glVertex2d(PX, PY - h);
+        glVertex2d(PX + h, PY);
+        glVertex2d(PX, PY + h);
+        glVertex2d(PX - h, PY);
+      glEnd;
+    end;
+    pmsCircle: begin
+      glBegin(GL_LINE_LOOP);
+        for i := 0 to CircleSegments - 1 do begin
+          ang := 2 * Pi * i / CircleSegments;
+          glVertex2d(PX + h * Cos(ang), PY + h * Sin(ang));
+        end;
+      glEnd;
+    end;
+  end;
+end;
+
+// Draws every series' markers (those with MarkerShape <> pmsNone), once
+// per data vertex. Runs in pass 2 (pixel space, see Paint) rather than
+// pass 1's data-space glOrtho, precisely so MarkerSize stays a constant
+// pixel size regardless of the data-space zoom/aspect ratio - the same
+// reason tick labels are pixel-space chrome rather than data-space text.
+// PX/PY reuse the exact linear-map formula Paint's own tick-mark loop
+// uses to go from a data value to a pixel position; unlike ticks, no
+// FXMin/FXMax range check is needed here, since every data vertex is by
+// construction within [FXMin,FXMax]x[FYMin,FYMax] (those bounds are
+// computed FROM the data itself, padded outward - see SetData).
+procedure TVMPlot2D.DrawMarkers(PlotLeft, PlotBottom, PlotW, PlotH: Integer);
+var
+  iser, i: Integer;
+  PX, PY: Double;
+begin
+  for iser := 0 to FSeriesCount - 1 do begin
+    if FSeriesStyles[iser].MarkerShape = pmsNone then Continue;
+    for i := 0 to High(FXData[iser]) do begin
+      PX := PlotLeft + (FXData[iser][i] - FXMin) / (FXMax - FXMin) * PlotW;
+      PY := PlotBottom + (FYData[iser][i] - FYMin) / (FYMax - FYMin) * PlotH;
+      DrawMarker(PX, PY, FSeriesStyles[iser].MarkerShape,
+        FSeriesStyles[iser].MarkerSize, FSeriesStyles[iser].LineColor);
     end;
   end;
 end;
@@ -719,14 +1032,33 @@ begin
   for i := 0 to FSeriesCount - 1 do begin
     if FSeriesStyles[i].Name = '' then Continue;
     RowY := RowY - RowH;
-    ApplyLineStyle(FSeriesStyles[i]);
-    glBegin(GL_LINES);
-      glVertex2d(X0 + Padding, RowY + RowH / 2);
-      glVertex2d(X0 + Padding + SwatchW, RowY + RowH / 2);
-    glEnd;
+    if FSeriesStyles[i].LineStyle <> plsNone then begin
+      ApplyLineStyle(FSeriesStyles[i]);
+      glBegin(GL_LINES);
+        glVertex2d(X0 + Padding, RowY + RowH / 2);
+        glVertex2d(X0 + Padding + SwatchW, RowY + RowH / 2);
+      glEnd;
+    end;
     RowY := RowY - RowGap;
   end;
   glDisable(GL_LINE_STIPPLE);
+
+  // Marker glyphs, own pass: DrawMarker sets its own fill/outline colours
+  // per call (not the stippled/width-varying state ApplyLineStyle just
+  // set up for the line swatches above), so interleaving it into the
+  // loop above would mean re-establishing ApplyLineStyle's state after
+  // every marker. Capped to RowH-2 so an oversized MarkerSize can't blow
+  // out the legend row.
+  RowY := Y0 + BoxH - Padding;
+  for i := 0 to FSeriesCount - 1 do begin
+    if FSeriesStyles[i].Name = '' then Continue;
+    RowY := RowY - RowH;
+    if FSeriesStyles[i].MarkerShape <> pmsNone then
+      DrawMarker(X0 + Padding + SwatchW / 2, RowY + RowH / 2,
+        FSeriesStyles[i].MarkerShape, Min(FSeriesStyles[i].MarkerSize, RowH - 2),
+        FSeriesStyles[i].LineColor);
+    RowY := RowY - RowGap;
+  end;
 
   glEnable(GL_TEXTURE_2D);
   glColor4f(1, 1, 1, 1);
@@ -791,10 +1123,11 @@ begin
     DrawAxes;
 
     for iser := 0 to FSeriesCount - 1 do begin
+      if FSeriesStyles[iser].LineStyle = plsNone then Continue;
       ApplyLineStyle(FSeriesStyles[iser]);
       glBegin(GL_LINE_STRIP);
-        for i := 0 to High(FXData) do
-          glVertex2d(FXData[i], FYData[iser][i]);
+        for i := 0 to High(FXData[iser]) do
+          glVertex2d(FXData[iser][i], FYData[iser][i]);
       glEnd;
     end;
     glDisable(GL_LINE_STIPPLE);
@@ -845,6 +1178,12 @@ begin
       DrawTextTexture(FYTickTex[i], PlotLeft - 8, py, 0, 1, 0.5);
     end;
     glDisable(GL_TEXTURE_2D);
+
+    // Point markers, drawn on top of the gridlines/ticks/line strips
+    // beneath them but before the legend panel, which stays topmost
+    // (its own semi-transparent background would otherwise be drawn
+    // under any marker near the top-right corner).
+    DrawMarkers(PlotLeft, PlotBottom, PlotW, PlotH);
 
     // Drawn last (on top of the border/gridlines/ticks/line strips already
     // painted, all of which are further from the top-right corner anyway).

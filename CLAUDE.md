@@ -903,32 +903,65 @@ OpenGL in Lazarus, requiring no GLScene dependency at all. Leave
 ### `Graphs/uVMPlot2D.pas` (`TVMPlot2D` component)
 
 A reusable `TOpenGLControl`-descended LCL component - not tied to the
-`Plot2D` demo - that plots one shared `x` `TVMobj` vector against up to
-`VMPlotMaxSeries` (10) `y` `TVMobj` vectors, generalising what used to be
-`Plot2D`'s single-series, hand-rolled-per-form OpenGL code (see git history
-of `uplot2dmain.pas` for the original version this was lifted from) into
-something any form in this repo (or a future one) can drop in and reuse.
-Like the rest of `Graphs/`, it requires the `LazOpenGLContext` package and
-`uses GL, OpenGLContext`.
+`Plot2D` demo - that plots up to `VMPlotMaxSeries` (10) series, each its
+own `x`/`y` pair, generalising what used to be `Plot2D`'s single-series,
+hand-rolled-per-form OpenGL code (see git history of `uplot2dmain.pas`
+for the original version this was lifted from) into something any form
+in this repo (or a future one) can drop in and reuse. Like the rest of
+`Graphs/`, it requires the `LazOpenGLContext` package and `uses GL,
+OpenGLContext`. Internally, `FXData`/`FYData` are both
+`array[0..VMPlotMaxSeries-1] of TVMPlotSeriesData` - i.e. every series
+has always stored its own `X` array, even though `SetData` (below) makes
+those all identical copies of one shared `X` for callers who don't need
+per-series grids.
 
-- **Data**: `procedure SetData(const X: TVMobj; const YSeries: array of
-  TVMobj)` - a single call takes `X` plus an open array of 1..10 `Y`
-  vectors (asserted; `TVMPlot2D.SetData` rejects 0 or >10). Each vector may
-  be row `(1,N)` or column `(N,1)` shaped, per newVM's usual convention.
-  `TVMobj` is a record, not a class, so it can't be a published/streamable
-  property (Delphi/Lazarus property streaming only supports simple types,
-  sets, classes, and interfaces) - data assignment is necessarily a method
-  call, not something editable in the Object Inspector. The combined
-  bounding box (across `X` and *every* `Y` series, not just one) plus tick
-  positions are recomputed on every `SetData` call, so the auto-fit
-  `glOrtho` projection and axis labels always cover whichever series are
-  currently plotted.
+- **Data, bulk**: `procedure SetData(const X: TVMobj; const YSeries:
+  array of TVMobj)` - a single call takes `X` plus an open array of 1..10
+  `Y` vectors (asserted; `TVMPlot2D.SetData` rejects 0 or >10), all
+  sharing that one `X`. Each vector may be row `(1,N)` or column `(N,1)`
+  shaped, per newVM's usual convention. `TVMobj` is a record, not a
+  class, so it can't be a published/streamable property (Delphi/Lazarus
+  property streaming only supports simple types, sets, classes, and
+  interfaces) - data assignment is necessarily a method call, not
+  something editable in the Object Inspector. Replaces every series
+  passed in wholesale - `FXData[iser] := Copy(XVals, 0, N)` (its own copy
+  of `X`, not a shared reference) and a fresh `FYData[iser]`, discarding
+  whatever was there before, marking `FUserDataStarted` (see `PlotXY`).
+- **Data, incremental**: `procedure PlotXY(X, Y: Double; PlotLine:
+  Integer)` appends one `(X,Y)` point to series `PlotLine`, extending it
+  by one - for building a series up over time (streaming/interactive
+  data) rather than from a pre-built `TVMobj` vector. Since every series
+  already stores its own `X` internally, appending to one `PlotLine`
+  never touches any other series, and different series can have
+  completely different point counts and grids - e.g. a coarse discrete
+  series and a fine interpolated one plotted together, which `SetData`
+  alone can't do (its `X` is shared across the whole call). The one
+  wrinkle: a fresh component's series 0/1 already hold the constructor's
+  own placeholder demo data (see "Default demo data" below) - without
+  special-casing that, a caller's first-ever `PlotXY` call on a new
+  component would silently append onto the tail of that demo data rather
+  than starting the caller's own series from scratch. `FUserDataStarted`
+  (`False` only until a real caller's first `SetData`/`PlotXY` call - the
+  constructor's own default-demo `SetData` call explicitly resets it to
+  `False` again immediately after, since that call doesn't count) is the
+  fix: `PlotXY`'s first real invocation clears every series before
+  appending its own point, exactly once.
+- Both recompute the combined bounding box (every series' `X` and `Y`
+  alike) plus tick positions from scratch on every call - factored into
+  the shared private `RecomputeBounds` - so the auto-fit `glOrtho`
+  projection and axis labels always cover whichever series are currently
+  plotted, whichever of the two methods populated them. Fine for
+  interactive/streaming `PlotXY` use at a reasonable point rate, but each
+  call is `O(total points across every series)`, not optimised for very
+  high-frequency appends against an already-large series.
 - **Per-series style**: `LineColor`/`LineWidth`/`LineStyle`
-  (`plsSolid`/`plsDash`/`plsDot`, drawn via `GL_LINE_STIPPLE` - the only
-  way to get non-solid `GL_LINE_STRIP` rendering in fixed-function OpenGL
-  1.x; `plsSolid` explicitly disables stippling rather than using an
+  (`plsSolid`/`plsDash`/`plsDot`/`plsNone`, drawn via `GL_LINE_STIPPLE` -
+  the only way to get non-solid `GL_LINE_STRIP` rendering in fixed-function
+  OpenGL 1.x; `plsSolid` explicitly disables stippling rather than using an
   all-ones pattern, since a stipple factor can still subtly affect
-  anti-aliased line rendering on some drivers) live on `TVMPlotSeriesStyle`
+  anti-aliased line rendering on some drivers; `plsNone` skips the line
+  strip entirely, both in `Paint` and in `DrawLegend`'s swatch) plus
+  `MarkerShape`/`MarkerSize` (see below) live on `TVMPlotSeriesStyle`
   (a `TCollectionItem`), collected in the published `Series:
   TVMPlotSeriesStyles` property (a `TOwnedCollection`) - editable per-slot
   in the Object Inspector at design time regardless of whether data has
@@ -937,14 +970,47 @@ Like the rest of `Graphs/`, it requires the `LazOpenGLContext` package and
   (`DefaultPaletteR`/`G`/`B`), so multiple series are already
   distinguishable even if the caller never touches styling. For runtime
   code, `procedure SetSeriesStyle(Index: Integer; AColor: TColor;
-  ALineWidth: Single; AStyle: TVMPlotLineStyle)` is a one-call convenience
-  wrapper over setting the three `TVMPlotSeriesStyle` properties
-  individually. `TVMPlotSeriesStyles.Update` (the standard
-  `TCollection`/`TOwnedCollection` change-notification hook) calls back
-  into the owning `TVMPlot2D.Invalidate` whenever any series property
-  changes, so edits - whether from the Object Inspector or from
+  ALineWidth: Single; AStyle: TVMPlotLineStyle; const AName: string = '';
+  AMarkerShape: TVMPlotMarkerShape = pmsNone; AMarkerSize: Single = 6.0)`
+  is a one-call convenience wrapper over setting the `TVMPlotSeriesStyle`
+  properties individually - the two marker parameters are trailing/
+  optional specifically so every pre-existing call site (across all the
+  demos) keeps compiling unchanged. `TVMPlotSeriesStyles.Update` (the
+  standard `TCollection`/`TOwnedCollection` change-notification hook)
+  calls back into the owning `TVMPlot2D.Invalidate` whenever any series
+  property changes, so edits - whether from the Object Inspector or from
   `SetSeriesStyle` - repaint immediately without the caller needing to
   call `Invalidate` themselves.
+- **Point markers**: `MarkerShape` (`pmsNone`/`pmsSquare`/`pmsDiamond`/
+  `pmsCircle`, default `pmsNone` - markers are strictly opt-in, so no
+  existing series' appearance changes) and `MarkerSize` (pixels, constant
+  regardless of the data-space zoom/aspect ratio, the same convention
+  `LineWidth`'s `glLineWidth` already uses) draw a glyph at every data
+  vertex, filled with the series' own `LineColor` and outlined in a fixed
+  thin black line - `DrawMarker` draws one glyph (two `glBegin`/`glEnd`
+  passes, fill then outline, since a single filled OpenGL 1.x primitive
+  can't carry a differently-coloured edge), `DrawMarkers` calls it once
+  per vertex for every series with a shape set. Markers are independent
+  of `LineStyle`: a series can show a line, markers, or both together;
+  `LineStyle=plsNone` with a `MarkerShape` set gives a points-only series
+  (e.g. a discrete/collocation series plotted point-by-point, as distinct
+  from a smooth interpolated one drawn as a line) - the original
+  motivating case (`demos/Chebyshev/ChebBVP_FPC`'s raw N+1-point
+  collocation solution `V`, currently *not* plotted at all - see that
+  demo's own header comment) still can't combine with the fine
+  interpolated curve in one `SetData` call even with markers available,
+  since `SetData` requires one shared `X` across every series and `V`
+  lives on a different, coarser grid than the interpolated curve's
+  display grid. Drawn in pass 2 (pixel space), not pass 1's data-space
+  `glOrtho`, precisely so `MarkerSize` stays a constant pixel size - the
+  same reason tick labels are pixel-space chrome rather than data-space
+  text; `DrawMarkers`' `PX`/`PY` reuse the exact linear-map formula
+  `Paint`'s own tick-mark loop already uses to go from a data value to a
+  pixel position. `DrawLegend` draws a matching marker glyph (capped to
+  the row height) beside each named series' line swatch, in its own pass
+  after the swatches (`DrawMarker` sets its own colours per call, so
+  interleaving it into the swatch loop would mean re-establishing
+  `ApplyLineStyle`'s state after every marker).
 - **Titles**: `Title`/`XAxisTitle`/`YAxisTitle` are plain published
   `string` properties (unlike series data, ordinary types stream and
   edit fine).
