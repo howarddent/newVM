@@ -51,7 +51,9 @@ unit newVMI;
 
 {$mode delphi}{$H+}
 {$Align 8}
+{$I newVMConfig.inc}
 {$IFDEF UNIX}
+  {$IFDEF HAVE_MKL}
 {$Linklib 'mkl_rt.so'}
 {$Linklib 'pthread'}
 {$Linklib 'm'}
@@ -61,6 +63,7 @@ unit newVMI;
 //global symbol table - without this you get errors like:
 //  symbol lookup error: .../libmkl_core.so: undefined symbol: log10
 //Unix/ELF dynamic-linker quirk only - not needed for mkl_rt.dll on Windows.
+  {$ENDIF}
 {$ENDIF}
 
 interface
@@ -184,13 +187,28 @@ end;
 
 procedure TVMobjI.fillRandom(loBound, hiBound: Integer);
 //
-// Fixed-seed (777) uniform integers in [loBound,hiBound), via MKL VSL's
-// viRngUniform - same seeding convention as the other units' fillRandom,
-// so two same-sized/same-bounds fillRandom calls produce bit-identical
-// data (exploited by tests via the deterministic-fill trick).
+// Fixed-seed (777) uniform integers in [loBound,hiBound) - same seeding
+// convention as the other units' fillRandom, so two same-sized/same-bounds
+// fillRandom calls produce bit-identical data (exploited by tests via the
+// deterministic-fill trick).
 //
 const
   s : string = 'Routine fillRandom : ';
+{$IFDEF PUREPASCAL}
+{ PUREPASCAL: no VSL, so this reseeds FPC's own Random() to the same
+  constant (777) every call and draws via Random(hiBound-loBound) - the
+  same "fixed seed -> bit-identical repeat calls" contract as the
+  MKL-backed version, just via a different generator. }
+var
+  i : Integer;
+begin
+  assert(hiBound > loBound, s+'hiBound must be > loBound');
+  RandSeed := 777;
+  for i := 0 to high(fdata) do
+    fdata[i] := loBound + Random(hiBound-loBound);
+end;
+{$ELSE}
+const
   vslConst = 8388608;
   VSL_RNG_METHOD_UNIFORM_STD = 0;
 var
@@ -201,6 +219,7 @@ begin
   viRngUniform(VSL_RNG_METHOD_UNIFORM_STD,vsStream,high(fdata)+1,@Fdata[0],loBound,hiBound);
   vsldeleteStream(@vsStream);
 end;
+{$ENDIF}
 
 procedure TVMobjI.Id;
 const
@@ -224,10 +243,20 @@ end;
 procedure TVMObjI.linspace(Start, increment: Integer);
 const
   s : String ='routine linspace';
+{$IFDEF PUREPASCAL}
+var
+  i : Integer;
+begin
+  assert(fdata <>nil,s+  ': MVObj Not Initialized');
+  for i := 0 to high(fdata) do
+    fdata[i] := Start + i*increment;
+end;
+{$ELSE}
 begin
   assert(fdata <>nil,s+  ': MVObj Not Initialized');
   ippsVectorSlope_32s(@FData[0],high(fdata)+1,start,increment);
 end;
+{$ENDIF}
 
 function TVMObjI.Transpose:TVMObjI;
 var
@@ -244,7 +273,11 @@ end;
 function CopyObjI(const A: TVMObjI): TVMobjI;
 begin
   result := TVMObjI.Create(A.rows,A.cols);
+{$IFDEF PUREPASCAL}
+  Move(A.fdata[0], result.fdata[0], A.rows*A.cols*SizeOf(Integer));
+{$ELSE}
   ippsCopy_32s(A.DataPtr,result.DataPtr,A.rows*A.cols);
+{$ENDIF}
 end;
 
 function Gather(const A: TVMobjI): TVMobjI;

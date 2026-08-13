@@ -1547,6 +1547,7 @@ begin
   assert(plan<>nil, s+'fftw_plan_dft_1d failed');
   fftw_execute_dft(plan, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]));
   fftw_destroy_plan(plan);
+  assert(Assigned(cblas_zdscal), s+'OpenBLAS not available on this machine - IFFT normalization has no PUREPASCAL fallback');
   cblas_zdscal(n, 1.0/n, @result.FData[0], 1);  //normalize, matching IFFT(FFT(x)) = x
 end;
 

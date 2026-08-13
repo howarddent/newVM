@@ -311,11 +311,24 @@ function lapacke_cgetrs(matrix_layout: CBLAS_ORDER; trans: UTF8Char; n: Integer;
 
 {eigen values, eigenvector routines}
 
+{$IFDEF HAVE_MKL}
 function lapacke_dgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PDouble; lda : Integer;
                         wr ,wi : PDouble; vl : PDouble; ldvl :integer; vr : PDouble; ldvr : Integer):Integer;cdecl;external;
 
 function lapacke_sgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
                         wr ,wi : PSingle; vl : PSingle; ldvl :integer; vr : PSingle; ldvr : Integer):Integer;cdecl;external;
+{$ELSE}
+// No MKL on this machine: EigDecompose/EigDecomposeS have no PUREPASCAL
+// fallback (out of scope, see newVM.pas's own header comment on why LU/
+// Invert/Det got one but eigendecomposition didn't) - these plain-Pascal
+// stubs exist only so the rest of the program still links; calling either
+// asserts clearly instead of failing to link the whole binary.
+function lapacke_dgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PDouble; lda : Integer;
+                        wr ,wi : PDouble; vl : PDouble; ldvl :integer; vr : PDouble; ldvr : Integer):Integer;
+
+function lapacke_sgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
+                        wr ,wi : PSingle; vl : PSingle; ldvl :integer; vr : PSingle; ldvr : Integer):Integer;
+{$ENDIF}
 
 // routines from intel vml library
 
@@ -455,9 +468,19 @@ function ippsAddC_32fc_I(val: TComplex8; pSrcDst: PComplex8; len: Integer): Inte
 
 function ippsSubC_64f_I(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;external;
 
+{$IFDEF HAVE_IPP}
 function ippsDivC_64f_I(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl; external;
 
 function ippsDivC_32f_I(val: Single; pSrcDst: PSingle; len: Integer): Integer; cdecl; external;
+{$ELSE}
+// No IPP on this machine: FFT_C2R/IFFT's normalisation step (divide by N)
+// has no PUREPASCAL fallback (FFT itself doesn't - see newVM.pas's header
+// comment) - same stub-so-it-still-links rationale as lapacke_dgeev/sgeev
+// above.
+function ippsDivC_64f_I(val: Double; pSrcDst: PDouble; len: Integer): Integer;
+
+function ippsDivC_32f_I(val: Single; pSrcDst: PSingle; len: Integer): Integer;
+{$ENDIF}
 
 function ippsSqr_64f_I(pSrcDst: PDouble; len: Integer): Integer; cdecl;external;
 
@@ -707,6 +730,43 @@ procedure LoadIPPFunctions;
 {$ENDIF}
 
 implementation
+
+{$IFDEF UNIX}
+{$IFNDEF HAVE_MKL}
+// Stub bodies for the lapacke_dgeev/sgeev declarations above (only present
+// when HAVE_MKL is undefined) - see that declaration's comment for why
+// these exist at all rather than a real fallback.
+function lapacke_dgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PDouble; lda : Integer;
+                        wr ,wi : PDouble; vl : PDouble; ldvl :integer; vr : PDouble; ldvr : Integer):Integer;
+begin
+  assert(False, 'lapacke_dgeev : MKL not available on this machine - EigDecompose has no PUREPASCAL fallback');
+  result := -1;
+end;
+
+function lapacke_sgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
+                        wr ,wi : PSingle; vl : PSingle; ldvl :integer; vr : PSingle; ldvr : Integer):Integer;
+begin
+  assert(False, 'lapacke_sgeev : MKL not available on this machine - EigDecomposeS has no PUREPASCAL fallback');
+  result := -1;
+end;
+{$ENDIF}
+
+{$IFNDEF HAVE_IPP}
+// Stub bodies for the ippsDivC_64f_I/_32f_I declarations above (only
+// present when HAVE_IPP is undefined) - see that declaration's comment.
+function ippsDivC_64f_I(val: Double; pSrcDst: PDouble; len: Integer): Integer;
+begin
+  assert(False, 'ippsDivC_64f_I : IPP not available on this machine - FFT_C2R/IFFT have no PUREPASCAL fallback');
+  result := -1;
+end;
+
+function ippsDivC_32f_I(val: Single; pSrcDst: PSingle; len: Integer): Integer;
+begin
+  assert(False, 'ippsDivC_32f_I : IPP not available on this machine - FFT_C2R/IFFT have no PUREPASCAL fallback');
+  result := -1;
+end;
+{$ENDIF}
+{$ENDIF}
 
 {$IFDEF WINDOWS}
 //No unversioned "mkl_rt.dll" exists on recent Intel oneAPI installs - the

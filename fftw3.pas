@@ -45,8 +45,13 @@ const
   FFTWDoubleLib = 'libfftw3-3.dll';
   FFTWSingleLib = 'libfftw3f-3.dll';
 {$ELSE}
+  {$IFDEF DARWIN}
+  FFTWDoubleLib = 'libfftw3.dylib';
+  FFTWSingleLib = 'libfftw3f.dylib';
+  {$ELSE}
   FFTWDoubleLib = 'libfftw3.so.3';
   FFTWSingleLib = 'libfftw3f.so.3';
+  {$ENDIF}
 {$ENDIF}
 
 type

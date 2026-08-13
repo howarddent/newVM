@@ -15,6 +15,7 @@ program newVMtest;
 
 {$mode objfpc}{$H+}
 {$APPTYPE CONSOLE}
+{$I newVMConfig.inc}
 
 uses
   {$IFDEF UNIX}
@@ -27,7 +28,9 @@ var
   ResultsWriter: TCustomResultsWriter;
   TestResult: TTestResult;
 begin
+  {$IFDEF HAVE_OPENBLAS}
   InitializeCblas;
+  {$ENDIF}
   ResultsWriter := TPlainResultsWriter.Create(nil);
   TestResult := TTestResult.Create;
   try
