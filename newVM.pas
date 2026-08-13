@@ -193,6 +193,24 @@ function Reshape(const A: TVMobj; NewRows, NewCols: TDim): TVMobj;
   into every (row-tile, col-tile) destination slot via cblas_dcopy - same
   "no block primitive -> loop of per-row BLAS calls" idiom Kron/MergeLR use. }
 function Repmat(const A: TVMobj; RowReps, ColReps: Integer): TVMobj;
+{ AddScalar - adds the constant K to every element of A, returning a new
+  TVMobj of the same dimensions. No dimension assert needed - valid for any
+  shape. Via IPP's ippsAddC_64f_I (in-place add-constant) on a CopyObj
+  scratch buffer, the same idiom the '*'/k and '/'/k scalar operators use
+  (ippsDivC_64f_I) - there is no '+'/scalar operator overload for this
+  (only '*'/'/' accept a plain scalar; see the OPERATOR OVERLOADS note at
+  the top of this file), so this is the named-function equivalent. }
+function AddScalar(const A: TVMobj; K: Double): TVMobj;
+{ SubMatrix - extracts the (RCount x CCount) submatrix of A starting at
+  (R0,C0) (asserts the requested block stays within A's bounds; RCount/
+  CCount > 0 is enforced by TVMobj.Create itself). Via LAPACKE_dlacpy,
+  pointed at A's data offset by R0*A.Cols+C0 with lda=A.Cols (A's own row
+  stride) rather than RCount/CCount - LAPACKE_dlacpy's separate lda/ldb
+  parameters mean this single call copies the strided block directly, no
+  per-row loop needed despite the submatrix's rows not being contiguous in
+  A's buffer (the same "differing leading dimensions do the strided work"
+  trick CopyObj's own whole-matrix copy is a degenerate case of). }
+function SubMatrix(const A: TVMobj; R0, C0, RCount, CCount: TDim): TVMobj;
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vd* routines
   in OneAPI.pas). Each returns a new TVMobj of the same dimensions as A,
@@ -581,6 +599,21 @@ begin
       for j := 0 to ColReps-1 do
         cblas_dcopy(A.Cols, @A.FData[r*A.Cols], 1, @result.FData[destRow*result.Cols + j*A.Cols], 1);
     end;
+end;
+
+function AddScalar(const A: TVMobj; K: Double): TVMobj;
+begin
+  result := CopyObj(A);
+  ippsAddC_64f_I(K, result.DataPtr, A.Rows*A.Cols);
+end;
+
+function SubMatrix(const A: TVMobj; R0, C0, RCount, CCount: TDim): TVMobj;
+const
+  s : String = 'Function SubMatrix : ';
+begin
+  assert((R0+RCount <= A.Rows) and (C0+CCount <= A.Cols), s+'submatrix (R0,C0,RCount,CCount) extends beyond A''s bounds');
+  result := TVMobj.Create(RCount, CCount);
+  LAPACKE_dlacpy(CBlasRowMajor, 'A', RCount, CCount, @A.FData[R0*A.Cols+C0], A.Cols, result.DataPtr, CCount);
 end;
 
 class operator TVMobj.+(const A, B: TVMobj): TVMobj;

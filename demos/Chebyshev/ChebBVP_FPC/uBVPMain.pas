@@ -9,13 +9,20 @@ unit uBVPMain;
      build the (N+1)x(N+1) second-derivative matrix D2 via TCheb - reused
      as-is from demos/Chebyshev/NormalIntegration/uCheb.pas, not copied
      (see ChebBVP.lpi's OtherUnitFiles search path) - drop the first/last
-     row and column (the Dirichlet boundary values are already known to
-     be zero, so only the N-1 interior points are unknowns), solve the
-     resulting (N-1)x(N-1) system directly via newVM's LinearSolve,
-     zero-pad the result back up to N+1 points, and barycentrically
-     interpolate (BaryInterpol, also from uCheb.pas) onto a fine display
-     grid for comparison against the problem's known closed-form
-     solution, displayed via TVMPlot2D as in the NormalIntegration demo.
+     row and column via newVM.pas's SubMatrix (the Dirichlet boundary
+     values are already known to be zero, so only the N-1 interior points
+     are unknowns), solve the resulting (N-1)x(N-1) system directly via
+     newVM's LinearSolve, zero-pad the result back up to N+1 points, and
+     barycentrically interpolate (BaryInterpol, also from uCheb.pas) onto
+     a fine display grid for comparison against the problem's known
+     closed-form solution (built with newVM.pas's AddScalar, alongside the
+     existing '*'/'/' scalar operators, since there's no '+'/scalar
+     operator overload), displayed via TVMPlot2D as in the NormalIntegration
+     demo. AddScalar and SubMatrix both started out as demo-local helpers
+     here (AddScalar duplicated a second time in NormalIntegration's own
+     uNormMain.pas) before being promoted into newVM.pas itself - see that
+     unit's own header comment and CLAUDE.md's architecture notes for the
+     library-level version now used by both demos.
 
      As with that demo, everything is computed once in FormCreate rather
      than behind a separate "Execute" button. The original's second tab
@@ -60,32 +67,6 @@ var
 implementation
 
 {$R *.lfm}
-
-// Extracts the (RCount x CCount) submatrix of A starting at (R0, C0). No
-// BLAS/IPP primitive extracts an arbitrary submatrix, so - like
-// NormalIntegration's AddScalar - this is a plain per-element loop;
-// demo-local glue, not a library gap.
-function SubMatrix(const A: TVMobj; R0, C0, RCount, CCount: Integer): TVMobj;
-var
-  I, J: Integer;
-begin
-  Result := TVMobj.Create(RCount, CCount);
-  for I := 0 to RCount - 1 do
-    for J := 0 to CCount - 1 do
-      Result.Element[I, J] := A.Element[R0 + I, C0 + J];
-end;
-
-// Same rationale as NormalIntegration's uNormMain.pas: no newVM operator
-// adds/subtracts a plain scalar, so this is a plain per-element loop too.
-function AddScalar(const V: TVMobj; K: Double): TVMobj;
-var
-  I, J: Integer;
-begin
-  Result := TVMobj.Create(V.Rows, V.Cols);
-  for I := 0 to V.Rows - 1 do
-    for J := 0 to V.Cols - 1 do
-      Result.Element[I, J] := V.Element[I, J] + K;
-end;
 
 { TfmMain }
 

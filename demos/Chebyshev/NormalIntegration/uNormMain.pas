@@ -60,19 +60,6 @@ implementation
 
 {$R *.lfm}
 
-// No newVM operator adds/subtracts a plain scalar (only '*'/'/' against a
-// scalar are defined) - this is demo-local glue, not a library gap worth
-// closing for a two-use case, so it's a plain per-element loop.
-function AddScalar(const V: TVMobj; K: Double): TVMobj;
-var
-  I, J: Integer;
-begin
-  Result := TVMobj.Create(V.Rows, V.Cols);
-  for I := 0 to V.Rows - 1 do
-    for J := 0 to V.Cols - 1 do
-      Result.Element[I, J] := V.Element[I, J] + K;
-end;
-
 { TfmMain }
 
 procedure TfmMain.FormCreate(Sender: TObject);

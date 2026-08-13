@@ -61,6 +61,7 @@ type
     procedure Raise_MergeLRRowMismatch;
     procedure Raise_ReshapeElementCountMismatch;
     procedure Raise_RepmatBadReps;
+    procedure Raise_SubMatrixOutOfBounds;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -118,6 +119,9 @@ type
     procedure TestReshapeElementCountMismatchAsserts;
     procedure TestRepmatKnownValues;
     procedure TestRepmatBadRepsAsserts;
+    procedure TestAddScalarKnownValues;
+    procedure TestSubMatrixKnownValues;
+    procedure TestSubMatrixOutOfBoundsAsserts;
   end;
 
   { TVMobjSTests - newVMSingle.pas, real single }
@@ -534,6 +538,13 @@ var A, R: TVMobj;
 begin
   A := TVMobj.Create(1, 2, [1, 2]);
   R := Repmat(A, 0, 1);
+end;
+
+procedure TVMobjTests.Raise_SubMatrixOutOfBounds;
+var A, R: TVMobj;
+begin
+  A := TVMobj.Create(3, 3, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  R := SubMatrix(A, 1, 1, 3, 3);  //rows/cols 1..3 - A only has indices 0..2
 end;
 
 procedure TVMobjTests.TestCreateZeroFills;
@@ -1086,6 +1097,33 @@ end;
 procedure TVMobjTests.TestRepmatBadRepsAsserts;
 begin
   AssertException(EAssertionFailed, @Raise_RepmatBadReps);
+end;
+
+procedure TVMobjTests.TestAddScalarKnownValues;
+var A, R: TVMobj;
+begin
+  A := TVMobj.Create(2, 2, [1, 2, 3, 4]);
+  R := AddScalar(A, 10);
+  AssertEquals(11, R[0,0], DblTol); AssertEquals(12, R[0,1], DblTol);
+  AssertEquals(13, R[1,0], DblTol); AssertEquals(14, R[1,1], DblTol);
+  //A itself must be left untouched
+  AssertEquals(1, A[0,0], DblTol); AssertEquals(4, A[1,1], DblTol);
+end;
+
+procedure TVMobjTests.TestSubMatrixKnownValues;
+var A, R: TVMobj;
+begin
+  A := TVMobj.Create(3, 3, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  R := SubMatrix(A, 1, 1, 2, 2);
+  AssertEquals('Rows', 2, R.Rows);
+  AssertEquals('Cols', 2, R.Cols);
+  AssertEquals(5, R[0,0], DblTol); AssertEquals(6, R[0,1], DblTol);
+  AssertEquals(8, R[1,0], DblTol); AssertEquals(9, R[1,1], DblTol);
+end;
+
+procedure TVMobjTests.TestSubMatrixOutOfBoundsAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_SubMatrixOutOfBounds);
 end;
 
 {===========================================================================

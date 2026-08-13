@@ -399,6 +399,43 @@ Two more per-unit functions, same suffix convention as `Diag`/`Kron`.
 - No new external bindings needed for either - both are built entirely on
   `cblas_?copy`, same rationale as `MergeUD`/`MergeLR` above.
 
+### `AddScalar` and `SubMatrix` (`newVM.pas` only, not quadrupled)
+
+Two more utility functions, originally written as demo-local helpers in
+`demos/Chebyshev/ChebBVP_FPC/uBVPMain.pas` (and `AddScalar` duplicated
+again in `demos/Chebyshev/NormalIntegration/uNormMain.pas`) before being
+promoted into `newVM.pas` itself once a second demo needed the same
+logic. Unlike every other function in this section, these are **not**
+duplicated across `newVMSingle.pas`/`newVMComplex.pas`/
+`newVMComplexSingle.pas` - only `newVM.pas` (real double) has a
+demonstrated caller so far; see "Cross-platform library binding" below
+for why extending `AddScalar` to the other three isn't just a copy-paste
+job. Both demos now call the library versions instead of their own
+copies.
+
+- `AddScalar(A, K)` adds the scalar `K` to every element of `A`, returning
+  a new same-shape `TVMobj` (no dimension assert - valid for any shape).
+  There's no `'+'`/scalar operator overload to fall back on (only `'*'`/
+  `'/'` accept a plain scalar - see "OPERATOR OVERLOADS" in `newVM.pas`'s
+  own header comment), so this is the named-function equivalent, via
+  IPP's `ippsAddC_64f_I` (in-place add-a-constant) on a `CopyObj` scratch
+  buffer - the same idiom the `'*'`/`k` and `'/'`/`k` scalar operators
+  already use (`ippsDivC_64f_I` for `'/'`). `ippsAddC_64f_I` was already
+  bound in `OneAPI.pas` (alongside `ippsSubC_64f_I`/`ippsMulC_64f_I_L`)
+  before this addition, just never called from `newVM.pas` itself - no
+  new binding work was needed.
+- `SubMatrix(A, R0, C0, RCount, CCount)` extracts the `(RCount,CCount)`
+  submatrix of `A` starting at `(R0,C0)` (asserts the requested block
+  stays within `A`'s bounds; `RCount`/`CCount > 0` is enforced by
+  `TVMobj.Create` itself, so no separate check is needed for that). No
+  loop needed despite the submatrix's rows not being contiguous in `A`'s
+  buffer: `LAPACKE_dlacpy` takes independent `lda`/`ldb` (leading
+  dimension) parameters for its source and destination, so pointing it at
+  `A`'s data offset by `R0*A.Cols+C0` with `lda=A.Cols` (`A`'s own row
+  stride, not `CCount`) does the strided copy in a single call - the same
+  "differing leading dimensions do the strided work" trick `CopyObj`'s
+  own whole-matrix copy (`lda=ldb=A.Cols`) is simply a degenerate case of.
+
 ### Elementwise math functions
 
 Each unit also declares plain (non-operator) functions `Sin`, `Cos`, `Tan`,
@@ -682,7 +719,12 @@ every operator overload including the assertion paths, the elementwise VML
 functions, and
 `DCT1`..`DCT4`/`DST1`..`DST4` (each verified as a self-inverse or
 mutual-inverse round trip at the exact FFTW scale factor for that kind -
-see the "FFT/DCT/DST functions" architecture section above). The two real
+see the "FFT/DCT/DST functions" architecture section above). `TVMobjTests`
+alone (real double, the only type `AddScalar`/`SubMatrix` are implemented
+for - see that architecture section above) additionally covers
+`AddScalar` (a known-value case, plus confirming `A` itself is left
+untouched) and `SubMatrix` (a known-value 3×3→2×2 case, plus the
+out-of-bounds assertion path). The two real
 types (`TVMobjTests`/`TVMobjSTests`) additionally
 cover `Find` (known-value checks against each `TVMCompareOp`). The two
 complex types additionally cover
