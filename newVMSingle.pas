@@ -22,8 +22,11 @@ unit newVMSingle;
      OPERATOR OVERLOADS (algebraic expressions on TVMobjS) - the single-
      precision analogue of the ones added to newVM.pas: '+'/'-' element-
      wise via cblas_saxpy, unary '-' via cblas_sscal, '*' between two
-     TVMobjS is matrix multiplication (delegates to MatMultS), and '*'/'/'
-     against a Single scalar scale via cblas_sscal / IPP's ippsDivC_32f_I.
+     TVMobjS is ELEMENT-WISE multiplication (delegates to MulObjS, MKL
+     VML's vsMul) - NOT matrix multiplication; use MatMultS explicitly for
+     a real matrix product (same distinction as newVM.pas's '*' - see its
+     header comment), and '*'/'/' against a Single scalar scale via
+     cblas_sscal / IPP's ippsDivC_32f_I.
 
 *******************************************************************************}
 

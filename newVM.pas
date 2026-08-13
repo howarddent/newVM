@@ -22,12 +22,24 @@ unit newVM;
      OPERATOR OVERLOADS (algebraic expressions on TVMobj):
        - '+' and '-' are element-wise, via cblas_daxpy (Y := alpha*X + Y).
        - unary '-' negates via cblas_dscal.
-       - '*' between two TVMobj is matrix multiplication, delegating to
-         the existing MatMult (cblas_dgemm).
+       - '*' between two TVMobj is ELEMENT-WISE multiplication (the
+         Hadamard product), via mulObj (MKL VML's vdMul) - NOT matrix
+         multiplication. Use the separate MatMult function (cblas_dgemm)
+         for a real matrix product. newVMTests.pas's own
+         "AssertTrue(A * B = mulObj(A, B))" is the operator's actual,
+         tested contract - a prior version of this comment claimed '*'
+         was matrix multiplication, which it is not and, per that test,
+         never was; getting this backwards produces a matrix that
+         silently compiles and runs, just on the wrong values (see
+         demos/Chebyshev/NormalIntegration/uCheb.pas's TCheb.Create for a
+         real bug this caused: FD2 := FD * FD instead of
+         MatMult(FD, FD)).
        - '*' and '/' against a plain Double scalar scale every element,
          via cblas_dscal and IPP's ippsDivC_64f_I respectively.
-       These let expressions like  C := A*B + D;  or  C := 2*A - B/3;
-       be written directly instead of via named routines.
+       These let expressions like  C := A*B + D;  (element-wise) or
+       C := 2*A - B/3;  be written directly instead of via named
+       routines; use MatMult(A,B) explicitly wherever a real matrix
+       product is what's actually wanted.
 
 *******************************************************************************}
 

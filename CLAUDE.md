@@ -183,9 +183,21 @@ What backs each operator, and why:
 - unary `-` negates via `cblas_?scal` (real units) or `cblas_?dscal`/
   `cblas_?sscal` (complex units — MKL's "scale a complex vector by a real
   scalar" routine, used here with -1).
-- `*` between two same-type `TVMobj*` is matrix multiplication; it just
-  delegates to the existing `MatMult`/`MatMultS`/`MatMultZ`/`MatMultC`
-  rather than duplicating the `cblas_?gemm` call.
+- `*` between two same-type `TVMobj*` is **element-wise** multiplication
+  (the Hadamard product), via `mulObj`/`MulObjS`/`MulObjZ`/`MulObjC` (MKL
+  VML's `vdMul`/`vsMul`/`vzMul`/`vcMul`) — **not** matrix multiplication.
+  Use the separate `MatMult`/`MatMultS`/`MatMultZ`/`MatMultC` function
+  (`cblas_?gemm`) explicitly for a real matrix product.
+  `newVMTests.pas`'s own `AssertTrue(A * B = mulObj(A, B))` (and the
+  `S`/`Z`/`C` analogues) is the operator's actual, tested contract, and
+  `Graphs/Plot2D`'s `YSin := Envelope * Sin(3 * X);` (two same-shaped row
+  vectors — dimensionally impossible as a matrix product) already relies
+  on it being element-wise. Getting this backwards compiles and runs
+  fine, just on the wrong values: see
+  `demos/Chebyshev/NormalIntegration/uCheb.pas`'s git history, where
+  `FD2 := FD * FD` (intended as `D` composed with itself) silently
+  computed the element-wise square of `D`'s entries instead, and the bug
+  only surfaced once a second demo actually solved against `D2`.
 - `*`/`/` against a scalar scale every element via `cblas_?scal`. The real
   units' `/` uses IPP's `ippsDivC_64f_I`/`ippsDivC_32f_I` directly (division
   by a constant is a native IPP primitive); the complex units' `/` instead
@@ -198,10 +210,22 @@ What backs each operator, and why:
   work without an explicit cast.
 - `newVMComplex.pas`/`newVMComplexSingle.pas` additionally overload `+`,
   `-`, `*` for mixed complex/real operands (`TVMobjZ` with `TVMobj`,
-  `TVMobjC` with `TVMobjS`, both operand orders) by promoting the real
-  operand via `RealToComplex`/`RealToComplexS` and delegating to the
-  same-type complex operator — these can only live in the complex units
-  since only they `uses` the real sibling unit.
+  `TVMobjC` with `TVMobjS`, both operand orders) — these can only live in
+  the complex units since only they `uses` the real sibling unit. `+`/`-`
+  promote the real operand via `RealToComplex`/`RealToComplexS` and
+  delegate to the same-type complex operator, same rationale as the
+  real units. Mixed-type `*` does **not** follow that pattern, though,
+  and does not match the same-type `*` above either: `TVMobjZ * TVMobj`
+  and `TVMobj * TVMobjZ` (and the `C`/`S` analogues) call
+  `MatMultZ`/`MatMultC` directly — a genuine matrix product — while
+  same-type `Z * Z` is element-wise. This split is deliberately exercised
+  by `newVMTests.pas`'s `TestEigDecomposeSatisfiesEigenEquation`, which
+  computes `Av := A * vcol` (real eigenvector matrix times complex
+  eigenvector) to verify the defining equation `A*v = lambda*v` — a real
+  matrix-vector product is exactly what's needed there. Whether this
+  same-type-vs-mixed-type inconsistency is intentional isn't documented
+  anywhere in the source; treat it as the current, tested behaviour
+  rather than assuming consistency with the same-type operator.
 
 ### `Kron`/`KronS`/`KronZ`/`KronC` (Kronecker product)
 

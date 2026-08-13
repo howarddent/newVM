@@ -46,16 +46,27 @@ unit newVMComplex;
          pointer, per the CBLAS complex convention).
        - unary '-' negates via cblas_zdscal - MKL's "scale a complex
          vector by a real scalar" routine, used here with -1.
-       - '*' between two TVMobjZ is matrix multiplication, delegating to
-         MatMultZ (cblas_zgemm).
+       - '*' between two same-type TVMobjZ is ELEMENT-WISE multiplication,
+         delegating to MulObjZ (MKL VML's vzMul) - NOT matrix
+         multiplication; use MatMultZ (cblas_zgemm) explicitly for a real
+         matrix product.
        - '*' and '/' accept either a TComplex16 scalar (cblas_zscal) or a
          plain Double scalar (cblas_zdscal); division computes the scalar
          reciprocal in Pascal first, since there is no BLAS "divide by
          scalar" primitive.
-       - mixed-type '+' , '-' and '*' against a real TVMobj promote the
-         real operand to complex via RealToComplex, then delegate to the
+       - mixed-type '+' and '-' against a real TVMobj promote the real
+         operand to complex via RealToComplex, then delegate to the
          TVMobjZ operators above - so e.g.  Z := R + I;  (real matrix plus
-         a complex identity) works without an explicit cast.
+         a complex identity) works without an explicit cast. Mixed-type
+         '*' does NOT follow that pattern: TVMobjZ*TVMobj and
+         TVMobj*TVMobjZ both call MatMultZ (real matrix multiplication)
+         directly, not MulObjZ - so same-type Z*Z is element-wise but
+         mixed-type Z*R/R*Z is a genuine matrix product (this is
+         deliberately exercised by newVMTests.pas's
+         TestEigDecomposeSatisfiesEigenEquation, via "Av := A * vcol"
+         for the real eigenvector matrix A and complex eigenvector
+         vcol). Know which one you're calling at each site - the two
+         forms are not interchangeable despite looking identical.
 
 *******************************************************************************}
 

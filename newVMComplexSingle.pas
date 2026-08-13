@@ -39,14 +39,20 @@ unit newVMComplexSingle;
      precision analogue of the ones added to newVMComplex.pas:
        - '+'/'-' element-wise via cblas_caxpy; unary '-' via cblas_csscal
          (MKL's "scale a complex vector by a real scalar" routine).
-       - '*' between two TVMobjC is matrix multiplication, delegating to
-         MatMultC (cblas_cgemm).
+       - '*' between two same-type TVMobjC is ELEMENT-WISE multiplication,
+         delegating to MulObjC (MKL VML's vcMul) - NOT matrix
+         multiplication; use MatMultC (cblas_cgemm) explicitly for a real
+         matrix product (same distinction as newVMComplex.pas's TVMobjZ -
+         see its header comment).
        - '*'/'/' accept either a TComplex8 scalar (cblas_cscal) or a plain
          Single scalar (cblas_csscal); division computes the scalar
          reciprocal in Pascal first.
-       - mixed-type '+', '-' and '*' against a real TVMobjS promote the
-         real operand to complex via RealToComplexS, then delegate to the
-         TVMobjC operators above.
+       - mixed-type '+' and '-' against a real TVMobjS promote the real
+         operand to complex via RealToComplexS, then delegate to the
+         TVMobjC operators above. Mixed-type '*' does not: TVMobjC*TVMobjS
+         and TVMobjS*TVMobjC both call MatMultC (real matrix
+         multiplication) directly, not MulObjC - the same same-type-
+         element-wise-vs-mixed-type-matrix split as newVMComplex.pas.
 
 *******************************************************************************}
 
