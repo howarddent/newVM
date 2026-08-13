@@ -171,6 +171,14 @@ function MergeUDZ(const A, B: TVMobjZ): TVMobjZ;  //stacks A above B - see Merge
 function MergeLRZ(const A, B: TVMobjZ): TVMobjZ;  //places A left of B - see MergeLR in newVM.pas
 function ReshapeZ(const A: TVMobjZ; NewRows, NewCols: TDimZ): TVMobjZ;  //reinterprets A's elements with new dims - see Reshape in newVM.pas
 function RepmatZ(const A: TVMobjZ; RowReps, ColReps: Integer): TVMobjZ;  //tiles A RowReps x ColReps - see Repmat in newVM.pas
+{ AddScalarZ - adds K to every element, via ippsAddC_64fc_I - see AddScalar
+  in newVM.pas. Two overloads, same convention as the '*'/'/' operators:
+  a native TComplex16 constant, or a plain Double treated as a real scalar
+  (added to every element's real part only, imaginary parts untouched -
+  i.e. K is promoted to Cplx(K,0), not added to both parts). }
+function AddScalarZ(const A: TVMobjZ; K: TComplex16): TVMobjZ; overload;
+function AddScalarZ(const A: TVMobjZ; K: Double): TVMobjZ; overload;
+function SubMatrixZ(const A: TVMobjZ; R0, C0, RCount, CCount: TDimZ): TVMobjZ;  //extracts a submatrix, via LAPACKE_zlacpy - see SubMatrix in newVM.pas
 function Cplx(re,im : Double): TComplex16;inline;
 function RealToComplex(const A : TVMobj): TVMobjZ;    //promotes a real double TVMobj to a complex TVMobjZ, im = 0
 function GetRealPart(const A : TVMobjZ): TVMobj;      //extracts the real component of A into a real double TVMobj
@@ -572,6 +580,26 @@ begin
       for j := 0 to ColReps-1 do
         cblas_zcopy(A.Cols, @A.FData[r*A.Cols], 1, @result.FData[destRow*result.Cols + j*A.Cols], 1);
     end;
+end;
+
+function AddScalarZ(const A: TVMobjZ; K: TComplex16): TVMobjZ;
+begin
+  result := CopyObjZ(A);
+  ippsAddC_64fc_I(K, @result.FData[0], A.Rows*A.Cols);
+end;
+
+function AddScalarZ(const A: TVMobjZ; K: Double): TVMobjZ;
+begin
+  result := AddScalarZ(A, Cplx(K, 0));
+end;
+
+function SubMatrixZ(const A: TVMobjZ; R0, C0, RCount, CCount: TDimZ): TVMobjZ;
+const
+  s : String = 'Function SubMatrixZ : ';
+begin
+  assert((R0+RCount <= A.Rows) and (C0+CCount <= A.Cols), s+'submatrix (R0,C0,RCount,CCount) extends beyond A''s bounds');
+  result := TVMobjZ.Create(RCount, CCount);
+  LAPACKE_zlacpy(CBlasRowMajor, 'A', RCount, CCount, @A.FData[R0*A.Cols+C0], A.Cols, @result.FData[0], CCount);
 end;
 
 function RealToComplex(const A: TVMobj): TVMobjZ;

@@ -146,6 +146,7 @@ type
     procedure Raise_MergeLRRowMismatch;
     procedure Raise_ReshapeElementCountMismatch;
     procedure Raise_RepmatBadReps;
+    procedure Raise_SubMatrixOutOfBounds;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -203,6 +204,9 @@ type
     procedure TestReshapeElementCountMismatchAsserts;
     procedure TestRepmatKnownValues;
     procedure TestRepmatBadRepsAsserts;
+    procedure TestAddScalarKnownValues;
+    procedure TestSubMatrixKnownValues;
+    procedure TestSubMatrixOutOfBoundsAsserts;
   end;
 
   { TVMobjZTests - newVMComplex.pas, complex double }
@@ -227,6 +231,7 @@ type
     procedure Raise_MergeLRRowMismatch;
     procedure Raise_ReshapeElementCountMismatch;
     procedure Raise_RepmatBadReps;
+    procedure Raise_SubMatrixOutOfBounds;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -284,6 +289,10 @@ type
     procedure TestReshapeElementCountMismatchAsserts;
     procedure TestRepmatKnownValues;
     procedure TestRepmatBadRepsAsserts;
+    procedure TestAddScalarKnownValues;
+    procedure TestAddScalarRealOverloadKnownValues;
+    procedure TestSubMatrixKnownValues;
+    procedure TestSubMatrixOutOfBoundsAsserts;
   end;
 
   { TVMobjCTests - newVMComplexSingle.pas, complex single }
@@ -308,6 +317,7 @@ type
     procedure Raise_MergeLRRowMismatch;
     procedure Raise_ReshapeElementCountMismatch;
     procedure Raise_RepmatBadReps;
+    procedure Raise_SubMatrixOutOfBounds;
   published
     procedure TestCreateZeroFills;
     procedure TestCreateInvalidDimsAssert;
@@ -365,6 +375,10 @@ type
     procedure TestReshapeElementCountMismatchAsserts;
     procedure TestRepmatKnownValues;
     procedure TestRepmatBadRepsAsserts;
+    procedure TestAddScalarKnownValues;
+    procedure TestAddScalarRealOverloadKnownValues;
+    procedure TestSubMatrixKnownValues;
+    procedure TestSubMatrixOutOfBoundsAsserts;
   end;
 
   { TVMobjITests - newVMI.pas, integer index array/matrix }
@@ -1258,6 +1272,13 @@ begin
   R := RepmatS(A, 0, 1);
 end;
 
+procedure TVMobjSTests.Raise_SubMatrixOutOfBounds;
+var A, R: TVMobjS;
+begin
+  A := TVMobjS.Create(3, 3, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  R := SubMatrixS(A, 1, 1, 3, 3);  //rows/cols 1..3 - A only has indices 0..2
+end;
+
 procedure TVMobjSTests.TestCreateZeroFills;
 var A: TVMobjS; r, c: Integer;
 begin
@@ -1799,6 +1820,33 @@ begin
   AssertException(EAssertionFailed, @Raise_RepmatBadReps);
 end;
 
+procedure TVMobjSTests.TestAddScalarKnownValues;
+var A, R: TVMobjS;
+begin
+  A := TVMobjS.Create(2, 2, [1, 2, 3, 4]);
+  R := AddScalarS(A, 10);
+  AssertEquals(11, R[0,0], SngTol); AssertEquals(12, R[0,1], SngTol);
+  AssertEquals(13, R[1,0], SngTol); AssertEquals(14, R[1,1], SngTol);
+  //A itself must be left untouched
+  AssertEquals(1, A[0,0], SngTol); AssertEquals(4, A[1,1], SngTol);
+end;
+
+procedure TVMobjSTests.TestSubMatrixKnownValues;
+var A, R: TVMobjS;
+begin
+  A := TVMobjS.Create(3, 3, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  R := SubMatrixS(A, 1, 1, 2, 2);
+  AssertEquals('Rows', 2, R.Rows);
+  AssertEquals('Cols', 2, R.Cols);
+  AssertEquals(5, R[0,0], SngTol); AssertEquals(6, R[0,1], SngTol);
+  AssertEquals(8, R[1,0], SngTol); AssertEquals(9, R[1,1], SngTol);
+end;
+
+procedure TVMobjSTests.TestSubMatrixOutOfBoundsAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_SubMatrixOutOfBounds);
+end;
+
 {===========================================================================
   TVMobjZTests  (complex double)
 ===========================================================================}
@@ -1929,6 +1977,13 @@ var A, R: TVMobjZ;
 begin
   A := TVMobjZ.Create(1, 2, [Cplx(1,0), Cplx(2,0)]);
   R := RepmatZ(A, 0, 1);
+end;
+
+procedure TVMobjZTests.Raise_SubMatrixOutOfBounds;
+var A, R: TVMobjZ;
+begin
+  A := TVMobjZ.Create(3, 3, [Cplx(1,0),Cplx(2,0),Cplx(3,0), Cplx(4,0),Cplx(5,0),Cplx(6,0), Cplx(7,0),Cplx(8,0),Cplx(9,0)]);
+  R := SubMatrixZ(A, 1, 1, 3, 3);  //rows/cols 1..3 - A only has indices 0..2
 end;
 
 procedure TVMobjZTests.TestCreateZeroFills;
@@ -2567,6 +2622,47 @@ begin
   AssertException(EAssertionFailed, @Raise_RepmatBadReps);
 end;
 
+procedure TVMobjZTests.TestAddScalarKnownValues;
+var A, R: TVMobjZ;
+begin
+  A := TVMobjZ.Create(2, 2, [Cplx(1,1), Cplx(2,0), Cplx(0,1), Cplx(1,0)]);
+  R := AddScalarZ(A, Cplx(10,5));
+  AssertEquals(11, R[0,0].re, DblTol); AssertEquals(6, R[0,0].im, DblTol);
+  AssertEquals(12, R[0,1].re, DblTol); AssertEquals(5, R[0,1].im, DblTol);
+  AssertEquals(10, R[1,0].re, DblTol); AssertEquals(6, R[1,0].im, DblTol);
+  AssertEquals(11, R[1,1].re, DblTol); AssertEquals(5, R[1,1].im, DblTol);
+  //A itself must be left untouched
+  AssertEquals(1, A[0,0].re, DblTol); AssertEquals(1, A[0,0].im, DblTol);
+end;
+
+procedure TVMobjZTests.TestAddScalarRealOverloadKnownValues;
+var A, R: TVMobjZ;
+begin
+  //the plain-Double overload adds only to the real part, imaginary parts unchanged
+  A := TVMobjZ.Create(1, 2, [Cplx(1,1), Cplx(2,-3)]);
+  R := AddScalarZ(A, 10.0);
+  AssertEquals(11, R[0,0].re, DblTol); AssertEquals(1, R[0,0].im, DblTol);
+  AssertEquals(12, R[0,1].re, DblTol); AssertEquals(-3, R[0,1].im, DblTol);
+end;
+
+procedure TVMobjZTests.TestSubMatrixKnownValues;
+var A, R: TVMobjZ;
+begin
+  A := TVMobjZ.Create(3, 3, [Cplx(1,0),Cplx(2,0),Cplx(3,0), Cplx(4,0),Cplx(5,1),Cplx(6,0), Cplx(7,0),Cplx(8,0),Cplx(9,-1)]);
+  R := SubMatrixZ(A, 1, 1, 2, 2);
+  AssertEquals('Rows', 2, R.Rows);
+  AssertEquals('Cols', 2, R.Cols);
+  AssertEquals(5, R[0,0].re, DblTol); AssertEquals(1, R[0,0].im, DblTol);
+  AssertEquals(6, R[0,1].re, DblTol); AssertEquals(0, R[0,1].im, DblTol);
+  AssertEquals(8, R[1,0].re, DblTol); AssertEquals(0, R[1,0].im, DblTol);
+  AssertEquals(9, R[1,1].re, DblTol); AssertEquals(-1, R[1,1].im, DblTol);
+end;
+
+procedure TVMobjZTests.TestSubMatrixOutOfBoundsAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_SubMatrixOutOfBounds);
+end;
+
 {===========================================================================
   TVMobjCTests  (complex single)
 ===========================================================================}
@@ -2697,6 +2793,13 @@ var A, R: TVMobjC;
 begin
   A := TVMobjC.Create(1, 2, [Cplx8(1,0), Cplx8(2,0)]);
   R := RepmatC(A, 0, 1);
+end;
+
+procedure TVMobjCTests.Raise_SubMatrixOutOfBounds;
+var A, R: TVMobjC;
+begin
+  A := TVMobjC.Create(3, 3, [Cplx8(1,0),Cplx8(2,0),Cplx8(3,0), Cplx8(4,0),Cplx8(5,0),Cplx8(6,0), Cplx8(7,0),Cplx8(8,0),Cplx8(9,0)]);
+  R := SubMatrixC(A, 1, 1, 3, 3);  //rows/cols 1..3 - A only has indices 0..2
 end;
 
 procedure TVMobjCTests.TestCreateZeroFills;
@@ -3324,6 +3427,47 @@ end;
 procedure TVMobjCTests.TestRepmatBadRepsAsserts;
 begin
   AssertException(EAssertionFailed, @Raise_RepmatBadReps);
+end;
+
+procedure TVMobjCTests.TestAddScalarKnownValues;
+var A, R: TVMobjC;
+begin
+  A := TVMobjC.Create(2, 2, [Cplx8(1,1), Cplx8(2,0), Cplx8(0,1), Cplx8(1,0)]);
+  R := AddScalarC(A, Cplx8(10,5));
+  AssertEquals(11, R[0,0].re, SngTol); AssertEquals(6, R[0,0].im, SngTol);
+  AssertEquals(12, R[0,1].re, SngTol); AssertEquals(5, R[0,1].im, SngTol);
+  AssertEquals(10, R[1,0].re, SngTol); AssertEquals(6, R[1,0].im, SngTol);
+  AssertEquals(11, R[1,1].re, SngTol); AssertEquals(5, R[1,1].im, SngTol);
+  //A itself must be left untouched
+  AssertEquals(1, A[0,0].re, SngTol); AssertEquals(1, A[0,0].im, SngTol);
+end;
+
+procedure TVMobjCTests.TestAddScalarRealOverloadKnownValues;
+var A, R: TVMobjC;
+begin
+  //the plain-Single overload adds only to the real part, imaginary parts unchanged
+  A := TVMobjC.Create(1, 2, [Cplx8(1,1), Cplx8(2,-3)]);
+  R := AddScalarC(A, 10.0);
+  AssertEquals(11, R[0,0].re, SngTol); AssertEquals(1, R[0,0].im, SngTol);
+  AssertEquals(12, R[0,1].re, SngTol); AssertEquals(-3, R[0,1].im, SngTol);
+end;
+
+procedure TVMobjCTests.TestSubMatrixKnownValues;
+var A, R: TVMobjC;
+begin
+  A := TVMobjC.Create(3, 3, [Cplx8(1,0),Cplx8(2,0),Cplx8(3,0), Cplx8(4,0),Cplx8(5,1),Cplx8(6,0), Cplx8(7,0),Cplx8(8,0),Cplx8(9,-1)]);
+  R := SubMatrixC(A, 1, 1, 2, 2);
+  AssertEquals('Rows', 2, R.Rows);
+  AssertEquals('Cols', 2, R.Cols);
+  AssertEquals(5, R[0,0].re, SngTol); AssertEquals(1, R[0,0].im, SngTol);
+  AssertEquals(6, R[0,1].re, SngTol); AssertEquals(0, R[0,1].im, SngTol);
+  AssertEquals(8, R[1,0].re, SngTol); AssertEquals(0, R[1,0].im, SngTol);
+  AssertEquals(9, R[1,1].re, SngTol); AssertEquals(-1, R[1,1].im, SngTol);
+end;
+
+procedure TVMobjCTests.TestSubMatrixOutOfBoundsAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_SubMatrixOutOfBounds);
 end;
 
 {===========================================================================

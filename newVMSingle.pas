@@ -116,6 +116,8 @@ function MergeUDS(const A, B: TVMobjS): TVMobjS;  //stacks A above B - see Merge
 function MergeLRS(const A, B: TVMobjS): TVMobjS;  //places A left of B - see MergeLR in newVM.pas
 function ReshapeS(const A: TVMobjS; NewRows, NewCols: TDimS): TVMobjS;  //reinterprets A's elements with new dims - see Reshape in newVM.pas
 function RepmatS(const A: TVMobjS; RowReps, ColReps: Integer): TVMobjS;  //tiles A RowReps x ColReps - see Repmat in newVM.pas
+function AddScalarS(const A: TVMobjS; K: Single): TVMobjS;  //adds K to every element, via ippsAddC_32f_I - see AddScalar in newVM.pas
+function SubMatrixS(const A: TVMobjS; R0, C0, RCount, CCount: TDimS): TVMobjS;  //extracts a submatrix, via LAPACKE_slacpy - see SubMatrix in newVM.pas
 
 { Elementwise transcendental/algebraic functions, via MKL VML (vs* routines
   in OneAPI.pas). Each returns a new TVMobjS of the same dimensions as A,
@@ -495,6 +497,21 @@ begin
       for j := 0 to ColReps-1 do
         cblas_scopy(A.Cols, @A.FData[r*A.Cols], 1, @result.FData[destRow*result.Cols + j*A.Cols], 1);
     end;
+end;
+
+function AddScalarS(const A: TVMobjS; K: Single): TVMobjS;
+begin
+  result := CopyObjS(A);
+  ippsAddC_32f_I(K, result.DataPtr, A.Rows*A.Cols);
+end;
+
+function SubMatrixS(const A: TVMobjS; R0, C0, RCount, CCount: TDimS): TVMobjS;
+const
+  s : String = 'Function SubMatrixS : ';
+begin
+  assert((R0+RCount <= A.Rows) and (C0+CCount <= A.Cols), s+'submatrix (R0,C0,RCount,CCount) extends beyond A''s bounds');
+  result := TVMobjS.Create(RCount, CCount);
+  LAPACKE_slacpy(CBlasRowMajor, 'A', RCount, CCount, @A.FData[R0*A.Cols+C0], A.Cols, result.DataPtr, CCount);
 end;
 
 class operator TVMobjS.+(const A, B: TVMobjS): TVMobjS;

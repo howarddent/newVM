@@ -399,42 +399,54 @@ Two more per-unit functions, same suffix convention as `Diag`/`Kron`.
 - No new external bindings needed for either - both are built entirely on
   `cblas_?copy`, same rationale as `MergeUD`/`MergeLR` above.
 
-### `AddScalar` and `SubMatrix` (`newVM.pas` only, not quadrupled)
+### `AddScalar`/`AddScalarS`/`AddScalarZ`/`AddScalarC` and `SubMatrix`/`SubMatrixS`/`SubMatrixZ`/`SubMatrixC`
 
-Two more utility functions, originally written as demo-local helpers in
+Two more per-unit functions, same suffix convention as `Diag`/`Kron`.
+Originally written as demo-local helpers in
 `demos/Chebyshev/ChebBVP_FPC/uBVPMain.pas` (and `AddScalar` duplicated
-again in `demos/Chebyshev/NormalIntegration/uNormMain.pas`) before being
-promoted into `newVM.pas` itself once a second demo needed the same
-logic. Unlike every other function in this section, these are **not**
-duplicated across `newVMSingle.pas`/`newVMComplex.pas`/
-`newVMComplexSingle.pas` - only `newVM.pas` (real double) has a
-demonstrated caller so far; see "Cross-platform library binding" below
-for why extending `AddScalar` to the other three isn't just a copy-paste
-job. Both demos now call the library versions instead of their own
-copies.
+again in `demos/Chebyshev/NormalIntegration/uNormMain.pas`), first
+promoted into `newVM.pas` alone once a second demo needed the same logic,
+then extended to the other three units on request even though no
+complex/single-precision caller exists yet - both demos now call the
+`newVM.pas` versions instead of their own copies.
 
-- `AddScalar(A, K)` adds the scalar `K` to every element of `A`, returning
-  a new same-shape `TVMobj` (no dimension assert - valid for any shape).
-  There's no `'+'`/scalar operator overload to fall back on (only `'*'`/
-  `'/'` accept a plain scalar - see "OPERATOR OVERLOADS" in `newVM.pas`'s
-  own header comment), so this is the named-function equivalent, via
-  IPP's `ippsAddC_64f_I` (in-place add-a-constant) on a `CopyObj` scratch
-  buffer - the same idiom the `'*'`/`k` and `'/'`/`k` scalar operators
-  already use (`ippsDivC_64f_I` for `'/'`). `ippsAddC_64f_I` was already
-  bound in `OneAPI.pas` (alongside `ippsSubC_64f_I`/`ippsMulC_64f_I_L`)
-  before this addition, just never called from `newVM.pas` itself - no
-  new binding work was needed.
-- `SubMatrix(A, R0, C0, RCount, CCount)` extracts the `(RCount,CCount)`
-  submatrix of `A` starting at `(R0,C0)` (asserts the requested block
-  stays within `A`'s bounds; `RCount`/`CCount > 0` is enforced by
-  `TVMobj.Create` itself, so no separate check is needed for that). No
-  loop needed despite the submatrix's rows not being contiguous in `A`'s
-  buffer: `LAPACKE_dlacpy` takes independent `lda`/`ldb` (leading
-  dimension) parameters for its source and destination, so pointing it at
-  `A`'s data offset by `R0*A.Cols+C0` with `lda=A.Cols` (`A`'s own row
-  stride, not `CCount`) does the strided copy in a single call - the same
-  "differing leading dimensions do the strided work" trick `CopyObj`'s
-  own whole-matrix copy (`lda=ldb=A.Cols`) is simply a degenerate case of.
+- `AddScalar(A, K)`/`AddScalarS`/etc add the scalar `K` to every element
+  of `A`, returning a new same-shape result (no dimension assert - valid
+  for any shape). There's no `'+'`/scalar operator overload to fall back
+  on (only `'*'`/`'/'` accept a plain scalar - see "OPERATOR OVERLOADS" in
+  each unit's own header comment), so these are the named-function
+  equivalent, via IPP's `ippsAddC_64f_I`/`_32f_I`/`_64fc_I`/`_32fc_I`
+  (in-place add-a-constant) on a `CopyObj*` scratch buffer - the same
+  idiom the `'*'`/`k` and `'/'`/`k` scalar operators already use
+  (`ippsDivC_64f_I`/`_32f_I` for `'/'`). `ippsAddC_64f_I`/`_32f_I` were
+  already bound in `OneAPI.pas` before this addition (alongside
+  `ippsSubC_64f_I`/`ippsMulC_64f_I_L`), just never called from
+  `newVM.pas`/`newVMSingle.pas` themselves; `ippsAddC_64fc_I`/`_32fc_I`
+  (the complex analogues) are genuinely new bindings, added for this - see
+  "Cross-platform library binding" below for the by-value-complex-struct
+  detail that made those two worth extra care. The complex units'
+  `AddScalarZ`/`AddScalarC` follow the same two-overload convention as
+  their `'*'`/`'/'` operators: a native `TComplex16`/`TComplex8` constant,
+  or a plain `Double`/`Single` treated as a real scalar - promoted via
+  `Cplx`/`Cplx8` to add only to each element's real part, leaving
+  imaginary parts untouched (`AddScalarZ(A, K: Double)` is a one-line
+  wrapper around `AddScalarZ(A, Cplx(K, 0))`), rather than a third IPP
+  binding of its own.
+- `SubMatrix(A, R0, C0, RCount, CCount)`/`SubMatrixS`/etc extract the
+  `(RCount,CCount)` submatrix of `A` starting at `(R0,C0)` (asserts the
+  requested block stays within `A`'s bounds; `RCount`/`CCount > 0` is
+  enforced by `Create` itself, so no separate check is needed for that).
+  No loop needed despite the submatrix's rows not being contiguous in
+  `A`'s buffer: `LAPACKE_dlacpy`/`_slacpy`/`_zlacpy`/`_clacpy` take
+  independent `lda`/`ldb` (leading dimension) parameters for their source
+  and destination, so pointing at `A`'s data offset by `R0*A.Cols+C0` with
+  `lda=A.Cols` (`A`'s own row stride, not `CCount`) does the strided copy
+  in a single call - the same "differing leading dimensions do the
+  strided work" trick `CopyObj`'s own whole-matrix copy (`lda=ldb=A.Cols`)
+  is simply a degenerate case of. All four `lacpy` variants were already
+  bound (Unix and Windows alike) before this addition - `CopyObjS`/`Z`/`C`
+  already used them for their own whole-matrix copies - so `SubMatrixS`/
+  `Z`/`C` needed no new binding work at all, unlike `AddScalarZ`/`C`.
 
 ### Elementwise math functions
 
@@ -644,7 +656,7 @@ external function.
   bumps the suffix past 10, extend `MKLCandidateLibs`.
 - **IPP** (`ippsCos_64f_A50`, `ippsVectorSlope_64f`/`_32f`, `ippsCopy_64f`,
   `ippsFlip_64f`/`_32f`/`_64fc`/`_32fc`, `ippsMulC_64f`/`_I_L`,
-  `ippsAddC_64f_I`, `ippsSubC_64f_I`,
+  `ippsAddC_64f_I`/`_32f_I`/`_64fc_I`/`_32fc_I`, `ippsSubC_64f_I`,
   `ippsDivC_64f_I`/`_32f_I`, `ippsSqr_64f_I`, `ippsExp_64f_I`, `ippInit`,
   `ippMalloc`, `ippFree`) is split across three separate DLLs even on
   Windows (`ippcore.dll`/`ippvm.dll`/`ipps.dll`, mirroring the Linux
@@ -654,6 +666,19 @@ external function.
   resolve from `ippvm.dll`). `LoadIPPFunctions` resolves each one at
   runtime by trying `ipps.dll`, then `ippvm.dll`, then `ippcore.dll` via
   `IPPProc`, asserting if none of the three export it.
+  `ippsAddC_64fc_I`/`ippsAddC_32fc_I` (added for `AddScalarZ`/`AddScalarC`
+  - see `Diag`/`Norm` above) take their constant `val` **by value** as a
+  `TComplex16`/`TComplex8` record, matching Intel IPP's own C signature
+  (`IppStatus ippsAddC_64fc_I(Ipp64fc val, Ipp64fc* pSrcDst, int len)`) -
+  the same by-value-record convention `lapacke_zlaset`/`lapacke_claset`
+  already use for their `alpha`/`beta` parameters. Before wiring this into
+  `newVMComplex.pas`/`newVMComplexSingle.pas`, a standalone scratch
+  program (outside the project tree) called the real, linked
+  `ippvm.dll`/`ipps.dll` on the development machine directly and
+  round-tripped known complex values correctly - confirming FPC's `cdecl`
+  on Windows x64 passes >8-byte structs "by value" via the same invisible-
+  reference convention the DLL's own C compiler targets, rather than just
+  assuming it from the `lapacke_zlaset` precedent alone.
 - Both loaders are called from `OneAPI`'s `initialization` section
   (Windows-only), so nothing in `newVMtest.lpr` or elsewhere needs to call
   them explicitly.
@@ -719,13 +744,12 @@ every operator overload including the assertion paths, the elementwise VML
 functions, and
 `DCT1`..`DCT4`/`DST1`..`DST4` (each verified as a self-inverse or
 mutual-inverse round trip at the exact FFTW scale factor for that kind -
-see the "FFT/DCT/DST functions" architecture section above). `TVMobjTests`
-alone (real double, the only type `AddScalar`/`SubMatrix` are implemented
-for - see that architecture section above) additionally covers
-`AddScalar` (a known-value case, plus confirming `A` itself is left
-untouched) and `SubMatrix` (a known-value 3×3→2×2 case, plus the
-out-of-bounds assertion path). The two real
-types (`TVMobjTests`/`TVMobjSTests`) additionally
+see the "FFT/DCT/DST functions" architecture section above), `AddScalar*`
+(a known-value case, plus confirming `A` itself is left untouched - the
+two complex types additionally cover the plain-`Double`/`Single`
+overload, verifying it only shifts the real part) and `SubMatrix*` (a
+known-value 3×3→2×2 case, plus the out-of-bounds assertion path). The two
+real types (`TVMobjTests`/`TVMobjSTests`) additionally
 cover `Find` (known-value checks against each `TVMCompareOp`). The two
 complex types additionally cover
 `RealToComplex*`/`GetRealPart*`/`GetImagPart*`/`SplitComplex*`,

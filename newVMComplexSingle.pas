@@ -151,6 +151,13 @@ function MergeUDC(const A, B: TVMobjC): TVMobjC;  //stacks A above B - see Merge
 function MergeLRC(const A, B: TVMobjC): TVMobjC;  //places A left of B - see MergeLR in newVM.pas
 function ReshapeC(const A: TVMobjC; NewRows, NewCols: TDimC): TVMobjC;  //reinterprets A's elements with new dims - see Reshape in newVM.pas
 function RepmatC(const A: TVMobjC; RowReps, ColReps: Integer): TVMobjC;  //tiles A RowReps x ColReps - see Repmat in newVM.pas
+{ AddScalarC - adds K to every element, via ippsAddC_32fc_I - see AddScalarZ
+  in newVMComplex.pas (same two-overload convention: a native TComplex8
+  constant, or a plain Single treated as a real scalar added to the real
+  part only). }
+function AddScalarC(const A: TVMobjC; K: TComplex8): TVMobjC; overload;
+function AddScalarC(const A: TVMobjC; K: Single): TVMobjC; overload;
+function SubMatrixC(const A: TVMobjC; R0, C0, RCount, CCount: TDimC): TVMobjC;  //extracts a submatrix, via LAPACKE_clacpy - see SubMatrix in newVM.pas
 function Cplx8(re,im : Single): TComplex8;inline;
 function RealToComplexS(const A : TVMobjS): TVMobjC;    //promotes a real single TVMobjS to a complex TVMobjC, im = 0
 function GetRealPartS(const A : TVMobjC): TVMobjS;      //extracts the real component of A into a real single TVMobjS
@@ -546,6 +553,26 @@ begin
       for j := 0 to ColReps-1 do
         cblas_ccopy(A.Cols, @A.FData[r*A.Cols], 1, @result.FData[destRow*result.Cols + j*A.Cols], 1);
     end;
+end;
+
+function AddScalarC(const A: TVMobjC; K: TComplex8): TVMobjC;
+begin
+  result := CopyObjC(A);
+  ippsAddC_32fc_I(K, @result.FData[0], A.Rows*A.Cols);
+end;
+
+function AddScalarC(const A: TVMobjC; K: Single): TVMobjC;
+begin
+  result := AddScalarC(A, Cplx8(K, 0));
+end;
+
+function SubMatrixC(const A: TVMobjC; R0, C0, RCount, CCount: TDimC): TVMobjC;
+const
+  s : String = 'Function SubMatrixC : ';
+begin
+  assert((R0+RCount <= A.Rows) and (C0+CCount <= A.Cols), s+'submatrix (R0,C0,RCount,CCount) extends beyond A''s bounds');
+  result := TVMobjC.Create(RCount, CCount);
+  LAPACKE_clacpy(CBlasRowMajor, 'A', RCount, CCount, @A.FData[R0*A.Cols+C0], A.Cols, @result.FData[0], CCount);
 end;
 
 function RealToComplexS(const A: TVMobjS): TVMobjC;

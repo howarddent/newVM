@@ -417,6 +417,25 @@ function ippsMulC_64f(const pSrc: PIpp64f; val: Ipp64f; pDst: PIpp64f; len: Inte
 
 function ippsAddC_64f_I(val: double; pSrcDst: PDouble; len: Integer): Integer; cdecl;external;
 
+//single-precision real and double/single-precision complex analogues of
+//ippsAddC_64f_I above - added for newVMSingle/newVMComplex/
+//newVMComplexSingle's AddScalarS/AddScalarZ/AddScalarC (see newVM.pas's
+//AddScalar). The complex two take their constant "val" BY VALUE as a
+//TComplex16/TComplex8 record, matching Intel IPP's own C signature
+//(IppStatus ippsAddC_64fc_I(Ipp64fc val, Ipp64fc* pSrcDst, int len)) -
+//the same by-value-record convention lapacke_zlaset/lapacke_claset above
+//already use for their alpha/beta parameters, and empirically confirmed
+//correct here too (a small standalone test program calling the real,
+//linked ippvm.dll/ipps.dll on this machine round-tripped known values
+//correctly under FPC's cdecl on Windows x64, which passes >8-byte
+//structs "by value" via an invisible reference - the same ABI the DLL's
+//own C compiler targets).
+function ippsAddC_32f_I(val: Single; pSrcDst: PSingle; len: Integer): Integer; cdecl;external;
+
+function ippsAddC_64fc_I(val: TComplex16; pSrcDst: PComplex16; len: Integer): Integer; cdecl;external;
+
+function ippsAddC_32fc_I(val: TComplex8; pSrcDst: PComplex8; len: Integer): Integer; cdecl;external;
+
 function ippsSubC_64f_I(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;external;
 
 function ippsDivC_64f_I(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl; external;
@@ -524,6 +543,9 @@ type
   Tippsmulc_64f_i_l    = function(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;
   Tippsmulc_64f        = function(const pSrc: PIpp64f; val: Ipp64f; pDst: PIpp64f; len: Integer): Integer; cdecl;
   Tippsaddc_64f_i      = function(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;
+  Tippsaddc_32f_i      = function(val: Single; pSrcDst: PSingle; len: Integer): Integer; cdecl;
+  Tippsaddc_64fc_i     = function(val: TComplex16; pSrcDst: PComplex16; len: Integer): Integer; cdecl;
+  Tippsaddc_32fc_i     = function(val: TComplex8; pSrcDst: PComplex8; len: Integer): Integer; cdecl;
   Tippssubc_64f_i      = function(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;
   Tippsdivc_64f_i      = function(val: Double; pSrcDst: PDouble; len: Integer): Integer; cdecl;
   Tippsdivc_32f_i      = function(val: Single; pSrcDst: PSingle; len: Integer): Integer; cdecl;
@@ -636,6 +658,9 @@ var
   ippsMulC_64f_I_L    : Tippsmulc_64f_i_l;
   ippsMulC_64f        : Tippsmulc_64f;
   ippsAddC_64f_I      : Tippsaddc_64f_i;
+  ippsAddC_32f_I      : Tippsaddc_32f_i;
+  ippsAddC_64fc_I     : Tippsaddc_64fc_i;
+  ippsAddC_32fc_I     : Tippsaddc_32fc_i;
   ippsSubC_64f_I      : Tippssubc_64f_i;
   ippsDivC_64f_I      : Tippsdivc_64f_i;
   ippsDivC_32f_I      : Tippsdivc_32f_i;
@@ -855,6 +880,9 @@ begin
   pointer(ippsMulC_64f_I_L)    := IPPProc('ippsMulC_64f_I_L');
   pointer(ippsMulC_64f)        := IPPProc('ippsMulC_64f');
   pointer(ippsAddC_64f_I)      := IPPProc('ippsAddC_64f_I');
+  pointer(ippsAddC_32f_I)      := IPPProc('ippsAddC_32f_I');
+  pointer(ippsAddC_64fc_I)     := IPPProc('ippsAddC_64fc_I');
+  pointer(ippsAddC_32fc_I)     := IPPProc('ippsAddC_32fc_I');
   pointer(ippsSubC_64f_I)      := IPPProc('ippsSubC_64f_I');
   pointer(ippsDivC_64f_I)      := IPPProc('ippsDivC_64f_I');
   pointer(ippsDivC_32f_I)      := IPPProc('ippsDivC_32f_I');
