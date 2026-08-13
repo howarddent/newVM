@@ -18,6 +18,21 @@ openblas.dll
 demos/*/[A-Za-z]*
 !demos/*/*.*
 
+# demos/Chebyshev/ groups its sub-projects one level deeper than the
+# demos/<Name>/ layout above (e.g. demos/Chebyshev/NormalIntegration/).
+# The rule above also matches the *grouping* directory itself, though -
+# "NormalIntegration" looks exactly like an extensionless binary name
+# from its point of view, so git excludes the whole subtree outright,
+# before the "!demos/*/*.*" negation ever gets a chance to run against
+# files inside it (an excluded directory isn't descended into at all).
+# Un-ignore the grouping directory and its subdirectories first, then
+# re-apply the same ignore-extensionless/keep-extension pattern one
+# level deeper.
+!demos/Chebyshev/
+!demos/Chebyshev/*/
+demos/Chebyshev/*/[A-Za-z]*
+!demos/Chebyshev/*/*.*
+
 # Same for Graphs/<Name>/ (Plot2D, Plot3D) - unlike demos/, these are only
 # ignored on Linux where the binary has no extension; Windows .exe builds
 # are caught by the unscoped *.exe rule below either way.

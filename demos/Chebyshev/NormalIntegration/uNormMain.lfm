@@ -1,0 +1,24 @@
+object fmMain: TfmMain
+  Left = 300
+  Height = 700
+  Top = 200
+  Width = 1050
+  Caption = 'Standard Normal Distribution by Chebyshev Spectral Integration'
+  Position = poScreenCenter
+  LCLVersion = '4.99.0.0'
+  OnCreate = FormCreate
+  OnDestroy = FormDestroy
+  object Memo1: TMemo
+    Left = 0
+    Height = 700
+    Top = 0
+    Width = 220
+    Align = alRight
+    Font.Name = 'Consolas'
+    Lines.Strings = (
+      '')
+    ReadOnly = True
+    ScrollBars = ssAutoVertical
+    TabOrder = 0
+  end
+end
