@@ -64,6 +64,9 @@
         <UseHeaptrc Value="True"/>
       </Debugging>
     </Linking>
+    <Other>
+      <CustomOptions Value="-k-ld_classic"/>
+    </Other>
   </CompilerOptions>
   <Debugging>
     <Exceptions>
