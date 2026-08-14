@@ -697,10 +697,15 @@ end;
 function CopyObj(const A: TVMObj): TVMobj;
 begin
   result := TVMObj.Create(A.rows,A.cols);
-{$IFDEF PUREPASCAL}
+{ A whole-buffer copy needs no strides at all (source and dest share the
+  same shape), so - unlike SubMatrix below - this never genuinely needed
+  LAPACKE_dlacpy's row-major-aware strided copy; a flat cblas_dcopy
+  produces an identical result and only needs a BLAS backend, not real
+  LAPACK, so this is gated on PUREPASCAL_BLAS rather than PUREPASCAL. }
+{$IFDEF PUREPASCAL_BLAS}
   Move(A.fdata[0], result.fdata[0], A.rows*A.cols*SizeOf(Double));
 {$ELSE}
-  LAPACKE_dlacpy(CBlasRowMajor,'A',A.rows,A.cols,@A.Fdata[0],a.cols,@result.fdata[0],result.cols);
+  cblas_dcopy(A.rows*A.cols, A.DataPtr, 1, result.DataPtr, 1);
 {$ENDIF}
 end;
 
@@ -1063,22 +1068,26 @@ end;
 function SubMatrix(const A: TVMobj; R0, C0, RCount, CCount: TDim): TVMobj;
 const
   s : String = 'Function SubMatrix : ';
-{$IFDEF PUREPASCAL}
 var
   i : Integer;
+{ A sub-rectangle's rows aren't contiguous in either buffer (source
+  stride A.Cols, dest stride CCount) - a genuinely strided copy, unlike
+  CopyObj's whole-buffer case above - but the strided copy itself only
+  ever needed a per-row cblas_dcopy loop (the same "no block primitive ->
+  loop of per-row BLAS calls" idiom Kron/FlipUD/MergeLR/Repmat already
+  use), not LAPACKE_dlacpy's dedicated routine, so this is gated on
+  PUREPASCAL_BLAS rather than PUREPASCAL too. }
 begin
   assert((R0+RCount <= A.Rows) and (C0+CCount <= A.Cols), s+'submatrix (R0,C0,RCount,CCount) extends beyond A''s bounds');
   result := TVMobj.Create(RCount, CCount);
+{$IFDEF PUREPASCAL_BLAS}
   for i := 0 to RCount-1 do
     Move(A.FData[(R0+i)*A.Cols+C0], result.FData[i*CCount], CCount*SizeOf(Double));
-end;
 {$ELSE}
-begin
-  assert((R0+RCount <= A.Rows) and (C0+CCount <= A.Cols), s+'submatrix (R0,C0,RCount,CCount) extends beyond A''s bounds');
-  result := TVMobj.Create(RCount, CCount);
-  LAPACKE_dlacpy(CBlasRowMajor, 'A', RCount, CCount, @A.FData[R0*A.Cols+C0], A.Cols, result.DataPtr, CCount);
-end;
+  for i := 0 to RCount-1 do
+    cblas_dcopy(CCount, @A.FData[(R0+i)*A.Cols+C0], 1, @result.FData[i*CCount], 1);
 {$ENDIF}
+end;
 
 class operator TVMobj.+(const A, B: TVMobj): TVMobj;
 const
