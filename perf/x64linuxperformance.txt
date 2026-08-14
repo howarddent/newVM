@@ -1,0 +1,110 @@
+newVM Performance Benchmark
+============================
+MatMult / LinearSolve / Invert, N = 10 / 100 / 1000, all four TVMobj* types
+Library-backed (MKL + IPP + OpenBLAS) vs PUREPASCAL, Linux/x86_64
+
+Machine: Intel(R) Core(TM) i7-14650HX, 24 logical CPUs, 31 GiB RAM
+OS: Linux 7.0.0-28-generic (Ubuntu 24.04)
+Backends detected by ./newvmconfigure: MKL (libmkl_rt), IPP
+(ippcore+ippvm+ipps), OpenBLAS, FFTW3 (double+single) - all found, so the
+"real" build for this machine is fully library-backed (PUREPASCAL and
+PUREPASCAL_BLAS both inactive). The PUREPASCAL comparison column below
+was produced from a second build with newVMConfig.inc hand-forced to
+{$DEFINE PUREPASCAL}/{$DEFINE PUREPASCAL_BLAS}, same technique as
+perf/OSXperformance.txt, then regenerated back to the real per-machine
+config via ./newvmconfigure afterwards.
+
+Plain text rather than RTF here (unlike perf/OSXperformance.txt, which
+used RTF verified via macOS's textutil) - no equivalent tool assumed
+present on this machine, and plain text is sufficient.
+
+Test suite: ./newVMtest (full 256-test FPCUnit suite, all five TVMobj*/
+TVMobjI types) - 256 run, 0 errors, 0 failures, against the real
+(library-backed) build.
+
+NOTE on LinearSolveZ/LinearSolveC: newVMbench.lpr's banner text
+unconditionally prints "PUREPASCAL always ... identical in both builds"
+for these two operations. That claim is only true on a machine where
+PUREPASCAL is already forced on for the "real" build too (e.g. the Mac
+in perf/OSXperformance.txt, which has no MKL/IPP). On THIS machine the
+real build has PUREPASCAL undefined, so LinearSolveZ/LinearSolveC's own
+{$IFDEF PUREPASCAL} branch (see newVMComplex.pas/newVMComplexSingle.pas)
+genuinely takes the library-backed lapacke_zgesv/zgetrs (resp. cgesv/
+cgetrs) path there, NOT PurePascalLUZ/LUC - the banner text is simply
+wrong for this platform. The timings below confirm this: LinearSolveZ/C
+differ substantially between the two builds here, unlike on the Mac.
+Not fixed in newVMbench.lpr as part of this run - flagged here so the
+numbers aren't misread against the printed (misleading) banner.
+
+All timings in milliseconds, single run per row (not averaged). Residuals
+are Frobenius-norm ||A*x-b|| (solve) / ||A*Ainv-I|| (invert); both builds
+compute the same correct answer to within precision-appropriate tolerance.
+Speedup = PUREPASCAL time / library-backed time. N=10 timings are at or
+below timer resolution for several operations - "~parity" means the two
+numbers are both sub-0.05ms noise, not a meaningful comparison.
+
+
+Double precision real (newVM.pas)
+----------------------------------------------------------------------------------------------------
+Operation     N     Library(ms)   PUREPASCAL(ms)   Speedup   SolveResid    InvertResid
+MatMult       10       0.03            0.01         ~parity        -             -
+MatMult       100      0.19            7.97         41.9x          -             -
+MatMult       1000    14.17         3944.60         278.4x         -             -
+LinearSolve   10       0.17            0.01         ~parity   2.8E-15/6.1E-15    -
+LinearSolve   100      1.61            2.14         1.33x     4.0E-13/1.1E-13    -
+LinearSolve   1000   160.12          973.70         6.08x     5.2E-11/2.8E-11    -
+Invert        10       0.03            0.01         ~parity        -        8.2E-15/3.3E-15
+Invert        100      3.73            8.42         2.26x          -        4.8E-13/1.5E-13
+Invert        1000   157.51         4281.19         27.18x         -        6.7E-11/3.1E-11
+
+Single precision real (newVMSingle.pas)
+----------------------------------------------------------------------------------------------------
+Operation     N     Library(ms)   PUREPASCAL(ms)   Speedup   SolveResid    InvertResid
+MatMult       10       0.01            0.00         ~parity        -             -
+MatMult       100      0.06            3.76         62.7x          -             -
+MatMult       1000     7.88         3867.32         490.8x         -             -
+LinearSolve   10       2.22            0.00         ~parity   1.2E-06/2.6E-06    -
+LinearSolve   100      0.75            1.04         1.39x     2.1E-04/8.8E-05    -
+LinearSolve   1000   134.48          966.46         7.19x     3.2E-02/1.6E-02    -
+Invert        10       0.03            0.01         ~parity        -        3.6E-06/1.9E-06
+Invert        100      1.85            4.32         2.34x          -        2.5E-04/7.8E-05
+Invert        1000   173.83         4238.98         24.39x         -        3.6E-02/1.7E-02
+
+Double precision complex (newVMComplex.pas)
+----------------------------------------------------------------------------------------------------
+Operation     N     Library(ms)   PUREPASCAL(ms)   Speedup   SolveResid    InvertResid
+MatMultZ      10       0.02            0.01         ~parity        -             -
+MatMultZ      100      0.15           10.80         72.0x          -             -
+MatMultZ      1000    28.05        11525.21         411.0x         -             -
+LinearSolveZ  10       0.11            0.01         ~parity   1.5E-15/3.5E-15    -
+LinearSolveZ  100      0.33            3.21         9.73x     1.8E-13/2.4E-13    -
+LinearSolveZ  1000   105.66         3005.74         28.45x    2.9E-11/2.3E-11    -
+InvertZ       10       0.04            0.02         ~parity        -        3.6E-15/2.9E-15
+InvertZ       100      3.73           12.65         3.39x          -        3.5E-13/1.5E-13
+InvertZ       1000   135.20        12404.59         91.75x         -        1.0E-10/3.6E-11
+
+Single precision complex (newVMComplexSingle.pas)
+----------------------------------------------------------------------------------------------------
+Operation     N     Library(ms)   PUREPASCAL(ms)   Speedup   SolveResid    InvertResid
+MatMultC      10       0.03            0.02         ~parity        -             -
+MatMultC      100      0.12           14.11         117.6x         -             -
+MatMultC      1000    18.91        14335.54         758.1x         -             -
+LinearSolveC  10       0.12            0.01         ~parity   7.0E-07/2.9E-06    -
+LinearSolveC  100      2.63            4.76         1.81x     8.4E-05/1.5E-04    -
+LinearSolveC  1000   105.25         4504.02         42.79x    1.4E-02/1.3E-02    -
+InvertC       10       0.04            0.02         ~parity        -        1.7E-06/1.6E-06
+InvertC       100      2.70           18.65         6.91x          -        2.0E-04/8.2E-05
+InvertC       1000    35.40        18258.18         515.8x         -        5.6E-02/2.0E-02
+
+
+Summary: as expected, the gap between library-backed and PUREPASCAL grows
+sharply with N (all three operations are O(N^3)). MatMult sees the
+largest speedups (278x-758x at N=1000, MKL/OpenBLAS's cblas_?gemm vs a
+plain triple loop). LinearSolve sees the smallest (6x-43x at N=1000) -
+PurePascalLU?/LU?Solve is a reasonably competitive single-threaded partial-
+pivoting LU, whereas MatMult's naive triple loop has no cache blocking or
+vectorisation at all. Invert lands in between (24x-516x), tracking
+LinearSolve's LU cost plus an extra O(N^3) triangular-solve pass for the
+inverse. Residuals confirm both variants compute the same correct answer
+at each N and precision (double ~1e-15 to 1e-11, single ~1e-6 to ~5e-2 at
+N=1000, i.e. still within expected single-precision O(N) error growth).

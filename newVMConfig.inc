@@ -4,13 +4,15 @@
 // machine you are about to build newVM* on - this is a snapshot of THIS
 // machine's installed libraries, not a portability guarantee for any
 // other machine.)
-// Generated: 14-8-26 18:47:12
+// Generated: 14-8-26 23:27:41
 
-{$DEFINE PLATFORM_DARWIN}
-{$DEFINE PLATFORM_AARCH64}
+{$DEFINE PLATFORM_LINUX}
+{$DEFINE PLATFORM_X86_64}
 
-{$DEFINE HAVE_ACCELERATE} // Apple Accelerate/vecLib found (Darwin only)
+{$DEFINE HAVE_OPENBLAS}   // libopenblas found
 {$DEFINE HAVE_BLAS}       // derived: HAVE_OPENBLAS or HAVE_ACCELERATE
+{$DEFINE HAVE_MKL}        // libmkl_rt found
+{$DEFINE HAVE_IPP}        // libippcore+libippvm+libipps all found
 {$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found
 
 // Derived: set whenever any of the three libraries newVM.pas's "core"
@@ -24,7 +26,7 @@
 // Presently only newVM.pas (double-precision real) actually implements the
 // PUREPASCAL-guarded bodies this drives - newVMSingle.pas/newVMComplex.pas/
 // newVMComplexSingle.pas still hard-require MKL/IPP/OpenBLAS unconditionally.
-{$DEFINE PUREPASCAL}
+// {$DEFINE PUREPASCAL} left undefined: all three backends found
 
 // Finer-grained sibling of PUREPASCAL above, for the subset of newVM.pas's
 // routines (MatMult/Kron/Diag/Norm/FlipUD/MergeUD/MergeLR/Reshape/Repmat, the
