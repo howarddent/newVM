@@ -506,6 +506,12 @@ procedure TVMObj.linspace(Start, increment: Double);
 const
   s : String ='routine linspace';
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+begin
+  assert(fdata <>nil,s+  ': MVObj Not Initialized');
+  accel_vDSP_vrampD(@Start, @increment, @FData[0], 1, high(fdata)+1);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
@@ -513,6 +519,7 @@ begin
   for i := 0 to high(fdata) do
     fdata[i] := start + i*increment;
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   assert(fdata <>nil,s+  ': MVObj Not Initialized');
@@ -936,6 +943,18 @@ function FlipLR(const A: TVMobj): TVMobj;
 var
   i : integer;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+{ vDSP_vrvrsD reverses in place (a single array, no separate src/dst
+  pointers the way ippsFlip_64f has) - so each row is copied into result
+  first, then reversed there directly. }
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  for i := 0 to A.Rows-1 do begin
+    Move(A.FData[i*A.Cols], result.FData[i*A.Cols], A.Cols*SizeOf(Double));
+    accel_vDSP_vrvrsD(@result.FData[i*A.Cols], 1, A.Cols);
+  end;
+end;
+  {$ELSE}
 var
   j : integer;
 begin
@@ -944,6 +963,7 @@ begin
     for j := 0 to A.Cols-1 do
       result.FData[i*A.Cols+j] := A.FData[i*A.Cols + (A.Cols-1-j)];
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
@@ -1021,14 +1041,20 @@ end;
 
 function AddScalar(const A: TVMobj; K: Double): TVMobj;
 {$IFDEF PUREPASCAL}
+  {$IFNDEF HAVE_ACCELERATE}
 var
   i : Integer;
+  {$ENDIF}
 {$ENDIF}
 begin
   result := CopyObj(A);
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+  accel_vDSP_vsaddD(A.DataPtr, 1, @K, result.DataPtr, 1, A.Rows*A.Cols);
+  {$ELSE}
   for i := 0 to A.Rows*A.Cols-1 do
     result.fdata[i] := result.fdata[i] + K;
+  {$ENDIF}
 {$ELSE}
   ippsAddC_64f_I(K, result.DataPtr, A.Rows*A.Cols);
 {$ENDIF}
@@ -1134,15 +1160,21 @@ class operator TVMobj./(const A: TVMobj; const k: Double): TVMobj;
 const
   s : String = 'Operator / (TVMobj) : ';
 {$IFDEF PUREPASCAL}
+  {$IFNDEF HAVE_ACCELERATE}
 var
   i : Integer;
+  {$ENDIF}
 {$ENDIF}
 begin
   assert(k<>0, s+'division by zero');
   result := CopyObj(A);
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+  accel_vDSP_vsdivD(A.DataPtr, 1, @k, result.DataPtr, 1, A.Rows*A.Cols);
+  {$ELSE}
   for i := 0 to A.Rows*A.Cols-1 do
     result.fdata[i] := result.fdata[i] / k;
+  {$ENDIF}
 {$ELSE}
   ippsDivC_64f_I(k, result.DataPtr, A.Rows*A.Cols);
 {$ENDIF}

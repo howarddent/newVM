@@ -454,10 +454,23 @@ var
 //     vDSP.h) and the element count (vDSP_Length, unsigned 8-byte) -
 //     stride 1 throughout, since every newVM.pas buffer this touches is
 //     contiguous.
+// vDSP also stands in for the remaining IPP-only routines
+// (linspace/FlipLR/AddScalar/the '/' operator, backed by
+// ippsVectorSlope_64f/ippsFlip_64f/ippsAddC_64f_I/ippsDivC_64f_I in the
+// library-backed branch) - same umbrella framework, same by-value/
+// stride calling convention as vDSP_vsqD/vDSP_vmulD above. One
+// asymmetry confirmed against the header docs before wiring in:
+// vDSP_vrvrsD reverses A SINGLE array IN PLACE (no separate src/dst the
+// way ippsFlip_64f has), so FlipLR's Accelerate body copies the row into
+// the result buffer first, then reverses it there - see newVM.pas.
 type
   Taccel_vv1 = procedure(y: PDouble; x: PDouble; n: PInteger); cdecl; // vvsin/vvcos/vvtan/vvsinh/vvsqrt/vvexp/vvlog shape
   Taccel_vDSP_vsqD = procedure(a: PDouble; ia: Int64; c: PDouble; ic: Int64; n: QWord); cdecl;
   Taccel_vDSP_vmulD = procedure(a: PDouble; ia: Int64; b: PDouble; ib: Int64; c: PDouble; ic: Int64; n: QWord); cdecl;
+  Taccel_vDSP_vrampD = procedure(a: PDouble; b: PDouble; c: PDouble; ic: Int64; n: QWord); cdecl; // C[n] = A[0] + n*B[0]
+  Taccel_vDSP_vrvrsD = procedure(c: PDouble; ic: Int64; n: QWord); cdecl; // in-place reversal
+  Taccel_vDSP_vsaddD = procedure(a: PDouble; ia: Int64; b: PDouble; c: PDouble; ic: Int64; n: QWord); cdecl; // C[n] = A[n] + B[0]
+  Taccel_vDSP_vsdivD = procedure(a: PDouble; ia: Int64; b: PDouble; c: PDouble; ic: Int64; n: QWord); cdecl; // C[n] = A[n] / B[0]
 
 var
   accel_vvsin: Taccel_vv1;
@@ -469,6 +482,10 @@ var
   accel_vvlog: Taccel_vv1;  // vForce's natural-log function - matches newVM.pas's Ln, not a base-10 log
   accel_vDSP_vsqD: Taccel_vDSP_vsqD;
   accel_vDSP_vmulD: Taccel_vDSP_vmulD;
+  accel_vDSP_vrampD: Taccel_vDSP_vrampD;
+  accel_vDSP_vrvrsD: Taccel_vDSP_vrvrsD;
+  accel_vDSP_vsaddD: Taccel_vDSP_vsaddD;
+  accel_vDSP_vsdivD: Taccel_vDSP_vsdivD;
 {$ENDIF}
 
 function  InitializeCBLASANSI(Dependencies: array of string; const LibraryName: UnicodeString = ''): Integer; //needed as TLibraryLoadFunction
@@ -665,6 +682,10 @@ begin
   pointer(accel_vvlog)  := GetProcedureAddress(AccelerateHandle, 'vvlog');
   pointer(accel_vDSP_vsqD)  := GetProcedureAddress(AccelerateHandle, 'vDSP_vsqD');
   pointer(accel_vDSP_vmulD) := GetProcedureAddress(AccelerateHandle, 'vDSP_vmulD');
+  pointer(accel_vDSP_vrampD) := GetProcedureAddress(AccelerateHandle, 'vDSP_vrampD');
+  pointer(accel_vDSP_vrvrsD) := GetProcedureAddress(AccelerateHandle, 'vDSP_vrvrsD');
+  pointer(accel_vDSP_vsaddD) := GetProcedureAddress(AccelerateHandle, 'vDSP_vsaddD');
+  pointer(accel_vDSP_vsdivD) := GetProcedureAddress(AccelerateHandle, 'vDSP_vsdivD');
 end;
 
 procedure UnloadAccelerateAddresses;
@@ -681,6 +702,10 @@ begin
   accel_vvlog  := Nil;
   accel_vDSP_vsqD  := Nil;
   accel_vDSP_vmulD := Nil;
+  accel_vDSP_vrampD := Nil;
+  accel_vDSP_vrvrsD := Nil;
+  accel_vDSP_vsaddD := Nil;
+  accel_vDSP_vsdivD := Nil;
   if AccelerateHandle <> NilHandle then
     UnloadLibrary(AccelerateHandle);
   AccelerateHandle := NilHandle;
