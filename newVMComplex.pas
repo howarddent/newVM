@@ -600,7 +600,7 @@ var
   m,n,k : integer;
   C : TVMObjZ;
   alpha, beta : TComplex16;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   ii, jj, kk : integer;
   sum : TComplex16;
@@ -652,7 +652,15 @@ const
   LAPACKE_zgetrs (solve only) - much less work when the same A is solved
   against several different B's in turn. On return, A holds its LU-factored
   form (not the original matrix) and the solution is in B. Returns info
-  from the underlying LAPACKE call. }
+  from the underlying LAPACKE call.
+
+  Deliberately has NO HAVE_ACCELERATE branch, unlike InvertZ/DetZ below -
+  see cblas.pas's comment next to accel_zgetrf_/accel_zgetri_ for why:
+  Accelerate's zgetrs_ (the solve step this would need) crashes with an
+  access violation whenever the factored matrix has an exactly-zero-
+  imaginary-part pivot, confirmed via a standalone reproduction outside
+  this codebase. This stays on PurePascalLUZ/PurePascalLUSolveZ
+  unconditionally until that's resolved. }
 {$IFDEF PUREPASCAL}
 begin
   assert(A.Cols = A.Rows,s+'Matrix A must be square');
@@ -682,10 +690,13 @@ end;
 function CopyObjZ(const A: TVMObjZ): TVMobjZ;
 begin
   result := TVMObjZ.Create(A.rows,A.cols);
-{$IFDEF PUREPASCAL}
+{ See newVM.pas's CopyObj - a whole-buffer copy needs no strides, so a
+  flat cblas_zcopy suffices; gated on PUREPASCAL_BLAS rather than
+  PUREPASCAL since it never genuinely needed real LAPACK. }
+{$IFDEF PUREPASCAL_BLAS}
   Move(A.fdata[0], result.fdata[0], A.rows*A.cols*SizeOf(TComplex16));
 {$ELSE}
-  LAPACKE_zlacpy(CBlasRowMajor,'A',A.rows,A.cols,@A.Fdata[0],a.cols,@result.fdata[0],result.cols);
+  cblas_zcopy(A.rows*A.cols, @A.FData[0], 1, @result.FData[0], 1);
 {$ENDIF}
 end;
 
@@ -700,6 +711,40 @@ var
   buffer - both LAPACKE calls overwrite their input matrix in place,
   so A itself is left untouched. }
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+{ Accelerate-backed: raw Fortran zgetrf_/zgetri_ (see cblas.pas) - no
+  LAPACKE row-major wrapper available. Matrix inversion is transpose-
+  symmetric ((A^T)^-1 = (A^-1)^T - REGULAR transpose, not conjugate
+  transpose, since this is purely a memory-layout reinterpretation with
+  no complex arithmetic of its own involved) exactly as newVM.pas's
+  Invert relies on, so reinterpreting A's row-major buffer as
+  column-major and running the column-major factor+invert directly on it
+  - no transposing needed - leaves the buffer holding, when read back as
+  row-major, exactly inv(A). Confirmed against known values (including a
+  deliberately non-Hermitian matrix, to rule out any conjugate-transpose
+  mixup) before wiring this in - unlike LinearSolveZ, zgetrf_/zgetri_
+  were verified with no crash even at exactly-zero-imaginary-part
+  entries, so this one's safe. }
+var
+  n, lwork : integer;
+  work : array of TComplex16;
+  workquery : array[0..0] of TComplex16;
+begin
+  assert(A.Cols = A.Rows, s+'Matrix A must be square');
+  result := CopyObjZ(A);
+  setlength(ipiv, A.rows);
+  n := A.rows;
+  accel_zgetrf_(@n, @n, @result.FData[0], @n, @ipiv[0], @info);
+  assert(info = 0, s+'zgetrf_ failed (singular matrix?), info='+IntToStr(info));
+  lwork := -1;
+  accel_zgetri_(@n, @result.FData[0], @n, @ipiv[0], @workquery[0], @lwork, @info);
+  lwork := Trunc(workquery[0].re);
+  if lwork < 1 then lwork := 1;
+  setlength(work, lwork);
+  accel_zgetri_(@n, @result.FData[0], @n, @ipiv[0], @work[0], @lwork, @info);
+  assert(info = 0, s+'zgetri_ failed (singular matrix?), info='+IntToStr(info));
+end;
+  {$ELSE}
 var
   identity : TVMobjZ;
   kk : Integer;
@@ -714,6 +759,7 @@ begin
   PurePascalLUSolveZ(@result.FData[0], A.rows, ipiv, @identity.FData[0], A.rows);
   result := identity;
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   assert(A.Cols = A.Rows, s+'Matrix A must be square');
@@ -730,7 +776,7 @@ function KronZ(const A, B: TVMobjZ): TVMobjZ;
 var
   i, j, k, rowdest, coldest : integer;
   aval : TComplex16;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   l : integer;
 begin
@@ -764,7 +810,7 @@ end;
 function DiagZ(const A: TVMobjZ): TVMobjZ;
 const
   s : String = 'Function DiagZ : ';
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 begin
@@ -784,7 +830,7 @@ end;
 function NormZ(const A: TVMobjZ): Double;
 const
   s : String = 'Function NormZ : ';
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
   sumsq : Double;
@@ -825,12 +871,26 @@ var
   info, i, sign : integer;
   scratch : TVMobjZ;
   d : TComplex16;
+{$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+  {$ENDIF}
+{$ENDIF}
 begin
   assert(A.Cols = A.Rows, s+'Matrix A must be square');
   scratch := CopyObjZ(A);
   setlength(ipiv, A.rows);
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+  { See newVM.pas's Det / InvertZ above for the transpose-invariance
+    rationale (det(A)=det(A^T), regular transpose) - identical here,
+    just complex/zgetrf_-typed. }
+  n := A.rows;
+  accel_zgetrf_(@n, @n, @scratch.FData[0], @n, @ipiv[0], @info);
+  {$ELSE}
   info := PurePascalLUZ(@scratch.FData[0], A.rows, ipiv);
+  {$ENDIF}
 {$ELSE}
   info := lapacke_zgetrf(CBlasRowMajor, A.rows, A.cols, @scratch.Fdata[0], A.cols, @ipiv[0]);
   assert(info >= 0, s+'LAPACKE_zgetrf reported an illegal argument, info='+IntToStr(info));
@@ -850,7 +910,7 @@ var
   i : integer;
 begin
   result := TVMobjZ.Create(A.Rows, A.Cols);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   for i := 0 to A.Rows-1 do
     Move(A.FData[i*A.Cols], result.FData[(A.Rows-1-i)*A.Cols], A.Cols*SizeOf(TComplex16));
 {$ELSE}
@@ -885,7 +945,7 @@ const
 begin
   assert(A.Cols = B.Cols, s+'A and B must have the same number of columns');
   result := TVMobjZ.Create(A.Rows+B.Rows, A.Cols);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   Move(A.FData[0], result.FData[0], A.Rows*A.Cols*SizeOf(TComplex16));
   Move(B.FData[0], result.FData[A.Rows*A.Cols], B.Rows*B.Cols*SizeOf(TComplex16));
 {$ELSE}
@@ -903,7 +963,7 @@ begin
   assert(A.Rows = B.Rows, s+'A and B must have the same number of rows');
   result := TVMobjZ.Create(A.Rows, A.Cols+B.Cols);
   for i := 0 to A.Rows-1 do begin
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
     Move(A.FData[i*A.Cols], result.FData[i*result.Cols], A.Cols*SizeOf(TComplex16));
     Move(B.FData[i*B.Cols], result.FData[i*result.Cols + A.Cols], B.Cols*SizeOf(TComplex16));
 {$ELSE}
@@ -919,7 +979,7 @@ const
 begin
   assert(NewRows*NewCols = A.Rows*A.Cols, s+'NewRows*NewCols must equal A.Rows*A.Cols');
   result := TVMobjZ.Create(NewRows, NewCols);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   Move(A.FData[0], result.FData[0], A.Rows*A.Cols*SizeOf(TComplex16));
 {$ELSE}
   cblas_zcopy(A.Rows*A.Cols, @A.FData[0], 1, @result.FData[0], 1);
@@ -938,7 +998,7 @@ begin
     for r := 0 to A.Rows-1 do begin
       destRow := i*A.Rows + r;
       for j := 0 to ColReps-1 do
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
         Move(A.FData[r*A.Cols], result.FData[destRow*result.Cols + j*A.Cols], A.Cols*SizeOf(TComplex16));
 {$ELSE}
         cblas_zcopy(A.Cols, @A.FData[r*A.Cols], 1, @result.FData[destRow*result.Cols + j*A.Cols], 1);
@@ -970,29 +1030,29 @@ end;
 function SubMatrixZ(const A: TVMobjZ; R0, C0, RCount, CCount: TDimZ): TVMobjZ;
 const
   s : String = 'Function SubMatrixZ : ';
-{$IFDEF PUREPASCAL}
 var
   i : Integer;
+{ See newVM.pas's SubMatrix - a strided sub-rectangle copy only ever
+  needed a per-row cblas_zcopy loop, not LAPACKE_zlacpy specifically, so
+  this is gated on PUREPASCAL_BLAS too. }
 begin
   assert((R0+RCount <= A.Rows) and (C0+CCount <= A.Cols), s+'submatrix (R0,C0,RCount,CCount) extends beyond A''s bounds');
   result := TVMobjZ.Create(RCount, CCount);
+{$IFDEF PUREPASCAL_BLAS}
   for i := 0 to RCount-1 do
     Move(A.FData[(R0+i)*A.Cols+C0], result.FData[i*CCount], CCount*SizeOf(TComplex16));
-end;
 {$ELSE}
-begin
-  assert((R0+RCount <= A.Rows) and (C0+CCount <= A.Cols), s+'submatrix (R0,C0,RCount,CCount) extends beyond A''s bounds');
-  result := TVMobjZ.Create(RCount, CCount);
-  LAPACKE_zlacpy(CBlasRowMajor, 'A', RCount, CCount, @A.FData[R0*A.Cols+C0], A.Cols, @result.FData[0], CCount);
-end;
+  for i := 0 to RCount-1 do
+    cblas_zcopy(CCount, @A.FData[(R0+i)*A.Cols+C0], 1, @result.FData[i*CCount], 1);
 {$ENDIF}
+end;
 
 function RealToComplex(const A: TVMobj): TVMobjZ;
 const
   s : String = 'Routine RealToComplex : ';
 var
   n : integer;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 begin
@@ -1019,7 +1079,7 @@ end;
 {$ENDIF}
 
 function GetRealPart(const A: TVMobjZ): TVMobj;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 begin
@@ -1041,7 +1101,7 @@ end;
 function GetImagPart(const A: TVMobjZ): TVMobj;
 var
   pIm : PDouble;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 begin
@@ -1155,7 +1215,7 @@ const
   s : String = 'Operator + (TVMobjZ) : ';
 var
   one : TComplex16;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 begin
@@ -1178,7 +1238,7 @@ const
   s : String = 'Operator - (TVMobjZ) : ';
 var
   negOne : TComplex16;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 begin
@@ -1197,7 +1257,7 @@ end;
 {$ENDIF}
 
 class operator TVMobjZ.-(const A: TVMobjZ): TVMobjZ;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 begin
@@ -1218,7 +1278,7 @@ begin
 end;
 
 class operator TVMobjZ.*(const A: TVMobjZ; const k: TComplex16): TVMobjZ;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 begin
@@ -1239,7 +1299,7 @@ begin
 end;
 
 class operator TVMobjZ.*(const A: TVMobjZ; const k: Double): TVMobjZ;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 begin
@@ -1262,7 +1322,7 @@ end;
 class operator TVMobjZ./(const A: TVMobjZ; const k: TComplex16): TVMobjZ;
 var
   r : TComplex16;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 begin
@@ -1281,7 +1341,7 @@ end;
 class operator TVMobjZ./(const A: TVMobjZ; const k: Double): TVMobjZ;
 const
   s : String = 'Operator / (TVMobjZ) : ';
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 begin

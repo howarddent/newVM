@@ -523,6 +523,30 @@ var
   accel_vDSP_vrvrs: Taccel_vDSP_vrvrs;
   accel_vDSP_vsadd: Taccel_vDSP_vsadd;
   accel_vDSP_vsdiv: Taccel_vDSP_vsdiv;
+
+// Complex (double-precision, "z") LAPACK, for newVMComplex.pas's InvertZ/
+// DetZ - same literal-mirror-of-the-Fortran-signature approach as the
+// real bindings above, "a"/"work" typed as a generic pointer (not
+// PComplex16) since TComplex16 is declared in OneAPI.pas, which this
+// unit doesn't depend on - exactly how this unit's own pre-existing
+// cblas_z*/cblas_c* complex CBLAS bindings already handle complex
+// arguments (see e.g. Tcblas_zaxpy above). Deliberately NOT binding
+// zgetrs_ (the solve step LinearSolveZ would need): confirmed via a
+// standalone reproduction, independent of this codebase, that Accelerate's
+// zgetrs_ crashes with an access violation whenever the factored matrix
+// ends up with an exactly-zero-imaginary-part pivot (e.g. A[0,0]=2+0i is
+// enough to trigger it, even though the exact same value is completely
+// safe when only fed through zgetrf_/zgetri_, which were extensively
+// verified including with zero-imaginary entries). LinearSolveZ stays on
+// its existing PurePascalLUZ/PurePascalLUSolveZ path unconditionally
+// until/unless that's resolved - see newVMComplex.pas's LinearSolveZ.
+type
+  Taccel_zgetrf_ = procedure(m, n: PInteger; a: pointer; lda: PInteger; ipiv: PInteger; info: PInteger); cdecl;
+  Taccel_zgetri_ = procedure(n: PInteger; a: pointer; lda: PInteger; ipiv: PInteger; work: pointer; lwork: PInteger; info: PInteger); cdecl;
+
+var
+  accel_zgetrf_: Taccel_zgetrf_;
+  accel_zgetri_: Taccel_zgetri_;
 {$ENDIF}
 
 function  InitializeCBLASANSI(Dependencies: array of string; const LibraryName: UnicodeString = ''): Integer; //needed as TLibraryLoadFunction
@@ -739,6 +763,8 @@ begin
   pointer(accel_vDSP_vrvrs) := GetProcedureAddress(AccelerateHandle, 'vDSP_vrvrs');
   pointer(accel_vDSP_vsadd) := GetProcedureAddress(AccelerateHandle, 'vDSP_vsadd');
   pointer(accel_vDSP_vsdiv) := GetProcedureAddress(AccelerateHandle, 'vDSP_vsdiv');
+  pointer(accel_zgetrf_) := GetProcedureAddress(AccelerateHandle, 'zgetrf_');
+  pointer(accel_zgetri_) := GetProcedureAddress(AccelerateHandle, 'zgetri_');
 end;
 
 procedure UnloadAccelerateAddresses;
@@ -774,6 +800,8 @@ begin
   accel_vDSP_vrvrs := Nil;
   accel_vDSP_vsadd := Nil;
   accel_vDSP_vsdiv := Nil;
+  accel_zgetrf_ := Nil;
+  accel_zgetri_ := Nil;
   accel_vDSP_vsdivD := Nil;
   if AccelerateHandle <> NilHandle then
     UnloadLibrary(AccelerateHandle);
