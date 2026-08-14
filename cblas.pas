@@ -486,6 +486,43 @@ var
   accel_vDSP_vrvrsD: Taccel_vDSP_vrvrsD;
   accel_vDSP_vsaddD: Taccel_vDSP_vsaddD;
   accel_vDSP_vsdivD: Taccel_vDSP_vsdivD;
+
+// Single-precision counterparts of everything above, for newVMSingle.pas -
+// same umbrella Accelerate binary, same calling conventions, just PSingle
+// instead of PDouble and each C/Fortran symbol's own single-precision
+// name (sgetrf_/sgetri_/sgetrs_, vForce's vv*f suffix, vDSP's un-suffixed
+// v* names - vDSP uses the "D" suffix ONLY for double, unlike vForce's
+// "f" suffix for single, so the type names below intentionally don't
+// all follow one consistent pattern - they follow Accelerate's own).
+type
+  Taccel_sgetrf_ = procedure(m, n: PInteger; a: PSingle; lda: PInteger; ipiv: PInteger; info: PInteger); cdecl;
+  Taccel_sgetri_ = procedure(n: PInteger; a: PSingle; lda: PInteger; ipiv: PInteger; work: PSingle; lwork: PInteger; info: PInteger); cdecl;
+  Taccel_sgetrs_ = procedure(trans: PChar; n, nrhs: PInteger; a: PSingle; lda: PInteger; ipiv: PInteger; b: PSingle; ldb: PInteger; info: PInteger); cdecl;
+  Taccel_vv1s = procedure(y: PSingle; x: PSingle; n: PInteger); cdecl; // vvsinf/vvcosf/vvtanf/vvsinhf/vvsqrtf/vvexpf/vvlogf shape
+  Taccel_vDSP_vsq = procedure(a: PSingle; ia: Int64; c: PSingle; ic: Int64; n: QWord); cdecl;
+  Taccel_vDSP_vmul = procedure(a: PSingle; ia: Int64; b: PSingle; ib: Int64; c: PSingle; ic: Int64; n: QWord); cdecl;
+  Taccel_vDSP_vramp = procedure(a: PSingle; b: PSingle; c: PSingle; ic: Int64; n: QWord); cdecl;
+  Taccel_vDSP_vrvrs = procedure(c: PSingle; ic: Int64; n: QWord); cdecl;
+  Taccel_vDSP_vsadd = procedure(a: PSingle; ia: Int64; b: PSingle; c: PSingle; ic: Int64; n: QWord); cdecl;
+  Taccel_vDSP_vsdiv = procedure(a: PSingle; ia: Int64; b: PSingle; c: PSingle; ic: Int64; n: QWord); cdecl;
+
+var
+  accel_sgetrf_: Taccel_sgetrf_;
+  accel_sgetri_: Taccel_sgetri_;
+  accel_sgetrs_: Taccel_sgetrs_;
+  accel_vvsinf: Taccel_vv1s;
+  accel_vvcosf: Taccel_vv1s;
+  accel_vvtanf: Taccel_vv1s;
+  accel_vvsinhf: Taccel_vv1s;
+  accel_vvsqrtf: Taccel_vv1s;
+  accel_vvexpf: Taccel_vv1s;
+  accel_vvlogf: Taccel_vv1s;
+  accel_vDSP_vsq: Taccel_vDSP_vsq;
+  accel_vDSP_vmul: Taccel_vDSP_vmul;
+  accel_vDSP_vramp: Taccel_vDSP_vramp;
+  accel_vDSP_vrvrs: Taccel_vDSP_vrvrs;
+  accel_vDSP_vsadd: Taccel_vDSP_vsadd;
+  accel_vDSP_vsdiv: Taccel_vDSP_vsdiv;
 {$ENDIF}
 
 function  InitializeCBLASANSI(Dependencies: array of string; const LibraryName: UnicodeString = ''): Integer; //needed as TLibraryLoadFunction
@@ -686,6 +723,22 @@ begin
   pointer(accel_vDSP_vrvrsD) := GetProcedureAddress(AccelerateHandle, 'vDSP_vrvrsD');
   pointer(accel_vDSP_vsaddD) := GetProcedureAddress(AccelerateHandle, 'vDSP_vsaddD');
   pointer(accel_vDSP_vsdivD) := GetProcedureAddress(AccelerateHandle, 'vDSP_vsdivD');
+  pointer(accel_sgetrf_) := GetProcedureAddress(AccelerateHandle, 'sgetrf_');
+  pointer(accel_sgetri_) := GetProcedureAddress(AccelerateHandle, 'sgetri_');
+  pointer(accel_sgetrs_) := GetProcedureAddress(AccelerateHandle, 'sgetrs_');
+  pointer(accel_vvsinf)  := GetProcedureAddress(AccelerateHandle, 'vvsinf');
+  pointer(accel_vvcosf)  := GetProcedureAddress(AccelerateHandle, 'vvcosf');
+  pointer(accel_vvtanf)  := GetProcedureAddress(AccelerateHandle, 'vvtanf');
+  pointer(accel_vvsinhf) := GetProcedureAddress(AccelerateHandle, 'vvsinhf');
+  pointer(accel_vvsqrtf) := GetProcedureAddress(AccelerateHandle, 'vvsqrtf');
+  pointer(accel_vvexpf)  := GetProcedureAddress(AccelerateHandle, 'vvexpf');
+  pointer(accel_vvlogf)  := GetProcedureAddress(AccelerateHandle, 'vvlogf');
+  pointer(accel_vDSP_vsq)  := GetProcedureAddress(AccelerateHandle, 'vDSP_vsq');
+  pointer(accel_vDSP_vmul) := GetProcedureAddress(AccelerateHandle, 'vDSP_vmul');
+  pointer(accel_vDSP_vramp) := GetProcedureAddress(AccelerateHandle, 'vDSP_vramp');
+  pointer(accel_vDSP_vrvrs) := GetProcedureAddress(AccelerateHandle, 'vDSP_vrvrs');
+  pointer(accel_vDSP_vsadd) := GetProcedureAddress(AccelerateHandle, 'vDSP_vsadd');
+  pointer(accel_vDSP_vsdiv) := GetProcedureAddress(AccelerateHandle, 'vDSP_vsdiv');
 end;
 
 procedure UnloadAccelerateAddresses;
@@ -705,6 +758,22 @@ begin
   accel_vDSP_vrampD := Nil;
   accel_vDSP_vrvrsD := Nil;
   accel_vDSP_vsaddD := Nil;
+  accel_sgetrf_ := Nil;
+  accel_sgetri_ := Nil;
+  accel_sgetrs_ := Nil;
+  accel_vvsinf  := Nil;
+  accel_vvcosf  := Nil;
+  accel_vvtanf  := Nil;
+  accel_vvsinhf := Nil;
+  accel_vvsqrtf := Nil;
+  accel_vvexpf  := Nil;
+  accel_vvlogf  := Nil;
+  accel_vDSP_vsq  := Nil;
+  accel_vDSP_vmul := Nil;
+  accel_vDSP_vramp := Nil;
+  accel_vDSP_vrvrs := Nil;
+  accel_vDSP_vsadd := Nil;
+  accel_vDSP_vsdiv := Nil;
   accel_vDSP_vsdivD := Nil;
   if AccelerateHandle <> NilHandle then
     UnloadLibrary(AccelerateHandle);

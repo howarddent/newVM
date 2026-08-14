@@ -382,6 +382,12 @@ procedure TVMobjS.linspace(Start, increment: Single);
 const
   s : String ='routine linspace';
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+begin
+  assert(fdata <>nil,s+  ': MVObj Not Initialized');
+  accel_vDSP_vramp(@Start, @increment, @FData[0], 1, high(fdata)+1);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
@@ -389,6 +395,7 @@ begin
   for i := 0 to high(fdata) do
     fdata[i] := start + i*increment;
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   assert(fdata <>nil,s+  ': MVObj Not Initialized');
@@ -425,7 +432,7 @@ const
 var
   m,n,k : integer;
   C : TVMObjS;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   ii, jj, kk : integer;
   sum : Single;
@@ -477,6 +484,39 @@ const
   form (not the original matrix) and the solution is in B. Returns info
   from the underlying LAPACKE call. }
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+{ See newVM.pas's LinearSolve for the full trans='T'/transpose-copy
+  rationale - identical here, just Single/sgetrf_/sgetrs_-typed. }
+var
+  n, nrhs : integer;
+  trans : char;
+  bcol : array of single;
+  r, c : integer;
+begin
+  assert(A.Cols = A.Rows,s+'Matrix A must be square');
+  assert(A.Rows = B.Rows, s+'Matrix A and B have incompatible dimensions');
+  n := A.rows;
+  nrhs := B.cols;
+  result := 0;
+  if not A.LU then begin
+    setlength(A.fIpiv,A.rows);
+    accel_sgetrf_(@n, @n, A.DataPtr, @n, @A.fIpiv[0], @result);
+    if result = 0 then A.fLUFactored := True;
+  end;
+  if result = 0 then begin
+    setlength(bcol, n*nrhs);
+    for r := 0 to n-1 do
+      for c := 0 to nrhs-1 do
+        bcol[c*n+r] := B.FData[r*nrhs+c];
+    trans := 'T';
+    accel_sgetrs_(@trans, @n, @nrhs, A.DataPtr, @n, @A.fIpiv[0], @bcol[0], @n, @result);
+    if result = 0 then
+      for r := 0 to n-1 do
+        for c := 0 to nrhs-1 do
+          B.FData[r*nrhs+c] := bcol[c*n+r];
+  end;
+end;
+  {$ELSE}
 begin
   assert(A.Cols = A.Rows,s+'Matrix A must be square');
   assert(A.Rows = B.Rows, s+'Matrix A and B have incompatible dimensions');
@@ -488,6 +528,7 @@ begin
   PurePascalLUSolveS(A.DataPtr, A.rows, A.fIpiv, B.DataPtr, B.cols);
   result := 0;
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   assert(A.Cols = A.Rows,s+'Matrix A must be square');
@@ -505,10 +546,13 @@ end;
 function CopyObjS(const A: TVMObjS): TVMobjS;
 begin
   result := TVMObjS.Create(A.rows,A.cols);
-{$IFDEF PUREPASCAL}
+{ See newVM.pas's CopyObj - a whole-buffer copy needs no strides, so a
+  flat cblas_scopy suffices; gated on PUREPASCAL_BLAS rather than
+  PUREPASCAL since it never genuinely needed real LAPACK. }
+{$IFDEF PUREPASCAL_BLAS}
   Move(A.fdata[0], result.fdata[0], A.rows*A.cols*SizeOf(Single));
 {$ELSE}
-  LAPACKE_slacpy(CBlasRowMajor,'A',A.rows,A.cols,@A.Fdata[0],a.cols,@result.fdata[0],result.cols);
+  cblas_scopy(A.rows*A.cols, A.DataPtr, 1, result.DataPtr, 1);
 {$ENDIF}
 end;
 
@@ -523,6 +567,30 @@ var
   buffer - both LAPACKE calls overwrite their input matrix in place,
   so A itself is left untouched. }
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+{ See newVM.pas's Invert for the transpose-symmetry rationale
+  ((A^T)^-1 = (A^-1)^T) - identical here, just Single/sgetrf_/sgetri_
+  -typed. }
+var
+  n, lwork : integer;
+  work : array of single;
+  workquery : array[0..0] of single;
+begin
+  assert(A.Cols = A.Rows, s+'Matrix A must be square');
+  result := CopyObjS(A);
+  setlength(ipiv, A.rows);
+  n := A.rows;
+  accel_sgetrf_(@n, @n, result.DataPtr, @n, @ipiv[0], @info);
+  assert(info = 0, s+'sgetrf_ failed (singular matrix?), info='+IntToStr(info));
+  lwork := -1;
+  accel_sgetri_(@n, result.DataPtr, @n, @ipiv[0], @workquery[0], @lwork, @info);
+  lwork := Trunc(workquery[0]);
+  if lwork < 1 then lwork := 1;
+  setlength(work, lwork);
+  accel_sgetri_(@n, result.DataPtr, @n, @ipiv[0], @work[0], @lwork, @info);
+  assert(info = 0, s+'sgetri_ failed (singular matrix?), info='+IntToStr(info));
+end;
+  {$ELSE}
 var
   identity : TVMobjS;
   kk : Integer;
@@ -537,6 +605,7 @@ begin
   PurePascalLUSolveS(result.DataPtr, A.rows, ipiv, identity.DataPtr, A.rows);
   result := identity;
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   assert(A.Cols = A.Rows, s+'Matrix A must be square');
@@ -573,7 +642,7 @@ end;
 function KronS(const A, B: TVMobjS): TVMobjS;
 var
   i, j, k, rowdest, coldest : integer;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   l : integer;
 begin
@@ -603,7 +672,7 @@ end;
 function DiagS(const A: TVMobjS): TVMobjS;
 const
   s : String = 'Function DiagS : ';
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 begin
@@ -623,7 +692,7 @@ end;
 function NormS(const A: TVMobjS): Single;
 const
   s : String = 'Function NormS : ';
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
   sumsq : Single;
@@ -660,12 +729,25 @@ var
   ipiv : array of integer;
   info, i, sign : integer;
   scratch : TVMobjS;
+{$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+  {$ENDIF}
+{$ENDIF}
 begin
   assert(A.Cols = A.Rows, s+'Matrix A must be square');
   scratch := CopyObjS(A);
   setlength(ipiv, A.rows);
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+  { See newVM.pas's Det for the transpose-invariance rationale (det(A)=
+    det(A^T)) - identical here, just Single/sgetrf_-typed. }
+  n := A.rows;
+  accel_sgetrf_(@n, @n, scratch.DataPtr, @n, @ipiv[0], @info);
+  {$ELSE}
   info := PurePascalLUS(scratch.DataPtr, A.rows, ipiv);
+  {$ENDIF}
 {$ELSE}
   info := lapacke_sgetrf(CBlasRowMajor, A.rows, A.cols, scratch.DataPtr, A.cols, @ipiv[0]);
   assert(info >= 0, s+'LAPACKE_sgetrf reported an illegal argument, info='+IntToStr(info));
@@ -683,7 +765,7 @@ var
   i : integer;
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   for i := 0 to A.Rows-1 do
     Move(A.FData[i*A.Cols], result.FData[(A.Rows-1-i)*A.Cols], A.Cols*SizeOf(Single));
 {$ELSE}
@@ -696,6 +778,17 @@ function FlipLRS(const A: TVMobjS): TVMobjS;
 var
   i : integer;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+{ See newVM.pas's FlipLR - vDSP_vrvrs reverses in place, so each row is
+  copied into result first, then reversed there directly. }
+begin
+  result := TVMobjS.Create(A.Rows, A.Cols);
+  for i := 0 to A.Rows-1 do begin
+    Move(A.FData[i*A.Cols], result.FData[i*A.Cols], A.Cols*SizeOf(Single));
+    accel_vDSP_vrvrs(@result.FData[i*A.Cols], 1, A.Cols);
+  end;
+end;
+  {$ELSE}
 var
   j : integer;
 begin
@@ -704,6 +797,7 @@ begin
     for j := 0 to A.Cols-1 do
       result.FData[i*A.Cols+j] := A.FData[i*A.Cols + (A.Cols-1-j)];
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
@@ -718,7 +812,7 @@ const
 begin
   assert(A.Cols = B.Cols, s+'A and B must have the same number of columns');
   result := TVMobjS.Create(A.Rows+B.Rows, A.Cols);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   Move(A.FData[0], result.FData[0], A.Rows*A.Cols*SizeOf(Single));
   Move(B.FData[0], result.FData[A.Rows*A.Cols], B.Rows*B.Cols*SizeOf(Single));
 {$ELSE}
@@ -736,7 +830,7 @@ begin
   assert(A.Rows = B.Rows, s+'A and B must have the same number of rows');
   result := TVMobjS.Create(A.Rows, A.Cols+B.Cols);
   for i := 0 to A.Rows-1 do begin
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
     Move(A.FData[i*A.Cols], result.FData[i*result.Cols], A.Cols*SizeOf(Single));
     Move(B.FData[i*B.Cols], result.FData[i*result.Cols + A.Cols], B.Cols*SizeOf(Single));
 {$ELSE}
@@ -752,7 +846,7 @@ const
 begin
   assert(NewRows*NewCols = A.Rows*A.Cols, s+'NewRows*NewCols must equal A.Rows*A.Cols');
   result := TVMobjS.Create(NewRows, NewCols);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   Move(A.FData[0], result.FData[0], A.Rows*A.Cols*SizeOf(Single));
 {$ELSE}
   cblas_scopy(A.Rows*A.Cols, A.DataPtr, 1, result.DataPtr, 1);
@@ -771,7 +865,7 @@ begin
     for r := 0 to A.Rows-1 do begin
       destRow := i*A.Rows + r;
       for j := 0 to ColReps-1 do
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
         Move(A.FData[r*A.Cols], result.FData[destRow*result.Cols + j*A.Cols], A.Cols*SizeOf(Single));
 {$ELSE}
         cblas_scopy(A.Cols, @A.FData[r*A.Cols], 1, @result.FData[destRow*result.Cols + j*A.Cols], 1);
@@ -781,14 +875,20 @@ end;
 
 function AddScalarS(const A: TVMobjS; K: Single): TVMobjS;
 {$IFDEF PUREPASCAL}
+  {$IFNDEF HAVE_ACCELERATE}
 var
   i : Integer;
+  {$ENDIF}
 {$ENDIF}
 begin
   result := CopyObjS(A);
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+  accel_vDSP_vsadd(A.DataPtr, 1, @K, result.DataPtr, 1, A.Rows*A.Cols);
+  {$ELSE}
   for i := 0 to A.Rows*A.Cols-1 do
     result.fdata[i] := result.fdata[i] + K;
+  {$ENDIF}
 {$ELSE}
   ippsAddC_32f_I(K, result.DataPtr, A.Rows*A.Cols);
 {$ENDIF}
@@ -797,34 +897,34 @@ end;
 function SubMatrixS(const A: TVMobjS; R0, C0, RCount, CCount: TDimS): TVMobjS;
 const
   s : String = 'Function SubMatrixS : ';
-{$IFDEF PUREPASCAL}
 var
   i : Integer;
+{ See newVM.pas's SubMatrix - a strided sub-rectangle copy only ever
+  needed a per-row cblas_scopy loop, not LAPACKE_slacpy specifically, so
+  this is gated on PUREPASCAL_BLAS too. }
 begin
   assert((R0+RCount <= A.Rows) and (C0+CCount <= A.Cols), s+'submatrix (R0,C0,RCount,CCount) extends beyond A''s bounds');
   result := TVMobjS.Create(RCount, CCount);
+{$IFDEF PUREPASCAL_BLAS}
   for i := 0 to RCount-1 do
     Move(A.FData[(R0+i)*A.Cols+C0], result.FData[i*CCount], CCount*SizeOf(Single));
-end;
 {$ELSE}
-begin
-  assert((R0+RCount <= A.Rows) and (C0+CCount <= A.Cols), s+'submatrix (R0,C0,RCount,CCount) extends beyond A''s bounds');
-  result := TVMobjS.Create(RCount, CCount);
-  LAPACKE_slacpy(CBlasRowMajor, 'A', RCount, CCount, @A.FData[R0*A.Cols+C0], A.Cols, result.DataPtr, CCount);
-end;
+  for i := 0 to RCount-1 do
+    cblas_scopy(CCount, @A.FData[(R0+i)*A.Cols+C0], 1, @result.FData[i*CCount], 1);
 {$ENDIF}
+end;
 
 class operator TVMobjS.+(const A, B: TVMobjS): TVMobjS;
 const
   s : String = 'Operator + (TVMobjS) : ';
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 {$ENDIF}
 begin
   assert((A.Rows=B.Rows) and (A.Cols=B.Cols), s+'matrix dimensions must match');
   result := CopyObjS(B);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   for i := 0 to A.Rows*A.Cols-1 do
     result.fdata[i] := result.fdata[i] + A.fdata[i];
 {$ELSE}
@@ -835,14 +935,14 @@ end;
 class operator TVMobjS.-(const A, B: TVMobjS): TVMobjS;
 const
   s : String = 'Operator - (TVMobjS) : ';
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 {$ENDIF}
 begin
   assert((A.Rows=B.Rows) and (A.Cols=B.Cols), s+'matrix dimensions must match');
   result := CopyObjS(A);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   for i := 0 to A.Rows*A.Cols-1 do
     result.fdata[i] := result.fdata[i] - B.fdata[i];
 {$ELSE}
@@ -851,13 +951,13 @@ begin
 end;
 
 class operator TVMobjS.-(const A: TVMobjS): TVMobjS;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 {$ENDIF}
 begin
   result := CopyObjS(A);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   for i := 0 to A.Rows*A.Cols-1 do
     result.fdata[i] := -result.fdata[i];
 {$ELSE}
@@ -871,13 +971,13 @@ begin
 end;
 
 class operator TVMobjS.*(const A: TVMobjS; const k: Single): TVMobjS;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 {$ENDIF}
 begin
   result := CopyObjS(A);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   for i := 0 to A.Rows*A.Cols-1 do
     result.fdata[i] := result.fdata[i] * k;
 {$ELSE}
@@ -894,15 +994,21 @@ class operator TVMobjS./(const A: TVMobjS; const k: Single): TVMobjS;
 const
   s : String = 'Operator / (TVMobjS) : ';
 {$IFDEF PUREPASCAL}
+  {$IFNDEF HAVE_ACCELERATE}
 var
   i : Integer;
+  {$ENDIF}
 {$ENDIF}
 begin
   assert(k<>0, s+'division by zero');
   result := CopyObjS(A);
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+  accel_vDSP_vsdiv(A.DataPtr, 1, @k, result.DataPtr, 1, A.Rows*A.Cols);
+  {$ELSE}
   for i := 0 to A.Rows*A.Cols-1 do
     result.fdata[i] := result.fdata[i] / k;
+  {$ENDIF}
 {$ELSE}
   ippsDivC_32f_I(k, result.DataPtr, A.Rows*A.Cols);
 {$ENDIF}
@@ -916,12 +1022,22 @@ end;
 
 function Sin(const A: TVMobjS): TVMobjS;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+begin
+  result := TVMobjS.Create(A.Rows, A.Cols);
+  n := A.Rows*A.Cols;
+  accel_vvsinf(result.DataPtr, A.DataPtr, @n);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := System.Sin(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
@@ -931,12 +1047,22 @@ end;
 
 function Cos(const A: TVMobjS): TVMobjS;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+begin
+  result := TVMobjS.Create(A.Rows, A.Cols);
+  n := A.Rows*A.Cols;
+  accel_vvcosf(result.DataPtr, A.DataPtr, @n);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := System.Cos(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
@@ -946,12 +1072,22 @@ end;
 
 function Tan(const A: TVMobjS): TVMobjS;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+begin
+  result := TVMobjS.Create(A.Rows, A.Cols);
+  n := A.Rows*A.Cols;
+  accel_vvtanf(result.DataPtr, A.DataPtr, @n);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := Math.Tan(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
@@ -961,12 +1097,22 @@ end;
 
 function Sinh(const A: TVMobjS): TVMobjS;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+begin
+  result := TVMobjS.Create(A.Rows, A.Cols);
+  n := A.Rows*A.Cols;
+  accel_vvsinhf(result.DataPtr, A.DataPtr, @n);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := Math.Sinh(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
@@ -976,12 +1122,19 @@ end;
 
 function Sqr(const A: TVMobjS): TVMobjS;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+begin
+  result := TVMobjS.Create(A.Rows, A.Cols);
+  accel_vDSP_vsq(A.DataPtr, 1, result.DataPtr, 1, A.Rows*A.Cols);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := System.Sqr(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
@@ -991,12 +1144,37 @@ end;
 
 function Sqrt(const A: TVMobjS): TVMobjS;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+{ Apple's vvsqrtf (unlike every other vForce/vDSP entry point used in this
+  unit - vvsinf/vvcosf/vvtanf/vvsinhf/vvexpf/vvlogf/vDSP_vsq/vDSP_vmul all
+  confirmed fine at N as low as 1) crashes with an access violation for
+  N<4 on this machine - reproduced in total isolation outside this
+  codebase (a standalone program calling vvsqrtf directly via the exact
+  same procedural-variable/cdecl mechanism, independent of newVM/cblas,
+  still crashed at N=1..3 and only succeeded at N>=4). vForce's own
+  header markets itself as being "for large arrays", so small-N may
+  simply be outside what Apple validated. Since correctness can't depend
+  on undocumented behaviour, N<4 falls back to the plain-Pascal loop -
+  negligible cost given how small N has to be to hit it. }
+var
+  n : integer;
+  i : Integer;
+begin
+  result := TVMobjS.Create(A.Rows, A.Cols);
+  n := A.Rows*A.Cols;
+  if n >= 4 then
+    accel_vvsqrtf(result.DataPtr, A.DataPtr, @n)
+  else
+    for i := 0 to n-1 do result.fdata[i] := System.Sqrt(A.fdata[i]);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := System.Sqrt(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
@@ -1006,12 +1184,22 @@ end;
 
 function Exp(const A: TVMobjS): TVMobjS;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+begin
+  result := TVMobjS.Create(A.Rows, A.Cols);
+  n := A.Rows*A.Cols;
+  accel_vvexpf(result.DataPtr, A.DataPtr, @n);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := System.Exp(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
@@ -1021,12 +1209,22 @@ end;
 
 function Ln(const A: TVMobjS): TVMobjS;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+begin
+  result := TVMobjS.Create(A.Rows, A.Cols);
+  n := A.Rows*A.Cols;
+  accel_vvlogf(result.DataPtr, A.DataPtr, @n);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := System.Ln(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobjS.Create(A.Rows, A.Cols);
@@ -1038,6 +1236,13 @@ function MulObjS(const A, B: TVMObjS): TVMObjS;
 const
   s: string ='Routine MulObjS : ';
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := TVMobjS.Create(A.Rows, A.Cols);
+  accel_vDSP_vmul(A.DataPtr, 1, B.DataPtr, 1, result.DataPtr, 1, A.Rows*A.Cols);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
@@ -1046,6 +1251,7 @@ begin
   for i := 0 to A.rows*A.cols-1 do
     result.fdata[i] := result.fdata[i] * B.fdata[i];
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
