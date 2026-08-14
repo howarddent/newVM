@@ -44,7 +44,11 @@ Graphs/*/[A-Za-z]*
 # Windows demo binaries do have an extension (.exe), so the negations above
 # re-include them - this rule comes after those negations (later patterns
 # win) to actually exclude them, e.g. demos/SpectralDiff/SpectralDiff.exe.
+# Same story for lazbuild's own *.compiled state file (already ignored
+# unscoped near the top of this file) - it has a dot too, so it needs
+# repeating here for the same reason, e.g. Graphs/Plot2D/Plot2D.compiled.
 *.exe
+*.compiled
 
 # Delphi/RAD Studio build artifacts and IDE-local state - demos/Chebyshev/
 # ChebBVP and demos/Chebyshev/Normal_Integration keep the original Delphi/
