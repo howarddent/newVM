@@ -21,7 +21,7 @@ uses
   Forms, cblas, uplot2dmain, newvmgraphs;
 
 begin
-  {$IFDEF HAVE_OPENBLAS}
+  {$IFDEF HAVE_BLAS}
   InitializeCBLAS;
   {$ENDIF}
   RequireDerivedFormResource := True;

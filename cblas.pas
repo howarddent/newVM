@@ -4,6 +4,8 @@ unit cblas;
 
 interface
 
+{$I newVMConfig.inc}
+
 uses
   ctypes,
   SysUtils, DynLibs;
@@ -11,9 +13,22 @@ uses
 const
 {$IFDEF WINDOWS}
   CBLASLib = 'openblas.dll';
-{$else}
+{$ELSE}
+  {$IF DEFINED(DARWIN) AND DEFINED(HAVE_ACCELERATE) AND NOT DEFINED(HAVE_OPENBLAS)}
+  // Apple's Accelerate framework exposes a standard, symbol-compatible
+  // CBLAS interface (same cblas_* names/signatures OpenBLAS provides,
+  // including complex alpha/beta passed by pointer) - see newvmconfigure.lpr
+  // for how HAVE_ACCELERATE gets detected and HAVE_BLAS/PUREPASCAL_BLAS
+  // derived from it. LoadLibrary below dlopen's this framework by its full
+  // binary path, same technique used for every other runtime-loaded library
+  // in this codebase (OpenBLAS itself, FFTW, MKL/IPP on Windows). OpenBLAS
+  // is preferred when both happen to be present, matching this constant's
+  // pre-Accelerate behaviour unchanged on every other platform.
+  CBLASLib = '/System/Library/Frameworks/Accelerate.framework/Accelerate';
+  {$ELSE}
   CBLASLib = 'libopenblas.'+sharedsuffix;
-{$endif}
+  {$ENDIF}
+{$ENDIF}
 
 
 {

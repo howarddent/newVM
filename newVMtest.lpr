@@ -28,7 +28,7 @@ var
   ResultsWriter: TCustomResultsWriter;
   TestResult: TTestResult;
 begin
-  {$IFDEF HAVE_OPENBLAS}
+  {$IFDEF HAVE_BLAS}
   InitializeCblas;
   {$ENDIF}
   ResultsWriter := TPlainResultsWriter.Create(nil);

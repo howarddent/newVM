@@ -550,7 +550,7 @@ const
 var
   m,n,k,I : integer;
   C : TVMObj;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   ii, jj, kk : integer;
   sum : Double;
@@ -712,7 +712,7 @@ end;
 function Kron(const A, B: TVMobj): TVMobj;
 var
   i, j, k, rowdest, coldest : integer;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   l : integer;
 begin
@@ -742,7 +742,7 @@ end;
 function Diag(const A: TVMobj): TVMobj;
 const
   s : String = 'Function Diag : ';
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 begin
@@ -762,7 +762,7 @@ end;
 function Norm(const A: TVMobj): Double;
 const
   s : String = 'Function Norm : ';
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
   sumsq : Double;
@@ -822,7 +822,7 @@ var
   i : integer;
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   for i := 0 to A.Rows-1 do
     Move(A.FData[i*A.Cols], result.FData[(A.Rows-1-i)*A.Cols], A.Cols*SizeOf(Double));
 {$ELSE}
@@ -857,7 +857,7 @@ const
 begin
   assert(A.Cols = B.Cols, s+'A and B must have the same number of columns');
   result := TVMobj.Create(A.Rows+B.Rows, A.Cols);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   Move(A.FData[0], result.FData[0], A.Rows*A.Cols*SizeOf(Double));
   Move(B.FData[0], result.FData[A.Rows*A.Cols], B.Rows*B.Cols*SizeOf(Double));
 {$ELSE}
@@ -875,7 +875,7 @@ begin
   assert(A.Rows = B.Rows, s+'A and B must have the same number of rows');
   result := TVMobj.Create(A.Rows, A.Cols+B.Cols);
   for i := 0 to A.Rows-1 do begin
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
     Move(A.FData[i*A.Cols], result.FData[i*result.Cols], A.Cols*SizeOf(Double));
     Move(B.FData[i*B.Cols], result.FData[i*result.Cols + A.Cols], B.Cols*SizeOf(Double));
 {$ELSE}
@@ -891,7 +891,7 @@ const
 begin
   assert(NewRows*NewCols = A.Rows*A.Cols, s+'NewRows*NewCols must equal A.Rows*A.Cols');
   result := TVMobj.Create(NewRows, NewCols);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   Move(A.FData[0], result.FData[0], A.Rows*A.Cols*SizeOf(Double));
 {$ELSE}
   cblas_dcopy(A.Rows*A.Cols, A.DataPtr, 1, result.DataPtr, 1);
@@ -910,7 +910,7 @@ begin
     for r := 0 to A.Rows-1 do begin
       destRow := i*A.Rows + r;
       for j := 0 to ColReps-1 do
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
         Move(A.FData[r*A.Cols], result.FData[destRow*result.Cols + j*A.Cols], A.Cols*SizeOf(Double));
 {$ELSE}
         cblas_dcopy(A.Cols, @A.FData[r*A.Cols], 1, @result.FData[destRow*result.Cols + j*A.Cols], 1);
@@ -956,14 +956,14 @@ end;
 class operator TVMobj.+(const A, B: TVMobj): TVMobj;
 const
   s : String = 'Operator + (TVMobj) : ';
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 {$ENDIF}
 begin
   assert((A.Rows=B.Rows) and (A.Cols=B.Cols), s+'matrix dimensions must match');
   result := CopyObj(B);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   for i := 0 to A.Rows*A.Cols-1 do
     result.fdata[i] := result.fdata[i] + A.fdata[i];
 {$ELSE}
@@ -974,14 +974,14 @@ end;
 class operator TVMobj.-(const A, B: TVMobj): TVMobj;
 const
   s : String = 'Operator - (TVMobj) : ';
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 {$ENDIF}
 begin
   assert((A.Rows=B.Rows) and (A.Cols=B.Cols), s+'matrix dimensions must match');
   result := CopyObj(A);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   for i := 0 to A.Rows*A.Cols-1 do
     result.fdata[i] := result.fdata[i] - B.fdata[i];
 {$ELSE}
@@ -990,13 +990,13 @@ begin
 end;
 
 class operator TVMobj.-(const A: TVMobj): TVMobj;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 {$ENDIF}
 begin
   result := CopyObj(A);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   for i := 0 to A.Rows*A.Cols-1 do
     result.fdata[i] := -result.fdata[i];
 {$ELSE}
@@ -1010,13 +1010,13 @@ begin
 end;
 
 class operator TVMobj.*(const A: TVMobj; const k: Double): TVMobj;
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
 var
   i : Integer;
 {$ENDIF}
 begin
   result := CopyObj(A);
-{$IFDEF PUREPASCAL}
+{$IFDEF PUREPASCAL_BLAS}
   for i := 0 to A.Rows*A.Cols-1 do
     result.fdata[i] := result.fdata[i] * k;
 {$ELSE}

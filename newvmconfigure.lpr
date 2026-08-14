@@ -50,7 +50,7 @@ program newvmconfigure;
 {$mode objfpc}{$H+}
 
 uses
-  SysUtils, DynLibs;
+  SysUtils, StrUtils, DynLibs;
 
 {$IFDEF WINDOWS}
 const
@@ -64,6 +64,7 @@ const
   OpenBLASCandidates: array of string = ('openblas.dll');
   FFTWDoubleCandidates: array of string = ('libfftw3-3.dll');
   FFTWSingleCandidates: array of string = ('libfftw3f-3.dll');
+  AccelerateCandidates: array of string = (); // Darwin-only framework
 {$ELSE}
   {$IFDEF DARWIN}
 const
@@ -75,6 +76,16 @@ const
   OpenBLASCandidates: array of string = ('libopenblas.dylib');
   FFTWDoubleCandidates: array of string = ('libfftw3.dylib','libfftw3.3.dylib');
   FFTWSingleCandidates: array of string = ('libfftw3f.dylib','libfftw3f.3.dylib');
+  // Apple's Accelerate framework ships on every Mac (no install needed) and
+  // exposes a standard, symbol-compatible CBLAS interface - see cblas.pas's
+  // header comment for how this gets used as a second BLAS provider
+  // alongside OpenBLAS. dlopen'ing a framework by its full binary path
+  // (rather than a bare library name) is the standard way to load one at
+  // runtime; confirmed working on this machine even though modern macOS no
+  // longer ships the actual dylib bytes on disk (they live in the dyld
+  // shared cache - LoadLibrary/dlopen still resolves this path correctly,
+  // only filesystem-level tools like `file`/`nm` see a broken symlink).
+  AccelerateCandidates: array of string = ('/System/Library/Frameworks/Accelerate.framework/Accelerate');
   {$ELSE}
 const
   PlatformDefine = 'PLATFORM_LINUX';
@@ -85,6 +96,7 @@ const
   OpenBLASCandidates: array of string = ('libopenblas.so');
   FFTWDoubleCandidates: array of string = ('libfftw3.so','libfftw3.so.3');
   FFTWSingleCandidates: array of string = ('libfftw3f.so','libfftw3f.so.3');
+  AccelerateCandidates: array of string = (); // Darwin-only framework
   {$ENDIF}
 {$ENDIF}
 
@@ -132,7 +144,8 @@ end;
 
 var
   OutFile: TextFile;
-  HaveMKL, HaveIPPCore, HaveIPPVM, HaveIPPS, HaveIPP, HaveOpenBLAS, HaveFFTWD, HaveFFTWS, HaveFFTW: Boolean;
+  HaveMKL, HaveIPPCore, HaveIPPVM, HaveIPPS, HaveIPP, HaveOpenBLAS, HaveFFTWD, HaveFFTWS, HaveFFTW,
+  HaveAccelerate, HaveBLAS: Boolean;
   FoundName: string;
 
   procedure Report(const Label_: string; Found: Boolean; const Via: string);
@@ -160,6 +173,10 @@ begin
 
   HaveOpenBLAS := ProbeLibrary(OpenBLASCandidates, FoundName);
   Report('OpenBLAS', HaveOpenBLAS, FoundName);
+
+  HaveAccelerate := ProbeLibrary(AccelerateCandidates, FoundName);
+  Report('Apple Accelerate (CBLAS via vecLib)', HaveAccelerate, FoundName);
+  HaveBLAS := HaveOpenBLAS or HaveAccelerate;
 
   HaveFFTWD := ProbeLibrary(FFTWDoubleCandidates, FoundName);
   HaveFFTWS := ProbeLibrary(FFTWSingleCandidates, FoundName);
@@ -190,10 +207,12 @@ begin
   WriteLn(OutFile, '{$DEFINE ', PlatformDefine, '}');
   WriteLn(OutFile, '{$DEFINE ', ArchDefine, '}');
   WriteLn(OutFile);
-  if HaveOpenBLAS then WriteLn(OutFile, '{$DEFINE HAVE_OPENBLAS}   // libopenblas found');
-  if HaveMKL      then WriteLn(OutFile, '{$DEFINE HAVE_MKL}        // libmkl_rt found');
-  if HaveIPP      then WriteLn(OutFile, '{$DEFINE HAVE_IPP}        // libippcore+libippvm+libipps all found');
-  if HaveFFTW     then WriteLn(OutFile, '{$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found');
+  if HaveOpenBLAS   then WriteLn(OutFile, '{$DEFINE HAVE_OPENBLAS}   // libopenblas found');
+  if HaveAccelerate then WriteLn(OutFile, '{$DEFINE HAVE_ACCELERATE} // Apple Accelerate/vecLib found (Darwin only)');
+  if HaveBLAS       then WriteLn(OutFile, '{$DEFINE HAVE_BLAS}       // derived: HAVE_OPENBLAS or HAVE_ACCELERATE');
+  if HaveMKL        then WriteLn(OutFile, '{$DEFINE HAVE_MKL}        // libmkl_rt found');
+  if HaveIPP        then WriteLn(OutFile, '{$DEFINE HAVE_IPP}        // libippcore+libippvm+libipps all found');
+  if HaveFFTW       then WriteLn(OutFile, '{$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found');
   WriteLn(OutFile);
   WriteLn(OutFile, '// Derived: set whenever any of the three libraries newVM.pas''s "core"');
   WriteLn(OutFile, '// linear algebra (MatMult/Invert/LinearSolve/Det/operators/elementwise');
@@ -210,6 +229,20 @@ begin
     WriteLn(OutFile, '{$DEFINE PUREPASCAL}')
   else
     WriteLn(OutFile, '// {$DEFINE PUREPASCAL} left undefined: all three backends found');
+  WriteLn(OutFile);
+  WriteLn(OutFile, '// Finer-grained sibling of PUREPASCAL above, for the subset of newVM.pas''s');
+  WriteLn(OutFile, '// routines (MatMult/Kron/Diag/Norm/FlipUD/MergeUD/MergeLR/Reshape/Repmat, the');
+  WriteLn(OutFile, '// +/-/unary-/scalar-* operators) whose library-backed body calls ONLY');
+  WriteLn(OutFile, '// cblas_* - no LAPACKE/ipps/vd*/vsl* - so they can run their real,');
+  WriteLn(OutFile, '// hardware-accelerated body whenever ANY CBLAS-compatible backend (OpenBLAS');
+  WriteLn(OutFile, '// or, on Darwin, Apple''s built-in Accelerate framework) is present, even on');
+  WriteLn(OutFile, '// a machine missing MKL/IPP that still forces PUREPASCAL above for the');
+  WriteLn(OutFile, '// LAPACK/IPP/VML-dependent routines. Left undefined (not set to False) when');
+  WriteLn(OutFile, '// a BLAS backend is found, matching PUREPASCAL''s own convention.');
+  if not HaveBLAS then
+    WriteLn(OutFile, '{$DEFINE PUREPASCAL_BLAS}')
+  else
+    WriteLn(OutFile, '// {$DEFINE PUREPASCAL_BLAS} left undefined: a CBLAS-compatible backend was found');
   CloseFile(OutFile);
 
   WriteLn('Done.');
@@ -217,4 +250,9 @@ begin
     WriteLn('PUREPASCAL will be active for newVM.pas''s core linear algebra (a backend is missing).')
   else
     WriteLn('All three linear-algebra backends found - newVM.pas will build against them as usual.');
+  if HaveBLAS then
+    WriteLn('PUREPASCAL_BLAS is inactive - newVM.pas''s CBLAS-only routines will use ',
+      IfThen(HaveOpenBLAS, 'OpenBLAS', 'Apple Accelerate'), '.')
+  else
+    WriteLn('PUREPASCAL_BLAS will be active - no CBLAS-compatible backend found.');
 end.

@@ -21,7 +21,7 @@ uses
   Forms, cblas, ufuncmain;
 
 begin
-  {$IFDEF HAVE_OPENBLAS}
+  {$IFDEF HAVE_BLAS}
   InitializeCBLAS;
   {$ENDIF}
   RequireDerivedFormResource := True;

@@ -21,7 +21,7 @@ uses
   Forms, cblas, ufuncplotmain;
 
 begin
-  {$IFDEF HAVE_OPENBLAS}
+  {$IFDEF HAVE_BLAS}
   InitializeCBLAS;
   {$ENDIF}
   RequireDerivedFormResource := True;

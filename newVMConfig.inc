@@ -4,11 +4,13 @@
 // machine you are about to build newVM* on - this is a snapshot of THIS
 // machine's installed libraries, not a portability guarantee for any
 // other machine.)
-// Generated: 14-8-26 17:57:03
+// Generated: 14-8-26 18:47:12
 
 {$DEFINE PLATFORM_DARWIN}
 {$DEFINE PLATFORM_AARCH64}
 
+{$DEFINE HAVE_ACCELERATE} // Apple Accelerate/vecLib found (Darwin only)
+{$DEFINE HAVE_BLAS}       // derived: HAVE_OPENBLAS or HAVE_ACCELERATE
 {$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found
 
 // Derived: set whenever any of the three libraries newVM.pas's "core"
@@ -23,3 +25,14 @@
 // PUREPASCAL-guarded bodies this drives - newVMSingle.pas/newVMComplex.pas/
 // newVMComplexSingle.pas still hard-require MKL/IPP/OpenBLAS unconditionally.
 {$DEFINE PUREPASCAL}
+
+// Finer-grained sibling of PUREPASCAL above, for the subset of newVM.pas's
+// routines (MatMult/Kron/Diag/Norm/FlipUD/MergeUD/MergeLR/Reshape/Repmat, the
+// +/-/unary-/scalar-* operators) whose library-backed body calls ONLY
+// cblas_* - no LAPACKE/ipps/vd*/vsl* - so they can run their real,
+// hardware-accelerated body whenever ANY CBLAS-compatible backend (OpenBLAS
+// or, on Darwin, Apple's built-in Accelerate framework) is present, even on
+// a machine missing MKL/IPP that still forces PUREPASCAL above for the
+// LAPACK/IPP/VML-dependent routines. Left undefined (not set to False) when
+// a BLAS backend is found, matching PUREPASCAL's own convention.
+// {$DEFINE PUREPASCAL_BLAS} left undefined: a CBLAS-compatible backend was found

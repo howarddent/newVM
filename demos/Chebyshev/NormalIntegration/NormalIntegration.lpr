@@ -20,7 +20,7 @@ uses
   Forms, cblas, uNormMain, newvmgraphs;
 
 begin
-  {$IFDEF HAVE_OPENBLAS}
+  {$IFDEF HAVE_BLAS}
   InitializeCBLAS;
   {$ENDIF}
   RequireDerivedFormResource := True;
