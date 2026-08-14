@@ -413,6 +413,31 @@ type
   procedure cblas_xerbla(p:longint; rout:Pchar; form:Pchar);cdecl;
 *)
 
+{$IFDEF HAVE_ACCELERATE}
+// Apple Accelerate exposes classic Fortran LAPACK only - column-major,
+// pointer arguments, trailing underscore - not the row-major LAPACKE_*
+// C wrapper newVM.pas's LAPACKE-backed bodies call (confirmed absent
+// anywhere in the macOS SDK headers). newVM.pas's LinearSolve/Invert/Det
+// use these three directly under a nested HAVE_ACCELERATE guard inside
+// their existing PUREPASCAL branch, with the row-major/column-major
+// adaptation done at the call site (see newVM.pas) - these declarations
+// are deliberately a literal, unadapted mirror of the Fortran
+// signatures, matching clapack.h/lapack.h in the SDK. Loaded via a
+// dedicated LoadLibrary call independent of whichever library CBLASLib
+// above resolved to (see LoadAccelerateLAPACKAddresses below), so they
+// never silently depend on OpenBLAS also having been chosen for the
+// plain CBLAS symbols.
+type
+  Taccel_dgetrf_ = procedure(m, n: PInteger; a: PDouble; lda: PInteger; ipiv: PInteger; info: PInteger); cdecl;
+  Taccel_dgetri_ = procedure(n: PInteger; a: PDouble; lda: PInteger; ipiv: PInteger; work: PDouble; lwork: PInteger; info: PInteger); cdecl;
+  Taccel_dgetrs_ = procedure(trans: PChar; n, nrhs: PInteger; a: PDouble; lda: PInteger; ipiv: PInteger; b: PDouble; ldb: PInteger; info: PInteger); cdecl;
+
+var
+  accel_dgetrf_: Taccel_dgetrf_;
+  accel_dgetri_: Taccel_dgetri_;
+  accel_dgetrs_: Taccel_dgetrs_;
+{$ENDIF}
+
 function  InitializeCBLASANSI(Dependencies: array of string; const LibraryName: UnicodeString = ''): Integer; //needed as TLibraryLoadFunction
 function  TryInitializeCBLAS(Dependencies:  array of string; const LibraryName: Unicodestring = ''): Integer;
 function  InitializeCBLAS: Integer;
@@ -583,6 +608,33 @@ var
 resourcestring
   SErrLoadFailed     = 'Can not load CBLAS client library "%s". Check your installation.';
   SErrAlreadyLoaded  = 'CBLAS interface already initialized from library %s.';
+
+{$IFDEF HAVE_ACCELERATE}
+const
+  AccelerateLAPACKPath = '/System/Library/Frameworks/Accelerate.framework/Accelerate';
+var
+  AccelerateLAPACKHandle: TLibHandle;
+
+procedure LoadAccelerateLAPACKAddresses;
+begin
+  if AccelerateLAPACKHandle <> NilHandle then Exit; // already loaded
+  AccelerateLAPACKHandle := LoadLibrary(AccelerateLAPACKPath);
+  if AccelerateLAPACKHandle = NilHandle then Exit;
+  pointer(accel_dgetrf_) := GetProcedureAddress(AccelerateLAPACKHandle, 'dgetrf_');
+  pointer(accel_dgetri_) := GetProcedureAddress(AccelerateLAPACKHandle, 'dgetri_');
+  pointer(accel_dgetrs_) := GetProcedureAddress(AccelerateLAPACKHandle, 'dgetrs_');
+end;
+
+procedure UnloadAccelerateLAPACKAddresses;
+begin
+  accel_dgetrf_ := Nil;
+  accel_dgetri_ := Nil;
+  accel_dgetrs_ := Nil;
+  if AccelerateLAPACKHandle <> NilHandle then
+    UnloadLibrary(AccelerateLAPACKHandle);
+  AccelerateLAPACKHandle := NilHandle;
+end;
+{$ENDIF}
 
 procedure LoadAddresses(LibHandle: TLibHandle);
 begin
@@ -930,6 +982,9 @@ begin
     end;
     CBLASLoadedLibrary := N;
     LoadAddresses(CBLASLibraryHandle);
+    {$IFDEF HAVE_ACCELERATE}
+    LoadAccelerateLAPACKAddresses;
+    {$ENDIF}
   end;
 end;
 
@@ -970,6 +1025,9 @@ begin
     result   := 0;
   end;
   UnloadAddresses;
+  {$IFDEF HAVE_ACCELERATE}
+  UnloadAccelerateLAPACKAddresses;
+  {$ENDIF}
 end;
 
 procedure ReleaseCBLAS;

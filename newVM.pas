@@ -603,6 +603,56 @@ const
   form (not the original matrix) and the solution is in B. Returns info
   from the underlying LAPACKE call. }
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+{ Accelerate-backed: raw Fortran dgetrf_ (factorise) / dgetrs_ (solve, both
+  fresh and cached-factorisation reuse) - no LAPACKE row-major wrapper
+  exists (see cblas.pas). Two adaptations, both verified against known
+  values (including a multi-RHS case) before wiring in:
+    1. dgetrf_ factorises A's row-major buffer AS-IS, reinterpreted
+       column-major - i.e. it factorises A^T, not A. A.fIpiv/A's buffer
+       end up holding the LU of A^T, opaque to any caller outside this
+       routine (LinearSolve is the only reader of either field).
+    2. Solving A*x=b given the LU of A^T uses dgetrs_'s trans='T' mode
+       (solves (A^T)^T*x = A*x = b). dgetrs_ needs B/X in column-major
+       layout, so B is transposed into a scratch buffer before the call
+       and the solution transposed back into B afterward - cheap even
+       when unnecessary (NRHS=1, the overwhelmingly common case, where
+       transposing a column vector is a no-op copy); NRHS>1 needs the
+       copy for correctness, not just style, since a row-major NxNRHS
+       buffer is genuinely not its own column-major reinterpretation
+       once NRHS<>1. Mirrors LAPACKE_dgesv's own contract: if
+       factorisation fails, B is left untouched and the failing info is
+       returned without attempting to solve. }
+var
+  n, nrhs : integer;
+  trans : char;
+  bcol : array of double;
+  r, c : integer;
+begin
+  assert(A.Cols = A.Rows,s+'Matrix A must be square');
+  assert(A.Rows = B.Rows, s+'Matrix A and B have incompatible dimensions');
+  n := A.rows;
+  nrhs := B.cols;
+  result := 0;
+  if not A.LU then begin
+    setlength(A.fIpiv,A.rows);
+    accel_dgetrf_(@n, @n, A.DataPtr, @n, @A.fIpiv[0], @result);
+    if result = 0 then A.fLUFactored := True;
+  end;
+  if result = 0 then begin
+    setlength(bcol, n*nrhs);
+    for r := 0 to n-1 do
+      for c := 0 to nrhs-1 do
+        bcol[c*n+r] := B.FData[r*nrhs+c];
+    trans := 'T';
+    accel_dgetrs_(@trans, @n, @nrhs, A.DataPtr, @n, @A.fIpiv[0], @bcol[0], @n, @result);
+    if result = 0 then
+      for r := 0 to n-1 do
+        for c := 0 to nrhs-1 do
+          B.FData[r*nrhs+c] := bcol[c*n+r];
+  end;
+end;
+  {$ELSE}
 { PUREPASCAL: PurePascalLU/PurePascalLUSolve (see above) fill the same two
   roles as LAPACKE_dgesv (factorise+solve) and LAPACKE_dgetrs (solve only,
   reusing a cached factorisation) respectively - same caching contract via
@@ -620,6 +670,7 @@ begin
   PurePascalLUSolve(A.DataPtr, A.rows, A.fIpiv, B.DataPtr, B.cols);
   result := 0;
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   //Check dimensions of matrices are compatible. A must be square and A.cols =
@@ -657,6 +708,36 @@ var
   buffer, like EigDecompose, since both LAPACKE calls overwrite their
   input matrix in place - A itself is left untouched. }
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+{ Accelerate-backed: raw Fortran dgetrf_/dgetri_ (see cblas.pas), since no
+  LAPACKE row-major wrapper is available. Matrix inversion is
+  transpose-symmetric ((A^T)^-1 = (A^-1)^T), so reinterpreting A's
+  row-major buffer as column-major (=A^T) and running the column-major
+  factor+invert directly on it - no transposing needed at all - leaves
+  the buffer holding, when read back as row-major, exactly inv(A).
+  Confirmed against known values before wiring this in. dgetri_ needs an
+  explicit work buffer (LAPACKE handled this internally) - queried via
+  the standard LWORK=-1 workspace-size probe, then allocated. }
+var
+  n, lwork : integer;
+  work : array of double;
+  workquery : array[0..0] of double;
+begin
+  assert(A.Cols = A.Rows, s+'Matrix A must be square');
+  result := CopyObj(A);
+  setlength(ipiv, A.rows);
+  n := A.rows;
+  accel_dgetrf_(@n, @n, result.DataPtr, @n, @ipiv[0], @info);
+  assert(info = 0, s+'dgetrf_ failed (singular matrix?), info='+IntToStr(info));
+  lwork := -1;
+  accel_dgetri_(@n, result.DataPtr, @n, @ipiv[0], @workquery[0], @lwork, @info);
+  lwork := Trunc(workquery[0]);
+  if lwork < 1 then lwork := 1;
+  setlength(work, lwork);
+  accel_dgetri_(@n, result.DataPtr, @n, @ipiv[0], @work[0], @lwork, @info);
+  assert(info = 0, s+'dgetri_ failed (singular matrix?), info='+IntToStr(info));
+end;
+  {$ELSE}
 { PUREPASCAL: PurePascalLU factorises a CopyObj scratch buffer (same
   non-mutating convention), then the inverse is obtained by solving
   A*X=I via PurePascalLUSolve against an identity right-hand side - a
@@ -676,6 +757,7 @@ begin
   PurePascalLUSolve(result.DataPtr, A.rows, ipiv, identity.DataPtr, A.rows);
   result := identity;
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   assert(A.Cols = A.Rows, s+'Matrix A must be square');
@@ -799,12 +881,31 @@ var
   ipiv : array of integer;
   info, i, sign : integer;
   scratch : TVMobj;
+{$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+  {$ENDIF}
+{$ENDIF}
 begin
   assert(A.Cols = A.Rows, s+'Matrix A must be square');
   scratch := CopyObj(A);
   setlength(ipiv, A.rows);
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+  { Accelerate has no LAPACKE_dgetrf (row-major C wrapper), only the
+    classic Fortran dgetrf_ (column-major) - see cblas.pas. Determinant
+    is invariant under transposition (det(A)=det(A^T)), and reinterpreting
+    A's row-major buffer as column-major represents exactly A^T, so
+    calling dgetrf_ directly on it - no transposing needed - factors A^T,
+    and the existing sign/diagonal-product logic below already computes
+    det(A^T) = det(A) unchanged. Confirmed against known values before
+    wiring this in. }
+  n := A.rows;
+  accel_dgetrf_(@n, @n, scratch.DataPtr, @n, @ipiv[0], @info);
+  {$ELSE}
   info := PurePascalLU(scratch.DataPtr, A.rows, ipiv);
+  {$ENDIF}
 {$ELSE}
   info := lapacke_dgetrf(CBlasRowMajor, A.rows, A.cols, scratch.DataPtr, A.cols, @ipiv[0]);
   assert(info >= 0, s+'LAPACKE_dgetrf reported an illegal argument, info='+IntToStr(info));
