@@ -71,5 +71,13 @@ Win64/
 *.lps
 Graphs/packagefiles.xml
 
+# macOS Finder metadata, and dSYM debug-symbol bundles fpc/ld leave next to
+# a Darwin binary (e.g. demos/FunctionPlot/FunctionPlot.dSYM/) - the latter
+# has a dot in its name, so it isn't caught by the demos/*/[A-Za-z]* rule
+# above (the "!demos/*/*.*" negation re-includes anything with an
+# extension-shaped name); this comes after that negation so it wins.
+.DS_Store
+*.dSYM/
+
 # Claude Code local settings
 .claude/settings.local.json

@@ -19,6 +19,22 @@
           <Target>
             <Filename Value="ChebBVP"/>
           </Target>
+          <SearchPaths>
+            <IncludeFiles Value="$(ProjOutDir)"/>
+            <OtherUnitFiles Value="../../..;../../../Graphs;../NormalIntegration"/>
+            <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
+          </SearchPaths>
+          <Parsing>
+            <SyntaxOptions>
+              <IncludeAssertionCode Value="True"/>
+            </SyntaxOptions>
+          </Parsing>
+          <Linking>
+            <Debugging>
+              <DebugInfoType Value="dsDwarf3"/>
+              <UseHeaptrc Value="True"/>
+            </Debugging>
+          </Linking>
           <Other>
             <CustomOptions Value="-k-ld_classic"/>
           </Other>
