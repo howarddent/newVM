@@ -14,7 +14,7 @@ program Plot3D;
 {$I ../../newVMConfig.inc}
 
 uses
-  {$IFDEF UNIX}
+  {$IF defined(UNIX) and not defined(DARWIN)}
   cthreads,
   {$ENDIF}
   Interfaces, // this includes the LCL widgetset

@@ -4,14 +4,11 @@
 // machine you are about to build newVM* on - this is a snapshot of THIS
 // machine's installed libraries, not a portability guarantee for any
 // other machine.)
-// Generated: 14/08/2026 14:06:15
+// Generated: 14-8-26 17:57:03
 
-{$DEFINE PLATFORM_WINDOWS}
-{$DEFINE PLATFORM_X86_64}
+{$DEFINE PLATFORM_DARWIN}
+{$DEFINE PLATFORM_AARCH64}
 
-{$DEFINE HAVE_OPENBLAS}   // libopenblas found
-{$DEFINE HAVE_MKL}        // libmkl_rt found
-{$DEFINE HAVE_IPP}        // libippcore+libippvm+libipps all found
 {$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found
 
 // Derived: set whenever any of the three libraries newVM.pas's "core"
@@ -25,4 +22,4 @@
 // Presently only newVM.pas (double-precision real) actually implements the
 // PUREPASCAL-guarded bodies this drives - newVMSingle.pas/newVMComplex.pas/
 // newVMComplexSingle.pas still hard-require MKL/IPP/OpenBLAS unconditionally.
-// {$DEFINE PUREPASCAL} left undefined: all three backends found
+{$DEFINE PUREPASCAL}
