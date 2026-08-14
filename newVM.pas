@@ -1156,12 +1156,22 @@ end;
 
 function Sin(const A: TVMobj): TVMobj;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  n := A.Rows*A.Cols;
+  accel_vvsin(result.DataPtr, A.DataPtr, @n);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := System.Sin(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
@@ -1171,12 +1181,22 @@ end;
 
 function Cos(const A: TVMobj): TVMobj;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  n := A.Rows*A.Cols;
+  accel_vvcos(result.DataPtr, A.DataPtr, @n);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := System.Cos(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
@@ -1186,12 +1206,22 @@ end;
 
 function Tan(const A: TVMobj): TVMobj;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  n := A.Rows*A.Cols;
+  accel_vvtan(result.DataPtr, A.DataPtr, @n);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := Math.Tan(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
@@ -1201,12 +1231,22 @@ end;
 
 function Sinh(const A: TVMobj): TVMobj;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  n := A.Rows*A.Cols;
+  accel_vvsinh(result.DataPtr, A.DataPtr, @n);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := Math.Sinh(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
@@ -1216,12 +1256,19 @@ end;
 
 function Sqr(const A: TVMobj): TVMobj;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  accel_vDSP_vsqD(A.DataPtr, 1, result.DataPtr, 1, A.Rows*A.Cols);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := System.Sqr(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
@@ -1231,12 +1278,22 @@ end;
 
 function Sqrt(const A: TVMobj): TVMobj;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  n := A.Rows*A.Cols;
+  accel_vvsqrt(result.DataPtr, A.DataPtr, @n);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := System.Sqrt(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
@@ -1246,12 +1303,22 @@ end;
 
 function Exp(const A: TVMobj): TVMobj;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  n := A.Rows*A.Cols;
+  accel_vvexp(result.DataPtr, A.DataPtr, @n);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := System.Exp(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
@@ -1261,12 +1328,22 @@ end;
 
 function Ln(const A: TVMobj): TVMobj;
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+var
+  n : integer;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  n := A.Rows*A.Cols;
+  accel_vvlog(result.DataPtr, A.DataPtr, @n);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
   for i := 0 to A.Rows*A.Cols-1 do result.fdata[i] := System.Ln(A.fdata[i]);
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   result := TVMobj.Create(A.Rows, A.Cols);
@@ -1278,6 +1355,13 @@ function mulObj(const A, B: TVMObj): TVMObj;
 const
   s: string ='Routine mulObj : ';
 {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_ACCELERATE}
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := TVMobj.Create(A.Rows, A.Cols);
+  accel_vDSP_vmulD(A.DataPtr, 1, B.DataPtr, 1, result.DataPtr, 1, A.Rows*A.Cols);
+end;
+  {$ELSE}
 var
   i : Integer;
 begin
@@ -1286,6 +1370,7 @@ begin
   for i := 0 to A.rows*A.cols-1 do
     result.fdata[i] := result.fdata[i] * B.fdata[i];
 end;
+  {$ENDIF}
 {$ELSE}
 begin
   assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');

@@ -424,7 +424,7 @@ type
 // are deliberately a literal, unadapted mirror of the Fortran
 // signatures, matching clapack.h/lapack.h in the SDK. Loaded via a
 // dedicated LoadLibrary call independent of whichever library CBLASLib
-// above resolved to (see LoadAccelerateLAPACKAddresses below), so they
+// above resolved to (see LoadAccelerateAddresses below), so they
 // never silently depend on OpenBLAS also having been chosen for the
 // plain CBLAS symbols.
 type
@@ -436,6 +436,39 @@ var
   accel_dgetrf_: Taccel_dgetrf_;
   accel_dgetri_: Taccel_dgetri_;
   accel_dgetrs_: Taccel_dgetrs_;
+
+// vForce (elementwise transcendentals - newVM.pas's Sin/Cos/Tan/Sinh/
+// Sqrt/Exp/Ln, backed by MKL VML's vd* family in the library-backed
+// branch) and vDSP (elementwise vector arithmetic - Sqr and mulObj,
+// backed by MKL VML's vdSqr/vdMul) are two more sub-frameworks bundled
+// into the same Accelerate umbrella binary already loaded above for
+// CBLAS/LAPACK - confirmed resolving from that same path, not a
+// separate one, before wiring this in. Two distinct calling conventions
+// to match exactly:
+//   - vForce (vv*): output pointer FIRST, then input pointer, then a
+//     POINTER to the element count (int, not vDSP_Length) - the reverse
+//     argument order from MKL's vd*(n, x, y), and n passed by reference
+//     rather than by value.
+//   - vDSP (vDSP_v*D): every argument BY VALUE, including the strides
+//     (vDSP_Stride, a signed 8-byte integer on this LP64 target - see
+//     vDSP.h) and the element count (vDSP_Length, unsigned 8-byte) -
+//     stride 1 throughout, since every newVM.pas buffer this touches is
+//     contiguous.
+type
+  Taccel_vv1 = procedure(y: PDouble; x: PDouble; n: PInteger); cdecl; // vvsin/vvcos/vvtan/vvsinh/vvsqrt/vvexp/vvlog shape
+  Taccel_vDSP_vsqD = procedure(a: PDouble; ia: Int64; c: PDouble; ic: Int64; n: QWord); cdecl;
+  Taccel_vDSP_vmulD = procedure(a: PDouble; ia: Int64; b: PDouble; ib: Int64; c: PDouble; ic: Int64; n: QWord); cdecl;
+
+var
+  accel_vvsin: Taccel_vv1;
+  accel_vvcos: Taccel_vv1;
+  accel_vvtan: Taccel_vv1;
+  accel_vvsinh: Taccel_vv1;
+  accel_vvsqrt: Taccel_vv1;
+  accel_vvexp: Taccel_vv1;
+  accel_vvlog: Taccel_vv1;  // vForce's natural-log function - matches newVM.pas's Ln, not a base-10 log
+  accel_vDSP_vsqD: Taccel_vDSP_vsqD;
+  accel_vDSP_vmulD: Taccel_vDSP_vmulD;
 {$ENDIF}
 
 function  InitializeCBLASANSI(Dependencies: array of string; const LibraryName: UnicodeString = ''): Integer; //needed as TLibraryLoadFunction
@@ -611,28 +644,46 @@ resourcestring
 
 {$IFDEF HAVE_ACCELERATE}
 const
-  AccelerateLAPACKPath = '/System/Library/Frameworks/Accelerate.framework/Accelerate';
+  AcceleratePath = '/System/Library/Frameworks/Accelerate.framework/Accelerate';
 var
-  AccelerateLAPACKHandle: TLibHandle;
+  AccelerateHandle: TLibHandle;
 
-procedure LoadAccelerateLAPACKAddresses;
+procedure LoadAccelerateAddresses;
 begin
-  if AccelerateLAPACKHandle <> NilHandle then Exit; // already loaded
-  AccelerateLAPACKHandle := LoadLibrary(AccelerateLAPACKPath);
-  if AccelerateLAPACKHandle = NilHandle then Exit;
-  pointer(accel_dgetrf_) := GetProcedureAddress(AccelerateLAPACKHandle, 'dgetrf_');
-  pointer(accel_dgetri_) := GetProcedureAddress(AccelerateLAPACKHandle, 'dgetri_');
-  pointer(accel_dgetrs_) := GetProcedureAddress(AccelerateLAPACKHandle, 'dgetrs_');
+  if AccelerateHandle <> NilHandle then Exit; // already loaded
+  AccelerateHandle := LoadLibrary(AcceleratePath);
+  if AccelerateHandle = NilHandle then Exit;
+  pointer(accel_dgetrf_) := GetProcedureAddress(AccelerateHandle, 'dgetrf_');
+  pointer(accel_dgetri_) := GetProcedureAddress(AccelerateHandle, 'dgetri_');
+  pointer(accel_dgetrs_) := GetProcedureAddress(AccelerateHandle, 'dgetrs_');
+  pointer(accel_vvsin)  := GetProcedureAddress(AccelerateHandle, 'vvsin');
+  pointer(accel_vvcos)  := GetProcedureAddress(AccelerateHandle, 'vvcos');
+  pointer(accel_vvtan)  := GetProcedureAddress(AccelerateHandle, 'vvtan');
+  pointer(accel_vvsinh) := GetProcedureAddress(AccelerateHandle, 'vvsinh');
+  pointer(accel_vvsqrt) := GetProcedureAddress(AccelerateHandle, 'vvsqrt');
+  pointer(accel_vvexp)  := GetProcedureAddress(AccelerateHandle, 'vvexp');
+  pointer(accel_vvlog)  := GetProcedureAddress(AccelerateHandle, 'vvlog');
+  pointer(accel_vDSP_vsqD)  := GetProcedureAddress(AccelerateHandle, 'vDSP_vsqD');
+  pointer(accel_vDSP_vmulD) := GetProcedureAddress(AccelerateHandle, 'vDSP_vmulD');
 end;
 
-procedure UnloadAccelerateLAPACKAddresses;
+procedure UnloadAccelerateAddresses;
 begin
   accel_dgetrf_ := Nil;
   accel_dgetri_ := Nil;
   accel_dgetrs_ := Nil;
-  if AccelerateLAPACKHandle <> NilHandle then
-    UnloadLibrary(AccelerateLAPACKHandle);
-  AccelerateLAPACKHandle := NilHandle;
+  accel_vvsin  := Nil;
+  accel_vvcos  := Nil;
+  accel_vvtan  := Nil;
+  accel_vvsinh := Nil;
+  accel_vvsqrt := Nil;
+  accel_vvexp  := Nil;
+  accel_vvlog  := Nil;
+  accel_vDSP_vsqD  := Nil;
+  accel_vDSP_vmulD := Nil;
+  if AccelerateHandle <> NilHandle then
+    UnloadLibrary(AccelerateHandle);
+  AccelerateHandle := NilHandle;
 end;
 {$ENDIF}
 
@@ -983,7 +1034,7 @@ begin
     CBLASLoadedLibrary := N;
     LoadAddresses(CBLASLibraryHandle);
     {$IFDEF HAVE_ACCELERATE}
-    LoadAccelerateLAPACKAddresses;
+    LoadAccelerateAddresses;
     {$ENDIF}
   end;
 end;
@@ -1026,7 +1077,7 @@ begin
   end;
   UnloadAddresses;
   {$IFDEF HAVE_ACCELERATE}
-  UnloadAccelerateLAPACKAddresses;
+  UnloadAccelerateAddresses;
   {$ENDIF}
 end;
 
