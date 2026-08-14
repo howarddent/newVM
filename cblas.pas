@@ -547,6 +547,23 @@ type
 var
   accel_zgetrf_: Taccel_zgetrf_;
   accel_zgetri_: Taccel_zgetri_;
+
+// Single-precision complex ("c") LAPACK counterpart, for
+// newVMComplexSingle.pas's InvertC/DetC. Same story as zgetrf_/zgetri_/
+// zgetrs_ above, re-verified independently rather than assumed: cgetrf_/
+// cgetri_ confirmed safe (including a zero-imaginary-part diagonal entry,
+// via the same non-Hermitian test matrix used for the double case), and
+// cgetrs_ confirmed to crash with the exact same zero-imaginary-part-pivot
+// trigger - so cgetrs_ is deliberately NOT bound here either, and
+// LinearSolveC stays on PurePascalLUC/PurePascalLUSolveC unconditionally,
+// same as LinearSolveZ.
+type
+  Taccel_cgetrf_ = procedure(m, n: PInteger; a: pointer; lda: PInteger; ipiv: PInteger; info: PInteger); cdecl;
+  Taccel_cgetri_ = procedure(n: PInteger; a: pointer; lda: PInteger; ipiv: PInteger; work: pointer; lwork: PInteger; info: PInteger); cdecl;
+
+var
+  accel_cgetrf_: Taccel_cgetrf_;
+  accel_cgetri_: Taccel_cgetri_;
 {$ENDIF}
 
 function  InitializeCBLASANSI(Dependencies: array of string; const LibraryName: UnicodeString = ''): Integer; //needed as TLibraryLoadFunction
@@ -765,6 +782,8 @@ begin
   pointer(accel_vDSP_vsdiv) := GetProcedureAddress(AccelerateHandle, 'vDSP_vsdiv');
   pointer(accel_zgetrf_) := GetProcedureAddress(AccelerateHandle, 'zgetrf_');
   pointer(accel_zgetri_) := GetProcedureAddress(AccelerateHandle, 'zgetri_');
+  pointer(accel_cgetrf_) := GetProcedureAddress(AccelerateHandle, 'cgetrf_');
+  pointer(accel_cgetri_) := GetProcedureAddress(AccelerateHandle, 'cgetri_');
 end;
 
 procedure UnloadAccelerateAddresses;
@@ -802,6 +821,8 @@ begin
   accel_vDSP_vsdiv := Nil;
   accel_zgetrf_ := Nil;
   accel_zgetri_ := Nil;
+  accel_cgetrf_ := Nil;
+  accel_cgetri_ := Nil;
   accel_vDSP_vsdivD := Nil;
   if AccelerateHandle <> NilHandle then
     UnloadLibrary(AccelerateHandle);
