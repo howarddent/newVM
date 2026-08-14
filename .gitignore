@@ -9,6 +9,10 @@ newVMtest
 newVMtest.exe
 newvmconfigure
 newvmconfigure.exe
+newVMbench
+newVMbench.exe
+newVMbench_purepascal
+newVMbench_purepascal.exe
 
 # Third-party runtime DLLs that are sometimes copied next to the exe for
 # local testing (see CLAUDE.md's Windows build notes) - not project sources
