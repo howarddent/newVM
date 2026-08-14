@@ -4,20 +4,21 @@ program newVMbench;
 
      Timed performance comparison of the three most demanding operations -
      MatMult, LinearSolve, Invert - across N = 10, 100, 1000, for random
-     matrices, across three of the four TVMobj* types: double-precision
-     real (newVM.pas), single-precision real (newVMSingle.pas), and
-     double-precision complex (newVMComplex.pas). Single-precision complex
-     (newVMComplexSingle.pas) isn't included - add a fourth RunBenchmarks*
-     section following the same pattern if wanted.
+     matrices, across all four TVMobj* types: double-precision real
+     (newVM.pas), single-precision real (newVMSingle.pas), double-precision
+     complex (newVMComplex.pas), and single-precision complex
+     (newVMComplexSingle.pas).
 
      One asymmetry worth knowing before reading the complex results: unlike
-     every other LinearSolve*, LinearSolveZ has NO Accelerate branch at all
-     - Apple's zgetrs_ crashes with an access violation whenever a factored
-     pivot has an exactly-zero imaginary part (see cblas.pas's comment next
-     to accel_zgetrf_/accel_zgetri_, and newVMComplex.pas's LinearSolveZ).
-     So LinearSolveZ always runs PurePascalLUZ/PurePascalLUSolveZ, in BOTH
-     builds - its two timings should come out essentially identical, and
-     that's expected, not a bug in this benchmark.
+     every other LinearSolve*, LinearSolveZ and LinearSolveC have NO
+     Accelerate branch at all - Apple's zgetrs_/cgetrs_ crash with an
+     access violation whenever a factored pivot has an exactly-zero
+     imaginary part (see cblas.pas's comments next to accel_zgetrf_/
+     accel_zgetri_ and accel_cgetrf_/accel_cgetri_, and newVMComplex.pas's/
+     newVMComplexSingle.pas's LinearSolveZ/LinearSolveC). So both always run
+     their PurePascalLU?/PurePascalLU?Solve path, in BOTH builds - their two
+     timings should come out essentially identical, and that's expected,
+     not a bug in this benchmark.
 
      PUREPASCAL vs library-backed isn't a runtime switch in this codebase -
      it's decided at compile time by newVMConfig.inc (see newVM.pas's own
@@ -54,7 +55,8 @@ program newVMbench;
 {$I newVMConfig.inc}
 
 uses
-  SysUtils, cblas, hirestimer, OneAPI, newVM, newVMSingle, newVMComplex;
+  SysUtils, cblas, hirestimer, OneAPI, newVM, newVMSingle, newVMComplex,
+  newVMComplexSingle;
 
 const
   Ns: array[0..2] of Integer = (10, 100, 1000);
@@ -111,6 +113,20 @@ begin
   result := Sqrt(sumsq);
 end;
 
+{ Single-precision complex analogue of MatrixResidualNormZ above - same
+  rationale (TVMobjC has no public DataPtr either, same Element[r,c] walk). }
+function MatrixResidualNormC(const M: TVMobjC): Single;
+var
+  i, j : Integer;
+  sumsq : Single;
+begin
+  sumsq := 0;
+  for i := 0 to M.Rows-1 do
+    for j := 0 to M.Cols-1 do
+      sumsq := sumsq + M[i,j].re*M[i,j].re + M[i,j].im*M[i,j].im;
+  result := Sqrt(sumsq);
+end;
+
 procedure PrintBackend;
 begin
   // MatMult/LinearSolve/Invert's choice of body is driven by the SAME
@@ -134,7 +150,7 @@ begin
   {$ELSE}
   WriteLn('library-backed (LAPACKE_?getrf/?getri/?gesv/?getrs)');
   {$ENDIF}
-  Write('Invert (complex) backend: ');
+  Write('Invert (complex double) backend: ');
   {$IFDEF PUREPASCAL}
     {$IFDEF HAVE_ACCELERATE}
   WriteLn('library-backed (Accelerate zgetrf_/zgetri_)');
@@ -144,8 +160,21 @@ begin
   {$ELSE}
   WriteLn('library-backed (LAPACKE_zgetrf/zgetri)');
   {$ENDIF}
-  WriteLn('LinearSolve (complex) backend: PUREPASCAL always ',
+  WriteLn('LinearSolve (complex double) backend: PUREPASCAL always ',
     '(Accelerate zgetrs_ has a known crash bug - see cblas.pas) - ',
+    'identical in both builds, not a bug in this benchmark');
+  Write('Invert (complex single) backend: ');
+  {$IFDEF PUREPASCAL}
+    {$IFDEF HAVE_ACCELERATE}
+  WriteLn('library-backed (Accelerate cgetrf_/cgetri_)');
+    {$ELSE}
+  WriteLn('PUREPASCAL (PurePascalLUC/PurePascalLUSolveC)');
+    {$ENDIF}
+  {$ELSE}
+  WriteLn('library-backed (LAPACKE_cgetrf/cgetri)');
+  {$ENDIF}
+  WriteLn('LinearSolve (complex single) backend: PUREPASCAL always ',
+    '(Accelerate cgetrs_ has the same known crash bug - see cblas.pas) - ',
     'identical in both builds, not a bug in this benchmark');
   WriteLn;
 end;
@@ -325,14 +354,73 @@ begin
   WriteLn;
 end;
 
+procedure RunBenchmarksComplexSingle;
+var
+  i, N : Integer;
+  A, B, C, Asolve, X, Ainv, Resid, IdentN : TVMobjC;
+  t0, t1 : Int64;
+  msMatMult, msSolve, msInvert : Double;
+  info : Integer;
+  solveResidual, invertResidual : Single;
+begin
+  WriteLn('--- Single precision complex (newVMComplexSingle.pas) ---');
+  WriteLn('     N   MatMultC(ms)  LinearSolveC(ms)  InvertC(ms)  ',
+          'SolveResidual   InvertResidual');
+  for i := 0 to High(Ns) do begin
+    N := Ns[i];
+    Write('  N=', N, '...'); Flush(Output);
+
+    A := TVMobjC.Create(N, N);
+    A.fillRandom;
+    B := TVMobjC.Create(N, N);
+    B.fillRandom;
+
+    // --- MatMultC ---
+    t0 := HighResTimer.MicroSeconds;
+    C := MatMultC(A, B);
+    t1 := HighResTimer.MicroSeconds;
+    msMatMult := (t1 - t0) / 1000.0;
+
+    // --- LinearSolveC --- (always PurePascalLUC - see this program's own
+    // header comment and PrintBackend above)
+    Asolve := CopyObjC(A);
+    X := TVMobjC.Create(N, 1);
+    X.fillRandom;
+    Resid := CopyObjC(X);
+    t0 := HighResTimer.MicroSeconds;
+    info := LinearSolveC(Asolve, X);
+    t1 := HighResTimer.MicroSeconds;
+    msSolve := (t1 - t0) / 1000.0;
+    Resid := MatMultC(A, X) - Resid;      // A*x - b, should be ~0
+    solveResidual := NormC(Resid);
+    if info <> 0 then solveResidual := -1;
+
+    // --- InvertC --- (never mutates A)
+    t0 := HighResTimer.MicroSeconds;
+    Ainv := InvertC(A);
+    t1 := HighResTimer.MicroSeconds;
+    msInvert := (t1 - t0) / 1000.0;
+    IdentN := TVMobjC.Create(N, N);
+    IdentN.Id;
+    Resid := MatMultC(A, Ainv) - IdentN;  // A*inv(A) - I, should be ~0
+    invertResidual := MatrixResidualNormC(Resid);
+
+    WriteLn(#13, Format('%6d %13.2f %17.2f %12.2f %15.2e %15.2e',
+      [N, msMatMult, msSolve, msInvert, solveResidual, invertResidual]));
+    Flush(Output);
+  end;
+  WriteLn;
+end;
+
 begin
   {$IFDEF HAVE_BLAS}
   InitializeCBLAS;
   {$ENDIF}
-  WriteLn('newVM performance benchmark (real double/single, complex double)');
+  WriteLn('newVM performance benchmark (real double/single, complex double/single)');
   WriteLn('====================================================');
   PrintBackend;
   RunBenchmarksDouble;
   RunBenchmarksSingle;
   RunBenchmarksComplex;
+  RunBenchmarksComplexSingle;
 end.

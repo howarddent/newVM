@@ -3,7 +3,7 @@
 {\colortbl;\red0\green0\blue0;}
 \viewkind4\uc1
 \pard\f0\fs28\b newVM Performance Benchmark\b0\fs20\par
-\f1\fs18 MatMult / LinearSolve / Invert, N = 10 / 100 / 1000, three of the four TVMobj* types\par
+\f1\fs18 MatMult / LinearSolve / Invert, N = 10 / 100 / 1000, all four TVMobj* types\par
 PUREPASCAL vs Apple Accelerate (Darwin/aarch64, no MKL/IPP/OpenBLAS installed)\par
 \f0\fs18\par
 
@@ -258,15 +258,98 @@ Double precision complex (newVMComplex.pas)\b0\fs18\par
 \clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx8300
 \pard\intbl InvertZ\cell 1000\cell 9762.11\cell 101.91\cell ~96x\cell\row
 
+\pard\f0\fs22\b\par
+Single precision complex (newVMComplexSingle.pas)\b0\fs18\par
+\f1\fs16\par
+
+\trowd\trgaph108\trleft0\trbrdrt\brdrs\brdrw10\trbrdrl\brdrs\brdrw10\trbrdrb\brdrs\brdrw10\trbrdrr\brdrs\brdrw10
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2000
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2700
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx4600
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx6500
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx8300
+\pard\intbl\b Operation\cell N\cell PUREPASCAL (ms)\cell Accelerate (ms)\cell Speedup\cell\b0\row
+
+\trowd\trgaph108\trleft0\trbrdrt\brdrs\brdrw10\trbrdrl\brdrs\brdrw10\trbrdrb\brdrs\brdrw10\trbrdrr\brdrs\brdrw10
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2000
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2700
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx4600
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx6500
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx8300
+\pard\intbl MatMultC\cell 10\cell 0.01\cell 0.01\cell ~parity\cell\row
+
+\trowd\trgaph108\trleft0\trbrdrt\brdrs\brdrw10\trbrdrl\brdrs\brdrw10\trbrdrb\brdrs\brdrw10\trbrdrr\brdrs\brdrw10
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2000
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2700
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx4600
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx6500
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx8300
+\pard\intbl MatMultC\cell 100\cell 9.12\cell 1.06\cell ~8.6x\cell\row
+
+\trowd\trgaph108\trleft0\trbrdrt\brdrs\brdrw10\trbrdrl\brdrs\brdrw10\trbrdrb\brdrs\brdrw10\trbrdrr\brdrs\brdrw10
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2000
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2700
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx4600
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx6500
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx8300
+\pard\intbl MatMultC\cell 1000\cell 9077.44\cell 6.01\cell ~1510x\cell\row
+
+\trowd\trgaph108\trleft0\trbrdrt\brdrs\brdrw10\trbrdrl\brdrs\brdrw10\trbrdrb\brdrs\brdrw10\trbrdrr\brdrs\brdrw10
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2000
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2700
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx4600
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx6500
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx8300
+\pard\intbl LinearSolveC\cell 10\cell 0.00\cell 0.00\cell ~parity\cell\row
+
+\trowd\trgaph108\trleft0\trbrdrt\brdrs\brdrw10\trbrdrl\brdrs\brdrw10\trbrdrb\brdrs\brdrw10\trbrdrr\brdrs\brdrw10
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2000
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2700
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx4600
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx6500
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx8300
+\pard\intbl LinearSolveC\cell 100\cell 2.92\cell 2.93\cell ~1.0x (always PUREPASCAL - see notes)\cell\row
+
+\trowd\trgaph108\trleft0\trbrdrt\brdrs\brdrw10\trbrdrl\brdrs\brdrw10\trbrdrb\brdrs\brdrw10\trbrdrr\brdrs\brdrw10
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2000
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2700
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx4600
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx6500
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx8300
+\pard\intbl LinearSolveC\cell 1000\cell 2830.21\cell 2831.60\cell ~1.0x (always PUREPASCAL - see notes)\cell\row
+
+\trowd\trgaph108\trleft0\trbrdrt\brdrs\brdrw10\trbrdrl\brdrs\brdrw10\trbrdrb\brdrs\brdrw10\trbrdrr\brdrs\brdrw10
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2000
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2700
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx4600
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx6500
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx8300
+\pard\intbl InvertC\cell 10\cell 0.02\cell 0.01\cell ~parity\cell\row
+
+\trowd\trgaph108\trleft0\trbrdrt\brdrs\brdrw10\trbrdrl\brdrs\brdrw10\trbrdrb\brdrs\brdrw10\trbrdrr\brdrs\brdrw10
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2000
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2700
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx4600
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx6500
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx8300
+\pard\intbl InvertC\cell 100\cell 11.90\cell 1.04\cell ~11.4x\cell\row
+
+\trowd\trgaph108\trleft0\trbrdrt\brdrs\brdrw10\trbrdrl\brdrs\brdrw10\trbrdrb\brdrs\brdrw10\trbrdrr\brdrs\brdrw10
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2000
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx2700
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx4600
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx6500
+\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10\cellx8300
+\pard\intbl InvertC\cell 1000\cell 11750.63\cell 67.55\cell ~174x\cell\row
+
 \pard\f0\fs18\par
 \b Notes\b0\par
-\f1\fs16 - MatMult/MatMultS/MatMultZ backend: PUREPASCAL = plain triple loop; Accelerate = cblas_dgemm/cblas_sgemm/cblas_zgemm.\par
-- LinearSolve/Invert (real, single) backend: PUREPASCAL = PurePascalLU?/PurePascalLU?Solve; Accelerate = ?getrf_/?getri_/?getrs_ (Apple vecLib, row-major/column-major adapter).\par
-- InvertZ backend: PUREPASCAL = PurePascalLUZ/PurePascalLUSolveZ; Accelerate = zgetrf_/zgetri_.\par
-- LinearSolveZ has NO Accelerate path at all, in either build: Apple's zgetrs_ crashes with an access violation whenever a factored pivot has an exactly-zero imaginary part (confirmed via a standalone reproduction independent of this codebase - see cblas.pas's comment next to accel_zgetrf_/accel_zgetri_, and newVMComplex.pas's LinearSolveZ). It always runs PurePascalLUZ/PurePascalLUSolveZ, so its two timings above are expected to be near-identical - that is not a bug in this benchmark.\par
-- LinearSolveS at N=100 measured slower under Accelerate (2.63ms) than PUREPASCAL (0.56ms), while N=1000 shows Accelerate ~252x faster as expected - most likely small-N call/setup overhead dominating at that size, but not fully isolated; flagged here rather than smoothed over.\par
-- Residuals: solve residual (||A*x - b||) and invert residual (||A*Ainv - I|| or its complex-magnitude equivalent) landed in the 1e-11 to 1e-15 range for double/complex, and roughly 1e-6 to 1e-2 for single (expected float32 precision) - all four combinations (double/single/complex x both builds) compute correct results; the differences above are purely speed.\par
+\f1\fs16 - MatMult/MatMultS/MatMultZ/MatMultC backend: PUREPASCAL = plain triple loop; Accelerate = cblas_dgemm/cblas_sgemm/cblas_zgemm/cblas_cgemm.\par
+- LinearSolve/Invert (real double, real single) backend: PUREPASCAL = PurePascalLU?/PurePascalLU?Solve; Accelerate = ?getrf_/?getri_/?getrs_ (Apple vecLib, row-major/column-major adapter).\par
+- InvertZ/InvertC backend: PUREPASCAL = PurePascalLUZ|C/PurePascalLUSolveZ|C; Accelerate = zgetrf_/zgetri_ or cgetrf_/cgetri_.\par
+- LinearSolveZ and LinearSolveC have NO Accelerate path at all, in either build: Apple's zgetrs_/cgetrs_ crash with an access violation whenever a factored pivot has an exactly-zero imaginary part (confirmed via a standalone reproduction independent of this codebase - see cblas.pas's comments next to accel_zgetrf_/accel_zgetri_ and accel_cgetrf_/accel_cgetri_, and newVMComplex.pas's/newVMComplexSingle.pas's LinearSolveZ/LinearSolveC). Both always run their PurePascalLU?/PurePascalLU?Solve path, so their two timings above are expected to be near-identical - that is not a bug in this benchmark.\par
+- LinearSolveS at N=100 measured slower under Accelerate (2.63ms) than PUREPASCAL (0.56ms) in one run of this benchmark, while N=1000 shows Accelerate ~252x faster as expected - most likely small-N call/setup overhead dominating at that size (a later re-run of the same benchmark did not reproduce this at N=100), but not fully isolated; flagged here rather than smoothed over.\par
+- Residuals: solve residual (||A*x - b||) and invert residual (||A*Ainv - I|| or its complex-magnitude equivalent) landed in the 1e-11 to 1e-15 range for double/complex double, and roughly 1e-6 to 1e-2 for single/complex single (expected float32 precision) - all eight combinations (double/single/complex double/complex single x both builds) compute correct results; the differences above are purely speed.\par
 - Machine: Darwin/aarch64 (Apple Silicon), no MKL/IPP/OpenBLAS installed - Accelerate is the only non-PUREPASCAL backend available.\par
-- Single-precision complex (newVMComplexSingle.pas) is not included in this pass.\par
 - Produced by newVMbench.lpr (repo root), built twice against two different newVMConfig.inc contents (real Accelerate-detected config, and a forced-PUREPASCAL config) - see that file's header comment for exact build/run steps.\par
 }
