@@ -22,7 +22,7 @@ unit uVMPlotStack;
        Stack := TVMPlotStack.Create(Self);
        Stack.Parent := Self;
        Stack.Align := alClient;
-       Stack.MaxSlices := 40;      // how many past graphs are kept/visible
+       Stack.MaxSeries := 40;      // how many past graphs are kept/visible
        Stack.Animate := False;     // True: stack continuously recedes over time
        Stack.AddGraph(Y);          // Y: a newVM (1,N) or (N,1) TVMobj vector
 
@@ -56,8 +56,8 @@ unit uVMPlotStack;
        its own floor" regardless of depth.
      - Along Z, across the whole stack: a slice's own brightness
        (computed once per slice as Intensity, in DrawSlice) is
-       1 - Age/MaxSlices - i.e. a brand new slice (Age=0) renders at full
-       GraphColor, and a slice about to be dropped (Age=MaxSlices) has
+       1 - Age/MaxSeries - i.e. a brand new slice (Age=0) renders at full
+       GraphColor, and a slice about to be dropped (Age=MaxSeries) has
        faded to Intensity=0, i.e. pure black - which is also this
        component's background colour, so the oldest visible graphs melt
        into the background rather than popping out of existence when
@@ -70,7 +70,7 @@ unit uVMPlotStack;
      ANIMATE ("an option for the stack to be stationary or to move
      backwards over time"): FAnimate (published Animate) selects between
      two ways a slice's Age - and hence its world-space depth and
-     brightness, both derived from Age/MaxSlices, see DrawSlice - changes
+     brightness, both derived from Age/MaxSeries, see DrawSlice - changes
      over time:
      - Animate=False (default): Age only changes in discrete +1 steps,
        applied to every existing slice at the moment AddGraph adds the
@@ -84,7 +84,7 @@ unit uVMPlotStack;
        newly-added slice simply joins in at Age=0 and starts ageing
        alongside the rest from that point on.
      Either way, TrimStack (called after both paths) drops any slice
-     whose Age has reached MaxSlices - ages are always non-decreasing
+     whose Age has reached MaxSeries - ages are always non-decreasing
      with array index (index 0 is the most recently added, and ageing
      only ever adds the same delta to every existing slice before a new
      Age=0 slice is inserted in front), so the slices to drop are always
@@ -135,7 +135,7 @@ type
   TVMPlotStack = class(TOpenGLControl)
   private
     FSlices: array of TVMPlotStackSlice;   // index 0 = most recently added
-    FMaxSlices: Integer;
+    FMaxSeries: Integer;
     FAnimate: Boolean;
     FAnimationSpeed: Double;
     FTimer: TTimer;
@@ -158,7 +158,7 @@ type
     FTitleTex, FXAxisTitleTex, FYAxisTitleTex, FZAxisTitleTex: TVMPlotTextTexture;
     FXTickTex, FYTickTex, FZTickTex: array of TVMPlotTextTexture;
 
-    procedure SetMaxSlices(AValue: Integer);
+    procedure SetMaxSeries(AValue: Integer);
     procedure SetAnimate(AValue: Boolean);
     procedure SetGraphColor(AValue: TColor);
     procedure SetShowAxes(AValue: Boolean);
@@ -204,15 +204,15 @@ type
     // How many past graphs are retained/visible before fading fully to
     // black and being dropped (TrimStack) - also fixes how far back in
     // world space (and hence how dim) a given Age reads as, via
-    // Age/MaxSlices - see DrawSlice.
-    property MaxSlices: Integer read FMaxSlices write SetMaxSlices;
+    // Age/MaxSeries - see DrawSlice.
+    property MaxSeries: Integer read FMaxSeries write SetMaxSeries;
     // False (default): the stack only moves in discrete steps, one per
     // AddGraph call. True: an internal timer continuously recedes/fades
     // the whole stack, AddGraph calls or not - see this unit's own header
     // comment for the full ANIMATE rationale.
     property Animate: Boolean read FAnimate write SetAnimate;
     // Depth-units (i.e. Age) advanced per second while Animate is True.
-    // 1.0 means a slice takes MaxSlices seconds to recede from the front
+    // 1.0 means a slice takes MaxSeries seconds to recede from the front
     // all the way to the vanishing point - same pacing a discretely-added
     // stack would show at one AddGraph per second.
     property AnimationSpeed: Double read FAnimationSpeed write FAnimationSpeed;
@@ -273,7 +273,7 @@ const
   HalfH = ValueScale / 2;
   HalfD = StackDepth / 2;
 
-  DefaultMaxSlices = 40;
+  DefaultMaxSeries = 40;
   DefaultAnimationSpeed = 1.0;
   TimerIntervalMs = 33;   // ~30 Hz
 
@@ -333,7 +333,7 @@ begin
   // below succeeds.
   Options := Options + [ocoRenderAtDesignTime];
 
-  FMaxSlices := DefaultMaxSlices;
+  FMaxSeries := DefaultMaxSeries;
   FAnimate := False;
   FAnimationSpeed := DefaultAnimationSpeed;
   SetGraphColor(RGBToColor(60, 150, 255));
@@ -376,13 +376,13 @@ begin
   inherited Destroy;
 end;
 
-procedure TVMPlotStack.SetMaxSlices(AValue: Integer);
+procedure TVMPlotStack.SetMaxSeries(AValue: Integer);
 const
-  s = 'TVMPlotStack.SetMaxSlices : ';
+  s = 'TVMPlotStack.SetMaxSeries : ';
 begin
-  assert(AValue > 0, s + 'MaxSlices must be positive');
-  if FMaxSlices = AValue then Exit;
-  FMaxSlices := AValue;
+  assert(AValue > 0, s + 'MaxSeries must be positive');
+  if FMaxSeries = AValue then Exit;
+  FMaxSeries := AValue;
   TrimStack;
   RecomputeZTicks;
   InvalidateTextures;
@@ -466,7 +466,7 @@ begin
   Invalidate;
 end;
 
-// Drops every slice whose Age has reached MaxSlices. FSlices is always
+// Drops every slice whose Age has reached MaxSeries. FSlices is always
 // kept newest (smallest Age, index 0) to oldest (largest Age) - ageing
 // adds the same delta to every existing slice before a new Age=0 slice is
 // inserted in front (AddGraph), and TimerTick likewise ages every slice
@@ -479,7 +479,7 @@ var
 begin
   cut := Length(FSlices);
   for i := 0 to High(FSlices) do
-    if FSlices[i].Age >= FMaxSlices then begin
+    if FSlices[i].Age >= FMaxSeries then begin
       cut := i;
       Break;
     end;
@@ -531,8 +531,8 @@ begin
     FXTicks := ComputeTicks(0, 1, 2);
 end;
 
-// Recomputes FZTicks - "nice" Age values in [0,MaxSlices], independent of
-// any actual data - called whenever MaxSlices changes (and once from
+// Recomputes FZTicks - "nice" Age values in [0,MaxSeries], independent of
+// any actual data - called whenever MaxSeries changes (and once from
 // Create). Kept separate from RecomputeBounds since it doesn't depend on
 // FSlices at all: these tick positions stay fixed in world space even
 // while Animate continuously moves the data ribbons past them, the same
@@ -540,7 +540,7 @@ end;
 // waterfall display has.
 procedure TVMPlotStack.RecomputeZTicks;
 begin
-  FZTicks := ComputeTicks(0, FMaxSlices, 5);
+  FZTicks := ComputeTicks(0, FMaxSeries, 5);
 end;
 
 procedure TVMPlotStack.ResetView;
@@ -632,11 +632,11 @@ end;
 // dips below that base plane rather than the base plane trailing the
 // data's own minimum.
 //
-// wz anchors Age=0 (a just-added slice) at -HalfD and Age=FMaxSlices at
+// wz anchors Age=0 (a just-added slice) at -HalfD and Age=FMaxSeries at
 // +HalfD - i.e. NEGATIVE Z is nearest the viewer/front of the stack,
 // POSITIVE Z is furthest/oldest, matching the axis-frame corner
 // DrawAxisLines/DrawAxisLabels place at Z=-HalfD (Age=0). The mirror-image
-// formula ((0.5-Age/FMaxSlices)*StackDepth) is what an earlier version of
+// formula ((0.5-Age/FMaxSeries)*StackDepth) is what an earlier version of
 // this unit used, and animated backwards - a slice visibly drifted
 // towards the viewer as it aged rather than receding - because, under
 // this component's default orthographic camera (DefaultYaw/DefaultPitch
@@ -650,13 +650,13 @@ var
   j: Integer;
   wx, wy, wz, intensity, denom, tr, tg, tb: Double;
 begin
-  intensity := 1 - Slice.Age / FMaxSlices;
+  intensity := 1 - Slice.Age / FMaxSeries;
   if intensity <= 0 then Exit;
   if intensity > 1 then intensity := 1;
   tr := FGraphR * intensity;
   tg := FGraphG * intensity;
   tb := FGraphB * intensity;
-  wz := (Slice.Age / FMaxSlices - 0.5) * StackDepth;
+  wz := (Slice.Age / FMaxSeries - 0.5) * StackDepth;
   if Slice.N > 1 then denom := Slice.N - 1 else denom := 1;
 
   glBegin(GL_TRIANGLE_STRIP);
@@ -712,7 +712,7 @@ begin
     for i := 0 to High(FXTicks) do
       glVertex3d((FXTicks[i] / Max(FFrontN - 1, 1) - 0.5) * WorldWidth, 0, -HalfD);
     for i := 0 to High(FZTicks) do
-      glVertex3d(-HalfW, 0, (FZTicks[i] / FMaxSlices - 0.5) * StackDepth);
+      glVertex3d(-HalfW, 0, (FZTicks[i] / FMaxSeries - 0.5) * StackDepth);
   glEnd;
 end;
 
@@ -930,7 +930,7 @@ begin
       if infront then DrawTextTexture(FXTickTex[i], sx, sy - 8, 0, 0.5, 1);
     end;
     for i := 0 to High(FZTicks) do begin
-      WorldToScreen(-HalfW, 0, (FZTicks[i] / FMaxSlices - 0.5) * StackDepth,
+      WorldToScreen(-HalfW, 0, (FZTicks[i] / FMaxSeries - 0.5) * StackDepth,
         VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FZTickTex[i], sx - 8, sy - 8, 0, 1, 1);
     end;

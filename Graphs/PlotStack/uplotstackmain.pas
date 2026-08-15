@@ -63,7 +63,7 @@ begin
   FPlot.XAxisTitle := 'Index';
   FPlot.YAxisTitle := 'Value';
   FPlot.ZAxisTitle := 'Time';
-  FPlot.MaxSlices := 40;
+  FPlot.MaxSeries := 40;
 end;
 
 // One more phase-shifted decaying sine wave, cycling FPhase forward each
