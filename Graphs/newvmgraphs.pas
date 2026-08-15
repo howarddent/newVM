@@ -8,7 +8,7 @@ unit newvmgraphs;
 interface
 
 uses
-  uVMPlot2D, uVMPlot3D, LazarusPackageIntf;
+  uVMPlot2D, uVMPlot3D, uVMPlotStack, LazarusPackageIntf;
 
 implementation
 
@@ -16,6 +16,7 @@ procedure Register;
 begin
   RegisterUnit('uVMPlot2D', @uVMPlot2D.Register);
   RegisterUnit('uVMPlot3D', @uVMPlot3D.Register);
+  RegisterUnit('uVMPlotStack', @uVMPlotStack.Register);
 end;
 
 initialization

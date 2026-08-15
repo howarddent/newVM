@@ -17,10 +17,10 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Description Value="Design-time/run-time LCL components for the newVM matrix/vector library: TVMPlot2D, an OpenGL line-plot control that renders one or more TVMobj vectors, and TVMPlot3D, an OpenGL height-field control that renders a real TVMobj matrix as a lit 3D surface."/>
+    <Description Value="Design-time/run-time LCL components for the newVM matrix/vector library: TVMPlot2D, an OpenGL line-plot control that renders one or more TVMobj vectors, TVMPlot3D, an OpenGL height-field control that renders a real TVMobj matrix as a lit 3D surface, and TVMPlotStack, an OpenGL waterfall control that stacks successive TVMobj vectors receding into the distance over time."/>
     <License Value="Same terms as the parent newVM project."/>
-    <Version Release="2"/>
-    <Files Count="2">
+    <Version Release="3"/>
+    <Files Count="3">
       <Item1>
         <Filename Value="uVMPlot2D.pas"/>
         <HasRegisterProc Value="True"/>
@@ -31,6 +31,11 @@
         <HasRegisterProc Value="True"/>
         <UnitName Value="uVMPlot3D"/>
       </Item2>
+      <Item3>
+        <Filename Value="uVMPlotStack.pas"/>
+        <HasRegisterProc Value="True"/>
+        <UnitName Value="uVMPlotStack"/>
+      </Item3>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>
