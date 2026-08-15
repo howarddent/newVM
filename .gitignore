@@ -33,10 +33,14 @@ demos/*/[A-Za-z]*
 # files inside it (an excluded directory isn't descended into at all).
 # Un-ignore the grouping directory and its subdirectories first, then
 # re-apply the same ignore-extensionless/keep-extension pattern one
-# level deeper.
+# level deeper. [A-Za-z0-9] (not just [A-Za-z], unlike the demos/*/ and
+# Graphs/*/ rules above) since demos/Chebyshev/2DChebBVP_FPC/'s binary
+# is named "2DChebBVP" - starting with a digit - which the letter-only
+# class silently failed to match, leaving that binary untracked instead
+# of ignored.
 !demos/Chebyshev/
 !demos/Chebyshev/*/
-demos/Chebyshev/*/[A-Za-z]*
+demos/Chebyshev/*/[A-Za-z0-9]*
 !demos/Chebyshev/*/*.*
 
 # Same for Graphs/<Name>/ (Plot2D, Plot3D) - unlike demos/, these are only
