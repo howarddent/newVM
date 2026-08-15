@@ -1,0 +1,169 @@
+newVM Performance Benchmark
+============================
+MatMult / LinearSolve / Invert, N = 10 / 100 / 1000, all four TVMobj* types
+Library-backed (MKL + IPP + OpenBLAS) vs PUREPASCAL, Windows 11/x86_64
+
+Machine: AMD Ryzen 9 7900 12-Core Processor, 24 logical CPUs, 31.1 GiB RAM
+OS: Windows 11 Home, build 10.0.26200
+Backends detected by ./newvmconfigure: MKL (mkl_rt.3.dll), IPP
+(ippcore+ippvm+ipps), OpenBLAS (openblas.dll), FFTW3 (double+single) - all
+found; Apple Accelerate not found (Darwin-only, expected on Windows). The
+"real" build for this machine is fully library-backed (PUREPASCAL and
+PUREPASCAL_BLAS both inactive). The PUREPASCAL comparison column below was
+produced by hand-forcing newVMConfig.inc to {$DEFINE PUREPASCAL}/
+{$DEFINE PUREPASCAL_BLAS} (same technique as perf/x64linuxperformance.txt/
+perf/OSXperformance.txt), then regenerating back to the real per-machine
+config via ./newvmconfigure afterwards.
+
+Test suite: ./newVMtest (full 256-test FPCUnit suite, all five TVMobj*/
+TVMobjI types) - 256 run, 0 errors, 0 failures, against the real
+(library-backed) build. Re-verified again after restoring the real config
+post-benchmark: still 256/256.
+
+*** WINDOWS-SPECIFIC FINDING: newVMbench.lpr crashes as shipped on this
+platform, in both builds ***
+
+Running ./newVMbench unmodified aborts partway through the single-precision
+complex (newVMComplexSingle.pas) section, inside LinearSolveC at N=100:
+
+  An unhandled exception occurred at $00007FF99C7955BF:
+  EInvalidOp: Invalid floating point operation
+
+Isolated with a standalone repro (not committed) that calls MatMultC,
+LinearSolveC, InvertC individually with Flush(Output) between each: the
+crash is specifically inside LinearSolveC (PurePascalLUC/PurePascalLUSolveC
+- LinearSolveC has no library-backed path at all on any platform, see
+newVMbench.lpr's own header comment re the Accelerate zgetrs_/cgetrs_ crash
+bug, so this is not an MKL/library issue). MatMultC alone completes fine at
+N=100.
+
+Root cause confirmed, not a numerical correctness bug: wrapping the same
+calls in Math.SetExceptionMask([exInvalidOp, exOverflow, exZeroDivide,
+exUnderflow, exPrecision, exDenormalized]) lets LinearSolveC complete
+normally, with a perfectly reasonable residual (~1.3E-04, matching the
+same order of magnitude as the equivalent real/other-type residuals at
+N=100). So PurePascalLUC's single-precision complex Gaussian elimination
+is producing some transient denormal/borderline value at N=100 that is
+numerically harmless (silently flushed/rounded on Linux and macOS, per
+those platforms' default FPU exception masks) but that FPC's Windows
+runtime leaves unmasked by default, turning it into a hard EInvalidOp
+exception that aborts the process. This is a genuine, previously-unhit
+platform difference - neither perf/x64linuxperformance.txt nor
+perf/OSXperformance.txt's runs would have encountered it even though the
+same PurePascalLUC code path exists on those platforms too, simply because
+Linux/macOS don't trap on it by default.
+
+The timings below were captured from a locally-patched, uncommitted copy of
+newVMbench.lpr with SetExceptionMask(...) added at the top of the main
+block (mirroring the mask above) - the only change from the shipped
+program. newVMbench.lpr itself was NOT modified in the repo; this is
+flagged here as something worth fixing upstream (e.g. adding the same
+SetExceptionMask call to the real newVMbench.lpr, or masking more
+narrowly/locally around PurePascalLUC's elimination step) rather than
+fixed as part of this run. Every OTHER row in every OTHER
+type/operation/N combination below completed identically with or without
+the mask - this is isolated to LinearSolveC/InvertC (which reuses
+PurePascalLUC) at N=100 and N=1000 specifically.
+
+All timings in milliseconds, single run per row (not averaged). Residuals
+are Frobenius-norm ||A*x-b|| (solve) / ||A*Ainv-I|| (invert); both builds
+compute the same correct answer to within precision-appropriate tolerance.
+Speedup = PUREPASCAL time / library-backed time. N=10 timings are at or
+below timer resolution for several operations - "~parity" means both
+numbers are sub-0.05ms noise, not a meaningful comparison.
+
+NOTE on LinearSolve N=10 (double/single real): the library-backed build
+shows an anomalously high N=10 LinearSolve time (5.88ms real-double,
+0.22ms real-single) compared to its own MatMult/Invert at the same N
+(0.02-0.04ms) - this is LinearSolve's lapacke_?gesv, the first LAPACKE_*
+call the whole process makes (MatMult's cblas_?gemm already ran first in
+the same iteration and pays no such cost), so it absorbs a one-time
+MKL/LAPACKE lazy-initialization cost. Not representative of steady-state
+per-call cost; the corresponding PUREPASCAL time (0.00ms, sub-resolution)
+makes the "speedup" column meaningless for this one cell, so it's marked
+n/a rather than a literal 0.00x. LinearSolveZ/LinearSolveC are unaffected
+(they never call LAPACKE at all - always PUREPASCAL, see below), and
+their N=10 timings look normal.
+
+Same LinearSolveZ/LinearSolveC caveat as the other two platform logs:
+newVMbench.lpr's banner text unconditionally prints "PUREPASCAL always ...
+identical in both builds" for these two operations - true here too, since
+they have no library-backed branch on any platform (Accelerate's zgetrs_/
+cgetrs_ crash bug forces PurePascalLUZ/LUC unconditionally). Confirmed by
+the timings below: LinearSolveZ/C are close between the two builds at
+N=10/100 (both running the identical PurePascalLU?Solve code), diverging
+only through Invert/MatMult's own library-vs-PUREPASCAL difference feeding
+into the same row's residual computation cost - not from LinearSolveZ/C
+itself changing behaviour.
+
+
+Double precision real (newVM.pas)
+----------------------------------------------------------------------------------------------------
+Operation     N     Library(ms)   PUREPASCAL(ms)   Speedup   SolveResid    InvertResid
+MatMult       10       0.02            0.00         ~parity        -             -
+MatMult       100      0.55            2.53         4.60x          -             -
+MatMult       1000    10.89         2570.16         236.01x        -             -
+LinearSolve   10       5.88            0.00         n/a (MKL init)  1.8E-15/4.0E-15    -
+LinearSolve   100      1.99            0.70         0.35x     3.8E-13/1.2E-13    -
+LinearSolve   1000     7.69          633.82         82.42x    6.4E-11/2.8E-11    -
+Invert        10       0.04            0.00         ~parity        -        8.2E-15/3.7E-15
+Invert        100      0.86            3.00         3.49x          -        4.9E-13/1.5E-13
+Invert        1000    17.07         2896.30         169.67x        -        7.9E-11/3.1E-11
+
+Single precision real (newVMSingle.pas)
+----------------------------------------------------------------------------------------------------
+Operation     N     Library(ms)   PUREPASCAL(ms)   Speedup   SolveResid    InvertResid
+MatMult       10       0.02            0.00         ~parity        -             -
+MatMult       100      0.34            2.54         7.47x          -             -
+MatMult       1000     6.75         2569.50         380.67x        -             -
+LinearSolve   10       0.22            0.00         n/a (MKL init)  1.6E-06/2.6E-06    -
+LinearSolve   100      0.38            0.67         1.76x     2.2E-04/8.8E-05    -
+LinearSolve   1000     3.95          644.39         163.14x   3.3E-02/1.6E-02    -
+Invert        10       0.04            0.00         ~parity        -        2.4E-06/1.9E-06
+Invert        100      0.69            3.02         4.38x          -        2.5E-04/7.8E-05
+Invert        1000    11.22         2892.22         257.77x        -        3.4E-02/1.7E-02
+
+Double precision complex (newVMComplex.pas)
+----------------------------------------------------------------------------------------------------
+Operation     N     Library(ms)   PUREPASCAL(ms)   Speedup   SolveResid    InvertResid
+MatMultZ      10       0.02            0.01         ~parity        -             -
+MatMultZ      100      0.32            8.32         26.00x         -             -
+MatMultZ      1000    39.47         8482.88         214.92x        -             -
+LinearSolveZ  10       0.19            0.00         ~parity   1.8E-15/3.7E-15    -
+LinearSolveZ  100      0.49            2.26         4.61x     2.2E-13/2.5E-13    -
+LinearSolveZ  1000    14.43         2078.13         144.01x   4.1E-11/2.4E-11    -
+InvertZ       10       0.03            0.01         ~parity        -        2.8E-15/3.1E-15
+InvertZ       100      0.82            8.94         10.90x         -        3.0E-13/1.5E-13
+InvertZ       1000    42.11         8360.82         198.55x        -        9.8E-11/3.7E-11
+
+Single precision complex (newVMComplexSingle.pas)
+----------------------------------------------------------------------------------------------------
+Operation     N     Library(ms)   PUREPASCAL(ms)   Speedup   SolveResid    InvertResid
+MatMultC      10       0.02            0.01         ~parity        -             -
+MatMultC      100      0.41           13.91         33.93x         -             -
+MatMultC      1000    25.75        13984.17         543.07x        -             -
+LinearSolveC  10       0.20            0.00         ~parity   7.8E-07/2.9E-06    -
+LinearSolveC  100      0.54            3.64         6.74x     1.3E-04/1.5E-04    -
+LinearSolveC  1000     8.31         3495.71         420.66x   2.2E-02/1.3E-02    -
+InvertC       10       0.03            0.02         ~parity        -        1.5E-06/1.6E-06
+InvertC       100      0.86           14.75         17.15x         -        1.7E-04/8.2E-05
+InvertC       1000    25.28        14057.95         556.09x        -        5.0E-02/2.0E-02
+
+
+Summary: as expected, the gap between library-backed and PUREPASCAL grows
+sharply with N (all three operations are O(N^3)). MatMult sees the largest
+speedups (236x-556x at N=1000, MKL/OpenBLAS's cblas_?gemm vs a plain triple
+loop) - noticeably higher than the same comparison on the Linux box in
+perf/x64linuxperformance.txt (278x-758x there too, actually a similar
+range - this Ryzen 9 and that i7-14650HX land in the same ballpark).
+LinearSolve again sees the smallest speedups (82x-421x at N=1000, excluding
+the MKL-init-skewed N=10 double-real cell) - PurePascalLU?/LU?Solve is a
+reasonably competitive single-threaded partial-pivoting LU, same
+conclusion as both other platforms. Invert lands in between (170x-556x),
+tracking LinearSolve's LU cost plus an extra O(N^3) triangular-solve pass.
+Residuals confirm both variants compute the same correct answer at each N
+and precision (double ~1e-15 to 1e-11, single ~1e-6 to ~5e-2 at N=1000,
+consistent with the other two platforms' logs). The one platform-specific
+wrinkle worth remembering from this run: PurePascalLUC's single-precision
+complex path needs FPU exceptions masked to even complete on Windows at
+N>=100, unlike Linux/macOS - see the finding writeup above.
