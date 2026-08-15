@@ -16,7 +16,13 @@ unit uVMPlot3D;
      magnitude or Rows/Cols, so any real TVMobj matrix - not just the
      demo's own sinc-ripple data - renders at the same on-screen scale;
      BuildDemoMatrix in the Plot3D demo is one concrete example fed
-     through that general path.
+     through that general path. SetData is `overload`ed to also accept a
+     single-precision TVMobjS directly (newVMSingle.pas) - promoted
+     element-by-element to a TVMobj and handed to the double-precision
+     overload, since every field this component itself holds (FVerts,
+     FZMin/FZMax, etc) is already Double throughout; there is no
+     single-precision-specific rendering path, only a single-precision
+     entry point into the same one.
 
      Unlike TVMPlot2D, this component's camera is interactive by
      necessity - a static 3D projection of a height field is far less
@@ -39,7 +45,7 @@ uses
   Classes, SysUtils, Math, Controls, LCLType, Graphics, LResources,
   IntfGraphics, FPImage,
   GL, GLU, OpenGLContext,
-  newVM;
+  newVM, newVMSingle;
 
 type
   TVMPlotDoubleArray = array of Double;
@@ -138,7 +144,8 @@ type
     constructor Create(TheOwner: TComponent); override;
     destructor Destroy; override;
     procedure Paint; override;
-    procedure SetData(const M: TVMobj);
+    procedure SetData(const M: TVMobj); overload;
+    procedure SetData(const M: TVMobjS); overload;
     procedure ResetView;
   published
     property Wireframe: Boolean read FWireframe write SetWireframe;
@@ -500,6 +507,28 @@ begin
   FHasData := True;
   InvalidateTextures;
   Invalidate;
+end;
+
+// Single-precision entry point: promotes M element-by-element into a
+// double-precision TVMobj and delegates to the TVMobj overload above,
+// rather than duplicating that whole grid/normal/tick/colour pipeline a
+// second time for Single - every one of this component's own fields
+// (FVerts, FZMin/FZMax, etc) is already Double throughout, so there's
+// nothing single-precision-specific left to do once the promotion itself
+// is done. The promotion is a plain O(Rows*Cols) loop, not a call into
+// newVMComplex-style library machinery - negligible next to the
+// ComputeNormal/HeightToColor work SetData(TVMobj) already does per
+// element.
+procedure TVMPlot3D.SetData(const M: TVMobjS);
+var
+  Converted: TVMobj;
+  r, c: Integer;
+begin
+  Converted := TVMobj.Create(M.Rows, M.Cols);
+  for r := 0 to M.Rows - 1 do
+    for c := 0 to M.Cols - 1 do
+      Converted[r, c] := M[r, c];
+  SetData(Converted);
 end;
 
 // Standard heightmap normal via central differences of the (already
