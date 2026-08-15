@@ -726,6 +726,22 @@ end;
 // in OpenGL 1.x); solid disables stippling outright rather than using an
 // all-ones pattern, since a stipple factor still subtly affects
 // anti-aliased line rendering on some drivers.
+//
+// GL_LINE_SMOOTH + GL_LINE_STIPPLE together silently draw nothing at all on
+// this codebase's tested Apple Silicon/macOS OpenGL implementation (legacy
+// compatibility-profile GL) - confirmed by A/B testing: a dashed/dotted
+// GL_LINE_STRIP renders correctly with GL_LINE_SMOOTH disabled and not at
+// all with it enabled, while a solid (unstippled) strip is unaffected
+// either way. Root cause not pinned down further than "this driver doesn't
+// support the combination" - Paint enables GL_LINE_SMOOTH for the whole
+// data-space pass (for solid lines' antialiasing), so a stippled series
+// must locally disable it here, right alongside enabling the stipple
+// itself, rather than leaving Paint's blanket setting in effect. The
+// tradeoff (dash/dot lines render aliased/jagged, solid ones stay
+// antialiased) is strictly better than a dash/dot series not rendering at
+// all - see git history for the two real demos (Graphs/Plot2D,
+// demos/Chebyshev/NormalIntegration) whose second, dashed series silently
+// failed to draw before this fix.
 procedure TVMPlot2D.ApplyLineStyle(const Style: TVMPlotSeriesStyle);
 var
   Clr: TColor;
@@ -734,12 +750,17 @@ begin
   glColor3ub(Clr and $FF, (Clr shr 8) and $FF, (Clr shr 16) and $FF);
   glLineWidth(Style.LineWidth);
   case Style.LineStyle of
-    plsSolid: glDisable(GL_LINE_STIPPLE);
+    plsSolid: begin
+      glDisable(GL_LINE_STIPPLE);
+      glEnable(GL_LINE_SMOOTH);
+    end;
     plsDash: begin
+      glDisable(GL_LINE_SMOOTH);
       glEnable(GL_LINE_STIPPLE);
       glLineStipple(3, $00FF);
     end;
     plsDot: begin
+      glDisable(GL_LINE_SMOOTH);
       glEnable(GL_LINE_STIPPLE);
       glLineStipple(2, $1111);
     end;
