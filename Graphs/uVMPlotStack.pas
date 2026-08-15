@@ -44,22 +44,30 @@ unit uVMPlotStack;
      artifacts a depth-tested renderer wouldn't have, since draw order is
      always oldest-to-newest regardless of where the camera actually is.
 
-     COLOUR ("colour the amplitude with a gradient from lightblue to red
-     so that peaks show up better against the noise background" + "fade
-     [into the distance] as it retreats"): three independent effects, all
-     driven by the same per-vertex glColor3d, relying on GL_SMOOTH
-     interpolating linearly between vertices as it fills each triangle -
+     COLOUR ("darkblue -> mauve -> red transition with increasing
+     amplitude, so that peaks show up better against the noise
+     background" + "fade [into the distance] as it retreats"): three
+     independent effects, all driven by the same per-vertex glColor3d,
+     relying on GL_SMOOTH interpolating linearly between vertices as it
+     fills each triangle -
      - By value, across a ribbon's own top edge: each top-edge vertex is
        coloured by where its OWN data value (Slice.Y[j]) falls between the
        stack's current auto-fit FYMin/FYMax (the same range RecomputeBounds
        already tracks for the Value axis - not that one slice's own local
        min/max, which would just as happily paint an ordinary noise
-       fluctuation red for being that slice's tallest point) - LowColor at
-       the low end, HighColor at the high end (defaults light blue and
-       red respectively), linearly interpolated per-channel. A genuine
-       standout peak - well above where the bulk of the data (e.g. a
-       noise floor) sits - reads as a hot red spike; ordinary fluctuations
-       clustered lower in the range stay a cool blue, exactly the contrast
+       fluctuation red for being that slice's tallest point), via a
+       three-stop gradient - LowColor at the low end, MidColor at the
+       midpoint, HighColor at the high end (defaults dark blue, mauve and
+       red respectively) - each half of the [0,1] fraction interpolated
+       separately against its own pair of stops (see DrawSlice). The
+       fraction itself is cubed before that lookup, not used linearly -
+       see DrawSlice's own comment for why a global range dominated by
+       rare outliers otherwise leaves ordinary data stranded in the
+       gradient's washed-out middle. A genuine standout peak - well above
+       where the bulk of the data (e.g. a noise floor) sits - reads as a
+       hot red spike, with a mauve transition band for values well above
+       typical but short of a true peak; ordinary fluctuations clustered
+       lower in the range stay a cool dark blue, exactly the contrast
        "peaks show up better against noise" asks for.
      - Vertically, within one ribbon: the top-edge vertex carries the
        value-gradient colour above; the paired bottom/floor vertex is
@@ -152,8 +160,9 @@ type
     FAnimationSpeed: Double;
     FTimer: TTimer;
 
-    FLowColor, FHighColor: TColor;
+    FLowColor, FMidColor, FHighColor: TColor;
     FLowR, FLowG, FLowB: Double;            // FLowColor, resolved+normalised
+    FMidR, FMidG, FMidB: Double;            // FMidColor, resolved+normalised
     FHighR, FHighG, FHighB: Double;         // FHighColor, resolved+normalised
 
     FYMin, FYMax: Double;                   // auto-fit across all held slices
@@ -174,6 +183,7 @@ type
     procedure SetMaxSeries(AValue: Integer);
     procedure SetAnimate(AValue: Boolean);
     procedure SetLowColor(AValue: TColor);
+    procedure SetMidColor(AValue: TColor);
     procedure SetHighColor(AValue: TColor);
     procedure SetShowAxes(AValue: Boolean);
     procedure SetTitle(const AValue: string);
@@ -230,13 +240,15 @@ type
     // all the way to the vanishing point - same pacing a discretely-added
     // stack would show at one AddGraph per second.
     property AnimationSpeed: Double read FAnimationSpeed write FAnimationSpeed;
-    // Endpoints of the value-based colour gradient painted along every
+    // Three stops of the value-based colour gradient painted along every
     // ribbon's top edge (LowColor at the auto-fit Value-axis minimum,
-    // HighColor at its maximum) - see this unit's own COLOUR rationale for
-    // the full picture, including how this gradient then also fades both
-    // vertically (to black at the floor) and with Age (to black as a
-    // slice recedes).
+    // MidColor at its midpoint, HighColor at its maximum, each half of the
+    // range interpolated separately - see this unit's own COLOUR
+    // rationale) for the full picture, including how this gradient then
+    // also fades both vertically (to black at the floor) and with Age (to
+    // black as a slice recedes).
     property LowColor: TColor read FLowColor write SetLowColor;
+    property MidColor: TColor read FMidColor write SetMidColor;
     property HighColor: TColor read FHighColor write SetHighColor;
     property ShowAxes: Boolean read FShowAxes write SetShowAxes;
     property Title: string read FTitle write SetTitle;
@@ -354,7 +366,8 @@ begin
   FMaxSeries := DefaultMaxSeries;
   FAnimate := False;
   FAnimationSpeed := DefaultAnimationSpeed;
-  SetLowColor(RGBToColor(135, 206, 250));   // light blue
+  SetLowColor(RGBToColor(0, 0, 139));       // dark blue
+  SetMidColor(RGBToColor(224, 176, 255));   // mauve
   SetHighColor(RGBToColor(255, 0, 0));      // red
   FShowAxes := True;
   FYaw := DefaultYaw;
@@ -427,6 +440,18 @@ begin
   FLowR := (Clr and $FF) / 255;
   FLowG := ((Clr shr 8) and $FF) / 255;
   FLowB := ((Clr shr 16) and $FF) / 255;
+  Invalidate;
+end;
+
+procedure TVMPlotStack.SetMidColor(AValue: TColor);
+var
+  Clr: TColor;
+begin
+  FMidColor := AValue;
+  Clr := ColorToRGB(AValue);
+  FMidR := (Clr and $FF) / 255;
+  FMidG := ((Clr shr 8) and $FF) / 255;
+  FMidB := ((Clr shr 16) and $FF) / 255;
   Invalidate;
 end;
 
@@ -658,14 +683,16 @@ end;
 //
 // Each top-edge vertex's base colour (before the *Intensity fade below)
 // is looked up once per vertex, into VR/VG/VB, from where that vertex's
-// OWN Slice.Y[j] falls between the stack's global FYMin/FYMax (LowColor
-// at the low end, HighColor at the high end) - not that one slice's own
-// local min/max, which would just as happily paint an ordinary noise
-// fluctuation red for merely being that slice's tallest point. Computed
-// into arrays up front rather than inline in the two glBegin/glEnd loops
-// below, since the highlight-line pass needs the same per-vertex colour
-// (boosted) as the fill pass just used, and recomputing the gradient
-// lookup a second time would be pure duplicated work.
+// OWN Slice.Y[j] falls between the stack's global FYMin/FYMax - LowColor
+// at the low end, MidColor at the midpoint, HighColor at the high end,
+// each half of the [0,1] fraction interpolated separately against its own
+// pair of stops - not that one slice's own local min/max, which would
+// just as happily paint an ordinary noise fluctuation red for merely
+// being that slice's tallest point. Computed into arrays up front rather
+// than inline in the two glBegin/glEnd loops below, since the
+// highlight-line pass needs the same per-vertex colour (boosted) as the
+// fill pass just used, and recomputing the gradient lookup a second time
+// would be pure duplicated work.
 //
 // The floor vertex sits at world Y=0, not at FYMin/HalfH as an earlier
 // version of this unit had it - i.e. the ribbon's base is the X-T plane
@@ -691,7 +718,7 @@ end;
 procedure TVMPlotStack.DrawSlice(const Slice: TVMPlotStackSlice);
 var
   j: Integer;
-  wx, wy, wz, intensity, denom, frac, yRange: Double;
+  wx, wy, wz, intensity, denom, frac, yRange, t: Double;
   VR, VG, VB: array of Double;
 begin
   intensity := 1 - Slice.Age / FMaxSeries;
@@ -718,12 +745,24 @@ begin
     // pulls typical/mid-range values back down towards 0 (LowColor) while
     // leaving frac=1 (the true max) at HighColor untouched - so the noise
     // floor reads as a clean, consistent LowColor and only genuine
-    // standout peaks pull towards HighColor, which is the actual "peaks
-    // show up better against the noise" effect asked for.
+    // standout peaks pull towards HighColor/MidColor, which is the actual
+    // "peaks show up better against the noise" effect asked for.
     frac := frac * frac * frac;
-    VR[j] := (FLowR + (FHighR - FLowR) * frac) * intensity;
-    VG[j] := (FLowG + (FHighG - FLowG) * frac) * intensity;
-    VB[j] := (FLowB + (FHighB - FLowB) * frac) * intensity;
+    // Two-stop piecewise blend, not one three-way interpolation: below the
+    // midpoint, blend LowColor->MidColor; above it, MidColor->HighColor -
+    // each half re-normalised to its own local [0,1] fraction t, so
+    // MidColor is hit exactly at frac=0.5 rather than only approximately.
+    if frac <= 0.5 then begin
+      t := frac / 0.5;
+      VR[j] := (FLowR + (FMidR - FLowR) * t) * intensity;
+      VG[j] := (FLowG + (FMidG - FLowG) * t) * intensity;
+      VB[j] := (FLowB + (FMidB - FLowB) * t) * intensity;
+    end else begin
+      t := (frac - 0.5) / 0.5;
+      VR[j] := (FMidR + (FHighR - FMidR) * t) * intensity;
+      VG[j] := (FMidG + (FHighG - FMidG) * t) * intensity;
+      VB[j] := (FMidB + (FHighB - FMidB) * t) * intensity;
+    end;
   end;
 
   glBegin(GL_TRIANGLE_STRIP);
