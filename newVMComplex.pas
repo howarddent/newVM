@@ -240,6 +240,22 @@ function FFT_C2R(const A: TVMobjZ; N: Integer): TVMobj; overload; //packed half-
 function FFT(const A: TVMobjZ): TVMobjZ; overload;             //complex -> complex, forward
 function IFFT(const A: TVMobjZ): TVMobjZ; overload;            //complex -> complex, inverse, normalized
 
+{ PowerSpectrum(A): one-call Hamming-windowed LINEAR power spectrum - see
+  the implementation's own header comment for the full rationale (built
+  for repeated use on fixed-size ADC-derived buffers). Real input (A:
+  TVMobj) returns half A's length (A.Rows*A.Cols div 2, integer
+  division); complex input (A: TVMobjZ) returns the same length as A,
+  since a general complex signal has no redundant conjugate-symmetric
+  half to drop the way real input does. Both always return a real TVMobj
+  (a power spectrum is never itself complex-valued) of LINEAR power
+  (re^2+im^2) - not dB; take 10*Log10(P+eps) at the call site for a dB
+  scale, the eps guarding against an exact-zero bin same as any log-power
+  display needs to. Marked "overload" for the same reason as FFT_R2C
+  above: newVMComplexSingle.pas declares the TVMobjS/TVMobjC analogues of
+  these same two names. }
+function PowerSpectrum(const A: TVMobj): TVMobj; overload;   //real signal -> half-length linear power spectrum
+function PowerSpectrum(const A: TVMobjZ): TVMobj; overload;  //complex signal -> full-length linear power spectrum
+
 implementation
 
 function Cplx(re,im: Double): TComplex16;
@@ -1609,6 +1625,109 @@ begin
   fftw_destroy_plan(plan);
   assert(Assigned(cblas_zdscal), s+'OpenBLAS not available on this machine - IFFT normalization has no PUREPASCAL fallback');
   cblas_zdscal(n, 1.0/n, @result.FData[0], 1);  //normalize, matching IFFT(FFT(x)) = x
+end;
+
+// One-call linear power spectrum of a real signal: Hamming-windows A,
+// FFT_R2C's it, and returns |X[k]|^2 for k=0..(N div 2)-1 - literally
+// half A's length (integer division, so an odd N drops one more bin than
+// FFT_R2C's own N div 2 + 1 would leave - deliberate, to land exactly on
+// "half the length" rather than "half the length, plus one"). A itself
+// is never mutated (matches FFT_R2C/the rest of this unit's convention).
+// The Hamming window is recomputed each call rather than cached, since
+// there's nowhere to cache it against (this routine is stateless and A's
+// length could differ call to call, e.g. across different ADC captures)
+// - that recomputation is O(N), negligible next to the O(N log N) FFT
+// itself.
+//
+// Internally normalises A to a row vector via Reshape (a pure
+// reinterpretation for any true vector, row- or column-shaped, since
+// row-major storage means the flat element order is identical either
+// way - see Reshape's own header comment in newVM.pas) so the windowing/
+// FFT/power-extraction logic below doesn't need to branch on A's
+// orientation, then reshapes the result back to match A's own
+// orientation at the end - the same orientation-preserving convention
+// FFT_R2C itself follows.
+function PowerSpectrum(const A: TVMobj): TVMobj;
+const
+  s : String = 'Routine PowerSpectrum : ';
+var
+  N, HalfN, i : Integer;
+  RowA, W, Windowed, RowResult : TVMobj;
+  Spectrum : TVMobjZ;
+  bin : TComplex16;
+begin
+  assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
+  N := A.Rows*A.Cols;
+  HalfN := N div 2;
+  assert(HalfN > 0, s+'A must have at least 2 elements');
+
+  RowA := Reshape(A, 1, N);
+
+  W := TVMobj.Create(1, N);
+  for i := 0 to N-1 do
+    W[0,i] := 0.54 - 0.46*cos(2*Pi*i/(N-1));
+
+  Windowed := RowA * W;
+  Spectrum := FFT_R2C(Windowed);
+
+  RowResult := TVMobj.Create(1, HalfN);
+  for i := 0 to HalfN-1 do begin
+    bin := Spectrum[0,i];
+    RowResult[0,i] := bin.re*bin.re + bin.im*bin.im;
+  end;
+
+  if A.Cols = 1 then result := Reshape(RowResult, HalfN, 1) else result := RowResult;
+end;
+
+// One-call linear power spectrum of a complex signal - see the real-input
+// overload's own comment for the shared rationale (repeated-use design,
+// row-vector normalisation trick). Differs in three ways a real signal
+// doesn't need: the Hamming window is applied by hand, one complex
+// element at a time (each element's re/im scaled by the same real window
+// value) rather than via the '*' operator - TVMobjZ's own same-type '*'
+// is elementwise, matching what windowing needs, but that would first
+// need the real window promoted to complex (RealToComplex) purely to
+// satisfy the type checker, an extra full-length allocation for no
+// benefit; FFT (complex-to-complex) is used instead of FFT_R2C, since a
+// general complex signal isn't Hermitian-symmetric the way real input
+// is, so there's no packed half-spectrum form to compute in the first
+// place; and the result keeps ALL N bins (the full length of A), not
+// half, since there is no redundant conjugate-symmetric upper half to
+// drop.
+function PowerSpectrum(const A: TVMobjZ): TVMobj;
+const
+  s : String = 'Routine PowerSpectrum : ';
+var
+  N, i : Integer;
+  RowA, Windowed, Spectrum : TVMobjZ;
+  W, RowResult : TVMobj;
+  bin : TComplex16;
+begin
+  assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
+  N := A.Rows*A.Cols;
+  assert(N > 0, s+'A must have at least 1 element');
+
+  RowA := ReshapeZ(A, 1, N);
+
+  W := TVMobj.Create(1, N);
+  for i := 0 to N-1 do
+    W[0,i] := 0.54 - 0.46*cos(2*Pi*i/(N-1));
+
+  Windowed := TVMobjZ.Create(1, N);
+  for i := 0 to N-1 do begin
+    bin := RowA[0,i];
+    Windowed[0,i] := Cplx(bin.re*W[0,i], bin.im*W[0,i]);
+  end;
+
+  Spectrum := FFT(Windowed);
+
+  RowResult := TVMobj.Create(1, N);
+  for i := 0 to N-1 do begin
+    bin := Spectrum[0,i];
+    RowResult[0,i] := bin.re*bin.re + bin.im*bin.im;
+  end;
+
+  if A.Cols = 1 then result := Reshape(RowResult, N, 1) else result := RowResult;
 end;
 
 end.

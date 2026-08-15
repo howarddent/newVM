@@ -34,22 +34,21 @@ unit uspectrummain;
           recognisable family of peaks (the tone's fundamental and odd
           harmonics) standing up out of the noise floor, rather than pure
           noise with nothing to visually anchor on.
-       3. Multiplies the result elementwise by a Hamming window built once
-          in FormCreate (FWindow) via the ordinary same-type TVMobj '*'
-          operator, which newVM.pas's own header (and CLAUDE.md) documents
-          as elementwise (Hadamard) for two same-type TVMobj operands -
-          exactly what windowing needs, not a matrix product.
-       4. FFT's the windowed signal via newVMComplex.pas's FFT_R2C
-          (FFTW3-backed real-to-complex transform), returning the packed
-          half-spectrum of length SignalLength div 2 + 1 (2049 for
-          SignalLength=4096).
-       5. Reduces that to a SpectrumLength=SignalLength div 2 (2048)
-          -point power spectrum in dB (10*Log10(re^2+im^2+eps), eps
-          guarding the log against an exact-zero bin) - one point per FFT
-          bin from DC up to (but not including) the Nyquist bin, which is
-          dropped purely to land on the requested round 2048 rather than
-          FFT_R2C's own 2049.
-       6. FPlot.AddGraph's the result - TVMPlotStack's own auto-fit value
+       3. Calls newVMComplex.pas's PowerSpectrum(A: TVMobj): TVMobj - the
+          Hamming-windowing/FFT_R2C/|X|^2 pipeline this unit originally
+          hand-rolled itself now lives there instead (moved into the
+          library on request, since it's a generally useful building
+          block - e.g. for A-D-converter-derived data - not something
+          specific to this one demo). Its result is SpectrumLength=
+          SignalLength div 2 (2048) points of LINEAR power, one per FFT
+          bin from DC up to (but not including) the Nyquist bin.
+       4. Converts that linear power to dB (10*Log10(P+eps), eps guarding
+          against an exact-zero bin) for display - PowerSpectrum itself
+          deliberately returns linear power, not dB, so callers doing
+          further numeric processing on it (peak detection, averaging)
+          aren't forced to undo a display-oriented transform first; dB is
+          this demo's own choice, made here rather than in the library.
+       5. FPlot.AddGraph's the result - TVMPlotStack's own auto-fit value
           range (see its RecomputeBounds) rescales to whatever range these
           dB values actually span, no manual scaling needed here.
 
@@ -62,7 +61,7 @@ interface
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls,
-  OneAPI, newVM, newVMComplex, uVMPlotStack;
+  newVM, newVMComplex, uVMPlotStack;
 
 const
   SignalLength = 4096;
@@ -99,10 +98,8 @@ type
   private
     FPlot: TVMPlotStack;
     FTimer: TTimer;
-    FWindow: TVMobj;
     FSquareWave: TVMobj;
     procedure TimerTick(Sender: TObject);
-    function BuildHammingWindow(N: Integer): TVMobj;
     function BuildSquareWave(N, FundamentalBin: Integer; Amplitude: Double): TVMobj;
   end;
 
@@ -130,7 +127,6 @@ begin
   FPlot.MaxSeries := 60;
   FPlot.ClearStack;   // discard the component's own default demo data
 
-  FWindow := BuildHammingWindow(SignalLength);
   FSquareWave := BuildSquareWave(SignalLength, SquareWaveBin, SquareWaveAmplitude);
 
   FTimer := TTimer.Create(Self);
@@ -146,20 +142,6 @@ end;
 procedure TForm1.FormDestroy(Sender: TObject);
 begin
   FTimer.Enabled := False;
-end;
-
-// w[n] = 0.54 - 0.46*cos(2*pi*n/(N-1)), n=0..N-1 - the standard Hamming
-// window. Built once here rather than in TimerTick, since it never
-// changes once SignalLength is fixed.
-function TForm1.BuildHammingWindow(N: Integer): TVMobj;
-var
-  W: TVMobj;
-  i: Integer;
-begin
-  W := TVMobj.Create(1, N);
-  for i := 0 to N - 1 do
-    W[0, i] := 0.54 - 0.46 * Cos(2 * Pi * i / (N - 1));
-  result := W;
 end;
 
 // A +-Amplitude square wave completing exactly FundamentalBin cycles over
@@ -189,24 +171,19 @@ end;
 
 procedure TForm1.TimerTick(Sender: TObject);
 var
-  Raw, Toned, Windowed, PowerSpec: TVMobj;
-  Spectrum: TVMobjZ;
+  Raw, Toned, LinearPower, PowerSpec: TVMobj;
   k: Integer;
-  bin: TComplex16;
 begin
   Raw := TVMobj.Create(1, SignalLength);
   for k := 0 to SignalLength - 1 do
     Raw[0, k] := RandG(0, 1);
 
   Toned := Raw + FSquareWave;
-  Windowed := Toned * FWindow;
-  Spectrum := FFT_R2C(Windowed);
+  LinearPower := PowerSpectrum(Toned);   // newVMComplex.pas - windows, FFTs, returns linear |X|^2
 
   PowerSpec := TVMobj.Create(1, SpectrumLength);
-  for k := 0 to SpectrumLength - 1 do begin
-    bin := Spectrum[0, k];
-    PowerSpec[0, k] := 10 * Log10(bin.re * bin.re + bin.im * bin.im + 1e-12);
-  end;
+  for k := 0 to SpectrumLength - 1 do
+    PowerSpec[0, k] := 10 * Log10(LinearPower[0, k] + 1e-12);
 
   FPlot.AddGraph(PowerSpec);
 end;

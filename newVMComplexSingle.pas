@@ -210,6 +210,17 @@ function FFT_C2R(const A: TVMobjC; N: Integer): TVMobjS; overload; //packed half
 function FFT(const A: TVMobjC): TVMobjC; overload;             //complex -> complex, forward
 function IFFT(const A: TVMobjC): TVMobjC; overload;            //complex -> complex, inverse, normalized
 
+{ PowerSpectrum(A): one-call Hamming-windowed LINEAR power spectrum - see
+  the matching PowerSpectrum comment in newVMComplex.pas for the full
+  rationale (built for repeated use on fixed-size ADC-derived buffers),
+  which applies here identically. Real input (A: TVMobjS) returns half
+  A's length; complex input (A: TVMobjC) returns the same length as A.
+  Both always return a real TVMobjS of LINEAR power (re^2+im^2), not dB.
+  Marked "overload" because newVMComplex.pas declares the TVMobj/TVMobjZ
+  (double) analogues of these same two names. }
+function PowerSpectrum(const A: TVMobjS): TVMobjS; overload;  //real signal -> half-length linear power spectrum
+function PowerSpectrum(const A: TVMobjC): TVMobjS; overload;  //complex signal -> full-length linear power spectrum
+
 implementation
 
 function Cplx8(re,im: Single): TComplex8;
@@ -1551,6 +1562,81 @@ begin
   fftwf_destroy_plan(plan);
   assert(Assigned(cblas_csscal), s+'OpenBLAS not available on this machine - IFFT normalization has no PUREPASCAL fallback');
   cblas_csscal(n, 1.0/n, @result.FData[0], 1);  //normalize, matching IFFT(FFT(x)) = x
+end;
+
+// Single-precision analogue of newVMComplex.pas's PowerSpectrum(A:
+// TVMobj) - see that function's own header comment for the full
+// rationale, which applies here identically (just Single/TVMobjS/
+// TVMobjC throughout instead of Double/TVMobj/TVMobjZ).
+function PowerSpectrum(const A: TVMobjS): TVMobjS;
+const
+  s : String = 'Routine PowerSpectrum : ';
+var
+  N, HalfN, i : Integer;
+  RowA, W, Windowed, RowResult : TVMobjS;
+  Spectrum : TVMobjC;
+  bin : TComplex8;
+begin
+  assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
+  N := A.Rows*A.Cols;
+  HalfN := N div 2;
+  assert(HalfN > 0, s+'A must have at least 2 elements');
+
+  RowA := ReshapeS(A, 1, N);
+
+  W := TVMobjS.Create(1, N);
+  for i := 0 to N-1 do
+    W[0,i] := 0.54 - 0.46*cos(2*Pi*i/(N-1));
+
+  Windowed := RowA * W;
+  Spectrum := FFT_R2C(Windowed);
+
+  RowResult := TVMobjS.Create(1, HalfN);
+  for i := 0 to HalfN-1 do begin
+    bin := Spectrum[0,i];
+    RowResult[0,i] := bin.re*bin.re + bin.im*bin.im;
+  end;
+
+  if A.Cols = 1 then result := ReshapeS(RowResult, HalfN, 1) else result := RowResult;
+end;
+
+// Single-precision analogue of newVMComplex.pas's PowerSpectrum(A:
+// TVMobjZ) - see that function's own header comment for the full
+// rationale, which applies here identically.
+function PowerSpectrum(const A: TVMobjC): TVMobjS;
+const
+  s : String = 'Routine PowerSpectrum : ';
+var
+  N, i : Integer;
+  RowA, Windowed, Spectrum : TVMobjC;
+  W, RowResult : TVMobjS;
+  bin : TComplex8;
+begin
+  assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
+  N := A.Rows*A.Cols;
+  assert(N > 0, s+'A must have at least 1 element');
+
+  RowA := ReshapeC(A, 1, N);
+
+  W := TVMobjS.Create(1, N);
+  for i := 0 to N-1 do
+    W[0,i] := 0.54 - 0.46*cos(2*Pi*i/(N-1));
+
+  Windowed := TVMobjC.Create(1, N);
+  for i := 0 to N-1 do begin
+    bin := RowA[0,i];
+    Windowed[0,i] := Cplx8(bin.re*W[0,i], bin.im*W[0,i]);
+  end;
+
+  Spectrum := FFT(Windowed);
+
+  RowResult := TVMobjS.Create(1, N);
+  for i := 0 to N-1 do begin
+    bin := Spectrum[0,i];
+    RowResult[0,i] := bin.re*bin.re + bin.im*bin.im;
+  end;
+
+  if A.Cols = 1 then result := ReshapeS(RowResult, N, 1) else result := RowResult;
 end;
 
 end.

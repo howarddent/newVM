@@ -270,6 +270,9 @@ type
     procedure TestFFTR2CC2RRoundTrip;
     procedure TestFFTC2CRoundTrip;
     procedure TestFFTR2CKnownDCValue;
+    procedure TestPowerSpectrumRealKnownValue;
+    procedure TestPowerSpectrumRealHalfLength;
+    procedure TestPowerSpectrumComplexFullLength;
     procedure TestKronKnownValues;
     procedure TestDiagKnownValues;
     procedure TestDiagNonColumnVectorAsserts;
@@ -356,6 +359,9 @@ type
     procedure TestFFTR2CC2RRoundTrip;
     procedure TestFFTC2CRoundTrip;
     procedure TestFFTR2CKnownDCValue;
+    procedure TestPowerSpectrumRealKnownValue;
+    procedure TestPowerSpectrumRealHalfLength;
+    procedure TestPowerSpectrumComplexFullLength;
     procedure TestKronKnownValues;
     procedure TestDiagKnownValues;
     procedure TestDiagNonColumnVectorAsserts;
@@ -2420,6 +2426,52 @@ begin
   AssertEquals(0.0, Z[0, 1].im, DblTol);
 end;
 
+procedure TVMobjZTests.TestPowerSpectrumRealKnownValue;
+const N = 4;
+var A, P: TVMobj;
+begin
+  A := TVMobj.Create(1, N, [1, 1, 1, 1]);
+  P := PowerSpectrum(A);
+  //DC bin (index 0) of a Hamming-windowed constant signal is (sum of the
+  //window)^2, since a constant multiplies straight through: windowed[n] =
+  //1*w[n] = w[n], and the DC bin is just sum(windowed). For N=4,
+  //w[n] = 0.54-0.46*cos(2*pi*n/3) = [0.08, 0.77, 0.77, 0.08], summing to
+  //1.70, so P[0] = 1.70^2 = 2.89.
+  AssertEquals(N div 2, P.Cols);
+  AssertEquals(2.89, P[0, 0], DblTol);
+end;
+
+procedure TVMobjZTests.TestPowerSpectrumRealHalfLength;
+var A, P: TVMobj;
+begin
+  A := TVMobj.Create(1, 8);                    //even length
+  P := PowerSpectrum(A);
+  AssertEquals('even N', 4, P.Cols);
+
+  A := TVMobj.Create(1, 7);                    //odd length - integer division
+  P := PowerSpectrum(A);
+  AssertEquals('odd N', 3, P.Cols);
+
+  A := TVMobj.Create(6, 1);                    //column vector - orientation preserved
+  P := PowerSpectrum(A);
+  AssertEquals('column Rows', 3, P.Rows);
+  AssertEquals('column Cols', 1, P.Cols);
+end;
+
+procedure TVMobjZTests.TestPowerSpectrumComplexFullLength;
+var A: TVMobjZ; P: TVMobj;
+begin
+  A := TVMobjZ.Create(1, 6, [Cplx(1,1), Cplx(2,-1), Cplx(3,0), Cplx(-1,2), Cplx(0,-3), Cplx(4,4)]);
+  P := PowerSpectrum(A);
+  AssertEquals('row Rows', 1, P.Rows);
+  AssertEquals('row Cols', 6, P.Cols);
+
+  A := TVMobjZ.Create(5, 1);                   //column vector - orientation preserved
+  P := PowerSpectrum(A);
+  AssertEquals('column Rows', 5, P.Rows);
+  AssertEquals('column Cols', 1, P.Cols);
+end;
+
 procedure TVMobjZTests.TestKronKnownValues;
 var A, B, K: TVMobjZ;
 begin
@@ -3225,6 +3277,49 @@ begin
   AssertEquals(0.0, Z[0, 0].im, SngTol);
   AssertEquals(0.0, Z[0, 1].re, SngTol);
   AssertEquals(0.0, Z[0, 1].im, SngTol);
+end;
+
+procedure TVMobjCTests.TestPowerSpectrumRealKnownValue;
+const N = 4;
+var A, P: TVMobjS;
+begin
+  A := TVMobjS.Create(1, N, [1, 1, 1, 1]);
+  P := PowerSpectrum(A);
+  //See the matching TVMobjZTests.TestPowerSpectrumRealKnownValue for the
+  //full derivation - identical here, just single precision: P[0] = 2.89.
+  AssertEquals(N div 2, P.Cols);
+  AssertEquals(2.89, P[0, 0], SngTol);
+end;
+
+procedure TVMobjCTests.TestPowerSpectrumRealHalfLength;
+var A, P: TVMobjS;
+begin
+  A := TVMobjS.Create(1, 8);                   //even length
+  P := PowerSpectrum(A);
+  AssertEquals('even N', 4, P.Cols);
+
+  A := TVMobjS.Create(1, 7);                   //odd length - integer division
+  P := PowerSpectrum(A);
+  AssertEquals('odd N', 3, P.Cols);
+
+  A := TVMobjS.Create(6, 1);                   //column vector - orientation preserved
+  P := PowerSpectrum(A);
+  AssertEquals('column Rows', 3, P.Rows);
+  AssertEquals('column Cols', 1, P.Cols);
+end;
+
+procedure TVMobjCTests.TestPowerSpectrumComplexFullLength;
+var A: TVMobjC; P: TVMobjS;
+begin
+  A := TVMobjC.Create(1, 6, [Cplx8(1,1), Cplx8(2,-1), Cplx8(3,0), Cplx8(-1,2), Cplx8(0,-3), Cplx8(4,4)]);
+  P := PowerSpectrum(A);
+  AssertEquals('row Rows', 1, P.Rows);
+  AssertEquals('row Cols', 6, P.Cols);
+
+  A := TVMobjC.Create(5, 1);                   //column vector - orientation preserved
+  P := PowerSpectrum(A);
+  AssertEquals('column Rows', 5, P.Rows);
+  AssertEquals('column Cols', 1, P.Cols);
 end;
 
 procedure TVMobjCTests.TestKronKnownValues;
