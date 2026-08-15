@@ -79,6 +79,16 @@ type
 
     FTitle, FXAxisTitle, FYAxisTitle, FZAxisTitle: string;
     FXTicks, FYTicks, FZTicks: TVMPlotDoubleArray;
+    // FXTickPos/FYTickPos hold each tick's fractional (column,row) index -
+    // i.e. its position in the SAME units SetData's world-position formula
+    // ((pos - (FCols-1)/2) * WorldSize/(FCols-1), etc) expects - regardless
+    // of what FXTicks/FYTicks themselves are labelled with. In index mode
+    // (the default) a tick's label value and its position are the same
+    // number; in domain mode (XAxisMin<>XAxisMax) they're not, since the
+    // label is a data-space coordinate but the position is still expressed
+    // in grid-index units - see RecomputeXYTicks.
+    FXTickPos, FYTickPos: TVMPlotDoubleArray;
+    FXAxisMin, FXAxisMax, FYAxisMin, FYAxisMax: Double;
     FTexturesBuilt: Boolean;
     FTitleTex, FXAxisTitleTex, FYAxisTitleTex, FZAxisTitleTex: TVMPlotTextTexture;
     FXTickTex, FYTickTex, FZTickTex: array of TVMPlotTextTexture;
@@ -90,6 +100,11 @@ type
     procedure SetXAxisTitle(const AValue: string);
     procedure SetYAxisTitle(const AValue: string);
     procedure SetZAxisTitle(const AValue: string);
+    procedure SetXAxisMin(AValue: Double);
+    procedure SetXAxisMax(AValue: Double);
+    procedure SetYAxisMin(AValue: Double);
+    procedure SetYAxisMax(AValue: Double);
+    procedure RecomputeXYTicks;
     procedure ComputeNormal(r, c: Integer);
     procedure HeightToColor(t: Double; out r, g, b: Double);
     procedure DrawAxisLines;
@@ -130,6 +145,21 @@ type
     property XAxisTitle: string read FXAxisTitle write SetXAxisTitle;
     property YAxisTitle: string read FYAxisTitle write SetYAxisTitle;
     property ZAxisTitle: string read FZAxisTitle write SetZAxisTitle;
+    // X/Y tick labels default to column/row index (useful for debugging -
+    // "which grid cell is this"), the one thing always knowable about an
+    // arbitrary matrix (see SetData's own comment). Setting XAxisMin/
+    // XAxisMax (or YAxisMin/YAxisMax) to a genuinely different pair of
+    // values switches that axis to label the actual solution-domain
+    // coordinate instead - e.g. XAxisMin:=-1; XAxisMax:=1; for a matrix
+    // sampled over x in [-1,1] - without changing the underlying grid
+    // geometry at all, only how ticks are labelled/spaced. Leaving a pair
+    // equal (the default, 0/0) keeps index labelling; this mirrors the
+    // "range=0 means degenerate/unset" convention SetData's own ZRange
+    // guard already uses.
+    property XAxisMin: Double read FXAxisMin write SetXAxisMin;
+    property XAxisMax: Double read FXAxisMax write SetXAxisMax;
+    property YAxisMin: Double read FYAxisMin write SetYAxisMin;
+    property YAxisMax: Double read FYAxisMax write SetYAxisMax;
   end;
 
 procedure Register;
@@ -297,6 +327,77 @@ begin
   Invalidate;
 end;
 
+procedure TVMPlot3D.SetXAxisMin(AValue: Double);
+begin
+  if FXAxisMin = AValue then Exit;
+  FXAxisMin := AValue;
+  RecomputeXYTicks;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlot3D.SetXAxisMax(AValue: Double);
+begin
+  if FXAxisMax = AValue then Exit;
+  FXAxisMax := AValue;
+  RecomputeXYTicks;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlot3D.SetYAxisMin(AValue: Double);
+begin
+  if FYAxisMin = AValue then Exit;
+  FYAxisMin := AValue;
+  RecomputeXYTicks;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlot3D.SetYAxisMax(AValue: Double);
+begin
+  if FYAxisMax = AValue then Exit;
+  FYAxisMax := AValue;
+  RecomputeXYTicks;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+// Rebuilds FXTicks/FYTicks (the label values) and FXTickPos/FYTickPos (their
+// world-position-formula input, always in grid-index units - see the fields'
+// own comment) from FCols/FRows plus whichever mode XAxisMin/XAxisMax (resp.
+// YAxisMin/YAxisMax) currently select. Called from SetData (after FCols/
+// FRows are updated) and from the four axis-range setters above - the
+// latter so changing XAxisMin/XAxisMax alone (no new SetData call) is
+// enough to relabel an already-displayed matrix, and so setting them
+// *before* the first real SetData call (a common call order - see
+// u2DBVPMain.pas's FormCreate) still lands on the right FCols/FRows once
+// SetData itself re-runs this.
+procedure TVMPlot3D.RecomputeXYTicks;
+var
+  i: Integer;
+begin
+  if FXAxisMin <> FXAxisMax then begin
+    FXTicks := ComputeTicks(FXAxisMin, FXAxisMax, 5);
+    SetLength(FXTickPos, Length(FXTicks));
+    for i := 0 to High(FXTicks) do
+      FXTickPos[i] := (FXTicks[i] - FXAxisMin) / (FXAxisMax - FXAxisMin) * (FCols - 1);
+  end else begin
+    FXTicks := ComputeTicks(0, FCols - 1, 5);
+    FXTickPos := Copy(FXTicks, 0, Length(FXTicks));
+  end;
+
+  if FYAxisMin <> FYAxisMax then begin
+    FYTicks := ComputeTicks(FYAxisMin, FYAxisMax, 5);
+    SetLength(FYTickPos, Length(FYTicks));
+    for i := 0 to High(FYTicks) do
+      FYTickPos[i] := (FYTicks[i] - FYAxisMin) / (FYAxisMax - FYAxisMin) * (FRows - 1);
+  end else begin
+    FYTicks := ComputeTicks(0, FRows - 1, 5);
+    FYTickPos := Copy(FYTicks, 0, Length(FYTicks));
+  end;
+end;
+
 procedure TVMPlot3D.ResetView;
 begin
   FYaw := DefaultYaw;
@@ -310,10 +411,12 @@ end;
 // world Z is M's values linearly rescaled from [FZMin,FZMax] to
 // [-ZScale/2,+ZScale/2] regardless of M's actual magnitude - so any real
 // matrix, of any size or value range, renders at the same on-screen
-// scale. Also computes the X/Y/Z axis tick values - the X/Y axes are
-// labelled by column/row index (the one thing this can always know about
-// an arbitrary matrix) and Z by M's actual value range. Ported from
-// uplot3dmain.pas's BuildSurface, renamed to SetData for parity with
+// scale. Also computes the X/Y/Z axis tick values (RecomputeXYTicks for X/Y
+// - column/row index by default, or the actual solution-domain coordinate
+// if XAxisMin/XAxisMax or YAxisMin/YAxisMax have been set to a genuine
+// range; Z always from M's actual value range, there being no equivalent
+// "index" reading for it). Ported from uplot3dmain.pas's BuildSurface,
+// renamed to SetData for parity with
 // TVMPlot2D's public entry point.
 procedure TVMPlot3D.SetData(const M: TVMobj);
 var
@@ -353,8 +456,7 @@ begin
         FVerts[r, c].R, FVerts[r, c].G, FVerts[r, c].B);
     end;
 
-  FXTicks := ComputeTicks(0, FCols - 1, 5);
-  FYTicks := ComputeTicks(0, FRows - 1, 5);
+  RecomputeXYTicks;
   FZTicks := ComputeTicks(FZMin, FZMax, 5);
 
   FHasData := True;
@@ -538,10 +640,10 @@ begin
   glBegin(GL_POINTS);
     glColor3f(0.85, 0.25, 0.25);
     for i := 0 to High(FXTicks) do
-      glVertex3d((FXTicks[i] - (FCols - 1) / 2) * (WorldSize / (FCols - 1)), 0, 0);
+      glVertex3d((FXTickPos[i] - (FCols - 1) / 2) * (WorldSize / (FCols - 1)), 0, 0);
     glColor3f(0.25, 0.75, 0.25);
     for i := 0 to High(FYTicks) do
-      glVertex3d(0, (FYTicks[i] - (FRows - 1) / 2) * (WorldSize / (FRows - 1)), 0);
+      glVertex3d(0, (FYTickPos[i] - (FRows - 1) / 2) * (WorldSize / (FRows - 1)), 0);
     glColor3f(0.35, 0.55, 1.0);
     for i := 0 to High(FZTicks) do
       glVertex3d(0, 0, ((FZTicks[i] - FZMin) / zRangeForTicks - 0.5) * ZScale);
@@ -775,12 +877,12 @@ begin
 
   if FShowAxes then begin
     for i := 0 to High(FXTicks) do begin
-      WorldToScreen((FXTicks[i] - (FCols - 1) / 2) * (WorldSize / (FCols - 1)),
+      WorldToScreen((FXTickPos[i] - (FCols - 1) / 2) * (WorldSize / (FCols - 1)),
         0, 0, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FXTickTex[i], sx, sy - 8, 0, 0.5, 1);
     end;
     for i := 0 to High(FYTicks) do begin
-      WorldToScreen(0, (FYTicks[i] - (FRows - 1) / 2) * (WorldSize / (FRows - 1)),
+      WorldToScreen(0, (FYTickPos[i] - (FRows - 1) / 2) * (WorldSize / (FRows - 1)),
         0, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FYTickTex[i], sx + 8, sy, 0, 0, 0.5);
     end;

@@ -137,8 +137,9 @@ begin
   v := CopyObj(f);
   LinearSolve(LaplaceScratch, v);
   ElapsedUs := Profiler.Stop;
-  Memo1.Lines.Add('Time for direct solve (' + IntToStr(Nint * Nint) + 'x' +
-    IntToStr(Nint * Nint) + '): ' + FloatToStr(ElapsedUs / 1000) + ' ms');
+  Memo1.Lines.Add('Time for direct solve (' + IntToStr(Nint) + 'x' + IntToStr(Nint) +
+    ' interior grid, ' + IntToStr(Nint * Nint) + 'x' + IntToStr(Nint * Nint) +
+    ' system): ' + FloatToStr(ElapsedUs / 1000) + ' ms');
 
   U := Reshape(v, Nint, Nint);
 
@@ -167,6 +168,13 @@ begin
   FPlot.XAxisTitle := 'x';
   FPlot.YAxisTitle := 'y';
   FPlot.ZAxisTitle := 'u';
+  // Label the X/Y axes with the actual solution-domain coordinate (PlotGrid
+  // is sampled over XF/YF, both exactly [-1,1] - see their construction
+  // above) rather than TVMPlot3D's default column/row index.
+  FPlot.XAxisMin := -1;
+  FPlot.XAxisMax := 1;
+  FPlot.YAxisMin := -1;
+  FPlot.YAxisMax := 1;
   FPlot.SetData(PlotGrid);
 
   Memo1.Lines.Add('');
