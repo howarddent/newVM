@@ -28,22 +28,28 @@ unit uspectrummain;
           TestFillRandomDeterministic) - calling it here would push the
           exact same "random" vector every 20ms, i.e. a frozen spectrum,
           not a live one.
-       2. Multiplies it elementwise by a Hamming window built once in
-          FormCreate (FWindow) via the ordinary same-type TVMobj '*'
+       2. Adds a fixed square-wave tone (FSquareWave, built once in
+          FormCreate - see BuildSquareWave's own comment) via the ordinary
+          same-type TVMobj '+' operator, so the spectrum shows a
+          recognisable family of peaks (the tone's fundamental and odd
+          harmonics) standing up out of the noise floor, rather than pure
+          noise with nothing to visually anchor on.
+       3. Multiplies the result elementwise by a Hamming window built once
+          in FormCreate (FWindow) via the ordinary same-type TVMobj '*'
           operator, which newVM.pas's own header (and CLAUDE.md) documents
           as elementwise (Hadamard) for two same-type TVMobj operands -
           exactly what windowing needs, not a matrix product.
-       3. FFT's the windowed signal via newVMComplex.pas's FFT_R2C
+       4. FFT's the windowed signal via newVMComplex.pas's FFT_R2C
           (FFTW3-backed real-to-complex transform), returning the packed
           half-spectrum of length SignalLength div 2 + 1 (2049 for
           SignalLength=4096).
-       4. Reduces that to a SpectrumLength=SignalLength div 2 (2048)
+       5. Reduces that to a SpectrumLength=SignalLength div 2 (2048)
           -point power spectrum in dB (10*Log10(re^2+im^2+eps), eps
           guarding the log against an exact-zero bin) - one point per FFT
           bin from DC up to (but not including) the Nyquist bin, which is
           dropped purely to land on the requested round 2048 rather than
           FFT_R2C's own 2049.
-       5. FPlot.AddGraph's the result - TVMPlotStack's own auto-fit value
+       6. FPlot.AddGraph's the result - TVMPlotStack's own auto-fit value
           range (see its RecomputeBounds) rescales to whatever range these
           dB values actually span, no manual scaling needed here.
 
@@ -61,6 +67,18 @@ uses
 const
   SignalLength = 4096;
   SpectrumLength = SignalLength div 2;   // 2048 - drops FFT_R2C's Nyquist bin
+
+  // The imposed tone: a square wave completing exactly SquareWaveBin
+  // cycles over the SignalLength-sample block - see BuildSquareWave's own
+  // comment for why an integer bin count here is what keeps its harmonics
+  // landing on exact FFT bins too, rather than smeared across several.
+  // Chosen well clear of bin 0 (rather than e.g. a low bin like 60) so the
+  // fundamental and its first couple of harmonics (900, 1500 - the next,
+  // 2100, falls past SpectrumLength and is simply absent) sit spread
+  // across the middle of the display, not crowded against the Bin axis
+  // at the left edge where they're hard to pick out visually.
+  SquareWaveBin = 300;
+  SquareWaveAmplitude = 3.0;
 
 type
 
@@ -82,8 +100,10 @@ type
     FPlot: TVMPlotStack;
     FTimer: TTimer;
     FWindow: TVMobj;
+    FSquareWave: TVMobj;
     procedure TimerTick(Sender: TObject);
     function BuildHammingWindow(N: Integer): TVMobj;
+    function BuildSquareWave(N, FundamentalBin: Integer; Amplitude: Double): TVMobj;
   end;
 
 var
@@ -111,6 +131,7 @@ begin
   FPlot.ClearStack;   // discard the component's own default demo data
 
   FWindow := BuildHammingWindow(SignalLength);
+  FSquareWave := BuildSquareWave(SignalLength, SquareWaveBin, SquareWaveAmplitude);
 
   FTimer := TTimer.Create(Self);
   FTimer.OnTimer := @TimerTick;
@@ -141,9 +162,34 @@ begin
   result := W;
 end;
 
+// A +-Amplitude square wave completing exactly FundamentalBin cycles over
+// N samples (via the sign of a sine at that same bin, rather than a
+// separate period/duty-cycle computation - simplest way to guarantee an
+// exact integer cycle count). Built once in FormCreate, like FWindow,
+// since it's the same fixed tone added to every tick's fresh noise - a
+// square wave's Fourier series is the fundamental plus odd harmonics
+// (3x, 5x, 7x, ...) at 1/3, 1/5, 1/7 ... of its amplitude, and because
+// FundamentalBin is an integer, every one of those harmonics is *also*
+// an integer bin - so the spectrum shows a whole family of clean,
+// unsmeared peaks (at FundamentalBin, 3*FundamentalBin, 5*FundamentalBin,
+// ...) rather than just one.
+function TForm1.BuildSquareWave(N, FundamentalBin: Integer; Amplitude: Double): TVMobj;
+var
+  S: TVMobj;
+  i: Integer;
+begin
+  S := TVMobj.Create(1, N);
+  for i := 0 to N - 1 do
+    if Sin(2 * Pi * FundamentalBin * i / N) >= 0 then
+      S[0, i] := Amplitude
+    else
+      S[0, i] := -Amplitude;
+  result := S;
+end;
+
 procedure TForm1.TimerTick(Sender: TObject);
 var
-  Raw, Windowed, PowerSpec: TVMobj;
+  Raw, Toned, Windowed, PowerSpec: TVMobj;
   Spectrum: TVMobjZ;
   k: Integer;
   bin: TComplex16;
@@ -152,7 +198,8 @@ begin
   for k := 0 to SignalLength - 1 do
     Raw[0, k] := RandG(0, 1);
 
-  Windowed := Raw * FWindow;
+  Toned := Raw + FSquareWave;
+  Windowed := Toned * FWindow;
   Spectrum := FFT_R2C(Windowed);
 
   PowerSpec := TVMobj.Create(1, SpectrumLength);
