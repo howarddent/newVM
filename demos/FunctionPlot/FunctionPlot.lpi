@@ -11,9 +11,9 @@
       <UseAppBundle Value="False"/>
       <ResourceType Value="res"/>
     </General>
-    <BuildModes Count="2">
-      <Item1 Name="Default" Default="True"/>
-      <Item2 Name="macOS">
+    <BuildModes>
+      <Item Name="Default" Default="True"/>
+      <Item Name="macOS">
         <CompilerOptions>
           <Version Value="11"/>
           <Target>
@@ -39,7 +39,7 @@
             <CustomOptions Value="-k-ld_classic"/>
           </Other>
         </CompilerOptions>
-      </Item2>
+      </Item>
     </BuildModes>
     <PublishOptions>
       <Version Value="2"/>
