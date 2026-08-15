@@ -1161,8 +1161,12 @@ procedure TVMPlotStack.MouseMove(Shift: TShiftState; X, Y: Integer);
 begin
   inherited MouseMove(Shift, X, Y);
   if not FDragging then Exit;
-  FYaw := FYaw + (X - FLastMouseX) * 0.5;
-  FPitch := EnsureRange(FPitch + (Y - FLastMouseY) * 0.5, -89.0, 89.0);
+  // Negated - reported as feeling backwards on both axes; see
+  // TVMPlot3D.MouseMove's own comment (uVMPlot3D.pas) for the fuller
+  // rationale and why this is a direct response to that report rather
+  // than something re-confirmed here by actually dragging.
+  FYaw := FYaw - (X - FLastMouseX) * 0.5;
+  FPitch := EnsureRange(FPitch - (Y - FLastMouseY) * 0.5, -89.0, 89.0);
   FLastMouseX := X;
   FLastMouseY := Y;
   Invalidate;

@@ -1132,7 +1132,20 @@ procedure TVMPlot3D.MouseMove(Shift: TShiftState; X, Y: Integer);
 begin
   inherited MouseMove(Shift, X, Y);
   if not FDragging then Exit;
-  FYaw := FYaw + (X - FLastMouseX) * 0.5;
+  // Negated (previously a plain '+'): reported as feeling backwards on
+  // both axes - dragging left rotated the graph right and vice versa,
+  // same for up/down - the standard "grab and turn" trackball feel wants
+  // the near face to follow the drag direction, not swing away from it.
+  // FYaw/FPitch rotate the SCENE (not the camera), so which sign actually
+  // produces that feel isn't something to re-derive from the rotation
+  // math in the abstract - see uVMPlotStack.pas's own DrawSlice comment
+  // for an analogous case (its Age-to-Z-direction sign) where reasoning
+  // from the rotation math alone gave the wrong answer, only caught by
+  // screenshotting the actual result. This negation is a direct response
+  // to the reported drag behaviour, not something re-confirmed here by
+  // actually dragging - no mouse-automation tooling was available in the
+  // environment this fix was made in.
+  FYaw := FYaw - (X - FLastMouseX) * 0.5;
   // Was clamped to [-89,89] (avoiding the exact poles at +-90, where a
   // simple sequential-Euler-angle camera like this one degenerates into
   // gimbal lock) back when DefaultPitch was 45 - now that DefaultPitch is
@@ -1141,7 +1154,7 @@ begin
   // [-179,179], which comfortably includes both defaults with room to
   // drag either way; GL_LIGHT_MODEL_TWO_SIDE (see Paint) means the wider
   // range crossing +-90 no longer risks the surface looking wrongly lit.
-  FPitch := EnsureRange(FPitch + (Y - FLastMouseY) * 0.5, -179.0, 179.0);
+  FPitch := EnsureRange(FPitch - (Y - FLastMouseY) * 0.5, -179.0, 179.0);
   FLastMouseX := X;
   FLastMouseY := Y;
   Invalidate;
