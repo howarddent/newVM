@@ -89,6 +89,7 @@ type
     // in grid-index units - see RecomputeXYTicks.
     FXTickPos, FYTickPos: TVMPlotDoubleArray;
     FXAxisMin, FXAxisMax, FYAxisMin, FYAxisMax: Double;
+    FLightX, FLightY: Double;
     FTexturesBuilt: Boolean;
     FTitleTex, FXAxisTitleTex, FYAxisTitleTex, FZAxisTitleTex: TVMPlotTextTexture;
     FXTickTex, FYTickTex, FZTickTex: array of TVMPlotTextTexture;
@@ -104,6 +105,8 @@ type
     procedure SetXAxisMax(AValue: Double);
     procedure SetYAxisMin(AValue: Double);
     procedure SetYAxisMax(AValue: Double);
+    procedure SetLightX(AValue: Double);
+    procedure SetLightY(AValue: Double);
     procedure RecomputeXYTicks;
     procedure ComputeNormal(r, c: Integer);
     procedure HeightToColor(t: Double; out r, g, b: Double);
@@ -160,6 +163,15 @@ type
     property XAxisMax: Double read FXAxisMax write SetXAxisMax;
     property YAxisMin: Double read FYAxisMin write SetYAxisMin;
     property YAxisMax: Double read FYAxisMax write SetYAxisMax;
+    // XY direction of the OpenGL "headlamp" light Paint sets up (see its own
+    // comment for why it's a camera-relative directional light rather than
+    // a scene-fixed one) - each roughly -1..1, matching whatever a
+    // Graphs/uVMLightPad.pas TVMLightPad feeds in, though nothing here
+    // requires that control specifically; any code setting these directly
+    // works too. Z stays fixed (see Paint) - only the XY direction is
+    // exposed, per the feature's own "XY position" scope.
+    property LightX: Double read FLightX write SetLightX;
+    property LightY: Double read FLightY write SetLightY;
   end;
 
 procedure Register;
@@ -182,6 +194,16 @@ const
   DefaultYaw = 20.0;
   DefaultPitch = -45.0;
   DefaultDistance = 16.0;
+
+  // Default headlamp light XY direction - see Paint's own comment for how
+  // these two values were arrived at (screenshotted trial and error, not
+  // derived). Now overridable at runtime via the LightX/LightY properties
+  // (typically driven by a Graphs/uVMLightPad.pas TVMLightPad control - see
+  // both demos' FormCreate) - these two constants are only the starting
+  // point a freshly-created TVMPlot3D (and a freshly-created TVMLightPad,
+  // which mirrors them as its own default) begin at.
+  DefaultLightX = 0.5;
+  DefaultLightY = -0.6;
 
   // World-space size of the rendered surface/axes, shared by SetData,
   // DrawAxisLines and WorldToScreen's world-position calculations.
@@ -248,6 +270,8 @@ begin
   FWireframe := False;
   FShowAxes := True;
   FShowLevelCurves := False;
+  FLightX := DefaultLightX;
+  FLightY := DefaultLightY;
   FHasData := False;
   FTexturesBuilt := False;
 
@@ -360,6 +384,20 @@ begin
   FYAxisMax := AValue;
   RecomputeXYTicks;
   InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlot3D.SetLightX(AValue: Double);
+begin
+  if FLightX = AValue then Exit;
+  FLightX := AValue;
+  Invalidate;
+end;
+
+procedure TVMPlot3D.SetLightY(AValue: Double);
+begin
+  if FLightY = AValue then Exit;
+  FLightY := AValue;
   Invalidate;
 end;
 
@@ -961,17 +999,25 @@ begin
   // whatever's visible" guarantee (still eye-space-relative) while
   // restoring that directional shading.
   //
-  // lightPos[1] is NEGATIVE despite that being meant to place the light
-  // "above" the viewer - confirmed empirically (screenshotting +0.6 showed
-  // the surface's actual peak, which HeightToColor should render as the
-  // most saturated red, rendering dark/muted while a lower side-slope lit
-  // up instead - the signature of light hitting the underside of the
-  // slopes; flipping the sign to -0.6 fixed it, the peak now reading as
-  // the brightest point as expected) rather than derived, since reasoning
-  // through eye-space sign conventions here has repeatedly not matched
-  // what actually renders - see CLAUDE.md's Graphs/ section. Don't
-  // "correct" this back to a positive value without re-screenshotting.
-  lightPos[0] := 0.5; lightPos[1] := -0.6; lightPos[2] := 0.65; lightPos[3] := 0;
+  // DefaultLightY (-0.6) is NEGATIVE despite that being meant to place the
+  // light "above" the viewer - confirmed empirically (screenshotting +0.6
+  // showed the surface's actual peak, which HeightToColor should render as
+  // the most saturated red, rendering dark/muted while a lower side-slope
+  // lit up instead - the signature of light hitting the underside of the
+  // slopes; flipping the sign to -0.6 fixed it, the peak now reading as the
+  // brightest point as expected) rather than derived, since reasoning
+  // through eye-space sign conventions here has repeatedly not matched what
+  // actually renders - see CLAUDE.md's Graphs/ section. Don't "correct"
+  // that default back to a positive value without re-screenshotting.
+  //
+  // FLightX/FLightY (published as LightX/LightY, defaulting to
+  // DefaultLightX/DefaultLightY above) are runtime-adjustable - typically
+  // via a Graphs/uVMLightPad.pas TVMLightPad control, see both demos'
+  // FormCreate - precisely so a user can drag the light to wherever best
+  // reveals a given surface's shape, rather than being stuck with the one
+  // fixed direction tuned above for the sinc-ripple demo data. Z stays
+  // fixed at 0.65: only the XY direction is exposed.
+  lightPos[0] := FLightX; lightPos[1] := FLightY; lightPos[2] := 0.65; lightPos[3] := 0;
   glLightfv(GL_LIGHT0, GL_POSITION, @lightPos[0]);
 
   glTranslatef(0, 0, -FDistance);

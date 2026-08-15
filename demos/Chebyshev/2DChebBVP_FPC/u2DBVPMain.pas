@@ -11,7 +11,10 @@ unit u2DBVPMain;
        - TCheb (reused as-is from ../NormalIntegration/uCheb.pas, not
          copied - see 2DChebBVP.lpi's OtherUnitFiles) builds the (N+1)x(N+1)
          Chebyshev grid/second-derivative matrix D2, exactly as ChebBVP_FPC
-         already does for the 1D case.
+         already does for the 1D case. uCheb.pas is the one shared unit for
+         all Chebyshev-specific code in this demo tree, 1D and 2D alike -
+         TCheb, BaryLag1D (1D barycentric interpolation, used by ChebBVP_FPC)
+         and BaryLag2D (below) all live there together.
        - The interior (N-1)x(N-1) block of D2 (D2R, via newVM's SubMatrix -
          the boundary values are already known to be zero) is the 1D
          second-derivative operator; applied to the (N-1)x(N-1) interior
@@ -36,13 +39,18 @@ unit u2DBVPMain;
          grid, and the interior solution is zero-padded back up to the full
          (N+1)x(N+1) grid (TVMobj.Create already zero-fills, matching
          ChebBVP_FPC's own zero-pad).
-       - uBaryLag2D.BaryLag2D (ported from the original's Bary2D.pas, see
-         that unit's own header) interpolates the (N+1)x(N+1) solution grid
-         - sampled at the *full* Chebyshev node set FCheb.X, boundary
-         values included, same as the original's ResultGrid/Cheb1D.x - onto
-         a finer DispN x DispN display grid, which TVMPlot3D
-         (Graphs/uVMPlot3D.pas) then renders as a lit height-field surface,
-         same as this repo's own Graphs/Plot3D demo.
+       - uCheb.BaryLag2D (ported from the original's Bary2D.pas, see that
+         function's own header comment in uCheb.pas) interpolates the
+         (N+1)x(N+1) solution grid - sampled at the *full* Chebyshev node
+         set FCheb.X, boundary values included, same as the original's
+         ResultGrid/Cheb1D.x - onto a finer DispN x DispN display grid,
+         which TVMPlot3D (Graphs/uVMPlot3D.pas) then renders as a lit
+         height-field surface, same as this repo's own Graphs/Plot3D demo -
+         including that demo's TVMLightPad (Graphs/uVMLightPad.pas), a small
+         circular control the user drags within to steer the surface's
+         OpenGL headlamp direction; wired up identically here (FLightPad,
+         LightPadChange), see uplot3dmain.pas's own header comment for the
+         pattern.
 
      DispN=65 (a power-of-2-plus-one, not the original's mismatched 50/200)
      is deliberately chosen so linspace's offset+i*slope construction lands
@@ -65,7 +73,7 @@ interface
 
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, StdCtrls, ExtCtrls,
-  newVM, uVMPlot3D, uCheb, uBaryLag2D, hirestimer;
+  newVM, uVMPlot3D, uVMLightPad, uCheb, hirestimer;
 
 const
   ChebN = 24;   // matches the original Laplace2D.create(24)
@@ -91,6 +99,8 @@ type
   private
     FCheb: TCheb;
     FPlot: TVMPlot3D;
+    FLightPad: TVMLightPad;
+    procedure LightPadChange(Sender: TObject);
   end;
 
 var
@@ -108,6 +118,7 @@ var
   D2R, Ident, Laplace, LaplaceScratch, Xi, FRhs, f, v, U, UFull, XF, YF, PlotGrid: TVMobj;
   I, J: Integer;
   ElapsedUs: Int64;
+  LightLabel: TLabel;
 begin
   Profiler.Start;
   FCheb := TCheb.Create(ChebN);
@@ -177,8 +188,32 @@ begin
   FPlot.YAxisMax := 1;
   FPlot.SetData(PlotGrid);
 
+  // Grow the control bar to fit the light pad below the existing checkbox/
+  // button row, then create+position the pad itself - same code-only
+  // approach (no .lfm changes) as Graphs/Plot3D/uplot3dmain.pas's own
+  // FormCreate, see this unit's header comment.
+  ControlPanel.Height := 120;
+  LightLabel := TLabel.Create(Self);
+  LightLabel.Parent := ControlPanel;
+  LightLabel.Left := 750;
+  LightLabel.Top := 4;
+  LightLabel.Caption := 'Light (drag)';
+  FLightPad := TVMLightPad.Create(Self);
+  FLightPad.Parent := ControlPanel;
+  FLightPad.Left := 750;
+  FLightPad.Top := 20;
+  FLightPad.OnChange := @LightPadChange;
+  FPlot.LightX := FLightPad.LightX;
+  FPlot.LightY := FLightPad.LightY;
+
   Memo1.Lines.Add('');
   Memo1.Lines.Add('u at (x,y)~=(0,0): ' + FloatToStr(UFull.Element[ChebN div 2, ChebN div 2]));
+end;
+
+procedure TfmMain.LightPadChange(Sender: TObject);
+begin
+  FPlot.LightX := FLightPad.LightX;
+  FPlot.LightY := FLightPad.LightY;
 end;
 
 procedure TfmMain.FormDestroy(Sender: TObject);

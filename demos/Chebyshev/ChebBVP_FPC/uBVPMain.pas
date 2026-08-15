@@ -13,8 +13,10 @@ unit uBVPMain;
      values are already known to be zero, so only the N-1 interior points
      are unknowns), solve the resulting (N-1)x(N-1) system directly via
      newVM's LinearSolve, zero-pad the result back up to N+1 points, and
-     barycentrically interpolate (BaryInterpol, also from uCheb.pas) onto
-     a fine 201-point display grid, plotted as a solid line - "the
+     barycentrically interpolate (BaryLag1D, also from uCheb.pas - formerly
+     named BaryInterpol, renamed when uCheb.pas picked up BaryLag2D too so
+     the two interpolation routines read as a matched pair) onto a fine
+     201-point display grid, plotted as a solid line - "the
      interpolated line of the approximated function". The problem's known
      closed-form solution (built with newVM.pas's AddScalar, alongside
      the existing '*'/'/' scalar operators, since there's no '+'/scalar
@@ -42,7 +44,7 @@ unit uBVPMain;
      PolyFit/PolyEval cross-check (used only to compute a comparison
      error figure, with its own interpolated curve never actually
      plotted - see the original's commented-out AddXY call) aren't
-     ported: BaryInterpol already stands in as the accuracy cross-check
+     ported: BaryLag1D already stands in as the accuracy cross-check
      here, same as it does for the demo's own plotted curve.
 
 *******************************************************************************}
@@ -117,7 +119,7 @@ begin
   IX.linspace(-1, 0.01);
 
   Profiler.Start;
-  IY := BaryInterpol(FCheb.X, V, IX);
+  IY := BaryLag1D(FCheb.X, V, IX);
   ElapsedUs := Profiler.Stop;
   Memo1.Lines.Add('Time for barycentric interpolation: ' + FloatToStr(ElapsedUs / 1000) + ' ms');
 

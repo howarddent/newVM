@@ -8,7 +8,10 @@ unit uNormMain;
      its antiderivative (the CDF, up to a constant) by solving the
      Chebyshev differentiation matrix equation D*iy = y (TCheb.Integrate,
      uCheb.pas), barycentrically interpolates both onto a 201-point display
-     grid (BaryInterpol, uCheb.pas), and hands the two series to a
+     grid (BaryLag1D, uCheb.pas - formerly named BaryInterpol, renamed when
+     uCheb.pas picked up 2DChebBVP_FPC's BaryLag2D too so the two
+     interpolation routines read as a matched pair), and hands the two
+     series to a
      TVMPlot2D component (Graphs/uVMPlot2D.pas) instead of the original's
      TChart/TeeSeries. Unlike the original, everything is computed directly
      in FormCreate rather than behind a separate "Execute" button - nothing
@@ -87,8 +90,8 @@ begin
   GX := TVMobj.Create(1, GridN);
   GX.linspace(-1, 0.01);
 
-  GYPdf := BaryInterpol(FCheb.X, Y, GX);
-  GYCdf := BaryInterpol(FCheb.X, IY, GX);
+  GYPdf := BaryLag1D(FCheb.X, Y, GX);
+  GYCdf := BaryLag1D(FCheb.X, IY, GX);
 
   FPlot := TVMPlot2D.Create(Self);
   FPlot.Parent := Self;

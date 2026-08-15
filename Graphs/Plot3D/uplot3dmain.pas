@@ -14,6 +14,17 @@ unit uplot3dmain;
      there, not duplicated here. WireframeCheckBox/ResetViewButton simply
      forward to the component's Wireframe property and ResetView method.
 
+     FLightPad (Graphs/uVMLightPad.pas's TVMLightPad) is a small circular
+     control, likewise created and parented entirely in code rather than
+     via the .lfm - same rationale as FPlot itself - that lets the user
+     drag within it to steer the OpenGL headlamp's XY direction; its
+     OnChange (LightPadChange) forwards the pad's current LightX/LightY
+     straight into FPlot's own like-named properties. No .lfm changes were
+     needed for it beyond growing ControlPanel tall enough to fit it,
+     which FormCreate also does in code rather than by hand-editing the
+     .lfm's own Height, to keep this one property change next to the code
+     that actually needs the extra room.
+
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
@@ -22,7 +33,7 @@ interface
 
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ExtCtrls, StdCtrls,
-  newVM, uVMPlot3D;
+  newVM, uVMPlot3D, uVMLightPad;
 
 type
 
@@ -42,6 +53,8 @@ type
     procedure LevelCurvesCheckBoxChange(Sender: TObject);
   private
     FPlot: TVMPlot3D;
+    FLightPad: TVMLightPad;
+    procedure LightPadChange(Sender: TObject);
     function BuildDemoMatrix: TVMobj;
   end;
 
@@ -55,6 +68,8 @@ implementation
 { TForm1 }
 
 procedure TForm1.FormCreate(Sender: TObject);
+var
+  LightLabel: TLabel;
 begin
   FPlot := TVMPlot3D.Create(Self);
   FPlot.Parent := Self;
@@ -64,6 +79,29 @@ begin
   FPlot.YAxisTitle := 'Row';
   FPlot.ZAxisTitle := 'Value';
   FPlot.SetData(BuildDemoMatrix);
+
+  // Grow the control bar to fit the light pad below the existing checkbox/
+  // button row, then create+position the pad itself - see this unit's own
+  // header comment for why both happen here in code rather than in the .lfm.
+  ControlPanel.Height := 120;
+  LightLabel := TLabel.Create(Self);
+  LightLabel.Parent := ControlPanel;
+  LightLabel.Left := 750;
+  LightLabel.Top := 4;
+  LightLabel.Caption := 'Light (drag)';
+  FLightPad := TVMLightPad.Create(Self);
+  FLightPad.Parent := ControlPanel;
+  FLightPad.Left := 750;
+  FLightPad.Top := 20;
+  FLightPad.OnChange := @LightPadChange;
+  FPlot.LightX := FLightPad.LightX;
+  FPlot.LightY := FLightPad.LightY;
+end;
+
+procedure TForm1.LightPadChange(Sender: TObject);
+begin
+  FPlot.LightX := FLightPad.LightX;
+  FPlot.LightY := FLightPad.LightY;
 end;
 
 // z = sin(r)/r, r = sqrt(x^2+y^2), x,y in [-Extent,Extent] - the classic

@@ -69,11 +69,11 @@
         <ResourceBaseClass Value="Form"/>
       </Unit>
       <Unit>
-        <Filename Value="uBaryLag2D.pas"/>
+        <Filename Value="../../../Graphs/uVMPlot3D.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="../../../Graphs/uVMPlot3D.pas"/>
+        <Filename Value="../../../Graphs/uVMLightPad.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
     </Units>

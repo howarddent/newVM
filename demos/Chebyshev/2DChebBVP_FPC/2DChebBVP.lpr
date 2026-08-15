@@ -5,10 +5,11 @@ program TwoDChebBVP;
      Demo: Chebyshev-collocation solution of the 2D Poisson equation
      u_xx+u_yy = 10*sin(8x(y-1)), u=0 on the boundary of [-1,1]x[-1,1], ported
      from the Delphi/MtxVec original at demos/Chebyshev/2DChebBVP - see
-     u2DBVPMain.pas/uBaryLag2D.pas. Reuses TCheb from
-     demos/Chebyshev/NormalIntegration/uCheb.pas rather than duplicating it,
-     same as ../ChebBVP_FPC's 1D demo, and displays via TVMPlot3D
-     (Graphs/uVMPlot3D.pas), same as Graphs/Plot3D's demo.
+     u2DBVPMain.pas. Reuses TCheb and BaryLag2D from
+     demos/Chebyshev/NormalIntegration/uCheb.pas rather than duplicating
+     them, same as ../ChebBVP_FPC's 1D demo (which reuses TCheb/BaryLag1D
+     from the same unit), and displays via TVMPlot3D (Graphs/uVMPlot3D.pas),
+     same as Graphs/Plot3D's demo.
 
 *******************************************************************************}
 
