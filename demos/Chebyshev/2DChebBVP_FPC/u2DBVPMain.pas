@@ -1,0 +1,201 @@
+unit u2DBVPMain;
+
+{*******************************************************************************
+
+     Main form for the 2DChebBVP demo - ported from the Delphi/MtxVec
+     original at demos/Chebyshev/2DChebBVP/{uMain,uCheb,Bary2D}.pas. Solves
+     the 2D Poisson equation u_xx+u_yy = 10*sin(8*x*(y-1)), u=0 on the
+     boundary of [-1,1]x[-1,1], by Chebyshev collocation on an N=24 grid
+     (matching the original's Laplace2D.create(24)):
+
+       - TCheb (reused as-is from ../NormalIntegration/uCheb.pas, not
+         copied - see 2DChebBVP.lpi's OtherUnitFiles) builds the (N+1)x(N+1)
+         Chebyshev grid/second-derivative matrix D2, exactly as ChebBVP_FPC
+         already does for the 1D case.
+       - The interior (N-1)x(N-1) block of D2 (D2R, via newVM's SubMatrix -
+         the boundary values are already known to be zero) is the 1D
+         second-derivative operator; applied to the (N-1)x(N-1) interior
+         solution grid U, the full 2D Laplacian is D2R*U + U*D2R' (second
+         derivative in x via left-multiplication, in y via
+         right-multiplication-by-transpose). Vectorised via the standard
+         Kronecker identity vec(D2R*U + U*D2R') =
+         [(I(kron)D2R)+(D2R(kron)I)]*vec(U) - newVM's Kron plus '+' assemble
+         the (N-1)^2 x (N-1)^2 system exactly as the original's kronX+kronY
+         did. newVM's Reshape (a pure reinterpret of the row-major buffer,
+         no data movement) stands in directly for vec()/unvec() here: unlike
+         the original's GridToVec/VecToGrid (which flatten column-major,
+         the natural convention for the *standard* column-major vec
+         identity), the identity above holds *identically* for newVM's
+         native row-major storage too - summing both Kronecker terms
+         together makes the identity insensitive to which flattening
+         convention is used (transposing U swaps which term is which, but
+         the sum of the two is unchanged), so no bespoke column-major
+         GridToVec/VecToGrid helpers are needed.
+       - LinearSolve solves the resulting (N-1)^2 x (N-1)^2 system against
+         the RHS 10*sin(8*x_i*(x_j-1)) sampled directly on the interior
+         grid, and the interior solution is zero-padded back up to the full
+         (N+1)x(N+1) grid (TVMobj.Create already zero-fills, matching
+         ChebBVP_FPC's own zero-pad).
+       - uBaryLag2D.BaryLag2D (ported from the original's Bary2D.pas, see
+         that unit's own header) interpolates the (N+1)x(N+1) solution grid
+         - sampled at the *full* Chebyshev node set FCheb.X, boundary
+         values included, same as the original's ResultGrid/Cheb1D.x - onto
+         a finer DispN x DispN display grid, which TVMPlot3D
+         (Graphs/uVMPlot3D.pas) then renders as a lit height-field surface,
+         same as this repo's own Graphs/Plot3D demo.
+
+     DispN=65 (a power-of-2-plus-one, not the original's mismatched 50/200)
+     is deliberately chosen so linspace's offset+i*slope construction lands
+     the display grid's own midpoint on *exactly* 0.0 in floating point
+     (2/64=0.03125 and 32*0.03125=1.0 are both exact in binary) - this
+     doesn't, on its own, guarantee an exact bit-for-bit coincidence with
+     any particular Chebyshev node (cos() of a finite-precision Pi/2
+     approximation isn't bit-exact 0 either), so BaryLag2D's
+     exact-coincidence path is not expected to fire in an ordinary run of
+     this demo; it exists, and was verified separately via a scratch test
+     with deliberately-coincident grids, for correctness whenever a
+     caller's grids genuinely do coincide (e.g. interpolating back onto the
+     source's own nodes).
+
+*******************************************************************************}
+
+{$mode objfpc}{$H+}
+
+interface
+
+uses
+  Classes, SysUtils, Forms, Controls, Graphics, Dialogs, StdCtrls, ExtCtrls,
+  newVM, uVMPlot3D, uCheb, uBaryLag2D, hirestimer;
+
+const
+  ChebN = 24;   // matches the original Laplace2D.create(24)
+  DispN = 65;   // display grid resolution (both axes), -1..1 - see header
+
+type
+
+  { TfmMain }
+
+  TfmMain = class(TForm)
+    ControlPanel: TPanel;
+    WireframeCheckBox: TCheckBox;
+    ShowAxesCheckBox: TCheckBox;
+    LevelCurvesCheckBox: TCheckBox;
+    ResetViewButton: TButton;
+    Memo1: TMemo;
+    procedure FormCreate(Sender: TObject);
+    procedure FormDestroy(Sender: TObject);
+    procedure ResetViewButtonClick(Sender: TObject);
+    procedure WireframeCheckBoxChange(Sender: TObject);
+    procedure ShowAxesCheckBoxChange(Sender: TObject);
+    procedure LevelCurvesCheckBoxChange(Sender: TObject);
+  private
+    FCheb: TCheb;
+    FPlot: TVMPlot3D;
+  end;
+
+var
+  fmMain: TfmMain;
+
+implementation
+
+{$R *.lfm}
+
+{ TfmMain }
+
+procedure TfmMain.FormCreate(Sender: TObject);
+var
+  Nint: Integer;
+  D2R, Ident, Laplace, LaplaceScratch, Xi, FRhs, f, v, U, UFull, XF, YF, PlotGrid: TVMobj;
+  I, J: Integer;
+  ElapsedUs: Int64;
+begin
+  Profiler.Start;
+  FCheb := TCheb.Create(ChebN);
+  ElapsedUs := Profiler.Stop;
+  Memo1.Lines.Add('Time to create TCheb object: ' + FloatToStr(ElapsedUs / 1000) + ' ms');
+
+  Nint := ChebN - 1;
+
+  // Dirichlet boundary u=0 on the whole edge is already known, so only the
+  // (N-1)x(N-1) interior grid is unknown - drop D2's first/last row and
+  // column, same reasoning as ChebBVP_FPC's 1D SubMatrix(FCheb.D2,...).
+  D2R := SubMatrix(FCheb.D2, 1, 1, Nint, Nint);
+  Xi := SubMatrix(FCheb.X, 1, 0, Nint, 1);
+
+  Ident := TVMobj.Create(Nint, Nint);
+  Ident.Id;
+  Laplace := Kron(Ident, D2R) + Kron(D2R, Ident);
+
+  FRhs := TVMobj.Create(Nint, Nint);
+  for I := 0 to Nint - 1 do
+    for J := 0 to Nint - 1 do
+      FRhs.Element[I, J] := 10 * Sin(8 * Xi.Element[I, 0] * (Xi.Element[J, 0] - 1));
+  f := Reshape(FRhs, Nint * Nint, 1);
+
+  Profiler.Start;
+  LaplaceScratch := CopyObj(Laplace);
+  v := CopyObj(f);
+  LinearSolve(LaplaceScratch, v);
+  ElapsedUs := Profiler.Stop;
+  Memo1.Lines.Add('Time for direct solve (' + IntToStr(Nint * Nint) + 'x' +
+    IntToStr(Nint * Nint) + '): ' + FloatToStr(ElapsedUs / 1000) + ' ms');
+
+  U := Reshape(v, Nint, Nint);
+
+  // Zero-pad the interior solution back up to the full (N+1)x(N+1) grid -
+  // TVMobj.Create already zero-fills, so the boundary ring needs no
+  // explicit assignment.
+  UFull := TVMobj.Create(ChebN + 1, ChebN + 1);
+  for I := 0 to Nint - 1 do
+    for J := 0 to Nint - 1 do
+      UFull.Element[I + 1, J + 1] := U.Element[I, J];
+
+  XF := TVMobj.Create(1, DispN);
+  XF.linspace(-1, 2 / (DispN - 1));
+  YF := CopyObj(XF);
+
+  Profiler.Start;
+  PlotGrid := BaryLag2D(UFull, FCheb.X, FCheb.X, XF, YF);
+  ElapsedUs := Profiler.Stop;
+  Memo1.Lines.Add('Time for 2D barycentric interpolation (' + IntToStr(DispN) +
+    'x' + IntToStr(DispN) + '): ' + FloatToStr(ElapsedUs / 1000) + ' ms');
+
+  FPlot := TVMPlot3D.Create(Self);
+  FPlot.Parent := Self;
+  FPlot.Align := alClient;
+  FPlot.Title := '2D Poisson: u_xx+u_yy = 10 sin(8x(y-1)), u=0 on boundary';
+  FPlot.XAxisTitle := 'x';
+  FPlot.YAxisTitle := 'y';
+  FPlot.ZAxisTitle := 'u';
+  FPlot.SetData(PlotGrid);
+
+  Memo1.Lines.Add('');
+  Memo1.Lines.Add('u at (x,y)~=(0,0): ' + FloatToStr(UFull.Element[ChebN div 2, ChebN div 2]));
+end;
+
+procedure TfmMain.FormDestroy(Sender: TObject);
+begin
+  FCheb.Free;
+end;
+
+procedure TfmMain.ResetViewButtonClick(Sender: TObject);
+begin
+  FPlot.ResetView;
+end;
+
+procedure TfmMain.WireframeCheckBoxChange(Sender: TObject);
+begin
+  FPlot.Wireframe := WireframeCheckBox.Checked;
+end;
+
+procedure TfmMain.ShowAxesCheckBoxChange(Sender: TObject);
+begin
+  FPlot.ShowAxes := ShowAxesCheckBox.Checked;
+end;
+
+procedure TfmMain.LevelCurvesCheckBoxChange(Sender: TObject);
+begin
+  FPlot.ShowLevelCurves := LevelCurvesCheckBox.Checked;
+end;
+
+end.
