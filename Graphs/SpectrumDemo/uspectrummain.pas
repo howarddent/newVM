@@ -2,19 +2,22 @@ unit uspectrummain;
 
 {*******************************************************************************
 
-     Main form for the SpectrumDemo. Every 20ms (FTimer/TimerTick), builds a
-     fresh 4096-point power spectrum from scratch and pushes it into a
-     TVMPlotStack (Graphs/uVMPlotStack.pas) - created and parented to this
-     form in code, same as the other Graphs/ demos use their own
+     Main form for the SpectrumDemo. On every FTimer tick (TimerTick),
+     builds a fresh 4096-point power spectrum from scratch and pushes it
+     into a TVMPlotStack (Graphs/uVMPlotStack.pas) - created and parented
+     to this form in code, same as the other Graphs/ demos use their own
      TVMPlot2D/TVMPlot3D/TVMPlotStack - via AddGraph, so the resulting
-     ~50-pushes/second cadence is itself what produces the waterfall's
-     flowing motion. TVMPlotStack's own Animate property (continuous
-     between-push recession - see uVMPlotStack.pas's own ANIMATE
-     rationale) is deliberately left at its default False: pushing a new
-     graph roughly every 20ms already advances the stack fast enough to
-     read as continuous motion, and turning Animate on as well would just
-     make already-pushed slices drift an extra, uncontrolled amount
-     between pushes on top of that.
+     push cadence is itself what produces the waterfall's flowing motion.
+     RateTrackBar (RateTrackBarChange) sets FTimer.Interval directly,
+     anywhere from 20ms (~50 pushes/second, the fastest/default) down to
+     1000ms (one push/second, the slowest) - see that method's own
+     comment. TVMPlotStack's own Animate property (continuous between-push
+     recession - see uVMPlotStack.pas's own ANIMATE rationale) is
+     deliberately left at its default False at every rate: pushing a new
+     graph already advances the stack, and turning Animate on as well
+     would just make already-pushed slices drift an extra, uncontrolled
+     amount between pushes on top of that - doubly noticeable, not
+     smoother, at the slider's slow end.
 
      Per push, TimerTick:
        1. Fills a (1,SignalLength) TVMobj with fresh white noise -
@@ -52,7 +55,7 @@ interface
 
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
-  StdCtrls,
+  StdCtrls, ComCtrls,
   OneAPI, newVM, newVMComplex, uVMPlotStack;
 
 const
@@ -67,11 +70,14 @@ type
     ControlPanel: TPanel;
     ShowAxesCheckBox: TCheckBox;
     ResetViewButton: TButton;
+    RateLabel: TLabel;
+    RateTrackBar: TTrackBar;
     HintLabel: TLabel;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure ShowAxesCheckBoxChange(Sender: TObject);
     procedure ResetViewButtonClick(Sender: TObject);
+    procedure RateTrackBarChange(Sender: TObject);
   private
     FPlot: TVMPlotStack;
     FTimer: TTimer;
@@ -107,9 +113,13 @@ begin
   FWindow := BuildHammingWindow(SignalLength);
 
   FTimer := TTimer.Create(Self);
-  FTimer.Interval := 20;
   FTimer.OnTimer := @TimerTick;
   FTimer.Enabled := True;
+  // RateTrackBar.Position (set in the .lfm, 20ms) is the single source of
+  // truth for the starting interval - this call both sets FTimer.Interval
+  // from it and syncs RateLabel's text, the same thing RateTrackBarChange
+  // does on every subsequent user drag, rather than duplicating "20" here.
+  RateTrackBarChange(Self);
 end;
 
 procedure TForm1.FormDestroy(Sender: TObject);
@@ -162,6 +172,18 @@ end;
 procedure TForm1.ResetViewButtonClick(Sender: TObject);
 begin
   FPlot.ResetView;
+end;
+
+// RateTrackBar spans [20,1000] ms directly (its own Min/Max, set in the
+// .lfm) - one spectrum push every 20ms (~50/s) at the fast end, one per
+// second at the slow end, per the user's own ask. FTimer.Interval is set
+// straight from the slider position; RateLabel's text is derived from it
+// (1000/interval, rounded) purely for display, not a separate setting.
+procedure TForm1.RateTrackBarChange(Sender: TObject);
+begin
+  FTimer.Interval := RateTrackBar.Position;
+  RateLabel.Caption := Format('Generation rate: %d/s (%d ms)',
+    [Round(1000 / RateTrackBar.Position), RateTrackBar.Position]);
 end;
 
 end.

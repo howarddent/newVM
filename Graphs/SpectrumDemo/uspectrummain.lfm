@@ -12,12 +12,12 @@ object Form1: TForm1
   LCLVersion = '4.99.0.0'
   object ControlPanel: TPanel
     Left = 0
-    Height = 40
+    Height = 60
     Top = 0
     Width = 1000
     Align = alTop
     BevelOuter = bvNone
-    ClientHeight = 40
+    ClientHeight = 60
     ClientWidth = 1000
     TabOrder = 0
     object ShowAxesCheckBox: TCheckBox
@@ -40,12 +40,31 @@ object Form1: TForm1
       TabOrder = 1
       OnClick = ResetViewButtonClick
     end
-    object HintLabel: TLabel
+    object RateLabel: TLabel
       Left = 220
       Height = 15
       Top = 12
+      Width = 130
+      Caption = 'Generation rate: 50/s'
+    end
+    object RateTrackBar: TTrackBar
+      Left = 355
+      Height = 30
+      Top = 3
+      Width = 220
+      Max = 1000
+      Min = 20
+      Frequency = 20
+      Position = 20
+      TabOrder = 2
+      OnChange = RateTrackBarChange
+    end
+    object HintLabel: TLabel
+      Left = 12
+      Height = 15
+      Top = 38
       Width = 300
-      Caption = 'Live 4096-pt noise -> Hamming -> FFT -> 2048-pt power spectrum, every 20ms. Drag to rotate, wheel to zoom.'
+      Caption = 'Live 4096-pt noise -> Hamming -> FFT -> 2048-pt power spectrum. Drag to rotate, wheel to zoom.'
     end
   end
 end
