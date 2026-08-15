@@ -19,10 +19,20 @@ unit uVMLightPad;
      circle and clamped to it (a click near a corner of the control doesn't
      produce a direction longer than 1). MouseCapture is set for the
      duration of the drag so a fast drag that briefly leaves the pad's small
-     bounds keeps tracking rather than dropping the interaction. Screen Y
-     increases downward but "light Y" is meant to feel like "up on the pad
-     moves the light up", so the Y axis is inverted in UpdateFromMouse -
-     the one place that inversion needs to happen.
+     bounds keeps tracking rather than dropping the interaction.
+
+     AXIS MAPPING - both LightX and LightY are the *negation* of where the
+     dot sits, on both axes: dot on the left sends a positive LightX
+     (surface lit as if from the right), dot on the right sends negative
+     (lit from the left); dot at the top sends a negative LightY, dot at
+     the bottom sends positive. Confirmed directly against the running
+     demo, not derived (see uVMPlot3D.pas's own DefaultLightY comment for
+     why eye-space light-direction sign shouldn't be reasoned about in the
+     abstract for this component - the same caution applies here). The dot
+     itself still visually follows the cursor 1:1 (UpdateFromMouse and
+     Paint's dot-position code apply the same negation, so it cancels out
+     for that purpose) - only the LightX/LightY *values* sent are mirrored
+     relative to a naive "dot position = light position" mapping.
 
      A TGraphicControl, not a TCustomControl: it owns no child controls,
      needs no keyboard focus, and (like TLabel/TShape/TImage, the LCL's own
@@ -133,8 +143,8 @@ begin
   cy := Height / 2;
   r := Min(Width, Height) / 2 - PadMargin;
   if r < 1 then r := 1;
-  nx := (X - cx) / r * MaxLightMagnitude;
-  ny := -(Y - cy) / r * MaxLightMagnitude;   // screen Y is down; light Y should feel "up = up"
+  nx := -(X - cx) / r * MaxLightMagnitude;   // negated on both axes - see header comment
+  ny := -(Y - cy) / r * MaxLightMagnitude;
   len := Sqrt(nx * nx + ny * ny);
   if len > MaxLightMagnitude then begin
     nx := nx / len * MaxLightMagnitude;
@@ -193,7 +203,9 @@ begin
   Canvas.Line(cx - r, cy, cx + r, cy);
   Canvas.Line(cx, cy - r, cx, cy + r);
 
-  dotx := cx + Round(FLightX / MaxLightMagnitude * r);
+  // Matching negation to UpdateFromMouse's, so the dot still visually
+  // follows the cursor 1:1 despite LightX/LightY themselves being mirrored.
+  dotx := cx - Round(FLightX / MaxLightMagnitude * r);
   doty := cy - Round(FLightY / MaxLightMagnitude * r);
   Canvas.Brush.Color := RGBToColor(255, 220, 40);
   Canvas.Pen.Color := clBlack;

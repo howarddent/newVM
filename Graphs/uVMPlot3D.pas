@@ -1045,8 +1045,14 @@ begin
   // FormCreate - precisely so a user can drag the light to wherever best
   // reveals a given surface's shape, rather than being stuck with the one
   // fixed direction tuned above for the sinc-ripple demo data. Z stays
-  // fixed at 0.65: only the XY direction is exposed.
-  lightPos[0] := FLightX; lightPos[1] := FLightY; lightPos[2] := 0.65; lightPos[3] := 0;
+  // fixed at -0.65 (previously +0.65): reported as putting the light
+  // behind the surface (relative to the default camera) rather than in
+  // front of it - confirmed directly on the running demo, not re-derived
+  // from eye-space reasoning about which sign should mean "in front" (see
+  // the DefaultLightY comment above for why that reasoning has repeatedly
+  // not matched what actually renders for this component). Only the XY
+  // direction is exposed as a property; Z is not.
+  lightPos[0] := FLightX; lightPos[1] := FLightY; lightPos[2] := -0.65; lightPos[3] := 0;
   glLightfv(GL_LIGHT0, GL_POSITION, @lightPos[0]);
 
   glTranslatef(0, 0, -FDistance);
@@ -1161,29 +1167,35 @@ procedure TVMPlot3D.MouseMove(Shift: TShiftState; X, Y: Integer);
 begin
   inherited MouseMove(Shift, X, Y);
   if not FDragging then Exit;
-  // Negated (previously a plain '+'): reported as feeling backwards on
-  // both axes - dragging left rotated the graph right and vice versa,
-  // same for up/down - the standard "grab and turn" trackball feel wants
-  // the near face to follow the drag direction, not swing away from it.
-  // FYaw/FPitch rotate the SCENE (not the camera), so which sign actually
-  // produces that feel isn't something to re-derive from the rotation
-  // math in the abstract - see uVMPlotStack.pas's own DrawSlice comment
-  // for an analogous case (its Age-to-Z-direction sign) where reasoning
-  // from the rotation math alone gave the wrong answer, only caught by
-  // screenshotting the actual result. This negation is a direct response
-  // to the reported drag behaviour, not something re-confirmed here by
-  // actually dragging - no mouse-automation tooling was available in the
-  // environment this fix was made in.
-  FYaw := FYaw - (X - FLastMouseX) * 0.5;
-  // Was clamped to [-89,89] (avoiding the exact poles at +-90, where a
-  // simple sequential-Euler-angle camera like this one degenerates into
-  // gimbal lock) back when DefaultPitch was 45 - now that DefaultPitch is
-  // 135 (see its own comment), that range would clamp the very first drag
-  // down to 89 immediately, a jarring ~46 degree jump. Widened to
-  // [-179,179], which comfortably includes both defaults with room to
-  // drag either way; GL_LIGHT_MODEL_TWO_SIDE (see Paint) means the wider
-  // range crossing +-90 no longer risks the surface looking wrongly lit.
-  FPitch := EnsureRange(FPitch - (Y - FLastMouseY) * 0.5, -179.0, 179.0);
+  // Plain '+' on both axes - NOT the negated ('-') form uVMPlotStack.pas
+  // uses. An earlier pass here copied PlotStack's negation on the (correct)
+  // theory that both components should want the same "grab and turn"
+  // trackball feel, but that was wrong: confirmed by direct testing (drag
+  // left/right, drag up/down, on the actual running demo) that with the
+  // negation in place, BOTH axes were still backwards here specifically -
+  // dragging right rotated the surface as if dragged left, and same for
+  // up/down - while uVMPlotStack.pas's own negated version genuinely feels
+  // correct. Reverting to '+' on both axes fixes it. The two components'
+  // camera setups differ in a way that plausibly explains needing opposite
+  // signs despite an identical glRotatef(Pitch,1,0,0); glRotatef(Yaw,0,1,0)
+  // sequence: this component additionally does glTranslatef(0,0,-FDistance)
+  // *before* those rotates (an orbiting-camera setup - see Paint's own
+  // camera-position derivation comment), whereas uVMPlotStack.pas has no
+  // such translate (the object rotates in place in front of a fixed
+  // orthographic eye) - but this is offered as a plausible explanation for
+  // why they differ, not as something to re-derive the sign from in the
+  // abstract; the sign itself is settled by the direct test above, not by
+  // this reasoning. Don't "correct" this back to '-' by analogy with
+  // PlotStack without re-testing on this component specifically.
+  FYaw := FYaw + (X - FLastMouseX) * 0.5;
+  // Clamped to [-89,89] rather than [-179,179] (an earlier, much wider
+  // range this file used to have, dating from when DefaultPitch was
+  // briefly 135 during camera-framing experiments - see CLAUDE.md's
+  // Graphs/ section) - avoids ever crossing the pole at +-90 of this
+  // sequential-Euler-angle camera, where yaw's felt direction would
+  // otherwise visibly reverse mid-drag. Independent of, and additive
+  // with, the sign fix above.
+  FPitch := EnsureRange(FPitch + (Y - FLastMouseY) * 0.5, -89.0, 89.0);
   FLastMouseX := X;
   FLastMouseY := Y;
   Invalidate;
