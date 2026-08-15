@@ -41,17 +41,19 @@ object Form1: TForm1
       OnClick = ResetViewButtonClick
     end
     object RateLabel: TLabel
-      Left = 220
+      Left = 580
       Height = 15
       Top = 12
-      Width = 130
+      Width = 170
+      Anchors = [akTop, akRight]
       Caption = 'Generation rate: 50/s'
     end
     object RateTrackBar: TTrackBar
-      Left = 355
+      Left = 760
       Height = 30
       Top = 3
       Width = 220
+      Anchors = [akTop, akRight]
       Max = 1000
       Min = 20
       Frequency = 20
