@@ -1,0 +1,97 @@
+object fmMain: TfmMain
+  Left = 280
+  Height = 750
+  Top = 150
+  Width = 1100
+  Caption = '2D Wave Equation: u_tt = u_xx + u_yy'
+  OnCreate = FormCreate
+  OnDestroy = FormDestroy
+  Position = poScreenCenter
+  LCLVersion = '4.99.0.0'
+  object ControlPanel: TPanel
+    Left = 900
+    Height = 750
+    Top = 0
+    Width = 200
+    Align = alRight
+    BevelOuter = bvNone
+    ClientHeight = 750
+    ClientWidth = 200
+    TabOrder = 0
+    object RadioGroup1: TRadioGroup
+      Left = 8
+      Height = 120
+      Top = 8
+      Width = 184
+      Caption = 'Initial Function'
+      ItemIndex = 0
+      Items.Strings = (
+        'Single Gaussian'
+        'Centered Gaussian'
+        'Double Gaussian'
+        'Single Plane Wave'
+      )
+      TabOrder = 0
+      OnClick = RadioGroup1Click
+    end
+    object SpeedLabel: TLabel
+      Left = 8
+      Height = 15
+      Top = 144
+      Width = 110
+      Caption = 'Speed Of Simulation'
+    end
+    object TrackBar1: TTrackBar
+      Left = 8
+      Height = 40
+      Top = 162
+      Width = 184
+      Min = 1
+      Max = 10
+      Position = 1
+      TabOrder = 1
+      OnChange = TrackBar1Change
+    end
+    object GroupBox1: TGroupBox
+      Left = 8
+      Height = 150
+      Top = 212
+      Width = 184
+      Caption = 'Control'
+      TabOrder = 2
+      object btnRun: TButton
+        Left = 30
+        Height = 25
+        Top = 20
+        Width = 115
+        Caption = 'Run Simulation'
+        TabOrder = 0
+        OnClick = btnRunClick
+      end
+      object btnStop: TButton
+        Left = 30
+        Height = 25
+        Top = 60
+        Width = 113
+        Caption = 'Stop'
+        TabOrder = 1
+        OnClick = btnStopClick
+      end
+      object btnReset: TButton
+        Left = 30
+        Height = 25
+        Top = 100
+        Width = 113
+        Caption = 'Reset'
+        TabOrder = 2
+        OnClick = btnResetClick
+      end
+    end
+  end
+  object AnimTimer: TTimer
+    Interval = 50
+    OnTimer = AnimTimerTimer
+    Left = 24
+    Top = 24
+  end
+end
