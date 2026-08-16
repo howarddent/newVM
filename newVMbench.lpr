@@ -7,7 +7,33 @@ program newVMbench;
      matrices, across all four TVMobj* types: double-precision real
      (newVM.pas), single-precision real (newVMSingle.pas), double-precision
      complex (newVMComplex.pas), and single-precision complex
-     (newVMComplexSingle.pas).
+     (newVMComplexSingle.pas). Also times FFT/IFFT (complex double/single,
+     round-tripped and checked against the original) and EigDecompose/
+     EigDecomposeS (real double/single, checked via the defining equation
+     A*v=lambda*v for every eigenpair, same verification approach as
+     newVMTests.pas's own TestEigDecomposeSatisfiesEigenEquation) - see
+     RunBenchmarksFFT/RunBenchmarksFFTSingle/RunBenchmarksEig/
+     RunBenchmarksEigSingle below. EigDecompose uses its own, shorter NsEig
+     list (10/50/100, not 1000): PurePascalEigHqr2's QR-iteration algorithm
+     is the same asymptotic O(N^3) as LU-based Invert but with a materially
+     larger constant factor (more scalar arithmetic per step, plus
+     accumulating the eigenvector transformation matrix alongside the
+     eigenvalues), so N=1000 in PUREPASCAL risks the benchmark taking
+     drastically longer than the other operations' N=1000 rows for little
+     extra insight. FFT/IFFT reuse the full Ns list unchanged - even
+     PPDirectDFT's direct O(N^2) summation is only 10^6 operations at
+     N=1000, comfortably fast either build.
+
+     A second independent axis worth knowing about when reading a table
+     this program prints: FFT/IFFT's library-vs-PUREPASCAL choice is driven
+     by HAVE_FFTW, not PUREPASCAL - the two are independent defines (see
+     newVM.pas's own architecture notes) - so a "PUREPASCAL forced, FFTW
+     still found" build (the common case, since forcing PUREPASCAL doesn't
+     touch newVMConfig.inc's separately-detected HAVE_FFTW) still times
+     FFTW for the FFT/IFFT rows even while MatMult/LinearSolve/Invert/
+     EigDecompose run their PUREPASCAL bodies. PrintBackend reports both
+     axes separately so a results table stays self-documenting about
+     exactly which combination produced it.
 
      One asymmetry worth knowing before reading the complex results: unlike
      every other LinearSolve*, LinearSolveZ and LinearSolveC have NO
@@ -60,6 +86,7 @@ uses
 
 const
   Ns: array[0..2] of Integer = (10, 100, 1000);
+  NsEig: array[0..2] of Integer = (10, 50, 100);  //see header comment: EigDecompose skips N=1000
 
 { Frobenius norm of a (possibly non-vector) matrix, computed directly over
   its buffer. Deliberately NOT implemented via Reshape(M, 1, Rows*Cols)+Norm
@@ -176,6 +203,19 @@ begin
   WriteLn('LinearSolve (complex single) backend: PUREPASCAL always ',
     '(Accelerate cgetrs_ has the same known crash bug - see cblas.pas) - ',
     'identical in both builds, not a bug in this benchmark');
+  Write('EigDecompose/EigDecomposeS (real double/single) backend: ');
+  {$IFDEF PUREPASCAL}
+  WriteLn('PUREPASCAL (PurePascalEigHqr2/PurePascalEigHqr2S)');
+  {$ELSE}
+  WriteLn('library-backed (LAPACKE_dgeev/sgeev)');
+  {$ENDIF}
+  Write('FFT/IFFT (complex double/single) backend: ');
+  {$IFDEF HAVE_FFTW}
+  WriteLn('library-backed (FFTW3 fftw_plan_dft_1d/fftwf_plan_dft_1d) - ',
+    'independent of PUREPASCAL above, see this program''s own header comment');
+  {$ELSE}
+  WriteLn('PUREPASCAL (direct O(N^2) DFT - PPDirectDFT/PPDirectDFTS)');
+  {$ENDIF}
   WriteLn;
 end;
 
@@ -412,6 +452,175 @@ begin
   WriteLn;
 end;
 
+{ FFT(A) then IFFT of that result should round-trip back to A (IFFT is
+  normalized - see newVMComplex.pas's own IFFT comment) - timed separately,
+  checked together via MatrixResidualNormZ(roundtrip - A). }
+procedure RunBenchmarksFFT;
+var
+  i, N : Integer;
+  A, F, R : TVMobjZ;
+  t0, t1 : Int64;
+  msFFT, msIFFT : Double;
+  roundTripResidual : Double;
+begin
+  WriteLn('--- FFT/IFFT double precision complex (newVMComplex.pas) ---');
+  WriteLn('     N   FFT(ms)   IFFT(ms)   RoundTripResidual');
+  for i := 0 to High(Ns) do begin
+    N := Ns[i];
+    Write('  N=', N, '...'); Flush(Output);
+
+    A := TVMobjZ.Create(1, N);
+    A.fillRandom;
+
+    t0 := HighResTimer.MicroSeconds;
+    F := FFT(A);
+    t1 := HighResTimer.MicroSeconds;
+    msFFT := (t1 - t0) / 1000.0;
+
+    t0 := HighResTimer.MicroSeconds;
+    R := IFFT(F);
+    t1 := HighResTimer.MicroSeconds;
+    msIFFT := (t1 - t0) / 1000.0;
+
+    R := R - A;  // should be ~0
+    roundTripResidual := MatrixResidualNormZ(R);
+
+    WriteLn(#13, Format('%6d %9.2f %10.2f %18.2e', [N, msFFT, msIFFT, roundTripResidual]));
+    Flush(Output);
+  end;
+  WriteLn;
+end;
+
+{ Single-precision analogue of RunBenchmarksFFT above - same round-trip
+  approach, TVMobjC/FFT/IFFT (overloaded against newVMComplexSingle.pas's
+  own TVMobjC) in place of TVMobjZ. }
+procedure RunBenchmarksFFTSingle;
+var
+  i, N : Integer;
+  A, F, R : TVMobjC;
+  t0, t1 : Int64;
+  msFFT, msIFFT : Double;
+  roundTripResidual : Single;
+begin
+  WriteLn('--- FFT/IFFT single precision complex (newVMComplexSingle.pas) ---');
+  WriteLn('     N   FFT(ms)   IFFT(ms)   RoundTripResidual');
+  for i := 0 to High(Ns) do begin
+    N := Ns[i];
+    Write('  N=', N, '...'); Flush(Output);
+
+    A := TVMobjC.Create(1, N);
+    A.fillRandom;
+
+    t0 := HighResTimer.MicroSeconds;
+    F := FFT(A);
+    t1 := HighResTimer.MicroSeconds;
+    msFFT := (t1 - t0) / 1000.0;
+
+    t0 := HighResTimer.MicroSeconds;
+    R := IFFT(F);
+    t1 := HighResTimer.MicroSeconds;
+    msIFFT := (t1 - t0) / 1000.0;
+
+    R := R - A;  // should be ~0
+    roundTripResidual := MatrixResidualNormC(R);
+
+    WriteLn(#13, Format('%6d %9.2f %10.2f %18.2e', [N, msFFT, msIFFT, roundTripResidual]));
+    Flush(Output);
+  end;
+  WriteLn;
+end;
+
+{ Times EigDecompose and checks every eigenpair against the defining
+  equation A*v = lambda*v (same verification newVMTests.pas's own
+  TestEigDecomposeSatisfiesEigenEquation uses) - A*vcol is a genuine matrix
+  product via the mixed TVMobj*TVMobjZ operator (see newVMComplex.pas's own
+  header comment on why that mixed-type '*' is a real MatMultZ, unlike
+  same-type Z*Z's element-wise '*'), and vcol*lambda is the complex-scalar
+  overload. Reports the WORST (max) residual across all N eigenpairs, not
+  the average - a single badly-conditioned eigenpair failing to satisfy the
+  equation is exactly the kind of thing an average would hide. Uses NsEig
+  (10/50/100), not Ns - see this program's own header comment for why
+  N=1000 is skipped here specifically. }
+procedure RunBenchmarksEig;
+var
+  i, j, N : Integer;
+  A : TVMobj;
+  EigenValues, EigenVectors, vcol, Av, lv, resid : TVMobjZ;
+  t0, t1 : Int64;
+  msEig, maxResidual, r : Double;
+begin
+  WriteLn('--- EigDecompose double precision (newVMComplex.pas) ---');
+  WriteLn('     N   EigDecompose(ms)   MaxEigenResidual');
+  for i := 0 to High(NsEig) do begin
+    N := NsEig[i];
+    Write('  N=', N, '...'); Flush(Output);
+
+    A := TVMobj.Create(N, N);
+    A.fillRandom;
+
+    t0 := HighResTimer.MicroSeconds;
+    EigDecompose(A, EigenValues, EigenVectors);
+    t1 := HighResTimer.MicroSeconds;
+    msEig := (t1 - t0) / 1000.0;
+
+    maxResidual := 0;
+    for j := 0 to N-1 do begin
+      vcol := SubMatrixZ(EigenVectors, 0, j, N, 1);
+      Av := A * vcol;                          // genuine matrix product (mixed real*complex)
+      lv := vcol * EigenValues.Element[j, 0];  // complex-scalar multiply
+      resid := Av - lv;
+      r := MatrixResidualNormZ(resid);
+      if r > maxResidual then maxResidual := r;
+    end;
+
+    WriteLn(#13, Format('%6d %18.2f %18.2e', [N, msEig, maxResidual]));
+    Flush(Output);
+  end;
+  WriteLn;
+end;
+
+{ Single-precision analogue of RunBenchmarksEig above - TVMobjS/TVMobjC/
+  EigDecomposeS/SubMatrixC in place of TVMobj/TVMobjZ/EigDecompose/
+  SubMatrixZ, otherwise identical approach. }
+procedure RunBenchmarksEigSingle;
+var
+  i, j, N : Integer;
+  A : TVMobjS;
+  EigenValues, EigenVectors, vcol, Av, lv, resid : TVMobjC;
+  t0, t1 : Int64;
+  msEig : Double;
+  maxResidual, r : Single;
+begin
+  WriteLn('--- EigDecompose single precision (newVMComplexSingle.pas) ---');
+  WriteLn('     N   EigDecompose(ms)   MaxEigenResidual');
+  for i := 0 to High(NsEig) do begin
+    N := NsEig[i];
+    Write('  N=', N, '...'); Flush(Output);
+
+    A := TVMobjS.Create(N, N);
+    A.fillRandom;
+
+    t0 := HighResTimer.MicroSeconds;
+    EigDecomposeS(A, EigenValues, EigenVectors);
+    t1 := HighResTimer.MicroSeconds;
+    msEig := (t1 - t0) / 1000.0;
+
+    maxResidual := 0;
+    for j := 0 to N-1 do begin
+      vcol := SubMatrixC(EigenVectors, 0, j, N, 1);
+      Av := A * vcol;                          // genuine matrix product (mixed real*complex)
+      lv := vcol * EigenValues.Element[j, 0];  // complex-scalar multiply
+      resid := Av - lv;
+      r := MatrixResidualNormC(resid);
+      if r > maxResidual then maxResidual := r;
+    end;
+
+    WriteLn(#13, Format('%6d %18.2f %18.2e', [N, msEig, maxResidual]));
+    Flush(Output);
+  end;
+  WriteLn;
+end;
+
 begin
   {$IFDEF HAVE_BLAS}
   InitializeCBLAS;
@@ -423,4 +632,8 @@ begin
   RunBenchmarksSingle;
   RunBenchmarksComplex;
   RunBenchmarksComplexSingle;
+  RunBenchmarksFFT;
+  RunBenchmarksFFTSingle;
+  RunBenchmarksEig;
+  RunBenchmarksEigSingle;
 end.
