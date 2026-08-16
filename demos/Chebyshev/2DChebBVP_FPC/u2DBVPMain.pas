@@ -206,8 +206,15 @@ begin
   FPlot.LightX := FLightPad.LightX;
   FPlot.LightY := FLightPad.LightY;
 
+  // ChebN div 4 lands exactly on the Chebyshev node x=cos((ChebN div 4)*Pi/ChebN)
+  // = cos(Pi/4) = 1/sqrt(2) (the same node index arithmetic the header comment's
+  // "(0,0)" case used with ChebN div 2 -> cos(Pi/2) = 0) - this is the original
+  // Delphi demo's own evaluation point (Laplace2D.ResultGrid[18,18] there, whose
+  // reversed node ordering - x[I]:=-cos(I*Pi/N) there vs cos(I*Pi/N) here - put
+  // the same node at index N-6=18 rather than index 6).
   Memo1.Lines.Add('');
-  Memo1.Lines.Add('u at (x,y)~=(0,0): ' + FloatToStr(UFull.Element[ChebN div 2, ChebN div 2]));
+  Memo1.Lines.Add('u at (x,y)~=(1/sqrt(2),1/sqrt(2)): ' +
+    FloatToStr(UFull.Element[ChebN div 4, ChebN div 4]));
 end;
 
 procedure TfmMain.LightPadChange(Sender: TObject);
