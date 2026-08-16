@@ -550,7 +550,7 @@ end;
 procedure TVMobjZ.Id;
 const
   s : string = 'Routine Id :';
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
 var
   i, j : TDimZ;
 begin
@@ -677,7 +677,7 @@ const
   imaginary-part pivot, confirmed via a standalone reproduction outside
   this codebase. This stays on PurePascalLUZ/PurePascalLUSolveZ
   unconditionally until that's resolved. }
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
 begin
   assert(A.Cols = A.Rows,s+'Matrix A must be square');
   assert(A.Rows = B.Rows, s+'Matrix A and B have incompatible dimensions');
@@ -726,7 +726,7 @@ var
   LAPACKE_zgetri (inverse from the LU factors), on a CopyObjZ scratch
   buffer - both LAPACKE calls overwrite their input matrix in place,
   so A itself is left untouched. }
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   {$IFDEF HAVE_ACCELERATE}
 { Accelerate-backed: raw Fortran zgetrf_/zgetri_ (see cblas.pas) - no
   LAPACKE row-major wrapper available. Matrix inversion is transpose-
@@ -887,7 +887,7 @@ var
   info, i, sign : integer;
   scratch : TVMobjZ;
   d : TComplex16;
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   {$IFDEF HAVE_ACCELERATE}
 var
   n : integer;
@@ -897,7 +897,7 @@ begin
   assert(A.Cols = A.Rows, s+'Matrix A must be square');
   scratch := CopyObjZ(A);
   setlength(ipiv, A.rows);
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   {$IFDEF HAVE_ACCELERATE}
   { See newVM.pas's Det / InvertZ above for the transpose-invariance
     rationale (det(A)=det(A^T), regular transpose) - identical here,
@@ -1906,7 +1906,7 @@ begin
   SetLength(wi, n);
   SetLength(vr, n*n);
 
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   //PurePascalEigHqr2 - see its own header comment above - fills wr/wi/vr in
   //exactly the same packed real/imaginary-column-pair convention LAPACKE_dgeev
   //uses below, so the unpacking loops after this IFDEF are unchanged either way.
@@ -2362,6 +2362,9 @@ const
 var
   nc : integer;
 {$IFDEF HAVE_FFTW}
+  Nd : Double;
+{$ENDIF}
+{$IFDEF HAVE_FFTW}
   plan : fftw_plan;
 {$ELSE}
   full, outc : array of TComplex16;
@@ -2379,7 +2382,15 @@ begin
   assert(plan<>nil, s+'fftw_plan_dft_c2r_1d failed');
   fftw_execute_dft_c2r(plan, PComplex16(@A.FData[0]), result.DataPtr);
   fftw_destroy_plan(plan);
-  ippsDivC_64f_I(N, result.DataPtr, N);   //normalize, matching FFT_C2R(FFT_R2C(x), N) = x
+  assert(Assigned(cblas_dscal), s+'OpenBLAS not available on this machine - FFT_C2R normalization has no PUREPASCAL fallback');
+  //Divide via an explicit Double intermediate (Nd), not "1.0/N" directly -
+  //this FPC/AArch64 target silently computes a literal-over-Integer division
+  //like "1.0/N" at reduced (~single) precision, even though "1.0/Nd" with Nd
+  //already Double is fully precise; confirmed empirically (not just here -
+  //IFFT below had the identical latent bug in "1.0/n", previously masked by
+  //its round-trip test's looser DblSolveTol tolerance).
+  Nd := N;
+  cblas_dscal(N, 1.0/Nd, result.DataPtr, 1);   //normalize, matching FFT_C2R(FFT_R2C(x), N) = x
 {$ELSE}
   //Expand the half-spectrum to the full N-point spectrum via conjugate
   //symmetry (X[N-k] = conj(X[k]), the defining property of a real-valued
@@ -2425,6 +2436,7 @@ var
   n, i : integer;
 {$IFDEF HAVE_FFTW}
   plan : fftw_plan;
+  Nd : Double;
 {$ENDIF}
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
@@ -2437,7 +2449,8 @@ begin
   fftw_execute_dft(plan, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]));
   fftw_destroy_plan(plan);
   assert(Assigned(cblas_zdscal), s+'OpenBLAS not available on this machine - IFFT normalization has no PUREPASCAL fallback');
-  cblas_zdscal(n, 1.0/n, @result.FData[0], 1);  //normalize, matching IFFT(FFT(x)) = x
+  Nd := n;  //see FFT_C2R's own comment above: avoid "1.0/n" (Integer) directly
+  cblas_zdscal(n, 1.0/Nd, @result.FData[0], 1);  //normalize, matching IFFT(FFT(x)) = x
 {$ELSE}
   PPDirectDFT(n, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]), False);
   for i := 0 to n-1 do begin

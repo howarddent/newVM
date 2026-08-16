@@ -355,7 +355,7 @@ end;
 procedure TVMobjS.Id;
 const
   s : string = 'Routine Id :';
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
 var
   i, j : TDimS;
 begin
@@ -483,7 +483,7 @@ const
   against several different B's in turn. On return, A holds its LU-factored
   form (not the original matrix) and the solution is in B. Returns info
   from the underlying LAPACKE call. }
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   {$IFDEF HAVE_ACCELERATE}
 { See newVM.pas's LinearSolve for the full trans='T'/transpose-copy
   rationale - identical here, just Single/sgetrf_/sgetrs_-typed. }
@@ -566,7 +566,7 @@ var
   LAPACKE_sgetri (inverse from the LU factors), on a CopyObjS scratch
   buffer - both LAPACKE calls overwrite their input matrix in place,
   so A itself is left untouched. }
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   {$IFDEF HAVE_ACCELERATE}
 { See newVM.pas's Invert for the transpose-symmetry rationale
   ((A^T)^-1 = (A^-1)^T) - identical here, just Single/sgetrf_/sgetri_
@@ -729,7 +729,7 @@ var
   ipiv : array of integer;
   info, i, sign : integer;
   scratch : TVMobjS;
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   {$IFDEF HAVE_ACCELERATE}
 var
   n : integer;
@@ -739,7 +739,7 @@ begin
   assert(A.Cols = A.Rows, s+'Matrix A must be square');
   scratch := CopyObjS(A);
   setlength(ipiv, A.rows);
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   {$IFDEF HAVE_ACCELERATE}
   { See newVM.pas's Det for the transpose-invariance rationale (det(A)=
     det(A^T)) - identical here, just Single/sgetrf_-typed. }

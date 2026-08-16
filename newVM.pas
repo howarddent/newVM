@@ -478,7 +478,7 @@ end;
 procedure TVMobj.Id;
 const
   s : string = 'Routine Id :';
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
 var
   i, j : TDim;
 begin
@@ -609,7 +609,7 @@ const
   against several different B's in turn. On return, A holds its LU-factored
   form (not the original matrix) and the solution is in B. Returns info
   from the underlying LAPACKE call. }
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   {$IFDEF HAVE_ACCELERATE}
 { Accelerate-backed: raw Fortran dgetrf_ (factorise) / dgetrs_ (solve, both
   fresh and cached-factorisation reuse) - no LAPACKE row-major wrapper
@@ -719,7 +719,7 @@ var
   LAPACKE_dgetri (inverse from the LU factors). Runs on a CopyObj scratch
   buffer, like EigDecompose, since both LAPACKE calls overwrite their
   input matrix in place - A itself is left untouched. }
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   {$IFDEF HAVE_ACCELERATE}
 { Accelerate-backed: raw Fortran dgetrf_/dgetri_ (see cblas.pas), since no
   LAPACKE row-major wrapper is available. Matrix inversion is
@@ -893,7 +893,7 @@ var
   ipiv : array of integer;
   info, i, sign : integer;
   scratch : TVMobj;
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   {$IFDEF HAVE_ACCELERATE}
 var
   n : integer;
@@ -903,7 +903,7 @@ begin
   assert(A.Cols = A.Rows, s+'Matrix A must be square');
   scratch := CopyObj(A);
   setlength(ipiv, A.rows);
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   {$IFDEF HAVE_ACCELERATE}
   { Accelerate has no LAPACKE_dgetrf (row-major C wrapper), only the
     classic Fortran dgetrf_ (column-major) - see cblas.pas. Determinant

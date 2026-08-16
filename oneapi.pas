@@ -251,6 +251,7 @@ type
 //OpenBLAS (LoadAddresses/TryInitializeCBLAS there).
 
 {$IFDEF UNIX}
+  {$IFDEF HAVE_MKL}
   { Lapacke LU factorisation}
 function lapacke_dgetrf(matrix_layout: CBLAS_ORDER; m: Integer; n: Integer; a: PDouble; lda: Integer; ipiv: PInteger): Integer;cdecl;external;
 {LaPacke linear solve}
@@ -311,24 +312,78 @@ function lapacke_cgetrs(matrix_layout: CBLAS_ORDER; trans: UTF8Char; n: Integer;
 
 {eigen values, eigenvector routines}
 
-{$IFDEF HAVE_MKL}
 function lapacke_dgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PDouble; lda : Integer;
                         wr ,wi : PDouble; vl : PDouble; ldvl :integer; vr : PDouble; ldvr : Integer):Integer;cdecl;external;
 
 function lapacke_sgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
                         wr ,wi : PSingle; vl : PSingle; ldvl :integer; vr : PSingle; ldvr : Integer):Integer;cdecl;external;
-{$ELSE}
-// No MKL on this machine: EigDecompose/EigDecomposeS have no PUREPASCAL
-// fallback (out of scope, see newVM.pas's own header comment on why LU/
-// Invert/Det got one but eigendecomposition didn't) - these plain-Pascal
-// stubs exist only so the rest of the program still links; calling either
-// asserts clearly instead of failing to link the whole binary.
-function lapacke_dgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PDouble; lda : Integer;
-                        wr ,wi : PDouble; vl : PDouble; ldvl :integer; vr : PDouble; ldvr : Integer):Integer;
+  {$ELSE}
+  { No MKL on this Unix machine - these 22 LAPACKE_* entry points (exactly
+    the set newVM.pas/newVMSingle.pas/newVMComplex.pas/newVMComplexSingle.pas
+    actually call - lapacke_?lacpy above is declared but genuinely unused,
+    see CopyObj/SubMatrix's own comments for why they moved to cblas_?copy
+    instead, so it's not repeated here) become runtime-resolved procedural
+    vars instead, exactly mirroring the WINDOWS branch's own MKL-loader
+    pattern below - LoadArmPLLAPACKEFunctions (implementation section)
+    resolves them from Arm Performance Libraries' libarmpl_lp64.so, when
+    HAVE_ARMPL is defined (see newvmconfigure.lpr). If neither MKL nor
+    ArmPL is present these vars are simply never assigned and stay nil -
+    harmless, since every newVM*.pas call site is gated on the derived
+    HAVE_LAPACKE define (true only when HAVE_MKL or HAVE_ARMPL), so a nil
+    var is never actually called in that configuration either. }
+  type
+    Tlapacke_dgetrf = function(matrix_layout: CBLAS_ORDER; m: Integer; n: Integer; a: PDouble; lda: Integer; ipiv: PInteger): Integer; cdecl;
+    Tlapacke_dgesv  = function(matrix_layout: CBLAS_ORDER; n: Integer; nrhs: Integer; a: PDouble; lda: Integer; ipiv: PInteger; b: PDouble; ldb: Integer): integer; cdecl;
+    Tlapacke_sgesv  = function(matrix_layout: CBLAS_ORDER; n: Integer; nrhs: Integer; a: PSingle; lda: Integer; ipiv: PInteger; b: PSingle; ldb: Integer): integer; cdecl;
+    Tlapacke_zgesv  = function(matrix_layout: CBLAS_ORDER; n: Integer; nrhs: Integer; a: PComplex16; lda: Integer; ipiv: PInteger; b: PComplex16; ldb: Integer): integer; cdecl;
+    Tlapacke_cgesv  = function(matrix_layout: CBLAS_ORDER; n: Integer; nrhs: Integer; a: PComplex8; lda: Integer; ipiv: PInteger; b: PComplex8; ldb: Integer): integer; cdecl;
+    Tlapacke_dlaset = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; alpha: Double; beta: Double; a: PDouble; lda: Integer): Integer; cdecl;
+    Tlapacke_slaset = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; alpha: single; beta: single; a: PSingle; lda: Integer): Integer; cdecl;
+    Tlapacke_zlaset = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; alpha: TComplex16; beta: TComplex16; a: PComplex16; lda: Integer): Integer; cdecl;
+    Tlapacke_claset = function(matrix_layout: CBLAS_ORDER; uplo: UTF8Char; m: Integer; n: Integer; alpha: TComplex8; beta: TComplex8; a: PComplex8; lda: Integer): Integer; cdecl;
+    Tlapacke_sgetrf = function(matrix_layout: CBLAS_ORDER; m: Integer; n: Integer; a: PSingle; lda: Integer; ipiv: PInteger): Integer; cdecl;
+    Tlapacke_zgetrf = function(matrix_layout: CBLAS_ORDER; m: Integer; n: Integer; a: PComplex16; lda: Integer; ipiv: PInteger): Integer; cdecl;
+    Tlapacke_cgetrf = function(matrix_layout: CBLAS_ORDER; m: Integer; n: Integer; a: PComplex8; lda: Integer; ipiv: PInteger): Integer; cdecl;
+    Tlapacke_dgetri = function(matrix_layout: CBLAS_ORDER; n: Integer; a: PDouble; lda: Integer; const ipiv: PInteger): Integer; cdecl;
+    Tlapacke_sgetri = function(matrix_layout: CBLAS_ORDER; n: Integer; a: PSingle; lda: Integer; const ipiv: PInteger): Integer; cdecl;
+    Tlapacke_zgetri = function(matrix_layout: CBLAS_ORDER; n: Integer; a: PComplex16; lda: Integer; const ipiv: PInteger): Integer; cdecl;
+    Tlapacke_cgetri = function(matrix_layout: CBLAS_ORDER; n: Integer; a: PComplex8; lda: Integer; const ipiv: PInteger): Integer; cdecl;
+    Tlapacke_dgetrs = function(matrix_layout: CBLAS_ORDER; trans: UTF8Char; n: Integer; nrhs: Integer; const a: PDouble; lda: Integer; const ipiv: PInteger; b: PDouble; ldb: Integer): Integer; cdecl;
+    Tlapacke_sgetrs = function(matrix_layout: CBLAS_ORDER; trans: UTF8Char; n: Integer; nrhs: Integer; const a: PSingle; lda: Integer; const ipiv: PInteger; b: PSingle; ldb: Integer): Integer; cdecl;
+    Tlapacke_zgetrs = function(matrix_layout: CBLAS_ORDER; trans: UTF8Char; n: Integer; nrhs: Integer; const a: PComplex16; lda: Integer; const ipiv: PInteger; b: PComplex16; ldb: Integer): Integer; cdecl;
+    Tlapacke_cgetrs = function(matrix_layout: CBLAS_ORDER; trans: UTF8Char; n: Integer; nrhs: Integer; const a: PComplex8; lda: Integer; const ipiv: PInteger; b: PComplex8; ldb: Integer): Integer; cdecl;
+    Tlapacke_dgeev  = function(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PDouble; lda : Integer;
+                          wr ,wi : PDouble; vl : PDouble; ldvl :integer; vr : PDouble; ldvr : Integer):Integer; cdecl;
+    Tlapacke_sgeev  = function(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
+                          wr ,wi : PSingle; vl : PSingle; ldvl :integer; vr : PSingle; ldvr : Integer):Integer; cdecl;
+  var
+    lapacke_dgetrf : Tlapacke_dgetrf;
+    lapacke_dgesv  : Tlapacke_dgesv;
+    lapacke_sgesv  : Tlapacke_sgesv;
+    lapacke_zgesv  : Tlapacke_zgesv;
+    lapacke_cgesv  : Tlapacke_cgesv;
+    lapacke_dlaset : Tlapacke_dlaset;
+    lapacke_slaset : Tlapacke_slaset;
+    lapacke_zlaset : Tlapacke_zlaset;
+    lapacke_claset : Tlapacke_claset;
+    lapacke_sgetrf : Tlapacke_sgetrf;
+    lapacke_zgetrf : Tlapacke_zgetrf;
+    lapacke_cgetrf : Tlapacke_cgetrf;
+    lapacke_dgetri : Tlapacke_dgetri;
+    lapacke_sgetri : Tlapacke_sgetri;
+    lapacke_zgetri : Tlapacke_zgetri;
+    lapacke_cgetri : Tlapacke_cgetri;
+    lapacke_dgetrs : Tlapacke_dgetrs;
+    lapacke_sgetrs : Tlapacke_sgetrs;
+    lapacke_zgetrs : Tlapacke_zgetrs;
+    lapacke_cgetrs : Tlapacke_cgetrs;
+    lapacke_dgeev  : Tlapacke_dgeev;
+    lapacke_sgeev  : Tlapacke_sgeev;
 
-function lapacke_sgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
-                        wr ,wi : PSingle; vl : PSingle; ldvl :integer; vr : PSingle; ldvr : Integer):Integer;
-{$ENDIF}
+  {$IFDEF HAVE_ARMPL}
+  procedure LoadArmPLLAPACKEFunctions;
+  {$ENDIF}
+  {$ENDIF}
 
 // routines from intel vml library
 
@@ -733,22 +788,76 @@ implementation
 
 {$IFDEF UNIX}
 {$IFNDEF HAVE_MKL}
-// Stub bodies for the lapacke_dgeev/sgeev declarations above (only present
-// when HAVE_MKL is undefined) - see that declaration's comment for why
-// these exist at all rather than a real fallback.
-function lapacke_dgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PDouble; lda : Integer;
-                        wr ,wi : PDouble; vl : PDouble; ldvl :integer; vr : PDouble; ldvr : Integer):Integer;
+{$IFDEF HAVE_ARMPL}
+// Runtime loader for the 22 LAPACKE_* entry points declared above (Unix,
+// no MKL, ArmPL present) - mirrors GetMKLHandle/MKLProc/LoadMKLFunctions
+// below (Windows) exactly, just against a single fixed library name
+// instead of a versioned-DLL candidate list, and only for LAPACKE_* (not
+// the VML/VSL/MKL-utility symbols those cover too - ArmPL doesn't provide
+// drop-in replacements for those under matching names, so Sin/Cos/
+// fillRandom/etc stay on their PUREPASCAL fallback regardless of ArmPL).
+const
+  ArmPLLapackeLib = 'libarmpl_lp64.so';
+var
+  ArmPLLibHandle: TLibHandle = NilHandle;
+  ArmPLLibTried: Boolean = False;
+
+function GetArmPLHandle: TLibHandle;
 begin
-  assert(False, 'lapacke_dgeev : MKL not available on this machine - EigDecompose has no PUREPASCAL fallback');
-  result := -1;
+  if not ArmPLLibTried then begin
+    ArmPLLibTried := True;
+    ArmPLLibHandle := LoadLibrary(ArmPLLapackeLib);
+  end;
+  Result := ArmPLLibHandle;
 end;
 
-function lapacke_sgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
-                        wr ,wi : PSingle; vl : PSingle; ldvl :integer; vr : PSingle; ldvr : Integer):Integer;
+function ArmPLProc(const FuncName: AnsiString): Pointer;
+const
+  s = 'OneAPI (Unix ArmPL LAPACKE loader) : ';
+var
+  h: TLibHandle;
 begin
-  assert(False, 'lapacke_sgeev : MKL not available on this machine - EigDecomposeS has no PUREPASCAL fallback');
-  result := -1;
+  Result := nil;
+  h := GetArmPLHandle;
+  if h <> NilHandle then
+    Result := GetProcedureAddress(h, FuncName);
+  assert(Result <> nil, s + 'could not locate "' + FuncName + '" in ' +
+    ArmPLLapackeLib + ' - is Arm Performance Libraries'' lib directory ' +
+    '(e.g. /opt/arm/armpl_*/lib) registered with the dynamic linker ' +
+    '(ldconfig/ld.so.conf.d), not just present on disk?');
 end;
+
+procedure LoadArmPLLAPACKEFunctions;
+begin
+  // ArmPL exports these under the same all-lowercase "LAPACKE_*" spelling
+  // as MKL/reference LAPACKE (confirmed via nm -D against libarmpl_lp64.so),
+  // unlike MKL's Windows dispatcher (see LoadMKLFunctions's own comment on
+  // that) - so, unlike there, the casing passed to ArmPLProc doesn't need
+  // to differ from the Pascal identifier itself.
+  pointer(lapacke_dgetrf) := ArmPLProc('LAPACKE_dgetrf');
+  pointer(lapacke_dgesv)  := ArmPLProc('LAPACKE_dgesv');
+  pointer(lapacke_sgesv)  := ArmPLProc('LAPACKE_sgesv');
+  pointer(lapacke_zgesv)  := ArmPLProc('LAPACKE_zgesv');
+  pointer(lapacke_cgesv)  := ArmPLProc('LAPACKE_cgesv');
+  pointer(lapacke_dlaset) := ArmPLProc('LAPACKE_dlaset');
+  pointer(lapacke_slaset) := ArmPLProc('LAPACKE_slaset');
+  pointer(lapacke_zlaset) := ArmPLProc('LAPACKE_zlaset');
+  pointer(lapacke_claset) := ArmPLProc('LAPACKE_claset');
+  pointer(lapacke_sgetrf) := ArmPLProc('LAPACKE_sgetrf');
+  pointer(lapacke_zgetrf) := ArmPLProc('LAPACKE_zgetrf');
+  pointer(lapacke_cgetrf) := ArmPLProc('LAPACKE_cgetrf');
+  pointer(lapacke_dgetri) := ArmPLProc('LAPACKE_dgetri');
+  pointer(lapacke_sgetri) := ArmPLProc('LAPACKE_sgetri');
+  pointer(lapacke_zgetri) := ArmPLProc('LAPACKE_zgetri');
+  pointer(lapacke_cgetri) := ArmPLProc('LAPACKE_cgetri');
+  pointer(lapacke_dgetrs) := ArmPLProc('LAPACKE_dgetrs');
+  pointer(lapacke_sgetrs) := ArmPLProc('LAPACKE_sgetrs');
+  pointer(lapacke_zgetrs) := ArmPLProc('LAPACKE_zgetrs');
+  pointer(lapacke_cgetrs) := ArmPLProc('LAPACKE_cgetrs');
+  pointer(lapacke_dgeev)  := ArmPLProc('LAPACKE_dgeev');
+  pointer(lapacke_sgeev)  := ArmPLProc('LAPACKE_sgeev');
+end;
+{$ENDIF}
 {$ENDIF}
 
 {$IFNDEF HAVE_IPP}
@@ -765,6 +874,20 @@ begin
   assert(False, 'ippsDivC_32f_I : IPP not available on this machine - FFT_C2R/IFFT have no PUREPASCAL fallback');
   result := -1;
 end;
+{$ENDIF}
+{$ENDIF}
+
+{$IFDEF UNIX}
+{$IFNDEF HAVE_MKL}
+{$IFDEF HAVE_ARMPL}
+// Unlike the rest of this unit's Unix side (MKL/IPP, resolved at link time
+// via the {$Linklib}s at the top of this file - no explicit init call
+// needed), ArmPL's LAPACKE_* is resolved at runtime, so it needs exactly
+// the same kind of initialization-section call the Windows MKL/IPP loaders
+// below get - see LoadArmPLLAPACKEFunctions's own comment above.
+initialization
+  LoadArmPLLAPACKEFunctions;
+{$ENDIF}
 {$ENDIF}
 {$ENDIF}
 

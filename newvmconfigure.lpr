@@ -65,6 +65,11 @@ const
   FFTWDoubleCandidates: array of string = ('libfftw3-3.dll');
   FFTWSingleCandidates: array of string = ('libfftw3f-3.dll');
   AccelerateCandidates: array of string = (); // Darwin-only framework
+  // ArmPL's Windows DLL naming hasn't been confirmed against a real install
+  // (unlike every other candidate list here) - left empty rather than
+  // guessing, so HAVE_ARMPL simply never fires on Windows until someone
+  // verifies and fills this in.
+  ArmPLCandidates: array of string = ();
 {$ELSE}
   {$IFDEF DARWIN}
 const
@@ -86,6 +91,8 @@ const
   // shared cache - LoadLibrary/dlopen still resolves this path correctly,
   // only filesystem-level tools like `file`/`nm` see a broken symlink).
   AccelerateCandidates: array of string = ('/System/Library/Frameworks/Accelerate.framework/Accelerate');
+  // ArmPL doesn't ship a Darwin build - left empty.
+  ArmPLCandidates: array of string = ();
   {$ELSE}
 const
   PlatformDefine = 'PLATFORM_LINUX';
@@ -97,6 +104,15 @@ const
   FFTWDoubleCandidates: array of string = ('libfftw3.so','libfftw3.so.3');
   FFTWSingleCandidates: array of string = ('libfftw3f.so','libfftw3f.so.3');
   AccelerateCandidates: array of string = (); // Darwin-only framework
+  // Arm Performance Libraries' LP64 (32-bit int) CBLAS+LAPACKE shared
+  // library - matches this codebase's Integer/longint N/incX/incY
+  // parameters the same way OpenBLAS's default build does. Confirmed
+  // present under this bare name once /opt/arm/armpl_*/lib is registered
+  // with the dynamic linker (see the armpl.conf ld.so.conf.d entry added
+  // alongside the ArmPL install - LoadLibrary here relies on the system
+  // linker search path, same as every other candidate in this file, and
+  // ArmPL's own installer does not add such an entry itself).
+  ArmPLCandidates: array of string = ('libarmpl_lp64.so');
   {$ENDIF}
 {$ENDIF}
 
@@ -145,7 +161,7 @@ end;
 var
   OutFile: TextFile;
   HaveMKL, HaveIPPCore, HaveIPPVM, HaveIPPS, HaveIPP, HaveOpenBLAS, HaveFFTWD, HaveFFTWS, HaveFFTW,
-  HaveAccelerate, HaveBLAS: Boolean;
+  HaveAccelerate, HaveArmPL, HaveBLAS, HaveLAPACKE: Boolean;
   FoundName: string;
 
   procedure Report(const Label_: string; Found: Boolean; const Via: string);
@@ -176,7 +192,12 @@ begin
 
   HaveAccelerate := ProbeLibrary(AccelerateCandidates, FoundName);
   Report('Apple Accelerate (CBLAS via vecLib)', HaveAccelerate, FoundName);
-  HaveBLAS := HaveOpenBLAS or HaveAccelerate;
+
+  HaveArmPL := ProbeLibrary(ArmPLCandidates, FoundName);
+  Report('Arm Performance Libraries (ArmPL, cblas via libarmpl_lp64)', HaveArmPL, FoundName);
+
+  HaveBLAS := HaveOpenBLAS or HaveAccelerate or HaveArmPL;
+  HaveLAPACKE := HaveMKL or HaveArmPL;
 
   HaveFFTWD := ProbeLibrary(FFTWDoubleCandidates, FoundName);
   HaveFFTWS := ProbeLibrary(FFTWSingleCandidates, FoundName);
@@ -209,10 +230,26 @@ begin
   WriteLn(OutFile);
   if HaveOpenBLAS   then WriteLn(OutFile, '{$DEFINE HAVE_OPENBLAS}   // libopenblas found');
   if HaveAccelerate then WriteLn(OutFile, '{$DEFINE HAVE_ACCELERATE} // Apple Accelerate/vecLib found (Darwin only)');
-  if HaveBLAS       then WriteLn(OutFile, '{$DEFINE HAVE_BLAS}       // derived: HAVE_OPENBLAS or HAVE_ACCELERATE');
+  if HaveArmPL      then WriteLn(OutFile, '{$DEFINE HAVE_ARMPL}      // Arm Performance Libraries (libarmpl_lp64) found - cblas.pas prefers this over HAVE_OPENBLAS when both are present');
+  if HaveBLAS       then WriteLn(OutFile, '{$DEFINE HAVE_BLAS}       // derived: HAVE_OPENBLAS or HAVE_ACCELERATE or HAVE_ARMPL');
   if HaveMKL        then WriteLn(OutFile, '{$DEFINE HAVE_MKL}        // libmkl_rt found');
   if HaveIPP        then WriteLn(OutFile, '{$DEFINE HAVE_IPP}        // libippcore+libippvm+libipps all found');
   if HaveFFTW       then WriteLn(OutFile, '{$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found');
+  WriteLn(OutFile);
+  WriteLn(OutFile, '// Derived: true when a LAPACKE_* implementation is available from EITHER');
+  WriteLn(OutFile, '// MKL or Arm Performance Libraries (ArmPL exports a standard LAPACKE_* ABI');
+  WriteLn(OutFile, '// from its libarmpl_lp64.so alongside its cblas_* one - see oneapi.pas''s');
+  WriteLn(OutFile, '// LoadArmPLLAPACKEFunctions). Deliberately narrower than PUREPASCAL below:');
+  WriteLn(OutFile, '// gates only LinearSolve/Invert/Det/Id/EigDecompose (the routines that call');
+  WriteLn(OutFile, '// LAPACKE_* and nothing else) across all four TVMobj* units, so ArmPL alone');
+  WriteLn(OutFile, '// (no MKL) can take those specific routines off PUREPASCAL while VML/VSL/IPP-');
+  WriteLn(OutFile, '// dependent routines (Sin/Cos/etc, fillRandom, linspace/AddScalar/FlipLR/etc)');
+  WriteLn(OutFile, '// stay on their PUREPASCAL fallback, since ArmPL provides no equivalent for');
+  WriteLn(OutFile, '// those under matching names.');
+  if HaveLAPACKE then
+    WriteLn(OutFile, '{$DEFINE HAVE_LAPACKE}')
+  else
+    WriteLn(OutFile, '// {$DEFINE HAVE_LAPACKE} left undefined: no LAPACKE_* implementation found');
   WriteLn(OutFile);
   WriteLn(OutFile, '// Derived: set whenever any of the three libraries the "core" linear algebra');
   WriteLn(OutFile, '// (MatMult/Invert/LinearSolve/Det/operators/elementwise math/EigDecompose/etc)');
@@ -232,11 +269,15 @@ begin
   WriteLn(OutFile, '// routines (MatMult/Kron/Diag/Norm/FlipUD/MergeUD/MergeLR/Reshape/Repmat, the');
   WriteLn(OutFile, '// +/-/unary-/scalar-* operators) whose library-backed body calls ONLY');
   WriteLn(OutFile, '// cblas_* - no LAPACKE/ipps/vd*/vsl* - so they can run their real,');
-  WriteLn(OutFile, '// hardware-accelerated body whenever ANY CBLAS-compatible backend (OpenBLAS');
-  WriteLn(OutFile, '// or, on Darwin, Apple''s built-in Accelerate framework) is present, even on');
-  WriteLn(OutFile, '// a machine missing MKL/IPP that still forces PUREPASCAL above for the');
-  WriteLn(OutFile, '// LAPACK/IPP/VML-dependent routines. Left undefined (not set to False) when');
-  WriteLn(OutFile, '// a BLAS backend is found, matching PUREPASCAL''s own convention.');
+  WriteLn(OutFile, '// hardware-accelerated body whenever ANY CBLAS-compatible backend (Arm');
+  WriteLn(OutFile, '// Performance Libraries, OpenBLAS, or, on Darwin, Apple''s built-in Accelerate');
+  WriteLn(OutFile, '// framework) is present, even on a machine missing MKL/IPP that still forces');
+  WriteLn(OutFile, '// PUREPASCAL above for the VML/VSL/IPP-dependent routines - ArmPL''s cblas_*');
+  WriteLn(OutFile, '// layer is wired in via cblas.pas''s CBLASLib constant (preferring');
+  WriteLn(OutFile, '// libarmpl_lp64.so over libopenblas whenever HAVE_ARMPL is defined); its');
+  WriteLn(OutFile, '// LAPACKE_* layer is a separate concern, see HAVE_LAPACKE below. Left');
+  WriteLn(OutFile, '// undefined (not set to False) when a BLAS backend is found, matching');
+  WriteLn(OutFile, '// PUREPASCAL''s own convention.');
   if not HaveBLAS then
     WriteLn(OutFile, '{$DEFINE PUREPASCAL_BLAS}')
   else
@@ -250,7 +291,12 @@ begin
     WriteLn('All three linear-algebra backends found - newVM.pas will build against them as usual.');
   if HaveBLAS then
     WriteLn('PUREPASCAL_BLAS is inactive - newVM.pas''s CBLAS-only routines will use ',
-      IfThen(HaveOpenBLAS, 'OpenBLAS', 'Apple Accelerate'), '.')
+      IfThen(HaveArmPL, 'Arm Performance Libraries', IfThen(HaveOpenBLAS, 'OpenBLAS', 'Apple Accelerate')), '.')
   else
     WriteLn('PUREPASCAL_BLAS will be active - no CBLAS-compatible backend found.');
+  if HaveLAPACKE then
+    WriteLn('HAVE_LAPACKE is active - LinearSolve/Invert/Det/Id/EigDecompose will use ',
+      IfThen(HaveMKL, 'MKL', 'Arm Performance Libraries'), '''s LAPACKE_*, not their PUREPASCAL fallback.')
+  else
+    WriteLn('HAVE_LAPACKE is inactive - LinearSolve/Invert/Det/Id/EigDecompose will use their PUREPASCAL fallback (no MKL or ArmPL found).');
 end.
