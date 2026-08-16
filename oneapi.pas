@@ -5,7 +5,7 @@ unit OneAPI;
 interface
 
 uses
-  Classes, SysUtils, DynLibs, cblas;
+  Classes, SysUtils, DynLibs, Math, cblas;
 
 {$I newVMConfig.inc}
 
@@ -970,7 +970,46 @@ begin
   pointer(ippFree)             := IPPProc('ippFree');
 end;
 
+{ FPC's Windows runtime leaves the FPU's invalid-operation/denormal/
+  underflow traps UNMASKED by default - unlike Linux/macOS, where the C
+  runtime MKL itself links against already masks them (this is the
+  standard hardware default those platforms' libc/dyld startup code
+  establishes). MKL's LAPACKE complex solve/factor routines occasionally
+  produce a transient denormal or borderline value internally during
+  pivoting - numerically harmless, and silently flushed/rounded on
+  Linux/macOS - but on Windows that trips a hard EInvalidOp SIGFPE-style
+  exception that aborts the process outright.
+
+  Confirmed via an isolated, instrumented run of newVMbench.lpr with a
+  Flush(Output) after every call: lapacke_cgesv (LinearSolveC's N=100
+  complex-single solve, called via this unit's own MKLProc-resolved
+  function pointer) is what actually raises EInvalidOp - not
+  PurePascalLUC/PurePascalLUSolveC as an earlier investigation assumed
+  (that assumption was based on a stale comment in newVMComplex.pas/
+  newVMComplexSingle.pas claiming LinearSolveZ/LinearSolveC "always" run
+  the PurePascal path; the actual code has had a proper
+  {$IFDEF PUREPASCAL}/{$ELSE} library-backed branch - lapacke_zgetrs/
+  zgesv, lapacke_cgetrs/cgesv - for some time, and that's the branch that
+  actually runs on this Windows machine's normal library-backed build).
+
+  Masked here, once, for the lifetime of the process, immediately after
+  the MKL/IPP function pointers are resolved - the same place Linux/macOS
+  effectively get this behaviour for free from their own C runtime, so
+  this brings Windows in line with the other two platforms rather than
+  weakening anything they already had. Applied unconditionally to every
+  MKL call (not just the complex LAPACKE routines that have actually been
+  observed to trigger it) since the underlying cause - MKL's own internal
+  arithmetic occasionally touching a denormal/borderline value - is not
+  specific to one routine or data type, only to which random matrix
+  happens to produce a near-singular pivot. }
+procedure MaskFPUExceptionsForMKL;
+begin
+  SetExceptionMask([exInvalidOp, exOverflow, exZeroDivide, exUnderflow,
+    exPrecision, exDenormalized]);
+end;
+
 initialization
+  MaskFPUExceptionsForMKL;
   LoadMKLFunctions;
   LoadIPPFunctions;
 {$ENDIF}
