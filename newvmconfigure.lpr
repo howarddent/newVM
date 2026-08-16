@@ -214,17 +214,15 @@ begin
   if HaveIPP        then WriteLn(OutFile, '{$DEFINE HAVE_IPP}        // libippcore+libippvm+libipps all found');
   if HaveFFTW       then WriteLn(OutFile, '{$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found');
   WriteLn(OutFile);
-  WriteLn(OutFile, '// Derived: set whenever any of the three libraries newVM.pas''s "core"');
-  WriteLn(OutFile, '// linear algebra (MatMult/Invert/LinearSolve/Det/operators/elementwise');
-  WriteLn(OutFile, '// math/etc) actually calls into - OpenBLAS (cblas_*), MKL (LAPACKE_*/vd*/');
-  WriteLn(OutFile, '// vsl*) and IPP (ipps*) - is missing, so those routines fall back to plain');
-  WriteLn(OutFile, '// Pascal implementations instead of failing to link. FFTW absence is NOT');
-  WriteLn(OutFile, '// included here: DCT/DST/FFT have no plain-Pascal fallback (out of scope -');
-  WriteLn(OutFile, '// see newVM.pas''s r2rTransform) and already degrade to a clear runtime');
-  WriteLn(OutFile, '// assert on their own when FFTW isn''t loaded, regardless of this define.');
-  WriteLn(OutFile, '// Presently only newVM.pas (double-precision real) actually implements the');
-  WriteLn(OutFile, '// PUREPASCAL-guarded bodies this drives - newVMSingle.pas/newVMComplex.pas/');
-  WriteLn(OutFile, '// newVMComplexSingle.pas still hard-require MKL/IPP/OpenBLAS unconditionally.');
+  WriteLn(OutFile, '// Derived: set whenever any of the three libraries the "core" linear algebra');
+  WriteLn(OutFile, '// (MatMult/Invert/LinearSolve/Det/operators/elementwise math/EigDecompose/etc)');
+  WriteLn(OutFile, '// of all four TVMobj* units actually calls into - OpenBLAS (cblas_*), MKL');
+  WriteLn(OutFile, '// (LAPACKE_*/vd*/vsl*) and IPP (ipps*) - is missing, so those routines fall');
+  WriteLn(OutFile, '// back to plain Pascal implementations instead of failing to link. FFTW');
+  WriteLn(OutFile, '// absence is NOT included here: it drives its own, separate HAVE_FFTW-gated');
+  WriteLn(OutFile, '// fallback for DCT/DST/FFT (r2rTransform and friends, and FFT_R2C/FFT_C2R/');
+  WriteLn(OutFile, '// FFT/IFFT in the complex units) instead, independent of this define - see');
+  WriteLn(OutFile, '// HAVE_FFTW''s own line above.');
   if not (HaveOpenBLAS and HaveMKL and HaveIPP) then
     WriteLn(OutFile, '{$DEFINE PUREPASCAL}')
   else

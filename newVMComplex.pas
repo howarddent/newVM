@@ -1144,6 +1144,732 @@ begin
   ImagPart := GetImagPart(A);
 end;
 
+{$IFDEF PUREPASCAL}
+{ ============================================================================
+  PurePascal general eigenvalue decomposition - ported from LMath
+  (LMath/ULineAlgebra/ubalance.pas, uelmhes.pas, ueltran.pas, uhqr2.pas,
+  ubalbak.pas), itself a translation of the classic EISPACK Balance/Elmhes/Eltran/Hqr2/Balbak
+  pipeline - the same algorithm family LAPACK's dgeev descends from, and the
+  library-backed path above already uses.
+
+  Ported as close to line-for-line as practical, INCLUDING LMath's own
+  goto-based control flow in PPHqr2 ("a crude translation, many gotos kept"
+  per that unit's own comment) - restructuring a 400-line QR-iteration
+  routine into structured control flow would risk introducing a subtle bug
+  for no real benefit, so it's kept exactly that shape here. Runs on local
+  1-based-usable scratch arrays (index 0 unused - TPPMatrix/TPPVector/
+  TPPIntVector below), matching LMath's own Lb=1 convention, rather than
+  newVM's usual 0-based indexing; only PurePascalEigHqr2 itself converts
+  between this and the 0-based row-major Double buffers EigDecompose works
+  with, at the very start and very end.
+
+  Five stages, run in sequence exactly as LMath's own EigenVect does:
+    1. PPBalance - isolates/scales eigenvalues to improve numerical accuracy
+    2. PPElmHes  - reduces to upper Hessenberg form via elementary similarity transforms
+    3. PPEltran  - accumulates the transformations from step 2 into Z
+    4. PPHqr2    - QR algorithm: eigenvalues AND eigenvectors of the Hessenberg matrix
+    5. PPBalBak  - back-transforms the eigenvectors through the balancing from step 1
+
+  PPHqr2 returns 0 on success, or -j (matching EISPACK's own convention) if
+  the 30*N-iteration convergence limit was hit while seeking the j-th
+  eigenvalue - PurePascalEigHqr2 propagates this up unchanged, and
+  EigDecompose's PUREPASCAL branch asserts on it exactly like the
+  LAPACKE_dgeev branch asserts on a non-zero info.
+
+  LMath's Hqr2 documents its eigenvectors as unnormalised; LAPACKE_dgeev's
+  are unit-Euclidean-norm (see EigDecompose's own header comment above), so
+  PurePascalEigHqr2 normalises each eigenvector (real column, or the two
+  columns of a complex-conjugate pair together) to unit norm before
+  returning - done here, on the packed real/imaginary column-pair form,
+  rather than after EigDecompose's own unpacking loop below, so that
+  unpacking loop stays identical and correct for both branches.
+  ============================================================================ }
+
+type
+  TPPVector    = array of Double;
+  TPPIntVector = array of Integer;
+  TPPMatrix    = array of TPPVector;
+  TPPComplex   = array of TComplex16;   //1-based-usable, .re/.im per LMath's Lambda[I].X/.Y
+
+function PPDSgn(A, B: Double): Double; inline;
+begin
+  if B < 0 then result := -Abs(A) else result := Abs(A);
+end;
+
+function PPMinI(A, B: Integer): Integer; inline;
+begin
+  if A <= B then result := A else result := B;
+end;
+
+function PPMaxD(A, B: Double): Double; inline;
+begin
+  if A >= B then result := A else result := B;
+end;
+
+// Ported from LMath's ubalance.pas (EISPACK Balanc) - balances A in place
+// and isolates eigenvalues whenever possible; see that unit's own header
+// comment for the full I_low/I_igh/Scale contract.
+procedure PPBalance(A: TPPMatrix; Lb, Ub: Integer; out I_low, I_igh: Integer; Scale: TPPVector);
+const
+  RADIX = 2;
+var
+  I, J, M           : Integer;
+  C, F, G, R, S, B2 : Double;
+  Flag, Found, Conv : Boolean;
+
+  procedure Exchange;
+  var
+    I : Integer;
+  begin
+    Scale[M] := J;
+    if J = M then Exit;
+    for I := Lb to I_igh do begin
+      F := A[I,J]; A[I,J] := A[I,M]; A[I,M] := F;
+    end;
+    for I := I_low to Ub do begin
+      F := A[J,I]; A[J,I] := A[M,I]; A[M,I] := F;
+    end;
+  end;
+
+begin
+  B2 := RADIX * RADIX;
+  I_low := Lb;
+  I_igh := Ub;
+
+  repeat
+    J := I_igh;
+    repeat
+      I := Lb;
+      repeat
+        Flag := (I <> J) and (A[J,I] <> 0.0);
+        I := I + 1;
+      until Flag or (I > I_igh);
+      Found := not Flag;
+      if Found then begin
+        M := I_igh;
+        Exchange;
+        I_igh := I_igh - 1;
+      end;
+      J := J - 1;
+    until Found or (J < Lb);
+  until (not Found) or (I_igh < Lb);
+
+  if I_igh < Lb then I_igh := Lb;
+  if I_igh = Lb then Exit;
+
+  repeat
+    J := I_low;
+    repeat
+      I := I_low;
+      repeat
+        Flag := (I <> J) and (A[I,J] <> 0.0);
+        I := I + 1;
+      until Flag or (I > I_igh);
+      Found := not Flag;
+      if Found then begin
+        M := I_low;
+        Exchange;
+        I_low := I_low + 1;
+      end;
+      J := J + 1;
+    until Found or (J > I_igh);
+  until (not Found);
+
+  for I := I_low to I_igh do Scale[I] := 1.0;
+
+  repeat
+    Conv := True;
+    for I := I_low to I_igh do begin
+      C := 0.0; R := 0.0;
+      for J := I_low to I_igh do
+        if J <> I then begin
+          C := C + Abs(A[J,I]);
+          R := R + Abs(A[I,J]);
+        end;
+      if (C <> 0.0) and (R <> 0.0) then begin
+        G := R / RADIX;
+        F := 1.0;
+        S := C + R;
+        while C < G do begin F := F * RADIX; C := C * B2; end;
+        G := R * RADIX;
+        while C >= G do begin F := F / RADIX; C := C / B2; end;
+        if (C + R) / F < 0.95 * S then begin
+          G := 1.0 / F;
+          Scale[I] := Scale[I] * F;
+          Conv := False;
+          for J := I_low to Ub do A[I,J] := A[I,J] * G;
+          for J := Lb to I_igh do A[J,I] := A[J,I] * F;
+        end;
+      end;
+    end;
+  until Conv;
+end;
+
+// Ported from LMath's uelmhes.pas (EISPACK Elmhes) - reduces A[I_low..I_igh]
+// to upper Hessenberg form by stabilised elementary similarity transforms.
+procedure PPElmHes(A: TPPMatrix; Lb, Ub, I_low, I_igh: Integer; I_int: TPPIntVector);
+var
+  I, J, M, La, Kp1, Mm1, Mp1 : Integer;
+  X, Y                       : Double;
+begin
+  La := I_igh - 1;
+  Kp1 := I_low + 1;
+  if La < Kp1 then Exit;
+
+  for M := Kp1 to La do begin
+    Mm1 := M - 1;
+    X := 0.0;
+    I := M;
+    for J := M to I_igh do
+      if Abs(A[J,Mm1]) > Abs(X) then begin
+        X := A[J,Mm1];
+        I := J;
+      end;
+    I_int[M] := I;
+    if I <> M then begin
+      for J := Mm1 to Ub do begin
+        Y := A[I,J]; A[I,J] := A[M,J]; A[M,J] := Y;
+      end;
+      for J := Lb to I_igh do begin
+        Y := A[J,I]; A[J,I] := A[J,M]; A[J,M] := Y;
+      end;
+    end;
+    if X <> 0.0 then begin
+      Mp1 := M + 1;
+      for I := Mp1 to I_igh do begin
+        Y := A[I,Mm1];
+        if Y <> 0.0 then begin
+          Y := Y / X;
+          A[I,Mm1] := Y;
+          for J := M to Ub do A[I,J] := A[I,J] - Y * A[M,J];
+          for J := Lb to I_igh do A[J,M] := A[J,M] + Y * A[J,I];
+        end;
+      end;
+    end;
+  end;
+end;
+
+// Ported from LMath's ueltran.pas (EISPACK Eltran) - accumulates the
+// similarity transforms PPElmHes used, into Z (initialised to identity).
+procedure PPEltran(A: TPPMatrix; Lb, Ub, I_low, I_igh: Integer; I_int: TPPIntVector; Z: TPPMatrix);
+var
+  I, J, Mp, Mp1 : Integer;
+begin
+  for I := Lb to Ub do
+    for J := Lb to Ub do
+      if I = J then Z[I,J] := 1.0 else Z[I,J] := 0.0;
+
+  if I_igh < I_low then Exit;
+
+  for Mp := I_igh - 1 downto I_low + 1 do begin
+    Mp1 := Mp + 1;
+    for I := Mp1 to I_igh do Z[I,Mp] := A[I,Mp - 1];
+    I := I_int[Mp];
+    if I <> Mp then begin
+      for J := Mp to I_igh do begin
+        Z[Mp,J] := Z[I,J];
+        Z[I,J] := 0.0;
+      end;
+      Z[I,Mp] := 1.0;
+    end;
+  end;
+end;
+
+// Ported from LMath's uhqr2.pas (EISPACK Hqr2) - eigenvalues AND
+// (unnormalised) eigenvectors of the upper Hessenberg matrix H, via the QR
+// algorithm; Z must hold the identity-seeded PPEltran output on entry, and
+// holds the eigenvectors (packed real/imaginary column-pair form - see
+// PurePascalEigHqr2's own header comment) on return. Returns 0 on success,
+// or -j if 30*N iterations were exhausted seeking the j-th eigenvalue.
+function PPHqr2(H: TPPMatrix; Lb, Ub, I_low, I_igh: Integer; Lambda: TPPComplex; Z: TPPMatrix): Integer;
+
+  procedure Cdiv(Ar, Ai, Br, Bi : Double; var Cr, Ci : Double);
+  var
+    S, Ars, Ais, Brs, Bis : Double;
+  begin
+    S := Abs(Br) + Abs(Bi);
+    Ars := Ar / S;
+    Ais := Ai / S;
+    Brs := Br / S;
+    Bis := Bi / S;
+    S := Sqr(Brs) + Sqr(Bis);
+    Cr := (Ars * Brs + Ais * Bis) / S;
+    Ci := (Ais * Brs - Ars * Bis) / S;
+  end;
+
+var
+  I, J, K, L, M, N, En, Na, Itn, Its, Mp2, Enm2                : Integer;
+  P, Q, R, S, T, W, X, Y, Ra, Sa, Vi, Vr, Zz, Norm, Tst1, Tst2 : Double;
+  NotLas                                                       : Boolean;
+
+label
+  60, 70, 100, 130, 150, 170, 225, 260, 270, 280, 320, 330, 340,
+  600, 630, 635, 640, 680, 700, 710, 770, 780, 790, 795, 800;
+
+begin
+  result := 0;
+
+  K := Lb;
+  Norm := 0.0;
+  for I := Lb to Ub do begin
+    for J := K to Ub do Norm := Norm + Abs(H[I,J]);
+    K := I;
+    if (I < I_low) or (I > I_igh) then begin
+      Lambda[I].re := H[I,I];
+      Lambda[I].im := 0.0;
+    end;
+  end;
+
+  N := Ub - Lb + 1;
+  Itn := 30 * N;
+  En := I_igh;
+  T := 0.0;
+
+60:
+  if En < I_low then goto 340;
+  Its := 0;
+  Na := En - 1;
+  Enm2 := Na - 1;
+
+70:
+  for L := En downto I_low do begin
+    if L = I_low then goto 100;
+    S := Abs(H[L - 1,L - 1]) + Abs(H[L,L]);
+    if S = 0.0 then S := Norm;
+    Tst1 := S;
+    Tst2 := Tst1 + Abs(H[L,L - 1]);
+    if Tst2 = Tst1 then goto 100;
+  end;
+
+100:
+  X := H[En,En];
+  if L = En then goto 270;
+  Y := H[Na,Na];
+  W := H[En,Na] * H[Na,En];
+  if L = Na then goto 280;
+
+  if Itn = 0 then begin
+    result := -En;
+    Exit;
+  end;
+
+  if (Its <> 10) and (Its <> 20) then goto 130;
+
+  T := T + X;
+  for I := I_low to En do H[I,I] := H[I,I] - X;
+  S := Abs(H[En,Na]) + Abs(H[Na,Enm2]);
+  X := 0.75 * S;
+  Y := X;
+  W := - 0.4375 * S * S;
+
+130:
+  Its := Its + 1;
+  Itn := Itn - 1;
+
+  for M := Enm2 downto L do begin
+    Zz := H[M,M];
+    R := X - Zz;
+    S := Y - Zz;
+    P := (R * S - W) / H[M + 1,M] + H[M,M + 1];
+    Q := H[M + 1,M + 1] - Zz - R - S;
+    R := H[M + 2,M + 1];
+    S := Abs(P) + Abs(Q) + Abs(R);
+    P := P / S;
+    Q := Q / S;
+    R := R / S;
+    if M = L then goto 150;
+    Tst1 := Abs(P) * (Abs(H[M - 1,M - 1]) + Abs(Zz) + Abs(H[M + 1,M + 1]));
+    Tst2 := Tst1 + Abs(H[M,M - 1]) * (Abs(Q) + Abs(R));
+    if Tst2 = Tst1 then goto 150;
+  end;
+
+150:
+  Mp2 := M + 2;
+  for I := Mp2 to En do begin
+    H[I,I - 2] := 0.0;
+    if I <> Mp2 then H[I,I - 3] := 0.0;
+  end;
+
+  for K := M to Na do begin
+    NotLas := (K <> Na);
+    if (K = M) then goto 170;
+    P := H[K,K - 1];
+    Q := H[K + 1,K - 1];
+    R := 0.0;
+    if NotLas then R := H[K + 2,K - 1];
+    X := Abs(P) + Abs(Q) + Abs(R);
+    if X = 0.0 then goto 260;
+    P := P / X;
+    Q := Q / X;
+    R := R / X;
+170:S := PPDSgn(Sqrt(P * P + Q * Q + R * R), P);
+    if K <> M then
+      H[K,K - 1] := - S * X
+    else if L <> M then
+      H[K,K - 1] := - H[K,K - 1];
+    P := P + S;
+    X := P / S;
+    Y := Q / S;
+    Zz := R / S;
+    Q := Q / P;
+    R := R / P;
+    if NotLas then goto 225;
+
+    for J := K to Ub do begin
+      P := H[K,J] + Q * H[K + 1,J];
+      H[K,J] := H[K,J] - P * X;
+      H[K + 1,J] := H[K + 1,J] - P * Y;
+    end;
+
+    J := PPMinI(En, K + 3);
+
+    for I := Lb to J do begin
+      P := X * H[I,K] + Y * H[I,K + 1];
+      H[I,K] := H[I,K] - P;
+      H[I,K + 1] := H[I,K + 1] - P * Q;
+    end;
+
+    for I := I_low to I_igh do begin
+      P := X * Z[I,K] + Y * Z[I,K + 1];
+      Z[I,K] := Z[I,K] - P;
+      Z[I,K + 1] := Z[I,K + 1] - P * Q;
+    end;
+    goto 260;
+
+225:
+    for J := K to Ub do begin
+      P := H[K,J] + Q * H[K + 1,J] + R * H[K + 2,J];
+      H[K,J] := H[K,J] - P * X;
+      H[K + 1,J] := H[K + 1,J] - P * Y;
+      H[K + 2,J] := H[K + 2,J] - P * Zz;
+    end;
+
+    J := PPMinI(En, K + 3);
+
+    for I := Lb to J do begin
+      P := X * H[I,K] + Y * H[I,K + 1] + Zz * H[I,K + 2];
+      H[I,K] := H[I,K] - P;
+      H[I,K + 1] := H[I,K + 1] - P * Q;
+      H[I,K + 2] := H[I,K + 2] - P * R;
+    end;
+
+    for I := I_low to I_igh do begin
+      P := X * Z[I,K] + Y * Z[I,K + 1] + Zz * Z[I,K + 2];
+      Z[I,K] := Z[I,K] - P;
+      Z[I,K + 1] := Z[I,K + 1] - P * Q;
+      Z[I,K + 2] := Z[I,K + 2] - P * R;
+    end;
+
+260: end;
+
+  goto 70;
+
+270:
+  H[En,En] := X + T;
+  Lambda[En].re := H[En,En];
+  Lambda[En].im := 0.0;
+  En := Na;
+  goto 60;
+
+280:
+  P := 0.5 * (Y - X);
+  Q := P * P + W;
+  Zz := Sqrt(Abs(Q));
+  H[En,En] := X + T;
+  X := H[En,En];
+  H[Na,Na] := Y + T;
+  if Q < 0.0 then goto 320;
+
+  Zz := P + PPDSgn(Zz, P);
+  Lambda[Na].re := X + Zz;
+  Lambda[En].re := Lambda[Na].re;
+  if Zz <> 0.0 then Lambda[En].re := X - W / Zz;
+  Lambda[Na].im := 0.0;
+  Lambda[En].im := 0.0;
+  X := H[En,Na];
+  S := Abs(X) + Abs(Zz);
+  P := X / S;
+  Q := Zz / S;
+  R := Sqrt(P * P + Q * Q);
+  P := P / R;
+  Q := Q / R;
+
+  for J := Na to Ub do begin
+    Zz := H[Na,J];
+    H[Na,J] := Q * Zz + P * H[En,J];
+    H[En,J] := Q * H[En,J] - P * Zz;
+  end;
+
+  for I := Lb to En do begin
+    Zz := H[I,Na];
+    H[I,Na] := Q * Zz + P * H[I,En];
+    H[I,En] := Q * H[I,En] - P * Zz;
+  end;
+
+  for I := I_low to I_igh do begin
+    Zz := Z[I,Na];
+    Z[I,Na] := Q * Zz + P * Z[I,En];
+    Z[I,En] := Q * Z[I,En] - P * Zz;
+  end;
+
+  goto 330;
+
+320:
+  Lambda[Na].re := X + P;
+  Lambda[En].re := Lambda[Na].re;
+  Lambda[Na].im := Zz;
+  Lambda[En].im := - Zz;
+
+330:
+  En := Enm2;
+  goto 60;
+
+340:
+  if Norm = 0.0 then Exit;
+
+  for En := Ub downto Lb do begin
+    P := Lambda[En].re;
+    Q := Lambda[En].im;
+    Na := En - 1;
+    if Q < 0.0 then
+      goto 710
+    else if Q = 0.0 then
+      goto 600
+    else
+      goto 800;
+
+600:
+    M := En;
+    H[En,En] := 1.0;
+    if Na < Lb then goto 800;
+
+    for I := Na downto Lb do begin
+      W := H[I,I] - P;
+      R := 0.0;
+      for J := M to En do R := R + H[I,J] * H[J,En];
+      if Lambda[I].im >= 0.0 then goto 630;
+      Zz := W;
+      S := R;
+      goto 700;
+630:  M := I;
+      if Lambda[I].im <> 0.0 then goto 640;
+      T := W;
+      if T <> 0.0 then goto 635;
+      Tst1 := Norm;
+      T := Tst1;
+      repeat
+        T := 0.01 * T;
+        Tst2 := Norm + T;
+      until Tst2 <= Tst1;
+635:  H[I,En] := - R / T;
+      goto 680;
+
+640:
+      X := H[I,I + 1];
+      Y := H[I + 1,I];
+      Q := Sqr(Lambda[I].re - P) + Sqr(Lambda[I].im);
+      T := (X * S - Zz * R) / Q;
+      H[I,En] := T;
+      if Abs(X) > Abs(Zz) then
+        H[I + 1,En] := (- R - W * T) / X
+      else
+        H[I + 1,En] := (- S - Y * T) / Zz;
+
+680:
+      T := Abs(H[I,En]);
+      if T = 0.0 then goto 700;
+      Tst1 := T;
+      Tst2 := Tst1 + 1.0 / Tst1;
+      if Tst2 > Tst1 then goto 700;
+      for J := I to En do H[J,En] := H[J,En] / T;
+700: end;
+    goto 800;
+
+710:
+    M := Na;
+    if Abs(H[En,Na]) > Abs(H[Na,En]) then begin
+      H[Na,Na] := Q / H[En,Na];
+      H[Na,En] := - (H[En,En] - P) / H[En,Na];
+    end else
+      Cdiv(0.0, - H[Na,En], H[Na,Na] - P, Q, H[Na,Na], H[Na,En]);
+
+    H[En,Na] := 0.0;
+    H[En,En] := 1.0;
+    Enm2 := Na - 1;
+    if Enm2 < Lb then goto 800;
+
+    for I := Enm2 downto Lb do begin
+      W := H[I,I] - P;
+      Ra := 0.0;
+      Sa := 0.0;
+      for J := M to En do begin
+        Ra := Ra + H[I,J] * H[J,Na];
+        Sa := Sa + H[I,J] * H[J,En];
+      end;
+      if Lambda[I].im >= 0.0 then goto 770;
+      Zz := W;
+      R := Ra;
+      S := Sa;
+      goto 795;
+770:  M := I;
+      if Lambda[I].im <> 0.0 then goto 780;
+      Cdiv(- Ra, - Sa, W, Q, H[I,Na], H[I,En]);
+      goto 790;
+
+780:
+      X := H[I,I + 1];
+      Y := H[I + 1,I];
+      Vr := Sqr(Lambda[I].re - P) + Sqr(Lambda[I].im) - Sqr(Q);
+      Vi := (Lambda[I].re - P) * 2.0 * Q;
+      if (Vr = 0.0) and (Vi = 0.0) then begin
+        Tst1 := Norm * (Abs(W) + Abs(Q) + Abs(X) + Abs(Y) + Abs(Zz));
+        Vr := Tst1;
+        repeat
+          Vr := 0.01 * Vr;
+          Tst2 := Tst1 + Vr;
+        until Tst2 <= Tst1;
+      end;
+      Cdiv(X * R - Zz * Ra + Q * Sa, X * S - Zz * Sa - Q * Ra, Vr, Vi, H[I,Na], H[I,En]);
+      if Abs(X) > Abs(Zz) + Abs(Q) then begin
+        H[I + 1,Na] := (- Ra - W * H[I,Na] + Q * H[I,En]) / X;
+        H[I + 1,En] := (- Sa - W * H[I,En] - Q * H[I,Na]) / X;
+      end else
+        Cdiv(- R - Y * H[I,Na], - S - Y * H[I,En], Zz, Q, H[I + 1,Na], H[I + 1,En]);
+
+790:
+      T := PPMaxD(Abs(H[I,Na]), Abs(H[I,En]));
+      if T = 0.0 then goto 795;
+      Tst1 := T;
+      Tst2 := Tst1 + 1.0 / Tst1;
+      if Tst2 > Tst1 then goto 795;
+      for J := I to En do begin
+        H[J,Na] := H[J,Na] / T;
+        H[J,En] := H[J,En] / T;
+      end;
+
+795: end;
+800: end;
+
+  for I := Lb to Ub do
+    if (I < I_low) or (I > I_igh) then
+      for J := I to Ub do Z[I,J] := H[I,J];
+
+  for J := Ub downto I_low do begin
+    M := PPMinI(J, I_igh);
+    for I := I_low to I_igh do begin
+      Zz := 0.0;
+      for K := I_low to M do Zz := Zz + Z[I,K] * H[K,J];
+      Z[I,J] := Zz;
+    end;
+  end;
+
+  result := 0;
+end;
+
+// Ported from LMath's ubalbak.pas (EISPACK Balbak) - back-transforms the
+// eigenvectors in Z through the balancing PPBalance performed.
+procedure PPBalBak(Z: TPPMatrix; Lb, Ub, I_low, I_igh: Integer; Scale: TPPVector; M: Integer);
+var
+  I, J, K : Integer;
+  S       : Double;
+begin
+  if M < Lb then Exit;
+
+  if I_igh <> I_low then
+    for I := I_low to I_igh do begin
+      S := Scale[I];
+      for J := Lb to M do Z[I,J] := Z[I,J] * S;
+    end;
+
+  for I := (I_low - 1) downto Lb do begin
+    K := Round(Scale[I]);
+    if K <> I then
+      for J := Lb to M do begin
+        S := Z[I,J]; Z[I,J] := Z[K,J]; Z[K,J] := S;
+      end;
+  end;
+
+  for I := (I_igh + 1) to Ub do begin
+    K := Round(Scale[I]);
+    if K <> I then
+      for J := Lb to M do begin
+        S := Z[I,J]; Z[I,J] := Z[K,J]; Z[K,J] := S;
+      end;
+  end;
+end;
+
+// Converts between EigDecompose's 0-based row-major Double buffers and the
+// 1-based scratch arrays PPBalance..PPBalBak expect, runs the five stages
+// in sequence, normalises the (LMath-documented-unnormalised) eigenvectors
+// to unit Euclidean norm to match LAPACKE_dgeev's own contract, and returns
+// PPHqr2's error code unchanged (0 = success).
+function PurePascalEigHqr2(N: Integer; AData: PDouble; var Wr, Wi: TVector; var V: TVector): Integer;
+var
+  H, Z    : TPPMatrix;
+  Scale   : TPPVector;
+  I_int   : TPPIntVector;
+  Lambda  : TPPComplex;
+  I_low, I_igh, I, J, ErrCode : Integer;
+  NormSq, Nrm : Double;
+begin
+  SetLength(H, N+1, N+1);
+  SetLength(Z, N+1, N+1);
+  SetLength(Scale, N+1);
+  SetLength(I_int, N+1);
+  SetLength(Lambda, N+1);
+
+  for I := 0 to N-1 do
+    for J := 0 to N-1 do
+      H[I+1,J+1] := AData[I*N+J];
+
+  PPBalance(H, 1, N, I_low, I_igh, Scale);
+  PPElmHes(H, 1, N, I_low, I_igh, I_int);
+  PPEltran(H, 1, N, I_low, I_igh, I_int, Z);
+  ErrCode := PPHqr2(H, 1, N, I_low, I_igh, Lambda, Z);
+
+  if ErrCode <> 0 then begin
+    result := ErrCode;
+    Exit;
+  end;
+
+  PPBalBak(Z, 1, N, I_low, I_igh, Scale, N);
+
+  for I := 0 to N-1 do begin
+    Wr[I] := Lambda[I+1].re;
+    Wi[I] := Lambda[I+1].im;
+  end;
+  for I := 0 to N-1 do
+    for J := 0 to N-1 do
+      V[I*N+J] := Z[I+1,J+1];
+
+  //--- normalise each eigenvector (real column, or a conjugate pair's two
+  //    columns together) to unit Euclidean norm, matching LAPACKE_dgeev ---
+  J := 0;
+  while J <= N-1 do begin
+    if Wi[J] = 0 then begin
+      NormSq := 0;
+      for I := 0 to N-1 do NormSq := NormSq + Sqr(V[I*N+J]);
+      Nrm := Sqrt(NormSq);
+      if Nrm > 0 then
+        for I := 0 to N-1 do V[I*N+J] := V[I*N+J] / Nrm;
+      inc(J);
+    end else begin
+      NormSq := 0;
+      for I := 0 to N-1 do NormSq := NormSq + Sqr(V[I*N+J]) + Sqr(V[I*N+J+1]);
+      Nrm := Sqrt(NormSq);
+      if Nrm > 0 then
+        for I := 0 to N-1 do begin
+          V[I*N+J]   := V[I*N+J]   / Nrm;
+          V[I*N+J+1] := V[I*N+J+1] / Nrm;
+        end;
+      inc(J,2);
+    end;
+  end;
+
+  result := 0;
+end;
+{$ENDIF}
+
 procedure EigDecompose(const A: TVMobj; out EigenValues, EigenVectors: TVMobjZ);
 const
   s : String = 'Routine EigDecompose : ';
@@ -1180,6 +1906,13 @@ begin
   SetLength(wi, n);
   SetLength(vr, n*n);
 
+{$IFDEF PUREPASCAL}
+  //PurePascalEigHqr2 - see its own header comment above - fills wr/wi/vr in
+  //exactly the same packed real/imaginary-column-pair convention LAPACKE_dgeev
+  //uses below, so the unpacking loops after this IFDEF are unchanged either way.
+  info := PurePascalEigHqr2(n, Acopy.DataPtr, wr, wi, vr);
+  assert(info = 0, s+'PurePascal QR iteration failed to converge, info='+IntToStr(info));
+{$ELSE}
   //jobvl = 'N' : left eigenvectors not requested (vl unused -> nil, ldvl=n is a harmless placeholder)
   //jobvr = 'V' : right eigenvectors requested, returned in packed real form in vr
   info := LAPACKE_dgeev(CBlasRowMajor, 'N', 'V', n,
@@ -1188,6 +1921,7 @@ begin
                           nil, n,
                           @vr[0], n);
   assert(info = 0, s+'LAPACKE_dgeev failed, info='+IntToStr(info));
+{$ENDIF}
 
   //--- eigenvalues: one complex value per row, straight from wr/wi ---
   EigenValues := TVMobjZ.Create(n,1);
@@ -1553,22 +2287,73 @@ begin
 end;
 {$ENDIF}
 
+{$IFNDEF HAVE_FFTW}
+// Direct O(N^2) DFT - the FFT_R2C/FFT_C2R/FFT/IFFT fallback when FFTW isn't
+// loaded. Deliberately NOT a ported radix-2 fast FFT (e.g. LMath's own
+// ufft.pas, which only handles power-of-two lengths): a direct summation is
+// simpler, always correct, and - unlike a radix-2-only fast path - works
+// for ANY N, matching FFTW's own generality, which matters here since
+// FFT_R2C/FFT_C2R/FFT/IFFT accept arbitrary vector lengths, not just powers
+// of two. O(N^2) is an acceptable trade for a fallback path where
+// correctness/simplicity matter more than speed - same rationale as every
+// other PUREPASCAL body in this codebase (e.g. MatMult's own plain triple
+// loop, hundreds of times slower than cblas_dgemm).
+procedure PPDirectDFT(N: Integer; InData, OutData: PComplex16; Forward: Boolean);
+var
+  k, m : Integer;
+  sgn, angle, c, sn, accre, accim : Double;
+begin
+  if Forward then sgn := -1 else sgn := 1;
+  for k := 0 to N-1 do begin
+    accre := 0; accim := 0;
+    for m := 0 to N-1 do begin
+      angle := sgn * 2 * Pi * k * m / N;
+      c := cos(angle); sn := sin(angle);
+      accre := accre + InData[m].re*c - InData[m].im*sn;
+      accim := accim + InData[m].re*sn + InData[m].im*c;
+    end;
+    OutData[k].re := accre;
+    OutData[k].im := accim;
+  end;
+end;
+{$ENDIF}
+
 function FFT_R2C(const A: TVMobj): TVMobjZ;
 const
   s : String = 'Routine FFT_R2C : ';
 var
   n, nc : integer;
+{$IFDEF HAVE_FFTW}
   plan : fftw_plan;
+{$ELSE}
+  k, m : Integer;
+  angle, c, sn, accre, accim : Double;
+{$ENDIF}
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
   n := A.Rows*A.Cols;
-  assert(Assigned(fftw_plan_dft_r2c_1d), s+'FFTW3 (double) library not loaded');
   nc := n div 2 + 1;
   if A.Cols = 1 then result := TVMobjZ.Create(nc, 1) else result := TVMobjZ.Create(1, nc);
+{$IFDEF HAVE_FFTW}
+  assert(Assigned(fftw_plan_dft_r2c_1d), s+'FFTW3 (double) library not loaded');
   plan := fftw_plan_dft_r2c_1d(n, A.DataPtr, PComplex16(@result.FData[0]), FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
   assert(plan<>nil, s+'fftw_plan_dft_r2c_1d failed');
   fftw_execute_dft_r2c(plan, A.DataPtr, PComplex16(@result.FData[0]));
   fftw_destroy_plan(plan);
+{$ELSE}
+  //Only the nc needed half-spectrum bins are computed directly (A's imaginary
+  //part is implicitly 0 - a real vector treated as complex).
+  for k := 0 to nc-1 do begin
+    accre := 0; accim := 0;
+    for m := 0 to n-1 do begin
+      angle := -2 * Pi * k * m / n;
+      c := cos(angle); sn := sin(angle);
+      accre := accre + A.DataPtr[m]*c;
+      accim := accim + A.DataPtr[m]*sn;
+    end;
+    result.FData[k] := Cplx(accre, accim);
+  end;
+{$ENDIF}
 end;
 
 function FFT_C2R(const A: TVMobjZ; N: Integer): TVMobj;
@@ -1576,19 +2361,38 @@ const
   s : String = 'Routine FFT_C2R : ';
 var
   nc : integer;
+{$IFDEF HAVE_FFTW}
   plan : fftw_plan;
+{$ELSE}
+  full, outc : array of TComplex16;
+  k : Integer;
+{$ENDIF}
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
   assert(N>0, s+'N must be > 0');
   nc := A.Rows*A.Cols;
   assert(nc = (N div 2 + 1), s+'A''s length must be N div 2 + 1');
-  assert(Assigned(fftw_plan_dft_c2r_1d), s+'FFTW3 (double) library not loaded');
   if A.Cols = 1 then result := TVMobj.Create(N, 1) else result := TVMobj.Create(1, N);
+{$IFDEF HAVE_FFTW}
+  assert(Assigned(fftw_plan_dft_c2r_1d), s+'FFTW3 (double) library not loaded');
   plan := fftw_plan_dft_c2r_1d(N, PComplex16(@A.FData[0]), result.DataPtr, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
   assert(plan<>nil, s+'fftw_plan_dft_c2r_1d failed');
   fftw_execute_dft_c2r(plan, PComplex16(@A.FData[0]), result.DataPtr);
   fftw_destroy_plan(plan);
   ippsDivC_64f_I(N, result.DataPtr, N);   //normalize, matching FFT_C2R(FFT_R2C(x), N) = x
+{$ELSE}
+  //Expand the half-spectrum to the full N-point spectrum via conjugate
+  //symmetry (X[N-k] = conj(X[k]), the defining property of a real-valued
+  //time-domain signal - the same assumption FFTW's own C2R transform
+  //makes), inverse-DFT it, and keep only the real part (the imaginary part
+  //is ~0 for a genuine real-signal half-spectrum, by construction).
+  SetLength(full, N);
+  SetLength(outc, N);
+  for k := 0 to nc-1 do full[k] := A.FData[k];
+  for k := nc to N-1 do full[k] := Cplx(A.FData[N-k].re, -A.FData[N-k].im);
+  PPDirectDFT(N, @full[0], @outc[0], False);
+  for k := 0 to N-1 do result.DataPtr[k] := outc[k].re / N;
+{$ENDIF}
 end;
 
 function FFT(const A: TVMobjZ): TVMobjZ;
@@ -1596,35 +2400,51 @@ const
   s : String = 'Routine FFT : ';
 var
   n : integer;
+{$IFDEF HAVE_FFTW}
   plan : fftw_plan;
+{$ENDIF}
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
   n := A.Rows*A.Cols;
-  assert(Assigned(fftw_plan_dft_1d), s+'FFTW3 (double) library not loaded');
   result := TVMobjZ.Create(A.Rows, A.Cols);
+{$IFDEF HAVE_FFTW}
+  assert(Assigned(fftw_plan_dft_1d), s+'FFTW3 (double) library not loaded');
   plan := fftw_plan_dft_1d(n, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]), FFTW_FORWARD, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
   assert(plan<>nil, s+'fftw_plan_dft_1d failed');
   fftw_execute_dft(plan, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]));
   fftw_destroy_plan(plan);
+{$ELSE}
+  PPDirectDFT(n, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]), True);
+{$ENDIF}
 end;
 
 function IFFT(const A: TVMobjZ): TVMobjZ;
 const
   s : String = 'Routine IFFT : ';
 var
-  n : integer;
+  n, i : integer;
+{$IFDEF HAVE_FFTW}
   plan : fftw_plan;
+{$ENDIF}
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
   n := A.Rows*A.Cols;
-  assert(Assigned(fftw_plan_dft_1d), s+'FFTW3 (double) library not loaded');
   result := TVMobjZ.Create(A.Rows, A.Cols);
+{$IFDEF HAVE_FFTW}
+  assert(Assigned(fftw_plan_dft_1d), s+'FFTW3 (double) library not loaded');
   plan := fftw_plan_dft_1d(n, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]), FFTW_BACKWARD, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
   assert(plan<>nil, s+'fftw_plan_dft_1d failed');
   fftw_execute_dft(plan, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]));
   fftw_destroy_plan(plan);
   assert(Assigned(cblas_zdscal), s+'OpenBLAS not available on this machine - IFFT normalization has no PUREPASCAL fallback');
   cblas_zdscal(n, 1.0/n, @result.FData[0], 1);  //normalize, matching IFFT(FFT(x)) = x
+{$ELSE}
+  PPDirectDFT(n, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]), False);
+  for i := 0 to n-1 do begin
+    result.FData[i].re := result.FData[i].re / n;
+    result.FData[i].im := result.FData[i].im / n;
+  end;
+{$ENDIF}
 end;
 
 // One-call linear power spectrum of a real signal: Hamming-windows A,

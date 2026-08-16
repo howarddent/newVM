@@ -550,13 +550,13 @@ own. `newvmconfigure.lpr` bridges that gap:
 - The result is written to `newVMConfig.inc`: `{$DEFINE HAVE_OPENBLAS}`/
   `HAVE_MKL`/`HAVE_IPP`/`HAVE_FFTW` per library actually found, plus
   `PLATFORM_*` defines, plus a derived `{$DEFINE PUREPASCAL}` set whenever
-  *any* of OpenBLAS/MKL/IPP (all three of which `newVM.pas`'s "core" linear
-  algebra genuinely calls into - `cblas_*`, `LAPACKE_*`/`vd*`/`vsl*`, and
-  `ipps*` respectively) is missing. FFTW absence does *not* set
-  `PUREPASCAL` - DCT/DST/FFT have no plain-Pascal fallback (see below) and
-  already degrade to a clear runtime assert on their own via
-  `r2rTransform`'s `assert(Assigned(fftw_plan_r2r_1d), ...)` regardless of
-  this define. The generated file uses `//` line comments throughout, never
+  *any* of OpenBLAS/MKL/IPP (all three of which the "core" linear algebra of
+  all four `TVMobj*` units genuinely calls into - `cblas_*`, `LAPACKE_*`/
+  `vd*`/`vsl*`, and `ipps*` respectively) is missing. FFTW absence does
+  *not* set `PUREPASCAL` - it drives its own, separate `HAVE_FFTW`-gated
+  fallback for DCT/DST/FFT instead (a direct O(N²) evaluation - see "FFT/
+  DCT/DST fallback" below), independent of whether OpenBLAS/MKL/IPP are
+  present. The generated file uses `//` line comments throughout, never
   a `{ ... }` block comment - Pascal block comments don't nest, so a
   generated (or hand-written) comment that happens to mention a real
   `{$IFDEF ...}` directive by name inside a `{ }` block truncates the
@@ -630,12 +630,21 @@ replacing the other:
   plain-Pascal one instead. The full 256-test suite (all five `TVMobj*`/
   `TVMobjI` type test cases together) passes both with `PUREPASCAL` forced
   on and back in its normal (all-libraries-found) state.
-- DCT/DST/FFT (`r2rTransform` and everything built on it) deliberately have
-  **no** `PUREPASCAL` fallback - a correct pure-Pascal FFT is a
-  substantially larger undertaking than the rest of this list, out of
-  scope for this pass. They keep working exactly as before (FFTW is loaded
-  independently of `PUREPASCAL`) and already assert clearly if FFTW itself
-  isn't loaded.
+- DCT/DST (`r2rTransform` and the 8 `DCT1`..`DST4` functions built on it)
+  *do* have a fallback, gated on `{$IFDEF HAVE_FFTW}` rather than
+  `PUREPASCAL` - FFTW availability is a separate concern from BLAS/LAPACK/
+  IPP, so this uses its own independent define (see `newvmconfigure.lpr`'s
+  own header comment and the `newVMConfig.inc` section above). `PPr2rTransform`
+  evaluates each of the 8 kinds via its exact FFTW-documented unnormalized
+  trigonometric-sum formula directly (e.g. DCT-II: `Y[k] = 2*sum_j
+  X[j]*cos(pi*(j+0.5)*k/N)`) - a direct O(N²) summation, not a ported fast
+  transform: DCT/DST have no radix-2-simple fast algorithm the way a plain
+  complex FFT does (see `newVMComplex.pas`'s own FFT fallback below), and
+  this is a fallback path where O(N²) correctness/simplicity is an
+  acceptable trade against speed, same rationale as `MatMult`'s own plain
+  triple-loop `PUREPASCAL` body above. Verified against the *exact* same
+  scale-factor contracts `newVMTests.pas`'s round-trip tests already check
+  (e.g. `DCT1(DCT1(x)) = x*2*(N-1)`), run with `HAVE_FFTW` forced off.
 
 The same treatment has since been rolled out to all three sibling units -
 `newVM.pas` was the proof-of-concept, not the final scope:
@@ -691,18 +700,56 @@ The same treatment has since been rolled out to all three sibling units -
     they already delegate to `RealToComplex`/`RealToComplexS` plus either
     the same-type operator or `MatMultZ`/`MatMultC`, so once those have
     PUREPASCAL bodies the mixed operators inherit correctness for free.
-  - `EigDecompose`/`EigDecomposeS` (`LAPACKE_dgeev`/`sgeev`) and
-    `FFT_R2C`/`FFT_C2R`/`FFT`/`IFFT` (FFTW-backed) have no fallback, same
-    rationale and same "already asserts cleanly if the library isn't
-    loaded" behaviour as `newVM.pas`'s own DCT/DST.
-- **Verified** the same way as `newVM.pas`: with `PUREPASCAL` forced on
-  for all four units simultaneously, the full 256-test suite (`TVMobjTests`
-  59, `TVMobjSTests` 59, `TVMobjZTests` 60 - including
-  `TestEigDecomposeSatisfiesEigenEquation`, which still exercises the
-  library-backed `EigDecompose` combined with a now-PUREPASCAL `MatMultZ`
-  via the mixed real*complex `*` operator - `TVMobjCTests` 60, `TVMobjITests`
-  18) passes with 0 errors/0 failures, and again passes unchanged back in
-  the normal (all-libraries-found) state.
+  - `EigDecompose`/`EigDecomposeS` (`LAPACKE_dgeev`/`sgeev`) *do* now have a
+    `PUREPASCAL` fallback (`PurePascalEigHqr2`/`PurePascalEigHqr2S`), ported
+    from a general real-matrix eigenvalue/eigenvector algorithm the user
+    supplied in a local `LMath` directory (`LMath/ULineAlgebra/ubalance.pas`,
+    `uelmhes.pas`, `ueltran.pas`, `uhqr2.pas`, `ubalbak.pas`) - itself a
+    Pascal translation of the classic EISPACK Balance/Elmhes/Eltran/Hqr2/
+    Balbak pipeline, the same algorithm family LAPACK's `dgeev` descends
+    from. Ported close to line-for-line - including `Hqr2`'s own
+    goto-heavy control flow ("a crude translation, many gotos kept" per
+    LMath's own comment on it) rather than risk a bug restructuring 400
+    lines of QR-iteration into structured control flow - onto local
+    1-based-usable scratch arrays (index 0 unused, matching LMath's own
+    `Lb=1` convention) that only the outer wrapper converts to/from newVM's
+    usual 0-based row-major buffers. `Hqr2`'s own eigenvectors are
+    documented unnormalised, unlike `LAPACKE_dgeev`'s unit-Euclidean-norm
+    ones, so the wrapper normalises each eigenvector (or a
+    complex-conjugate pair's two columns together) before returning, on
+    the packed real/imaginary column-pair form both paths share - keeping
+    `EigDecompose`'s own unpacking loop identical and correct either way.
+  - `FFT_R2C`/`FFT_C2R`/`FFT`/`IFFT` also now have a fallback, gated on
+    `HAVE_FFTW` like `newVM.pas`'s DCT/DST above rather than `PUREPASCAL`.
+    `PPDirectDFT`/`PPDirectDFTS` evaluate a direct O(N²) DFT - deliberately
+    *not* a ported radix-2 fast FFT (e.g. LMath's own `uRegression/ufft.pas`,
+    which only handles power-of-two lengths): a direct summation is simpler
+    and works for *any* N, matching FFTW's own generality, which matters
+    since these functions accept arbitrary vector lengths. `FFT`/`IFFT` call
+    it directly; `FFT_R2C` computes only the `N div 2 + 1` needed
+    half-spectrum bins; `FFT_C2R` expands the half-spectrum to the full
+    N-point spectrum via conjugate symmetry (`X[N-k] = conj(X[k])`, the same
+    assumption FFTW's own C2R transform makes) before inverse-transforming.
+    One real bug surfaced and fixed while verifying this: `FFT_C2R`'s first
+    draft passed the same buffer as both input and output to the direct-DFT
+    routine, so later output indices silently corrupted input the loop's
+    earlier iterations still needed - caught immediately by
+    `TestFFTR2CC2RRoundTrip` failing (`expected: <2> but was: <-1>`) the
+    first time this ran with `HAVE_FFTW` forced off; fixed by using a
+    separate output array.
+- **Verified** the same way as `newVM.pas`: with `PUREPASCAL` forced on for
+  all four units simultaneously, the full test suite (262 tests as of this
+  writing, across `TVMobjTests`/`TVMobjSTests`/`TVMobjZTests`/`TVMobjCTests`/
+  `TVMobjITests` - including `TestEigDecomposeSatisfiesEigenEquation`, which
+  under this config now exercises `PurePascalEigHqr2` itself, not
+  `LAPACKE_dgeev`, since `EigDecompose` gained its own `PUREPASCAL` branch -
+  see above) passes with 0 errors/0 failures, and again passes unchanged
+  back in the normal (all-libraries-found) state. Because `HAVE_FFTW` is
+  now an independent define from `PUREPASCAL` (see the DCT/DST/FFT fallback
+  notes above), all **four** combinations of the two were exercised, not
+  just "both on" and "both off": `PUREPASCAL` off/`HAVE_FFTW` off (FFTW
+  missing only), `PUREPASCAL` on/`HAVE_FFTW` on (BLAS/LAPACK/IPP missing
+  only), and the two uniform states - all 262/262 in every combination.
 
 ### `newVMI.pas` (integer index array/matrix)
 
@@ -1594,3 +1641,23 @@ not part of the `LazOpenGLContext` Lazarus package, so no extra
 Contains earlier revisions of `newVM.pas`/`newVMComplex.pas` and an older
 test project. Treat as historical reference only, not live code — the
 current top-level `.pas` files are the ones actually built by `newVMtest.lpi`.
+
+### `LMath/`
+
+A third-party pure-Pascal numerical library (algorithms, integrals, line
+algebra, math/stat, non-linear equations, optimisation, plotting, random
+numbers, regression), vendored into the repo whole. None of `newVM.pas`/
+`newVMSingle.pas`/`newVMComplex.pas`/`newVMComplexSingle.pas` actually
+`uses` any `LMath` unit at build time - it's a reference source, not a
+dependency: `PurePascalEigHqr2`/`PurePascalEigHqr2S` (see `newVMComplex.pas`/
+`newVMComplexSingle.pas`'s own `EigDecompose`/`EigDecomposeS` sections
+above) were ported from `LMath/ULineAlgebra/{ubalance,uelmhes,ueltran,uhqr2,
+ubalbak}.pas` onto newVM's own 0-based `TVMobj`/`TVMobjZ` types and Double/
+Single element types, not linked against directly - the precision-agnostic
+`Float` type those units compile with (`{$IFDEF SINGLEREAL}`-selected,
+resolved once per compiled program) can't otherwise coexist with newVM's
+own four-way real/complex × double/single split, which needs both
+precisions live in the same program at once (`newVMTests.pas` `uses` all
+four `TVMobj*` units together). The rest of `LMath/` (FFT, statistics,
+regression, plotting, etc) is unused - vendored for reference/future use,
+not because anything in this repo currently calls into it.

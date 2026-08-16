@@ -1260,21 +1260,102 @@ begin
 end;
 {$ENDIF}
 
+{$IFNDEF HAVE_FFTW}
+// Direct O(N^2) trigonometric-sum evaluation - single-precision counterpart
+// to newVM.pas's own PPr2rTransform; see that unit's header comment for the
+// full rationale and the exact FFTW-matching formulas per kind.
+function PPDSgnPowS(V: Single; K: Integer): Single; inline;
+begin
+  if Odd(K) then result := -V else result := V;
+end;
+
+procedure PPr2rTransformS(N: Integer; InData, OutData: PSingle; kind: TFFTW_r2r_kind);
+var
+  j, k : Integer;
+  acc : Single;
+begin
+  case kind of
+    FFTW_REDFT00: //DCT-I: logical size 2*(N-1)
+      for k := 0 to N-1 do begin
+        acc := InData[0] + PPDSgnPowS(InData[N-1], k);
+        for j := 1 to N-2 do
+          acc := acc + 2*InData[j]*cos(Pi*j*k/(N-1));
+        OutData[k] := acc;
+      end;
+    FFTW_REDFT10: //DCT-II
+      for k := 0 to N-1 do begin
+        acc := 0;
+        for j := 0 to N-1 do
+          acc := acc + InData[j]*cos(Pi*(j+0.5)*k/N);
+        OutData[k] := 2*acc;
+      end;
+    FFTW_REDFT01: //DCT-III
+      for k := 0 to N-1 do begin
+        acc := InData[0];
+        for j := 1 to N-1 do
+          acc := acc + 2*InData[j]*cos(Pi*j*(k+0.5)/N);
+        OutData[k] := acc;
+      end;
+    FFTW_REDFT11: //DCT-IV
+      for k := 0 to N-1 do begin
+        acc := 0;
+        for j := 0 to N-1 do
+          acc := acc + InData[j]*cos(Pi*(j+0.5)*(k+0.5)/N);
+        OutData[k] := 2*acc;
+      end;
+    FFTW_RODFT00: //DST-I: logical size 2*(N+1)
+      for k := 0 to N-1 do begin
+        acc := 0;
+        for j := 0 to N-1 do
+          acc := acc + InData[j]*sin(Pi*(j+1)*(k+1)/(N+1));
+        OutData[k] := 2*acc;
+      end;
+    FFTW_RODFT10: //DST-II
+      for k := 0 to N-1 do begin
+        acc := 0;
+        for j := 0 to N-1 do
+          acc := acc + InData[j]*sin(Pi*(j+0.5)*(k+1)/N);
+        OutData[k] := 2*acc;
+      end;
+    FFTW_RODFT01: //DST-III
+      for k := 0 to N-1 do begin
+        acc := PPDSgnPowS(InData[N-1], k);
+        for j := 0 to N-2 do
+          acc := acc + 2*InData[j]*sin(Pi*(j+1)*(k+0.5)/N);
+        OutData[k] := acc;
+      end;
+    FFTW_RODFT11: //DST-IV
+      for k := 0 to N-1 do begin
+        acc := 0;
+        for j := 0 to N-1 do
+          acc := acc + InData[j]*sin(Pi*(j+0.5)*(k+0.5)/N);
+        OutData[k] := 2*acc;
+      end;
+  end;
+end;
+{$ENDIF}
+
 function r2rTransformS(const A: TVMobjS; kind: TFFTW_r2r_kind): TVMobjS;
 const
   s : String = 'Routine r2rTransformS : ';
 var
   n : integer;
+{$IFDEF HAVE_FFTW}
   plan : fftw_plan;
+{$ENDIF}
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
   n := A.Rows*A.Cols;
-  assert(Assigned(fftwf_plan_r2r_1d), s+'FFTW3 (single) library not loaded');
   result := TVMobjS.Create(A.Rows, A.Cols);
+{$IFDEF HAVE_FFTW}
+  assert(Assigned(fftwf_plan_r2r_1d), s+'FFTW3 (single) library not loaded');
   plan := fftwf_plan_r2r_1d(n, A.DataPtr, result.DataPtr, kind, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
   assert(plan<>nil, s+'fftwf_plan_r2r_1d failed');
   fftwf_execute_r2r(plan, A.DataPtr, result.DataPtr);
   fftwf_destroy_plan(plan);
+{$ELSE}
+  PPr2rTransformS(n, A.DataPtr, result.DataPtr, kind);
+{$ENDIF}
 end;
 
 function DCT1(const A: TVMobjS): TVMobjS;

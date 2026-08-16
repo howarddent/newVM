@@ -1093,6 +1093,680 @@ begin
   ImagPart := GetImagPartS(A);
 end;
 
+{$IFDEF PUREPASCAL}
+{ ============================================================================
+  PurePascal general eigenvalue decomposition (single precision) - the
+  single-precision counterpart to newVMComplex.pas's own PurePascalEigHqr2
+  port; see that unit's header comment for the full rationale (ported from
+  LMath's ubalance.pas, uelmhes.pas, ueltran.pas, uhqr2.pas, ubalbak.pas,
+  itself a translation of the classic EISPACK Balance/Elmhes/Eltran/Hqr2/
+  Balbak pipeline). Identical algorithm, Single throughout instead of
+  Double, and TComplex8 (.re/.im) in place of TComplex16 for Lambda.
+  ============================================================================ }
+
+type
+  TPPVectorS    = array of Single;
+  TPPIntVectorS = array of Integer;
+  TPPMatrixS    = array of TPPVectorS;
+  TPPComplexS   = array of TComplex8;
+
+function PPDSgnS(A, B: Single): Single; inline;
+begin
+  if B < 0 then result := -Abs(A) else result := Abs(A);
+end;
+
+function PPMinIS(A, B: Integer): Integer; inline;
+begin
+  if A <= B then result := A else result := B;
+end;
+
+function PPMaxDS(A, B: Single): Single; inline;
+begin
+  if A >= B then result := A else result := B;
+end;
+
+procedure PPBalanceS(A: TPPMatrixS; Lb, Ub: Integer; out I_low, I_igh: Integer; Scale: TPPVectorS);
+const
+  RADIX = 2;
+var
+  I, J, M           : Integer;
+  C, F, G, R, S, B2 : Single;
+  Flag, Found, Conv : Boolean;
+
+  procedure Exchange;
+  var
+    I : Integer;
+  begin
+    Scale[M] := J;
+    if J = M then Exit;
+    for I := Lb to I_igh do begin
+      F := A[I,J]; A[I,J] := A[I,M]; A[I,M] := F;
+    end;
+    for I := I_low to Ub do begin
+      F := A[J,I]; A[J,I] := A[M,I]; A[M,I] := F;
+    end;
+  end;
+
+begin
+  B2 := RADIX * RADIX;
+  I_low := Lb;
+  I_igh := Ub;
+
+  repeat
+    J := I_igh;
+    repeat
+      I := Lb;
+      repeat
+        Flag := (I <> J) and (A[J,I] <> 0.0);
+        I := I + 1;
+      until Flag or (I > I_igh);
+      Found := not Flag;
+      if Found then begin
+        M := I_igh;
+        Exchange;
+        I_igh := I_igh - 1;
+      end;
+      J := J - 1;
+    until Found or (J < Lb);
+  until (not Found) or (I_igh < Lb);
+
+  if I_igh < Lb then I_igh := Lb;
+  if I_igh = Lb then Exit;
+
+  repeat
+    J := I_low;
+    repeat
+      I := I_low;
+      repeat
+        Flag := (I <> J) and (A[I,J] <> 0.0);
+        I := I + 1;
+      until Flag or (I > I_igh);
+      Found := not Flag;
+      if Found then begin
+        M := I_low;
+        Exchange;
+        I_low := I_low + 1;
+      end;
+      J := J + 1;
+    until Found or (J > I_igh);
+  until (not Found);
+
+  for I := I_low to I_igh do Scale[I] := 1.0;
+
+  repeat
+    Conv := True;
+    for I := I_low to I_igh do begin
+      C := 0.0; R := 0.0;
+      for J := I_low to I_igh do
+        if J <> I then begin
+          C := C + Abs(A[J,I]);
+          R := R + Abs(A[I,J]);
+        end;
+      if (C <> 0.0) and (R <> 0.0) then begin
+        G := R / RADIX;
+        F := 1.0;
+        S := C + R;
+        while C < G do begin F := F * RADIX; C := C * B2; end;
+        G := R * RADIX;
+        while C >= G do begin F := F / RADIX; C := C / B2; end;
+        if (C + R) / F < 0.95 * S then begin
+          G := 1.0 / F;
+          Scale[I] := Scale[I] * F;
+          Conv := False;
+          for J := I_low to Ub do A[I,J] := A[I,J] * G;
+          for J := Lb to I_igh do A[J,I] := A[J,I] * F;
+        end;
+      end;
+    end;
+  until Conv;
+end;
+
+procedure PPElmHesS(A: TPPMatrixS; Lb, Ub, I_low, I_igh: Integer; I_int: TPPIntVectorS);
+var
+  I, J, M, La, Kp1, Mm1, Mp1 : Integer;
+  X, Y                       : Single;
+begin
+  La := I_igh - 1;
+  Kp1 := I_low + 1;
+  if La < Kp1 then Exit;
+
+  for M := Kp1 to La do begin
+    Mm1 := M - 1;
+    X := 0.0;
+    I := M;
+    for J := M to I_igh do
+      if Abs(A[J,Mm1]) > Abs(X) then begin
+        X := A[J,Mm1];
+        I := J;
+      end;
+    I_int[M] := I;
+    if I <> M then begin
+      for J := Mm1 to Ub do begin
+        Y := A[I,J]; A[I,J] := A[M,J]; A[M,J] := Y;
+      end;
+      for J := Lb to I_igh do begin
+        Y := A[J,I]; A[J,I] := A[J,M]; A[J,M] := Y;
+      end;
+    end;
+    if X <> 0.0 then begin
+      Mp1 := M + 1;
+      for I := Mp1 to I_igh do begin
+        Y := A[I,Mm1];
+        if Y <> 0.0 then begin
+          Y := Y / X;
+          A[I,Mm1] := Y;
+          for J := M to Ub do A[I,J] := A[I,J] - Y * A[M,J];
+          for J := Lb to I_igh do A[J,M] := A[J,M] + Y * A[J,I];
+        end;
+      end;
+    end;
+  end;
+end;
+
+procedure PPEltranS(A: TPPMatrixS; Lb, Ub, I_low, I_igh: Integer; I_int: TPPIntVectorS; Z: TPPMatrixS);
+var
+  I, J, Mp, Mp1 : Integer;
+begin
+  for I := Lb to Ub do
+    for J := Lb to Ub do
+      if I = J then Z[I,J] := 1.0 else Z[I,J] := 0.0;
+
+  if I_igh < I_low then Exit;
+
+  for Mp := I_igh - 1 downto I_low + 1 do begin
+    Mp1 := Mp + 1;
+    for I := Mp1 to I_igh do Z[I,Mp] := A[I,Mp - 1];
+    I := I_int[Mp];
+    if I <> Mp then begin
+      for J := Mp to I_igh do begin
+        Z[Mp,J] := Z[I,J];
+        Z[I,J] := 0.0;
+      end;
+      Z[I,Mp] := 1.0;
+    end;
+  end;
+end;
+
+function PPHqr2S(H: TPPMatrixS; Lb, Ub, I_low, I_igh: Integer; Lambda: TPPComplexS; Z: TPPMatrixS): Integer;
+
+  procedure Cdiv(Ar, Ai, Br, Bi : Single; var Cr, Ci : Single);
+  var
+    S, Ars, Ais, Brs, Bis : Single;
+  begin
+    S := Abs(Br) + Abs(Bi);
+    Ars := Ar / S;
+    Ais := Ai / S;
+    Brs := Br / S;
+    Bis := Bi / S;
+    S := Sqr(Brs) + Sqr(Bis);
+    Cr := (Ars * Brs + Ais * Bis) / S;
+    Ci := (Ais * Brs - Ars * Bis) / S;
+  end;
+
+var
+  I, J, K, L, M, N, En, Na, Itn, Its, Mp2, Enm2                : Integer;
+  P, Q, R, S, T, W, X, Y, Ra, Sa, Vi, Vr, Zz, Norm, Tst1, Tst2 : Single;
+  NotLas                                                       : Boolean;
+
+label
+  60, 70, 100, 130, 150, 170, 225, 260, 270, 280, 320, 330, 340,
+  600, 630, 635, 640, 680, 700, 710, 770, 780, 790, 795, 800;
+
+begin
+  result := 0;
+
+  K := Lb;
+  Norm := 0.0;
+  for I := Lb to Ub do begin
+    for J := K to Ub do Norm := Norm + Abs(H[I,J]);
+    K := I;
+    if (I < I_low) or (I > I_igh) then begin
+      Lambda[I].re := H[I,I];
+      Lambda[I].im := 0.0;
+    end;
+  end;
+
+  N := Ub - Lb + 1;
+  Itn := 30 * N;
+  En := I_igh;
+  T := 0.0;
+
+60:
+  if En < I_low then goto 340;
+  Its := 0;
+  Na := En - 1;
+  Enm2 := Na - 1;
+
+70:
+  for L := En downto I_low do begin
+    if L = I_low then goto 100;
+    S := Abs(H[L - 1,L - 1]) + Abs(H[L,L]);
+    if S = 0.0 then S := Norm;
+    Tst1 := S;
+    Tst2 := Tst1 + Abs(H[L,L - 1]);
+    if Tst2 = Tst1 then goto 100;
+  end;
+
+100:
+  X := H[En,En];
+  if L = En then goto 270;
+  Y := H[Na,Na];
+  W := H[En,Na] * H[Na,En];
+  if L = Na then goto 280;
+
+  if Itn = 0 then begin
+    result := -En;
+    Exit;
+  end;
+
+  if (Its <> 10) and (Its <> 20) then goto 130;
+
+  T := T + X;
+  for I := I_low to En do H[I,I] := H[I,I] - X;
+  S := Abs(H[En,Na]) + Abs(H[Na,Enm2]);
+  X := 0.75 * S;
+  Y := X;
+  W := - 0.4375 * S * S;
+
+130:
+  Its := Its + 1;
+  Itn := Itn - 1;
+
+  for M := Enm2 downto L do begin
+    Zz := H[M,M];
+    R := X - Zz;
+    S := Y - Zz;
+    P := (R * S - W) / H[M + 1,M] + H[M,M + 1];
+    Q := H[M + 1,M + 1] - Zz - R - S;
+    R := H[M + 2,M + 1];
+    S := Abs(P) + Abs(Q) + Abs(R);
+    P := P / S;
+    Q := Q / S;
+    R := R / S;
+    if M = L then goto 150;
+    Tst1 := Abs(P) * (Abs(H[M - 1,M - 1]) + Abs(Zz) + Abs(H[M + 1,M + 1]));
+    Tst2 := Tst1 + Abs(H[M,M - 1]) * (Abs(Q) + Abs(R));
+    if Tst2 = Tst1 then goto 150;
+  end;
+
+150:
+  Mp2 := M + 2;
+  for I := Mp2 to En do begin
+    H[I,I - 2] := 0.0;
+    if I <> Mp2 then H[I,I - 3] := 0.0;
+  end;
+
+  for K := M to Na do begin
+    NotLas := (K <> Na);
+    if (K = M) then goto 170;
+    P := H[K,K - 1];
+    Q := H[K + 1,K - 1];
+    R := 0.0;
+    if NotLas then R := H[K + 2,K - 1];
+    X := Abs(P) + Abs(Q) + Abs(R);
+    if X = 0.0 then goto 260;
+    P := P / X;
+    Q := Q / X;
+    R := R / X;
+170:S := PPDSgnS(Sqrt(P * P + Q * Q + R * R), P);
+    if K <> M then
+      H[K,K - 1] := - S * X
+    else if L <> M then
+      H[K,K - 1] := - H[K,K - 1];
+    P := P + S;
+    X := P / S;
+    Y := Q / S;
+    Zz := R / S;
+    Q := Q / P;
+    R := R / P;
+    if NotLas then goto 225;
+
+    for J := K to Ub do begin
+      P := H[K,J] + Q * H[K + 1,J];
+      H[K,J] := H[K,J] - P * X;
+      H[K + 1,J] := H[K + 1,J] - P * Y;
+    end;
+
+    J := PPMinIS(En, K + 3);
+
+    for I := Lb to J do begin
+      P := X * H[I,K] + Y * H[I,K + 1];
+      H[I,K] := H[I,K] - P;
+      H[I,K + 1] := H[I,K + 1] - P * Q;
+    end;
+
+    for I := I_low to I_igh do begin
+      P := X * Z[I,K] + Y * Z[I,K + 1];
+      Z[I,K] := Z[I,K] - P;
+      Z[I,K + 1] := Z[I,K + 1] - P * Q;
+    end;
+    goto 260;
+
+225:
+    for J := K to Ub do begin
+      P := H[K,J] + Q * H[K + 1,J] + R * H[K + 2,J];
+      H[K,J] := H[K,J] - P * X;
+      H[K + 1,J] := H[K + 1,J] - P * Y;
+      H[K + 2,J] := H[K + 2,J] - P * Zz;
+    end;
+
+    J := PPMinIS(En, K + 3);
+
+    for I := Lb to J do begin
+      P := X * H[I,K] + Y * H[I,K + 1] + Zz * H[I,K + 2];
+      H[I,K] := H[I,K] - P;
+      H[I,K + 1] := H[I,K + 1] - P * Q;
+      H[I,K + 2] := H[I,K + 2] - P * R;
+    end;
+
+    for I := I_low to I_igh do begin
+      P := X * Z[I,K] + Y * Z[I,K + 1] + Zz * Z[I,K + 2];
+      Z[I,K] := Z[I,K] - P;
+      Z[I,K + 1] := Z[I,K + 1] - P * Q;
+      Z[I,K + 2] := Z[I,K + 2] - P * R;
+    end;
+
+260: end;
+
+  goto 70;
+
+270:
+  H[En,En] := X + T;
+  Lambda[En].re := H[En,En];
+  Lambda[En].im := 0.0;
+  En := Na;
+  goto 60;
+
+280:
+  P := 0.5 * (Y - X);
+  Q := P * P + W;
+  Zz := Sqrt(Abs(Q));
+  H[En,En] := X + T;
+  X := H[En,En];
+  H[Na,Na] := Y + T;
+  if Q < 0.0 then goto 320;
+
+  Zz := P + PPDSgnS(Zz, P);
+  Lambda[Na].re := X + Zz;
+  Lambda[En].re := Lambda[Na].re;
+  if Zz <> 0.0 then Lambda[En].re := X - W / Zz;
+  Lambda[Na].im := 0.0;
+  Lambda[En].im := 0.0;
+  X := H[En,Na];
+  S := Abs(X) + Abs(Zz);
+  P := X / S;
+  Q := Zz / S;
+  R := Sqrt(P * P + Q * Q);
+  P := P / R;
+  Q := Q / R;
+
+  for J := Na to Ub do begin
+    Zz := H[Na,J];
+    H[Na,J] := Q * Zz + P * H[En,J];
+    H[En,J] := Q * H[En,J] - P * Zz;
+  end;
+
+  for I := Lb to En do begin
+    Zz := H[I,Na];
+    H[I,Na] := Q * Zz + P * H[I,En];
+    H[I,En] := Q * H[I,En] - P * Zz;
+  end;
+
+  for I := I_low to I_igh do begin
+    Zz := Z[I,Na];
+    Z[I,Na] := Q * Zz + P * Z[I,En];
+    Z[I,En] := Q * Z[I,En] - P * Zz;
+  end;
+
+  goto 330;
+
+320:
+  Lambda[Na].re := X + P;
+  Lambda[En].re := Lambda[Na].re;
+  Lambda[Na].im := Zz;
+  Lambda[En].im := - Zz;
+
+330:
+  En := Enm2;
+  goto 60;
+
+340:
+  if Norm = 0.0 then Exit;
+
+  for En := Ub downto Lb do begin
+    P := Lambda[En].re;
+    Q := Lambda[En].im;
+    Na := En - 1;
+    if Q < 0.0 then
+      goto 710
+    else if Q = 0.0 then
+      goto 600
+    else
+      goto 800;
+
+600:
+    M := En;
+    H[En,En] := 1.0;
+    if Na < Lb then goto 800;
+
+    for I := Na downto Lb do begin
+      W := H[I,I] - P;
+      R := 0.0;
+      for J := M to En do R := R + H[I,J] * H[J,En];
+      if Lambda[I].im >= 0.0 then goto 630;
+      Zz := W;
+      S := R;
+      goto 700;
+630:  M := I;
+      if Lambda[I].im <> 0.0 then goto 640;
+      T := W;
+      if T <> 0.0 then goto 635;
+      Tst1 := Norm;
+      T := Tst1;
+      repeat
+        T := 0.01 * T;
+        Tst2 := Norm + T;
+      until Tst2 <= Tst1;
+635:  H[I,En] := - R / T;
+      goto 680;
+
+640:
+      X := H[I,I + 1];
+      Y := H[I + 1,I];
+      Q := Sqr(Lambda[I].re - P) + Sqr(Lambda[I].im);
+      T := (X * S - Zz * R) / Q;
+      H[I,En] := T;
+      if Abs(X) > Abs(Zz) then
+        H[I + 1,En] := (- R - W * T) / X
+      else
+        H[I + 1,En] := (- S - Y * T) / Zz;
+
+680:
+      T := Abs(H[I,En]);
+      if T = 0.0 then goto 700;
+      Tst1 := T;
+      Tst2 := Tst1 + 1.0 / Tst1;
+      if Tst2 > Tst1 then goto 700;
+      for J := I to En do H[J,En] := H[J,En] / T;
+700: end;
+    goto 800;
+
+710:
+    M := Na;
+    if Abs(H[En,Na]) > Abs(H[Na,En]) then begin
+      H[Na,Na] := Q / H[En,Na];
+      H[Na,En] := - (H[En,En] - P) / H[En,Na];
+    end else
+      Cdiv(0.0, - H[Na,En], H[Na,Na] - P, Q, H[Na,Na], H[Na,En]);
+
+    H[En,Na] := 0.0;
+    H[En,En] := 1.0;
+    Enm2 := Na - 1;
+    if Enm2 < Lb then goto 800;
+
+    for I := Enm2 downto Lb do begin
+      W := H[I,I] - P;
+      Ra := 0.0;
+      Sa := 0.0;
+      for J := M to En do begin
+        Ra := Ra + H[I,J] * H[J,Na];
+        Sa := Sa + H[I,J] * H[J,En];
+      end;
+      if Lambda[I].im >= 0.0 then goto 770;
+      Zz := W;
+      R := Ra;
+      S := Sa;
+      goto 795;
+770:  M := I;
+      if Lambda[I].im <> 0.0 then goto 780;
+      Cdiv(- Ra, - Sa, W, Q, H[I,Na], H[I,En]);
+      goto 790;
+
+780:
+      X := H[I,I + 1];
+      Y := H[I + 1,I];
+      Vr := Sqr(Lambda[I].re - P) + Sqr(Lambda[I].im) - Sqr(Q);
+      Vi := (Lambda[I].re - P) * 2.0 * Q;
+      if (Vr = 0.0) and (Vi = 0.0) then begin
+        Tst1 := Norm * (Abs(W) + Abs(Q) + Abs(X) + Abs(Y) + Abs(Zz));
+        Vr := Tst1;
+        repeat
+          Vr := 0.01 * Vr;
+          Tst2 := Tst1 + Vr;
+        until Tst2 <= Tst1;
+      end;
+      Cdiv(X * R - Zz * Ra + Q * Sa, X * S - Zz * Sa - Q * Ra, Vr, Vi, H[I,Na], H[I,En]);
+      if Abs(X) > Abs(Zz) + Abs(Q) then begin
+        H[I + 1,Na] := (- Ra - W * H[I,Na] + Q * H[I,En]) / X;
+        H[I + 1,En] := (- Sa - W * H[I,En] - Q * H[I,Na]) / X;
+      end else
+        Cdiv(- R - Y * H[I,Na], - S - Y * H[I,En], Zz, Q, H[I + 1,Na], H[I + 1,En]);
+
+790:
+      T := PPMaxDS(Abs(H[I,Na]), Abs(H[I,En]));
+      if T = 0.0 then goto 795;
+      Tst1 := T;
+      Tst2 := Tst1 + 1.0 / Tst1;
+      if Tst2 > Tst1 then goto 795;
+      for J := I to En do begin
+        H[J,Na] := H[J,Na] / T;
+        H[J,En] := H[J,En] / T;
+      end;
+
+795: end;
+800: end;
+
+  for I := Lb to Ub do
+    if (I < I_low) or (I > I_igh) then
+      for J := I to Ub do Z[I,J] := H[I,J];
+
+  for J := Ub downto I_low do begin
+    M := PPMinIS(J, I_igh);
+    for I := I_low to I_igh do begin
+      Zz := 0.0;
+      for K := I_low to M do Zz := Zz + Z[I,K] * H[K,J];
+      Z[I,J] := Zz;
+    end;
+  end;
+
+  result := 0;
+end;
+
+procedure PPBalBakS(Z: TPPMatrixS; Lb, Ub, I_low, I_igh: Integer; Scale: TPPVectorS; M: Integer);
+var
+  I, J, K : Integer;
+  S       : Single;
+begin
+  if M < Lb then Exit;
+
+  if I_igh <> I_low then
+    for I := I_low to I_igh do begin
+      S := Scale[I];
+      for J := Lb to M do Z[I,J] := Z[I,J] * S;
+    end;
+
+  for I := (I_low - 1) downto Lb do begin
+    K := Round(Scale[I]);
+    if K <> I then
+      for J := Lb to M do begin
+        S := Z[I,J]; Z[I,J] := Z[K,J]; Z[K,J] := S;
+      end;
+  end;
+
+  for I := (I_igh + 1) to Ub do begin
+    K := Round(Scale[I]);
+    if K <> I then
+      for J := Lb to M do begin
+        S := Z[I,J]; Z[I,J] := Z[K,J]; Z[K,J] := S;
+      end;
+  end;
+end;
+
+function PurePascalEigHqr2S(N: Integer; AData: PSingle; var Wr, Wi: TVectorS; var V: TVectorS): Integer;
+var
+  H, Z    : TPPMatrixS;
+  Scale   : TPPVectorS;
+  I_int   : TPPIntVectorS;
+  Lambda  : TPPComplexS;
+  I_low, I_igh, I, J, ErrCode : Integer;
+  NormSq, Nrm : Single;
+begin
+  SetLength(H, N+1, N+1);
+  SetLength(Z, N+1, N+1);
+  SetLength(Scale, N+1);
+  SetLength(I_int, N+1);
+  SetLength(Lambda, N+1);
+
+  for I := 0 to N-1 do
+    for J := 0 to N-1 do
+      H[I+1,J+1] := AData[I*N+J];
+
+  PPBalanceS(H, 1, N, I_low, I_igh, Scale);
+  PPElmHesS(H, 1, N, I_low, I_igh, I_int);
+  PPEltranS(H, 1, N, I_low, I_igh, I_int, Z);
+  ErrCode := PPHqr2S(H, 1, N, I_low, I_igh, Lambda, Z);
+
+  if ErrCode <> 0 then begin
+    result := ErrCode;
+    Exit;
+  end;
+
+  PPBalBakS(Z, 1, N, I_low, I_igh, Scale, N);
+
+  for I := 0 to N-1 do begin
+    Wr[I] := Lambda[I+1].re;
+    Wi[I] := Lambda[I+1].im;
+  end;
+  for I := 0 to N-1 do
+    for J := 0 to N-1 do
+      V[I*N+J] := Z[I+1,J+1];
+
+  J := 0;
+  while J <= N-1 do begin
+    if Wi[J] = 0 then begin
+      NormSq := 0;
+      for I := 0 to N-1 do NormSq := NormSq + Sqr(V[I*N+J]);
+      Nrm := Sqrt(NormSq);
+      if Nrm > 0 then
+        for I := 0 to N-1 do V[I*N+J] := V[I*N+J] / Nrm;
+      inc(J);
+    end else begin
+      NormSq := 0;
+      for I := 0 to N-1 do NormSq := NormSq + Sqr(V[I*N+J]) + Sqr(V[I*N+J+1]);
+      Nrm := Sqrt(NormSq);
+      if Nrm > 0 then
+        for I := 0 to N-1 do begin
+          V[I*N+J]   := V[I*N+J]   / Nrm;
+          V[I*N+J+1] := V[I*N+J+1] / Nrm;
+        end;
+      inc(J,2);
+    end;
+  end;
+
+  result := 0;
+end;
+{$ENDIF}
+
 procedure EigDecomposeS(const A: TVMobjS; out EigenValues, EigenVectors: TVMobjC);
 const
   s : String = 'Routine EigDecomposeS : ';
@@ -1120,12 +1794,20 @@ begin
 
   //jobvl = 'N' : left eigenvectors not requested (vl unused -> nil, ldvl=n is a harmless placeholder)
   //jobvr = 'V' : right eigenvectors requested, returned in packed real form in vr
+{$IFDEF PUREPASCAL}
+  //PurePascalEigHqr2S - see its own header comment above - fills wr/wi/vr in
+  //exactly the same packed real/imaginary-column-pair convention LAPACKE_sgeev
+  //uses below, so the unpacking loop after this IFDEF is unchanged either way.
+  info := PurePascalEigHqr2S(n, Acopy.DataPtr, wr, wi, vr);
+  assert(info = 0, s+'PurePascal QR iteration failed to converge, info='+IntToStr(info));
+{$ELSE}
   info := LAPACKE_sgeev(CBlasRowMajor, 'N', 'V', n,
                           Acopy.DataPtr, n,
                           @wr[0], @wi[0],
                           nil, n,
                           @vr[0], n);
   assert(info = 0, s+'LAPACKE_sgeev failed, info='+IntToStr(info));
+{$ENDIF}
 
   //--- eigenvalues: one complex value per row, straight from wr/wi ---
   EigenValues := TVMobjC.Create(n,1);
@@ -1490,22 +2172,64 @@ begin
 end;
 {$ENDIF}
 
+{$IFNDEF HAVE_FFTW}
+// Direct O(N^2) DFT - single-precision counterpart to newVMComplex.pas's own
+// PPDirectDFT; see that unit's header comment for the full rationale (works
+// for any N, unlike a power-of-two-only radix-2 fast FFT).
+procedure PPDirectDFTS(N: Integer; InData, OutData: PComplex8; Forward: Boolean);
+var
+  k, m : Integer;
+  sgn, angle, c, sn, accre, accim : Single;
+begin
+  if Forward then sgn := -1 else sgn := 1;
+  for k := 0 to N-1 do begin
+    accre := 0; accim := 0;
+    for m := 0 to N-1 do begin
+      angle := sgn * 2 * Pi * k * m / N;
+      c := cos(angle); sn := sin(angle);
+      accre := accre + InData[m].re*c - InData[m].im*sn;
+      accim := accim + InData[m].re*sn + InData[m].im*c;
+    end;
+    OutData[k].re := accre;
+    OutData[k].im := accim;
+  end;
+end;
+{$ENDIF}
+
 function FFT_R2C(const A: TVMobjS): TVMobjC;
 const
   s : String = 'Routine FFT_R2C : ';
 var
   n, nc : integer;
+{$IFDEF HAVE_FFTW}
   plan : fftw_plan;
+{$ELSE}
+  k, m : Integer;
+  angle, c, sn, accre, accim : Single;
+{$ENDIF}
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
   n := A.Rows*A.Cols;
-  assert(Assigned(fftwf_plan_dft_r2c_1d), s+'FFTW3 (single) library not loaded');
   nc := n div 2 + 1;
   if A.Cols = 1 then result := TVMobjC.Create(nc, 1) else result := TVMobjC.Create(1, nc);
+{$IFDEF HAVE_FFTW}
+  assert(Assigned(fftwf_plan_dft_r2c_1d), s+'FFTW3 (single) library not loaded');
   plan := fftwf_plan_dft_r2c_1d(n, A.DataPtr, PComplex8(@result.FData[0]), FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
   assert(plan<>nil, s+'fftwf_plan_dft_r2c_1d failed');
   fftwf_execute_dft_r2c(plan, A.DataPtr, PComplex8(@result.FData[0]));
   fftwf_destroy_plan(plan);
+{$ELSE}
+  for k := 0 to nc-1 do begin
+    accre := 0; accim := 0;
+    for m := 0 to n-1 do begin
+      angle := -2 * Pi * k * m / n;
+      c := cos(angle); sn := sin(angle);
+      accre := accre + A.DataPtr[m]*c;
+      accim := accim + A.DataPtr[m]*sn;
+    end;
+    result.FData[k] := Cplx8(accre, accim);
+  end;
+{$ENDIF}
 end;
 
 function FFT_C2R(const A: TVMobjC; N: Integer): TVMobjS;
@@ -1513,19 +2237,34 @@ const
   s : String = 'Routine FFT_C2R : ';
 var
   nc : integer;
+{$IFDEF HAVE_FFTW}
   plan : fftw_plan;
+{$ELSE}
+  full, outc : array of TComplex8;
+  k : Integer;
+{$ENDIF}
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
   assert(N>0, s+'N must be > 0');
   nc := A.Rows*A.Cols;
   assert(nc = (N div 2 + 1), s+'A''s length must be N div 2 + 1');
-  assert(Assigned(fftwf_plan_dft_c2r_1d), s+'FFTW3 (single) library not loaded');
   if A.Cols = 1 then result := TVMobjS.Create(N, 1) else result := TVMobjS.Create(1, N);
+{$IFDEF HAVE_FFTW}
+  assert(Assigned(fftwf_plan_dft_c2r_1d), s+'FFTW3 (single) library not loaded');
   plan := fftwf_plan_dft_c2r_1d(N, PComplex8(@A.FData[0]), result.DataPtr, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
   assert(plan<>nil, s+'fftwf_plan_dft_c2r_1d failed');
   fftwf_execute_dft_c2r(plan, PComplex8(@A.FData[0]), result.DataPtr);
   fftwf_destroy_plan(plan);
   ippsDivC_32f_I(N, result.DataPtr, N);   //normalize, matching FFT_C2R(FFT_R2C(x), N) = x
+{$ELSE}
+  //See newVMComplex.pas's FFT_C2R for the conjugate-symmetry rationale.
+  SetLength(full, N);
+  SetLength(outc, N);
+  for k := 0 to nc-1 do full[k] := A.FData[k];
+  for k := nc to N-1 do full[k] := Cplx8(A.FData[N-k].re, -A.FData[N-k].im);
+  PPDirectDFTS(N, @full[0], @outc[0], False);
+  for k := 0 to N-1 do result.DataPtr[k] := outc[k].re / N;
+{$ENDIF}
 end;
 
 function FFT(const A: TVMobjC): TVMobjC;
@@ -1533,35 +2272,51 @@ const
   s : String = 'Routine FFT : ';
 var
   n : integer;
+{$IFDEF HAVE_FFTW}
   plan : fftw_plan;
+{$ENDIF}
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
   n := A.Rows*A.Cols;
-  assert(Assigned(fftwf_plan_dft_1d), s+'FFTW3 (single) library not loaded');
   result := TVMobjC.Create(A.Rows, A.Cols);
+{$IFDEF HAVE_FFTW}
+  assert(Assigned(fftwf_plan_dft_1d), s+'FFTW3 (single) library not loaded');
   plan := fftwf_plan_dft_1d(n, PComplex8(@A.FData[0]), PComplex8(@result.FData[0]), FFTW_FORWARD, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
   assert(plan<>nil, s+'fftwf_plan_dft_1d failed');
   fftwf_execute_dft(plan, PComplex8(@A.FData[0]), PComplex8(@result.FData[0]));
   fftwf_destroy_plan(plan);
+{$ELSE}
+  PPDirectDFTS(n, PComplex8(@A.FData[0]), PComplex8(@result.FData[0]), True);
+{$ENDIF}
 end;
 
 function IFFT(const A: TVMobjC): TVMobjC;
 const
   s : String = 'Routine IFFT : ';
 var
-  n : integer;
+  n, i : integer;
+{$IFDEF HAVE_FFTW}
   plan : fftw_plan;
+{$ENDIF}
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
   n := A.Rows*A.Cols;
-  assert(Assigned(fftwf_plan_dft_1d), s+'FFTW3 (single) library not loaded');
   result := TVMobjC.Create(A.Rows, A.Cols);
+{$IFDEF HAVE_FFTW}
+  assert(Assigned(fftwf_plan_dft_1d), s+'FFTW3 (single) library not loaded');
   plan := fftwf_plan_dft_1d(n, PComplex8(@A.FData[0]), PComplex8(@result.FData[0]), FFTW_BACKWARD, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
   assert(plan<>nil, s+'fftwf_plan_dft_1d failed');
   fftwf_execute_dft(plan, PComplex8(@A.FData[0]), PComplex8(@result.FData[0]));
   fftwf_destroy_plan(plan);
   assert(Assigned(cblas_csscal), s+'OpenBLAS not available on this machine - IFFT normalization has no PUREPASCAL fallback');
   cblas_csscal(n, 1.0/n, @result.FData[0], 1);  //normalize, matching IFFT(FFT(x)) = x
+{$ELSE}
+  PPDirectDFTS(n, PComplex8(@A.FData[0]), PComplex8(@result.FData[0]), False);
+  for i := 0 to n-1 do begin
+    result.FData[i].re := result.FData[i].re / n;
+    result.FData[i].im := result.FData[i].im / n;
+  end;
+{$ENDIF}
 end;
 
 // Single-precision analogue of newVMComplex.pas's PowerSpectrum(A:

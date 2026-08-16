@@ -1421,21 +1421,109 @@ begin
 end;
 {$ENDIF}
 
+{$IFNDEF HAVE_FFTW}
+// Direct O(N^2) trigonometric-sum evaluation of each of the 8 FFTW r2r
+// kinds, as the fallback when FFTW isn't loaded - matching FFTW's own
+// unnormalized formulas exactly (see "1D Real-even/odd DFTs (cosine/sine
+// transforms)" in the FFTW manual), not a ported fast transform: DCT/DST
+// have no simple radix-2-style fast algorithm as short as a direct FFT's,
+// and this is a fallback path where O(N^2) simplicity/correctness matters
+// more than speed - same rationale as newVMComplex.pas's PPDirectDFT.
+// Verified against the library-backed path's own exact scale-factor
+// contracts (e.g. DCT1(DCT1(x)) = x*2*(N-1)) via newVMTests.pas's existing
+// round-trip tests, run with PUREPASCAL/HAVE_FFTW both forced off.
+function PPDSgnPow(V: Double; K: Integer): Double; inline;
+begin
+  if Odd(K) then result := -V else result := V;
+end;
+
+procedure PPr2rTransform(N: Integer; InData, OutData: PDouble; kind: TFFTW_r2r_kind);
+var
+  j, k : Integer;
+  acc : Double;
+begin
+  case kind of
+    FFTW_REDFT00: //DCT-I: logical size 2*(N-1)
+      for k := 0 to N-1 do begin
+        acc := InData[0] + PPDSgnPow(InData[N-1], k);
+        for j := 1 to N-2 do
+          acc := acc + 2*InData[j]*cos(Pi*j*k/(N-1));
+        OutData[k] := acc;
+      end;
+    FFTW_REDFT10: //DCT-II
+      for k := 0 to N-1 do begin
+        acc := 0;
+        for j := 0 to N-1 do
+          acc := acc + InData[j]*cos(Pi*(j+0.5)*k/N);
+        OutData[k] := 2*acc;
+      end;
+    FFTW_REDFT01: //DCT-III
+      for k := 0 to N-1 do begin
+        acc := InData[0];
+        for j := 1 to N-1 do
+          acc := acc + 2*InData[j]*cos(Pi*j*(k+0.5)/N);
+        OutData[k] := acc;
+      end;
+    FFTW_REDFT11: //DCT-IV
+      for k := 0 to N-1 do begin
+        acc := 0;
+        for j := 0 to N-1 do
+          acc := acc + InData[j]*cos(Pi*(j+0.5)*(k+0.5)/N);
+        OutData[k] := 2*acc;
+      end;
+    FFTW_RODFT00: //DST-I: logical size 2*(N+1)
+      for k := 0 to N-1 do begin
+        acc := 0;
+        for j := 0 to N-1 do
+          acc := acc + InData[j]*sin(Pi*(j+1)*(k+1)/(N+1));
+        OutData[k] := 2*acc;
+      end;
+    FFTW_RODFT10: //DST-II
+      for k := 0 to N-1 do begin
+        acc := 0;
+        for j := 0 to N-1 do
+          acc := acc + InData[j]*sin(Pi*(j+0.5)*(k+1)/N);
+        OutData[k] := 2*acc;
+      end;
+    FFTW_RODFT01: //DST-III
+      for k := 0 to N-1 do begin
+        acc := PPDSgnPow(InData[N-1], k);
+        for j := 0 to N-2 do
+          acc := acc + 2*InData[j]*sin(Pi*(j+1)*(k+0.5)/N);
+        OutData[k] := acc;
+      end;
+    FFTW_RODFT11: //DST-IV
+      for k := 0 to N-1 do begin
+        acc := 0;
+        for j := 0 to N-1 do
+          acc := acc + InData[j]*sin(Pi*(j+0.5)*(k+0.5)/N);
+        OutData[k] := 2*acc;
+      end;
+  end;
+end;
+{$ENDIF}
+
 function r2rTransform(const A: TVMobj; kind: TFFTW_r2r_kind): TVMobj;
 const
   s : String = 'Routine r2rTransform : ';
 var
   n : integer;
+{$IFDEF HAVE_FFTW}
   plan : fftw_plan;
+{$ENDIF}
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
   n := A.Rows*A.Cols;
-  assert(Assigned(fftw_plan_r2r_1d), s+'FFTW3 (double) library not loaded');
   result := TVMobj.Create(A.Rows, A.Cols);
+{$IFDEF HAVE_FFTW}
+  assert(Assigned(fftw_plan_r2r_1d), s+'FFTW3 (double) library not loaded');
   plan := fftw_plan_r2r_1d(n, A.DataPtr, result.DataPtr, kind, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
   assert(plan<>nil, s+'fftw_plan_r2r_1d failed');
   fftw_execute_r2r(plan, A.DataPtr, result.DataPtr);
   fftw_destroy_plan(plan);
+{$ELSE}
+  PPr2rTransform(n, A.DataPtr, result.DataPtr, kind);
+{$ENDIF}
 end;
 
 function DCT1(const A: TVMobj): TVMobj;

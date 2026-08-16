@@ -4,27 +4,27 @@
 // machine you are about to build newVM* on - this is a snapshot of THIS
 // machine's installed libraries, not a portability guarantee for any
 // other machine.)
-// Generated: 15-8-26 15:27:23
+// Generated: 16/08/2026 08:51:17
 
-{$DEFINE PLATFORM_DARWIN}
-{$DEFINE PLATFORM_AARCH64}
+{$DEFINE PLATFORM_WINDOWS}
+{$DEFINE PLATFORM_X86_64}
 
-{$DEFINE HAVE_ACCELERATE} // Apple Accelerate/vecLib found (Darwin only)
+{$DEFINE HAVE_OPENBLAS}   // libopenblas found
 {$DEFINE HAVE_BLAS}       // derived: HAVE_OPENBLAS or HAVE_ACCELERATE
+{$DEFINE HAVE_MKL}        // libmkl_rt found
+{$DEFINE HAVE_IPP}        // libippcore+libippvm+libipps all found
 {$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found
 
-// Derived: set whenever any of the three libraries newVM.pas's "core"
-// linear algebra (MatMult/Invert/LinearSolve/Det/operators/elementwise
-// math/etc) actually calls into - OpenBLAS (cblas_*), MKL (LAPACKE_*/vd*/
-// vsl*) and IPP (ipps*) - is missing, so those routines fall back to plain
-// Pascal implementations instead of failing to link. FFTW absence is NOT
-// included here: DCT/DST/FFT have no plain-Pascal fallback (out of scope -
-// see newVM.pas's r2rTransform) and already degrade to a clear runtime
-// assert on their own when FFTW isn't loaded, regardless of this define.
-// Presently only newVM.pas (double-precision real) actually implements the
-// PUREPASCAL-guarded bodies this drives - newVMSingle.pas/newVMComplex.pas/
-// newVMComplexSingle.pas still hard-require MKL/IPP/OpenBLAS unconditionally.
-{$DEFINE PUREPASCAL}
+// Derived: set whenever any of the three libraries the "core" linear algebra
+// (MatMult/Invert/LinearSolve/Det/operators/elementwise math/EigDecompose/etc)
+// of all four TVMobj* units actually calls into - OpenBLAS (cblas_*), MKL
+// (LAPACKE_*/vd*/vsl*) and IPP (ipps*) - is missing, so those routines fall
+// back to plain Pascal implementations instead of failing to link. FFTW
+// absence is NOT included here: it drives its own, separate HAVE_FFTW-gated
+// fallback for DCT/DST/FFT (r2rTransform and friends, and FFT_R2C/FFT_C2R/
+// FFT/IFFT in the complex units) instead, independent of this define - see
+// HAVE_FFTW's own line above.
+// {$DEFINE PUREPASCAL} left undefined: all three backends found
 
 // Finer-grained sibling of PUREPASCAL above, for the subset of newVM.pas's
 // routines (MatMult/Kron/Diag/Norm/FlipUD/MergeUD/MergeLR/Reshape/Repmat, the
