@@ -4,16 +4,27 @@
 // machine you are about to build newVM* on - this is a snapshot of THIS
 // machine's installed libraries, not a portability guarantee for any
 // other machine.)
-// Generated: 16/08/2026 08:51:17
+// Generated: 16-8-26 14:45:07
 
-{$DEFINE PLATFORM_WINDOWS}
-{$DEFINE PLATFORM_X86_64}
+{$DEFINE PLATFORM_LINUX}
+{$DEFINE PLATFORM_AARCH64}
 
 {$DEFINE HAVE_OPENBLAS}   // libopenblas found
-{$DEFINE HAVE_BLAS}       // derived: HAVE_OPENBLAS or HAVE_ACCELERATE
-{$DEFINE HAVE_MKL}        // libmkl_rt found
-{$DEFINE HAVE_IPP}        // libippcore+libippvm+libipps all found
+{$DEFINE HAVE_ARMPL}      // Arm Performance Libraries (libarmpl_lp64) found - cblas.pas prefers this over HAVE_OPENBLAS when both are present
+{$DEFINE HAVE_BLAS}       // derived: HAVE_OPENBLAS or HAVE_ACCELERATE or HAVE_ARMPL
 {$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found
+
+// Derived: true when a LAPACKE_* implementation is available from EITHER
+// MKL or Arm Performance Libraries (ArmPL exports a standard LAPACKE_* ABI
+// from its libarmpl_lp64.so alongside its cblas_* one - see oneapi.pas's
+// LoadArmPLLAPACKEFunctions). Deliberately narrower than PUREPASCAL below:
+// gates only LinearSolve/Invert/Det/Id/EigDecompose (the routines that call
+// LAPACKE_* and nothing else) across all four TVMobj* units, so ArmPL alone
+// (no MKL) can take those specific routines off PUREPASCAL while VML/VSL/IPP-
+// dependent routines (Sin/Cos/etc, fillRandom, linspace/AddScalar/FlipLR/etc)
+// stay on their PUREPASCAL fallback, since ArmPL provides no equivalent for
+// those under matching names.
+{$DEFINE HAVE_LAPACKE}
 
 // Derived: set whenever any of the three libraries the "core" linear algebra
 // (MatMult/Invert/LinearSolve/Det/operators/elementwise math/EigDecompose/etc)
@@ -24,15 +35,19 @@
 // fallback for DCT/DST/FFT (r2rTransform and friends, and FFT_R2C/FFT_C2R/
 // FFT/IFFT in the complex units) instead, independent of this define - see
 // HAVE_FFTW's own line above.
-// {$DEFINE PUREPASCAL} left undefined: all three backends found
+{$DEFINE PUREPASCAL}
 
 // Finer-grained sibling of PUREPASCAL above, for the subset of newVM.pas's
 // routines (MatMult/Kron/Diag/Norm/FlipUD/MergeUD/MergeLR/Reshape/Repmat, the
 // +/-/unary-/scalar-* operators) whose library-backed body calls ONLY
 // cblas_* - no LAPACKE/ipps/vd*/vsl* - so they can run their real,
-// hardware-accelerated body whenever ANY CBLAS-compatible backend (OpenBLAS
-// or, on Darwin, Apple's built-in Accelerate framework) is present, even on
-// a machine missing MKL/IPP that still forces PUREPASCAL above for the
-// LAPACK/IPP/VML-dependent routines. Left undefined (not set to False) when
-// a BLAS backend is found, matching PUREPASCAL's own convention.
+// hardware-accelerated body whenever ANY CBLAS-compatible backend (Arm
+// Performance Libraries, OpenBLAS, or, on Darwin, Apple's built-in Accelerate
+// framework) is present, even on a machine missing MKL/IPP that still forces
+// PUREPASCAL above for the VML/VSL/IPP-dependent routines - ArmPL's cblas_*
+// layer is wired in via cblas.pas's CBLASLib constant (preferring
+// libarmpl_lp64.so over libopenblas whenever HAVE_ARMPL is defined); its
+// LAPACKE_* layer is a separate concern, see HAVE_LAPACKE below. Left
+// undefined (not set to False) when a BLAS backend is found, matching
+// PUREPASCAL's own convention.
 // {$DEFINE PUREPASCAL_BLAS} left undefined: a CBLAS-compatible backend was found
