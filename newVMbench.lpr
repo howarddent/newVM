@@ -156,11 +156,15 @@ end;
 
 procedure PrintBackend;
 begin
-  // MatMult/LinearSolve/Invert's choice of body is driven by the SAME
-  // machine-wide PUREPASCAL_BLAS/PUREPASCAL/HAVE_ACCELERATE defines for
-  // all four TVMobj* types (they all {$I} the same newVMConfig.inc) - so,
-  // real/single behave identically here. Complex is the one exception,
-  // called out separately below.
+  // MatMult's choice of body is driven by PUREPASCAL_BLAS, the same for all
+  // four TVMobj* types. LinearSolve/Invert/Id/EigDecompose are driven by the
+  // separate, narrower HAVE_LAPACKE define (true when either MKL or Arm
+  // Performance Libraries provides a LAPACKE_* implementation - see
+  // newvmconfigure.lpr's own comment on why this is deliberately independent
+  // of PUREPASCAL: a machine can have ArmPL's LAPACKE_* without also having
+  // MKL's VML/VSL or IPP, in which case PUREPASCAL stays active for the
+  // elementwise/fillRandom/etc routines this benchmark doesn't exercise,
+  // while LinearSolve/Invert/EigDecompose below still get real LAPACKE).
   Write('MatMult (real/single/complex) backend: ');
   {$IFDEF PUREPASCAL_BLAS}
   WriteLn('PUREPASCAL (plain Pascal triple loop)');
@@ -168,51 +172,65 @@ begin
   WriteLn('library-backed (cblas_?gemm)');
   {$ENDIF}
   Write('LinearSolve/Invert (real, single) backend: ');
-  {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_LAPACKE}
+  WriteLn('library-backed (LAPACKE_?getrf/?getri/?gesv/?getrs)');
+  {$ELSE}
     {$IFDEF HAVE_ACCELERATE}
   WriteLn('library-backed (Accelerate ?getrf_/?getri_/?getrs_)');
     {$ELSE}
   WriteLn('PUREPASCAL (PurePascalLU?/PurePascalLU?Solve)');
     {$ENDIF}
-  {$ELSE}
-  WriteLn('library-backed (LAPACKE_?getrf/?getri/?gesv/?getrs)');
   {$ENDIF}
   Write('Invert (complex double) backend: ');
-  {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_LAPACKE}
+  WriteLn('library-backed (LAPACKE_zgetrf/zgetri)');
+  {$ELSE}
     {$IFDEF HAVE_ACCELERATE}
   WriteLn('library-backed (Accelerate zgetrf_/zgetri_)');
     {$ELSE}
   WriteLn('PUREPASCAL (PurePascalLUZ/PurePascalLUSolveZ)');
     {$ENDIF}
-  {$ELSE}
-  WriteLn('library-backed (LAPACKE_zgetrf/zgetri)');
   {$ENDIF}
-  WriteLn('LinearSolve (complex double) backend: PUREPASCAL always ',
-    '(Accelerate zgetrs_ has a known crash bug - see cblas.pas) - ',
-    'identical in both builds, not a bug in this benchmark');
+  Write('LinearSolve (complex double) backend: ');
+  {$IFDEF HAVE_LAPACKE}
+  WriteLn('library-backed (LAPACKE_zgetrs/zgesv) - note: no Accelerate ',
+    'branch exists here even when HAVE_LAPACKE is undefined (Accelerate''s ',
+    'zgetrs_ has a known crash bug - see cblas.pas), unlike Invert above');
+  {$ELSE}
+  WriteLn('PUREPASCAL (PurePascalLUZ/PurePascalLUSolveZ) - no Accelerate ',
+    'branch exists here (Accelerate''s zgetrs_ has a known crash bug - ',
+    'see cblas.pas), unlike Invert above');
+  {$ENDIF}
   Write('Invert (complex single) backend: ');
-  {$IFDEF PUREPASCAL}
+  {$IFDEF HAVE_LAPACKE}
+  WriteLn('library-backed (LAPACKE_cgetrf/cgetri)');
+  {$ELSE}
     {$IFDEF HAVE_ACCELERATE}
   WriteLn('library-backed (Accelerate cgetrf_/cgetri_)');
     {$ELSE}
   WriteLn('PUREPASCAL (PurePascalLUC/PurePascalLUSolveC)');
     {$ENDIF}
-  {$ELSE}
-  WriteLn('library-backed (LAPACKE_cgetrf/cgetri)');
   {$ENDIF}
-  WriteLn('LinearSolve (complex single) backend: PUREPASCAL always ',
-    '(Accelerate cgetrs_ has the same known crash bug - see cblas.pas) - ',
-    'identical in both builds, not a bug in this benchmark');
-  Write('EigDecompose/EigDecomposeS (real double/single) backend: ');
-  {$IFDEF PUREPASCAL}
-  WriteLn('PUREPASCAL (PurePascalEigHqr2/PurePascalEigHqr2S)');
+  Write('LinearSolve (complex single) backend: ');
+  {$IFDEF HAVE_LAPACKE}
+  WriteLn('library-backed (LAPACKE_cgetrs/cgesv) - note: no Accelerate ',
+    'branch exists here even when HAVE_LAPACKE is undefined (Accelerate''s ',
+    'cgetrs_ has the same known crash bug - see cblas.pas), unlike Invert above');
   {$ELSE}
+  WriteLn('PUREPASCAL (PurePascalLUC/PurePascalLUSolveC) - no Accelerate ',
+    'branch exists here (Accelerate''s cgetrs_ has the same known crash ',
+    'bug - see cblas.pas), unlike Invert above');
+  {$ENDIF}
+  Write('EigDecompose/EigDecomposeS (real double/single) backend: ');
+  {$IFDEF HAVE_LAPACKE}
   WriteLn('library-backed (LAPACKE_dgeev/sgeev)');
+  {$ELSE}
+  WriteLn('PUREPASCAL (PurePascalEigHqr2/PurePascalEigHqr2S)');
   {$ENDIF}
   Write('FFT/IFFT (complex double/single) backend: ');
   {$IFDEF HAVE_FFTW}
   WriteLn('library-backed (FFTW3 fftw_plan_dft_1d/fftwf_plan_dft_1d) - ',
-    'independent of PUREPASCAL above, see this program''s own header comment');
+    'independent of PUREPASCAL/HAVE_LAPACKE above, see this program''s own header comment');
   {$ELSE}
   WriteLn('PUREPASCAL (direct O(N^2) DFT - PPDirectDFT/PPDirectDFTS)');
   {$ENDIF}
