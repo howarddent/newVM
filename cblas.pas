@@ -14,6 +14,21 @@ const
 {$IFDEF WINDOWS}
   CBLASLib = 'openblas.dll';
 {$ELSE}
+  {$IFDEF HAVE_ARMPL}
+  // Arm Performance Libraries ships a standard CBLAS interface (bit-identical
+  // cblas_* symbol names/signatures to OpenBLAS, including complex alpha/beta
+  // passed by pointer) via its LP64 (32-bit int) shared library, matching
+  // this codebase's Integer/longint N/incX/incY parameters the same way
+  // OpenBLAS's own default build does - see newvmconfigure.lpr for how
+  // HAVE_ARMPL gets detected. Preferred over OpenBLAS whenever both are
+  // present (unlike the Accelerate case below, which defers to OpenBLAS) -
+  // ArmPL is built to target the actual host AArch64 core, not a generic/
+  // runtime-dispatched kernel set, so it's the better default when found.
+  // Requires /opt/arm/armpl_*/lib (or wherever it was installed) to be on
+  // the dynamic linker's search path - ArmPL's own installer does not add
+  // this itself (see the ld.so.conf.d entry added alongside the install).
+  CBLASLib = 'libarmpl_lp64.so';
+  {$ELSE}
   {$IF DEFINED(DARWIN) AND DEFINED(HAVE_ACCELERATE) AND NOT DEFINED(HAVE_OPENBLAS)}
   // Apple's Accelerate framework exposes a standard, symbol-compatible
   // CBLAS interface (same cblas_* names/signatures OpenBLAS provides,
@@ -27,6 +42,7 @@ const
   CBLASLib = '/System/Library/Frameworks/Accelerate.framework/Accelerate';
   {$ELSE}
   CBLASLib = 'libopenblas.'+sharedsuffix;
+  {$ENDIF}
   {$ENDIF}
 {$ENDIF}
 

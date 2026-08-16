@@ -504,7 +504,7 @@ end;
 procedure TVMobjC.Id;
 const
   s : string = 'Routine Id :';
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
 var
   i, j : TDimC;
 begin
@@ -632,7 +632,7 @@ const
   this codebase (same bug as newVMComplex.pas's LinearSolveZ hits with
   zgetrs_). This stays on PurePascalLUC/PurePascalLUSolveC unconditionally
   until that's resolved. }
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
 begin
   assert(A.Cols = A.Rows,s+'Matrix A must be square');
   assert(A.Rows = B.Rows, s+'Matrix A and B have incompatible dimensions');
@@ -681,7 +681,7 @@ var
   LAPACKE_cgetri (inverse from the LU factors), on a CopyObjC scratch
   buffer - both LAPACKE calls overwrite their input matrix in place,
   so A itself is left untouched. }
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   {$IFDEF HAVE_ACCELERATE}
 { Accelerate-backed: raw Fortran cgetrf_/cgetri_ (see cblas.pas) - no
   LAPACKE row-major wrapper available. Same transpose-symmetry rationale
@@ -838,7 +838,7 @@ var
   info, i, sign : integer;
   scratch : TVMobjC;
   d : TComplex8;
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   {$IFDEF HAVE_ACCELERATE}
 var
   n : integer;
@@ -848,7 +848,7 @@ begin
   assert(A.Cols = A.Rows, s+'Matrix A must be square');
   scratch := CopyObjC(A);
   setlength(ipiv, A.rows);
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   {$IFDEF HAVE_ACCELERATE}
   { See newVM.pas's Det / InvertC above for the transpose-invariance
     rationale (det(A)=det(A^T), regular transpose) - identical here,
@@ -1794,7 +1794,7 @@ begin
 
   //jobvl = 'N' : left eigenvectors not requested (vl unused -> nil, ldvl=n is a harmless placeholder)
   //jobvr = 'V' : right eigenvectors requested, returned in packed real form in vr
-{$IFDEF PUREPASCAL}
+{$IFNDEF HAVE_LAPACKE}
   //PurePascalEigHqr2S - see its own header comment above - fills wr/wi/vr in
   //exactly the same packed real/imaginary-column-pair convention LAPACKE_sgeev
   //uses below, so the unpacking loop after this IFDEF is unchanged either way.
@@ -2239,6 +2239,7 @@ var
   nc : integer;
 {$IFDEF HAVE_FFTW}
   plan : fftw_plan;
+  Nd : Double;
 {$ELSE}
   full, outc : array of TComplex8;
   k : Integer;
@@ -2255,7 +2256,13 @@ begin
   assert(plan<>nil, s+'fftwf_plan_dft_c2r_1d failed');
   fftwf_execute_dft_c2r(plan, PComplex8(@A.FData[0]), result.DataPtr);
   fftwf_destroy_plan(plan);
-  ippsDivC_32f_I(N, result.DataPtr, N);   //normalize, matching FFT_C2R(FFT_R2C(x), N) = x
+  assert(Assigned(cblas_sscal), s+'OpenBLAS not available on this machine - FFT_C2R normalization has no PUREPASCAL fallback');
+  //Divide via an explicit Double intermediate (Nd), not "1.0/N" directly -
+  //see newVMComplex.pas's FFT_C2R for the full rationale (a confirmed
+  //FPC/AArch64 codegen bug: "1.0/IntegerExpr" silently loses precision to
+  //~single, even though "1.0/Nd" with Nd already Double is fully precise).
+  Nd := N;
+  cblas_sscal(N, 1.0/Nd, result.DataPtr, 1);   //normalize, matching FFT_C2R(FFT_R2C(x), N) = x
 {$ELSE}
   //See newVMComplex.pas's FFT_C2R for the conjugate-symmetry rationale.
   SetLength(full, N);
@@ -2297,6 +2304,7 @@ var
   n, i : integer;
 {$IFDEF HAVE_FFTW}
   plan : fftw_plan;
+  Nd : Double;
 {$ENDIF}
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
@@ -2309,7 +2317,8 @@ begin
   fftwf_execute_dft(plan, PComplex8(@A.FData[0]), PComplex8(@result.FData[0]));
   fftwf_destroy_plan(plan);
   assert(Assigned(cblas_csscal), s+'OpenBLAS not available on this machine - IFFT normalization has no PUREPASCAL fallback');
-  cblas_csscal(n, 1.0/n, @result.FData[0], 1);  //normalize, matching IFFT(FFT(x)) = x
+  Nd := n;  //see newVMComplex.pas's FFT_C2R for why "1.0/n" (Integer) is unsafe here
+  cblas_csscal(n, 1.0/Nd, @result.FData[0], 1);  //normalize, matching IFFT(FFT(x)) = x
 {$ELSE}
   PPDirectDFTS(n, PComplex8(@A.FData[0]), PComplex8(@result.FData[0]), False);
   for i := 0 to n-1 do begin
