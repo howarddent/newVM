@@ -95,6 +95,7 @@ type
     // in grid-index units - see RecomputeXYTicks.
     FXTickPos, FYTickPos: TVMPlotDoubleArray;
     FXAxisMin, FXAxisMax, FYAxisMin, FYAxisMax: Double;
+    FZAxisMin, FZAxisMax: Double;
     FLightX, FLightY: Double;
     FTexturesBuilt: Boolean;
     FTitleTex, FXAxisTitleTex, FYAxisTitleTex, FZAxisTitleTex: TVMPlotTextTexture;
@@ -111,6 +112,8 @@ type
     procedure SetXAxisMax(AValue: Double);
     procedure SetYAxisMin(AValue: Double);
     procedure SetYAxisMax(AValue: Double);
+    procedure SetZAxisMin(AValue: Double);
+    procedure SetZAxisMax(AValue: Double);
     procedure SetLightX(AValue: Double);
     procedure SetLightY(AValue: Double);
     procedure RecomputeXYTicks;
@@ -170,6 +173,32 @@ type
     property XAxisMax: Double read FXAxisMax write SetXAxisMax;
     property YAxisMin: Double read FYAxisMin write SetYAxisMin;
     property YAxisMax: Double read FYAxisMax write SetYAxisMax;
+    // Z defaults to auto-fit: SetData rescales whatever range the CURRENT
+    // matrix's own values happen to span to the fixed on-screen height
+    // every single call (see SetData's own comment) - fine for a static
+    // plot, but for data whose value range itself evolves over many SetData
+    // calls (an animated simulation, not just a one-shot surface), that
+    // means the on-screen position of any particular DATA value - most
+    // noticeably 0, e.g. a clamped-boundary simulation's own zero level -
+    // silently drifts as the range changes, even though the data at that
+    // value hasn't moved at all: reported from demos/Chebyshev/Wave2D_FPC,
+    // whose animated Laplacian solve keeps a mathematically pinned boundary
+    // (verified directly against the raw solution grid, not just the
+    // rendered plot) that nonetheless appeared to visibly drift once
+    // rendered, purely because the auto-fit range's midpoint moved as the
+    // wave's own min/max evolved. Setting ZAxisMin/ZAxisMax to a genuinely
+    // different pair (e.g. -1/1) switches to that fixed range instead - same
+    // "equal pair means unset" convention as XAxisMin/XAxisMax above, and
+    // like those, only takes effect from the next SetData call onward (there
+    // is no cached source matrix to re-rescale immediately from just the
+    // property setters - set these once before the first SetData call, as
+    // XAxisMin/XAxisMax are already typically used, rather than expecting a
+    // change mid-animation to retroactively affect an already-rendered
+    // frame). Values outside the fixed range simply render outside the
+    // usual [-ZScale/2,+ZScale/2] box rather than being clamped - consistent
+    // with there being no such clamping for X/Y either.
+    property ZAxisMin: Double read FZAxisMin write SetZAxisMin;
+    property ZAxisMax: Double read FZAxisMax write SetZAxisMax;
     // XY direction of the OpenGL "headlamp" light Paint sets up (see its own
     // comment for why it's a camera-relative directional light rather than
     // a scene-fixed one) - each roughly -1..1, matching whatever a
@@ -394,6 +423,20 @@ begin
   Invalidate;
 end;
 
+procedure TVMPlot3D.SetZAxisMin(AValue: Double);
+begin
+  if FZAxisMin = AValue then Exit;
+  FZAxisMin := AValue;
+  Invalidate;
+end;
+
+procedure TVMPlot3D.SetZAxisMax(AValue: Double);
+begin
+  if FZAxisMax = AValue then Exit;
+  FZAxisMax := AValue;
+  Invalidate;
+end;
+
 procedure TVMPlot3D.SetLightX(AValue: Double);
 begin
   if FLightX = AValue then Exit;
@@ -459,28 +502,37 @@ end;
 // scale. Also computes the X/Y/Z axis tick values (RecomputeXYTicks for X/Y
 // - column/row index by default, or the actual solution-domain coordinate
 // if XAxisMin/XAxisMax or YAxisMin/YAxisMax have been set to a genuine
-// range; Z always from M's actual value range, there being no equivalent
-// "index" reading for it). Ported from uplot3dmain.pas's BuildSurface,
+// range; Z from M's own actual value range by default, or from
+// ZAxisMin/ZAxisMax when THAT'S been set to a genuine range instead - see
+// ZAxisMin's own property comment for why a fixed range matters for
+// animated data specifically). Ported from uplot3dmain.pas's BuildSurface,
 // renamed to SetData for parity with
 // TVMPlot2D's public entry point.
 procedure TVMPlot3D.SetData(const M: TVMobj);
 var
   r, c: Integer;
-  ZRange, v, dxWorld, dyWorld: Double;
+  ZRange, v, dxWorld, dyWorld, DataZMin, DataZMax: Double;
 begin
   FRows := M.Rows;
   FCols := M.Cols;
   SetLength(FVerts, FRows, FCols);
 
-  FZMin := M[0, 0]; FZMax := M[0, 0];
+  DataZMin := M[0, 0]; DataZMax := M[0, 0];
   for r := 0 to FRows - 1 do
     for c := 0 to FCols - 1 do begin
       v := M[r, c];
-      if v < FZMin then FZMin := v;
-      if v > FZMax then FZMax := v;
+      if v < DataZMin then DataZMin := v;
+      if v > DataZMax then DataZMax := v;
     end;
+  if FZAxisMin <> FZAxisMax then begin
+    FZMin := FZAxisMin;
+    FZMax := FZAxisMax;
+  end else begin
+    FZMin := DataZMin;
+    FZMax := DataZMax;
+  end;
   ZRange := FZMax - FZMin;
-  if ZRange = 0 then ZRange := 1;   // guard a constant matrix
+  if ZRange = 0 then ZRange := 1;   // guard a constant matrix (or a degenerate fixed range)
 
   dxWorld := WorldSize / (FCols - 1);
   dyWorld := WorldSize / (FRows - 1);

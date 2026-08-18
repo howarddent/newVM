@@ -272,6 +272,23 @@ function DST4(const A: TVMobj): TVMobj; overload;  //FFTW_RODFT11 (self-inverse,
 
 implementation
 
+type
+  // One cached FFTW plan per distinct (vector length, r2r kind) - see
+  // r2rTransform's own comment for why this exists and why it's safe to
+  // reuse a plan across calls with different in/out buffers.
+  TFFTWPlanCacheEntry = record
+    N : Integer;
+    Kind : TFFTW_r2r_kind;
+    Plan : fftw_plan;
+  end;
+
+var
+  // Guards both FFTWPlanCache itself and FFTW plan creation in
+  // r2rTransform - see that function's own comment for why this is needed
+  // (FFTW's planner is not thread-safe, unlike fftw_execute_r2r itself).
+  FFTWPlanLock : TRTLCriticalSection;
+  FFTWPlanCache : array of TFFTWPlanCacheEntry;
+
 function calcoffset(r, c, cols: TDim): integer;
 begin
   result := r*cols+c;
@@ -1510,6 +1527,8 @@ var
   n : integer;
 {$IFDEF HAVE_FFTW}
   plan : fftw_plan;
+  i : Integer;
+  Found : Boolean;
 {$ENDIF}
 begin
   assert((A.Rows=1) or (A.Cols=1), s+'A must be a vector (Rows=1 or Cols=1)');
@@ -1517,10 +1536,56 @@ begin
   result := TVMobj.Create(A.Rows, A.Cols);
 {$IFDEF HAVE_FFTW}
   assert(Assigned(fftw_plan_r2r_1d), s+'FFTW3 (double) library not loaded');
-  plan := fftw_plan_r2r_1d(n, A.DataPtr, result.DataPtr, kind, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
-  assert(plan<>nil, s+'fftw_plan_r2r_1d failed');
+  // FFTW's planner mutates FFTW's own global/static state and is NOT
+  // thread-safe by default - only fftw_execute_r2r on an already-built plan
+  // is documented safe to call concurrently from multiple threads (with
+  // each thread using its own distinct in/out buffers). A first version of
+  // this fix built and destroyed a fresh plan on every single call, just
+  // serializing the create/destroy pair under FFTWPlanLock - correct, but
+  // once a caller fans DCT1 out across many worker threads (e.g.
+  // demos/Chebyshev/Wave2D_FPC's row-parallel Chebyshev differentiation, on
+  // a 24-thread machine), that lock became heavily contended and plan
+  // creation/destruction itself turned out to dominate the cost per call -
+  // measured as several times SLOWER end-to-end than the original
+  // single-threaded, lock-free code, not faster. Fixed by caching one plan
+  // per distinct (n, kind) in FFTWPlanCache instead of rebuilding one every
+  // call: built once (under the lock) the first time a given (n, kind) is
+  // requested, then reused - executed concurrently, lock-free - by every
+  // later call for that size/kind. FFTW_UNALIGNED is included in the
+  // planning flags specifically to make this safe: without it, FFTW only
+  // guarantees a plan's "new-array execute" functions (fftw_execute_r2r
+  // with different in/out pointers than the plan was built with, which
+  // every cache-hit call here does) for arrays with the same alignment as
+  // the ones the plan was originally built against - FPC's own dynamic
+  // array allocator gives no such alignment guarantee across independently
+  // allocated TVMobj buffers, unlike fftw_malloc'd memory. Never destroyed
+  // (no safe/useful point to invalidate a cache entry - the distinct
+  // (n, kind) combinations in practice are bounded by the calling code's
+  // own variety, not by how many times r2rTransform is called), which
+  // matches every other cross-call FFTW resource in this codebase (the
+  // library itself is never fftw_cleanup()'d either).
+  Found := False;
+  EnterCriticalSection(FFTWPlanLock);
+  try
+    for i := 0 to High(FFTWPlanCache) do
+      if (FFTWPlanCache[i].N = n) and (FFTWPlanCache[i].Kind = kind) then begin
+        plan := FFTWPlanCache[i].Plan;
+        Found := True;
+        break;
+      end;
+    if not Found then begin
+      plan := fftw_plan_r2r_1d(n, A.DataPtr, result.DataPtr, kind,
+        FFTW_ESTIMATE or FFTW_PRESERVE_INPUT or FFTW_UNALIGNED);
+      assert(plan<>nil, s+'fftw_plan_r2r_1d failed');
+      SetLength(FFTWPlanCache, Length(FFTWPlanCache)+1);
+      FFTWPlanCache[High(FFTWPlanCache)].N := n;
+      FFTWPlanCache[High(FFTWPlanCache)].Kind := kind;
+      FFTWPlanCache[High(FFTWPlanCache)].Plan := plan;
+    end;
+  finally
+    LeaveCriticalSection(FFTWPlanLock);
+  end;
   fftw_execute_r2r(plan, A.DataPtr, result.DataPtr);
-  fftw_destroy_plan(plan);
 {$ELSE}
   PPr2rTransform(n, A.DataPtr, result.DataPtr, kind);
 {$ENDIF}
@@ -1566,4 +1631,8 @@ begin
   result := r2rTransform(A, FFTW_RODFT11);
 end;
 
+initialization
+  InitCriticalSection(FFTWPlanLock);
+finalization
+  DoneCriticalSection(FFTWPlanLock);
 end.
