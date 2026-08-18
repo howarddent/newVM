@@ -43,9 +43,19 @@
         <UnitName Value="uSDRMain"/>
       </Unit>
       <Unit>
+        <Filename Value="uSDRDevice.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="uSDRDevice"/>
+      </Unit>
+      <Unit>
         <Filename Value="uHackRF.pas"/>
         <IsPartOfProject Value="True"/>
         <UnitName Value="uHackRF"/>
+      </Unit>
+      <Unit>
+        <Filename Value="uRTLSDR.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="uRTLSDR"/>
       </Unit>
       <Unit>
         <Filename Value="../Graphs/uVMPlotStack.pas"/>

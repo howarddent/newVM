@@ -3,8 +3,9 @@ unit uHackRF;
 {*******************************************************************************
 
      Runtime (dlopen-based) binding to libhackrf, plus THackRFDevice - a
-     thin wrapper that turns its background-thread RX callback into
-     epochs of complex IQ (TVMobjZ) a GUI timer can pull from safely.
+     TSDRDevice (uSDRDevice.pas) implementation that turns HackRF's
+     background-thread RX callback into epochs of complex IQ (TVMobjZ) a
+     GUI timer can pull from safely.
 
      WHY DLOPEN INSTEAD OF LINK-TIME EXTERNAL:
      Same rationale as fftw3.pas - on this development machine
@@ -34,19 +35,23 @@ unit uHackRF;
      hackrf_start_rx's callback runs on libhackrf's own libusb thread,
      not the GUI thread - it must return quickly and must never touch
      LCL/OpenGL state directly. OnRawData (invoked from that thread via
-     the module-level cdecl HackRFRxCallback) only locks a
-     TCriticalSection and copies raw bytes into a fixed-size ring
-     buffer; TryReadEpoch (called from the GUI thread's own TTimer) is
-     the only other thing that touches the ring, under the same lock.
-     A full ring is simply overwritten (oldest unread bytes lost)
-     rather than ever blocking the USB thread - a live spectrum display
-     only ever wants the most recent data anyway. TryReadEpoch goes
-     further: if more than one whole epoch is backlogged, it skips
-     forward to the newest one rather than draining oldest-first, so
-     the on-screen spectrum stays live instead of lagging behind
-     real time as the GUI timer's ~30Hz cadence falls behind the
-     ~2400 epochs/second a full 20Msps stream of 8192-sample epochs
-     would otherwise produce.
+     the module-level cdecl HackRFRxCallback) only writes into a
+     TSDRRingBuffer (uSDRDevice.pas - lock-protected internally);
+     TryReadEpoch (called from the GUI thread's own TTimer) is the only
+     other thing that touches it. See TSDRRingBuffer's own header
+     comment for the "overwrite oldest rather than block the producer,
+     skip forward to the newest epoch rather than lag" rationale this
+     was originally written for and now shares with uRTLSDR.pas.
+
+     GAIN MODEL:
+     HackRF's three independent gain controls (LNA, VGA, RF amp) are
+     exposed via Capabilities.GainStages, in that order, rather than as
+     named methods - SetGain(StageIndex, Value) dispatches on
+     StageIndex, matching the generic TSDRDevice interface uSDRMain.pas
+     drives its capability-adaptive UI from (see that unit's own
+     comment). StageIndex 0/1 (LNA/VGA) are gkContinuous with HackRF's
+     real 8dB/2dB step granularity; StageIndex 2 (RF amp) is gkBoolean
+     (Value 0/1).
 
 *******************************************************************************}
 
@@ -55,7 +60,7 @@ unit uHackRF;
 interface
 
 uses
-  Classes, SysUtils, SyncObjs, DynLibs, newVMComplex;
+  Classes, SysUtils, DynLibs, newVMComplex, uSDRDevice;
 
 const
   {$IFDEF WINDOWS}
@@ -125,50 +130,30 @@ var
 
 type
   { THackRFDevice }
-  THackRFDevice = class
+  THackRFDevice = class(TSDRDevice)
   private
     FDevice: Phackrf_device;
-    FOpen: Boolean;
-    FStreaming: Boolean;
-    FCenterFreqHz: QWord;
-    FSampleRateHz: Double;
-    FLastError: string;
-
-    FRing: array of Byte;
-    FWriteIdx, FReadIdx: Integer;
-    FFill: Integer;   // bytes currently held, 0..HackRFRingBytes
-    FLock: TCriticalSection;
+    FRing: TSDRRingBuffer;
 
     function CallFailed(RC: Integer; const Routine: string): Boolean;
   public
     constructor Create;
     destructor Destroy; override;
 
-    function Open: Boolean;
-    procedure Close;
+    function Open: Boolean; override;
+    procedure Close; override;
 
-    function SetFrequencyHz(Hz: QWord): Boolean;
-    function SetSampleRateHz(Hz: Double): Boolean;
-    function SetLNAGain(dB: LongWord): Boolean;
-    function SetVGAGain(dB: LongWord): Boolean;
-    function SetAmpEnable(Enable: Boolean): Boolean;
+    function SetFrequencyHz(Hz: QWord): Boolean; override;
+    function SetSampleRateHz(Hz: Double): Boolean; override;
+    function SetGain(StageIndex: Integer; Value: Double): Boolean; override;
 
-    function StartRX: Boolean;
-    function StopRX: Boolean;
+    function StartRX: Boolean; override;
+    function StopRX: Boolean; override;
 
     // Called only from HackRFRxCallback, on libhackrf's own USB thread.
     procedure OnRawData(Buf: PByte; Len: Integer);
 
-    // Called only from the GUI thread. Returns True and fills IQ (a
-    // fresh (1,N) TVMobjZ, normalised to [-1,1) per component) iff a
-    // full N-sample epoch was available.
-    function TryReadEpoch(N: Integer; out IQ: TVMobjZ): Boolean;
-
-    property IsOpen: Boolean read FOpen;
-    property IsStreaming: Boolean read FStreaming;
-    property CenterFreqHz: QWord read FCenterFreqHz;
-    property SampleRateHz: Double read FSampleRateHz;
-    property LastError: string read FLastError;
+    function TryReadEpoch(N: Integer; out IQ: TVMobjZ): Boolean; override;
   end;
 
 implementation
@@ -229,20 +214,43 @@ end;
 constructor THackRFDevice.Create;
 begin
   inherited Create;
-  SetLength(FRing, HackRFRingBytes);
-  FWriteIdx := 0;
-  FReadIdx := 0;
-  FFill := 0;
-  FLock := TCriticalSection.Create;
+  FRing := TSDRRingBuffer.Create(HackRFRingBytes);
   FCenterFreqHz := 95000000;
   FSampleRateHz := 20000000.0;
+
+  FCapabilities.DeviceName := 'HackRF';
+  FCapabilities.MinFreqHz := 1.0e6;
+  FCapabilities.MaxFreqHz := 6.0e9;
+  SetLength(FCapabilities.SampleRates, 6);
+  FCapabilities.SampleRates[0] := 2.0e6;
+  FCapabilities.SampleRates[1] := 4.0e6;
+  FCapabilities.SampleRates[2] := 8.0e6;
+  FCapabilities.SampleRates[3] := 10.0e6;
+  FCapabilities.SampleRates[4] := 16.0e6;
+  FCapabilities.SampleRates[5] := 20.0e6;
+  FCapabilities.DefaultSampleRateHz := 20.0e6;
+  FCapabilities.DefaultFreqHz := 95000000;
+
+  SetLength(FCapabilities.GainStages, 3);
+  FCapabilities.GainStages[0].Name := 'LNA Gain';
+  FCapabilities.GainStages[0].Kind := gkContinuous;
+  FCapabilities.GainStages[0].Min := 0;
+  FCapabilities.GainStages[0].Max := 40;
+  FCapabilities.GainStages[0].Step := 8;
+  FCapabilities.GainStages[1].Name := 'VGA Gain';
+  FCapabilities.GainStages[1].Kind := gkContinuous;
+  FCapabilities.GainStages[1].Min := 0;
+  FCapabilities.GainStages[1].Max := 62;
+  FCapabilities.GainStages[1].Step := 2;
+  FCapabilities.GainStages[2].Name := 'RF Amp';
+  FCapabilities.GainStages[2].Kind := gkBoolean;
 end;
 
 destructor THackRFDevice.Destroy;
 begin
   if FStreaming then StopRX;
-  if FOpen then Close;
-  FLock.Free;
+  if FIsOpen then Close;
+  FRing.Free;
   inherited Destroy;
 end;
 
@@ -262,7 +270,7 @@ var
   RC: Integer;
 begin
   Result := False;
-  if FOpen then begin Result := True; Exit; end;
+  if FIsOpen then begin Result := True; Exit; end;
 
   if not HackRFLibLoaded then begin
     FLastError := 'libhackrf runtime library (' + HackRFLib + ') not found';
@@ -279,24 +287,24 @@ begin
   RC := hackrf_open(FDevice);
   if CallFailed(RC, 'hackrf_open') then Exit;
 
-  FOpen := True;
+  FIsOpen := True;
   Result := True;
 end;
 
 procedure THackRFDevice.Close;
 begin
   if FStreaming then StopRX;
-  if FOpen then begin
+  if FIsOpen then begin
     hackrf_close(FDevice);
     FDevice := nil;
-    FOpen := False;
+    FIsOpen := False;
   end;
 end;
 
 function THackRFDevice.SetFrequencyHz(Hz: QWord): Boolean;
 begin
   Result := False;
-  if not FOpen then begin FLastError := 'device not open'; Exit; end;
+  if not FIsOpen then begin FLastError := 'device not open'; Exit; end;
   if CallFailed(hackrf_set_freq(FDevice, Hz), 'hackrf_set_freq') then Exit;
   FCenterFreqHz := Hz;
   Result := True;
@@ -305,34 +313,23 @@ end;
 function THackRFDevice.SetSampleRateHz(Hz: Double): Boolean;
 begin
   Result := False;
-  if not FOpen then begin FLastError := 'device not open'; Exit; end;
+  if not FIsOpen then begin FLastError := 'device not open'; Exit; end;
   if CallFailed(hackrf_set_sample_rate(FDevice, Hz), 'hackrf_set_sample_rate') then Exit;
   FSampleRateHz := Hz;
   Result := True;
 end;
 
-function THackRFDevice.SetLNAGain(dB: LongWord): Boolean;
+function THackRFDevice.SetGain(StageIndex: Integer; Value: Double): Boolean;
 begin
   Result := False;
-  if not FOpen then begin FLastError := 'device not open'; Exit; end;
-  Result := not CallFailed(hackrf_set_lna_gain(FDevice, dB), 'hackrf_set_lna_gain');
-end;
-
-function THackRFDevice.SetVGAGain(dB: LongWord): Boolean;
-begin
-  Result := False;
-  if not FOpen then begin FLastError := 'device not open'; Exit; end;
-  Result := not CallFailed(hackrf_set_vga_gain(FDevice, dB), 'hackrf_set_vga_gain');
-end;
-
-function THackRFDevice.SetAmpEnable(Enable: Boolean): Boolean;
-var
-  V: Byte;
-begin
-  Result := False;
-  if not FOpen then begin FLastError := 'device not open'; Exit; end;
-  if Enable then V := 1 else V := 0;
-  Result := not CallFailed(hackrf_set_amp_enable(FDevice, V), 'hackrf_set_amp_enable');
+  if not FIsOpen then begin FLastError := 'device not open'; Exit; end;
+  case StageIndex of
+    0: Result := not CallFailed(hackrf_set_lna_gain(FDevice, Round(Value)), 'hackrf_set_lna_gain');
+    1: Result := not CallFailed(hackrf_set_vga_gain(FDevice, Round(Value)), 'hackrf_set_vga_gain');
+    2: Result := not CallFailed(hackrf_set_amp_enable(FDevice, Ord(Value <> 0)), 'hackrf_set_amp_enable');
+  else
+    FLastError := 'unknown gain stage ' + IntToStr(StageIndex);
+  end;
 end;
 
 // Sets the baseband filter to the widest bandwidth not exceeding the
@@ -345,10 +342,10 @@ var
   BW: LongWord;
 begin
   Result := False;
-  if not FOpen then begin FLastError := 'device not open'; Exit; end;
+  if not FIsOpen then begin FLastError := 'device not open'; Exit; end;
   if FStreaming then begin Result := True; Exit; end;
 
-  FWriteIdx := 0; FReadIdx := 0; FFill := 0;
+  FRing.Reset;
 
   BW := hackrf_compute_baseband_filter_bw_round_down_lt(Round(FSampleRateHz));
   if CallFailed(hackrf_set_baseband_filter_bandwidth(FDevice, BW), 'hackrf_set_baseband_filter_bandwidth') then Exit;
@@ -368,171 +365,28 @@ begin
 end;
 
 procedure THackRFDevice.OnRawData(Buf: PByte; Len: Integer);
-var
-  Overflow, FirstPart, RingLen: Integer;
 begin
-  RingLen := Length(FRing);
-  FLock.Enter;
-  try
-    if Len >= RingLen then begin
-      // More data arrived in one callback than the whole ring holds -
-      // keep only its most recent RingLen bytes.
-      Move((Buf + (Len - RingLen))^, FRing[0], RingLen);
-      FWriteIdx := 0;
-      FReadIdx := 0;
-      FFill := RingLen;
-      Exit;
-    end;
-
-    FirstPart := RingLen - FWriteIdx;
-    if FirstPart > Len then FirstPart := Len;
-    Move(Buf^, FRing[FWriteIdx], FirstPart);
-    if Len > FirstPart then
-      Move((Buf + FirstPart)^, FRing[0], Len - FirstPart);
-    FWriteIdx := (FWriteIdx + Len) mod RingLen;
-
-    FFill := FFill + Len;
-    if FFill > RingLen then begin
-      // Ring is full - drop the oldest (Overflow) unread bytes rather
-      // than blocking this USB thread.
-      Overflow := FFill - RingLen;
-      FReadIdx := (FReadIdx + Overflow) mod RingLen;
-      FFill := RingLen;
-    end;
-  finally
-    FLock.Leave;
-  end;
+  FRing.Write(Buf, Len);
 end;
 
 function THackRFDevice.TryReadEpoch(N: Integer; out IQ: TVMobjZ): Boolean;
 const
   s = 'THackRFDevice.TryReadEpoch : ';
 var
-  NeedBytes, Epochs, SkipBytes, RingLen, Tail, i: Integer;
-  Tmp: array of Byte;
-  Re, Im, SumRe, SumIm, MeanRe, MeanIm: Double;
-  Iv, Qv, Pii, Piq, Pqq, g, k: Double;
+  Tmp: TSDRByteArray;
+  i: Integer;
 begin
   assert(N > 0, s + 'N must be positive');
-  NeedBytes := N * 2;   // 2 bytes (I,Q) per complex sample
   Result := False;
-  RingLen := Length(FRing);
-
-  FLock.Enter;
-  try
-    if FFill < NeedBytes then Exit;
-
-    // Skip forward to the newest full epoch if more than one is
-    // backlogged, so the display tracks real time instead of lagging.
-    Epochs := FFill div NeedBytes;
-    if Epochs > 1 then begin
-      SkipBytes := (Epochs - 1) * NeedBytes;
-      FReadIdx := (FReadIdx + SkipBytes) mod RingLen;
-      FFill := FFill - SkipBytes;
-    end;
-
-    SetLength(Tmp, NeedBytes);
-    if FReadIdx + NeedBytes <= RingLen then
-      Move(FRing[FReadIdx], Tmp[0], NeedBytes)
-    else begin
-      Tail := RingLen - FReadIdx;
-      Move(FRing[FReadIdx], Tmp[0], Tail);
-      Move(FRing[0], Tmp[Tail], NeedBytes - Tail);
-    end;
-    FReadIdx := (FReadIdx + NeedBytes) mod RingLen;
-    FFill := FFill - NeedBytes;
-  finally
-    FLock.Leave;
-  end;
+  if not FRing.TryReadNewest(N * 2, Tmp) then Exit;
 
   // Interleaved signed 8-bit I/Q, confirmed by the standalone probe -
-  // see this unit's header comment. Normalised to roughly [-1,1), and
-  // accumulated here (SumRe/SumIm) so the DC-removal pass below can
-  // reuse this same loop's work rather than summing over IQ again.
+  // see this unit's header comment. Normalised to roughly [-1,1).
   IQ := TVMobjZ.Create(1, N);
-  SumRe := 0; SumIm := 0;
-  for i := 0 to N - 1 do begin
-    Re := ShortInt(Tmp[i * 2]) / 128.0;
-    Im := ShortInt(Tmp[i * 2 + 1]) / 128.0;
-    IQ[0, i] := Cplx(Re, Im);
-    SumRe := SumRe + Re;
-    SumIm := SumIm + Im;
-  end;
+  for i := 0 to N - 1 do
+    IQ[0, i] := Cplx(ShortInt(Tmp[i * 2]) / 128.0, ShortInt(Tmp[i * 2 + 1]) / 128.0);
 
-  // Remove DC offset: HackRF is a direct-conversion (zero-IF) receiver,
-  // so any LO leakage/ADC bias shows up as a constant offset in the raw
-  // IQ stream - which an FFT concentrates entirely into the bin at 0Hz
-  // baseband, i.e. exactly the tuned centre frequency once the display
-  // shifts the spectrum into ascending-frequency order. That reads as a
-  // large, permanent "signal" sitting on the LO frequency regardless of
-  // what's actually being received. Subtracting each epoch's own mean
-  // I/Q before windowing/FFT removes it with no calibration step, and
-  // naturally tracks any drift in the offset itself (temperature, gain
-  // changes) since it's recomputed fresh every epoch.
-  // Also accumulates Pii/Piq (sum of I*I and I*Q over the now DC-free
-  // samples) in the same pass, for the IQ-imbalance correction below -
-  // no need for a separate summing loop over IQ.
-  MeanRe := SumRe / N;
-  MeanIm := SumIm / N;
-  Pii := 0; Piq := 0;
-  for i := 0 to N - 1 do begin
-    Iv := IQ[0, i].re - MeanRe;
-    Qv := IQ[0, i].im - MeanIm;
-    IQ[0, i] := Cplx(Iv, Qv);
-    Pii := Pii + Iv * Iv;
-    Piq := Piq + Iv * Qv;
-  end;
-
-  // Correct I/Q gain and phase imbalance: a zero-IF receiver whose I and
-  // Q channels aren't perfectly matched in amplitude and phase (HackRF's
-  // MAX2837 front-end included) mirrors every real signal about the
-  // tuned centre frequency - unlike the DC spike above, this "image"
-  // moves together with whatever real signal produced it rather than
-  // sitting at a fixed offset, which is how it was distinguished from a
-  // fixed internal spur here. Standard blind (no calibration signal
-  // needed) two-step fix, from Lyons' "Understanding Digital Signal
-  // Processing": first, Gram-Schmidt orthogonalise Q against I (removes
-  // the phase-imbalance component correlated with I - g is the
-  // projection of Q onto I, in units of I's own power); then rescale the
-  // orthogonalised Q back up to I's power (removes the amplitude
-  // imbalance). Recomputed fresh every epoch, same as the DC removal
-  // above, so it tracks any imbalance drift automatically. Guarded
-  // against near-silent epochs (Pii/Pqq ~ 0) where the estimate would be
-  // meaningless - those epochs pass through uncorrected rather than
-  // risking a division blowing the correction up.
-  //
-  // NOT A GENERAL HACKRF LIMITATION - ONE UNIT WAS FAULTY: at a 94.4MHz
-  // test tone (95MHz centre, 20Msps) on a first HackRF, this correction
-  // did NOT remove a same-amplitude image observed ~5.6MHz away, which
-  // tracked the real signal under retuning rather than sitting at a
-  // fixed offset from the centre frequency. That was originally taken to
-  // mean the image was entering upstream of the ADC via HackRF's
-  // sub-2.3GHz RFFC5071 upconversion mixer (used since 95MHz is below
-  // the MAX2837 transceiver's native band) - an architectural VHF
-  // limitation no amount of digital I/Q correction could reach. A
-  // second HackRF unit, same software, same settings, showed no such
-  // image at all - so the real cause was a defective/miscalibrated first
-  // unit (most likely that same RFFC5071 image-reject path, just broken
-  // on that specific device rather than inherent to the design). No
-  // code change follows from this: the DC and I/Q corrections above are
-  // still correct and worth keeping regardless, and there is nothing
-  // left to "fix" for a residual that turned out to be one unit's fault.
-  if Pii > 1e-9 then begin
-    g := Piq / Pii;
-    Pqq := 0;
-    for i := 0 to N - 1 do begin
-      Iv := IQ[0, i].re;
-      Qv := IQ[0, i].im - g * Iv;
-      IQ[0, i] := Cplx(Iv, Qv);
-      Pqq := Pqq + Qv * Qv;
-    end;
-    if Pqq > 1e-9 then begin
-      k := Sqrt(Pii / Pqq);
-      for i := 0 to N - 1 do
-        IQ[0, i] := Cplx(IQ[0, i].re, IQ[0, i].im * k);
-    end;
-  end;
-
+  CorrectIQEpoch(IQ);
   Result := True;
 end;
 
