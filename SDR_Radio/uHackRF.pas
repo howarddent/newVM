@@ -105,6 +105,7 @@ type
   Thackrf_set_lna_gain = function(device: Phackrf_device; value: LongWord): Integer; cdecl;
   Thackrf_set_vga_gain = function(device: Phackrf_device; value: LongWord): Integer; cdecl;
   Thackrf_set_amp_enable = function(device: Phackrf_device; value: Byte): Integer; cdecl;
+  Thackrf_set_antenna_enable = function(device: Phackrf_device; value: Byte): Integer; cdecl;
   Thackrf_set_baseband_filter_bandwidth = function(device: Phackrf_device; bandwidth_hz: LongWord): Integer; cdecl;
   Thackrf_compute_baseband_filter_bw_round_down_lt = function(sample_rate_hz: LongWord): LongWord; cdecl;
   Thackrf_error_name = function(errcode: Integer): PAnsiChar; cdecl;
@@ -122,6 +123,7 @@ var
   hackrf_set_lna_gain: Thackrf_set_lna_gain;
   hackrf_set_vga_gain: Thackrf_set_vga_gain;
   hackrf_set_amp_enable: Thackrf_set_amp_enable;
+  hackrf_set_antenna_enable: Thackrf_set_antenna_enable;
   hackrf_set_baseband_filter_bandwidth: Thackrf_set_baseband_filter_bandwidth;
   hackrf_compute_baseband_filter_bw_round_down_lt: Thackrf_compute_baseband_filter_bw_round_down_lt;
   hackrf_error_name: Thackrf_error_name;
@@ -146,6 +148,7 @@ type
     function SetFrequencyHz(Hz: QWord): Boolean; override;
     function SetSampleRateHz(Hz: Double): Boolean; override;
     function SetGain(StageIndex: Integer; Value: Double): Boolean; override;
+    function SetBoolOption(OptionIndex: Integer; Value: Boolean): Boolean; override;
 
     function StartRX: Boolean; override;
     function StopRX: Boolean; override;
@@ -181,6 +184,7 @@ begin
   Pointer(hackrf_set_lna_gain)                            := Load('hackrf_set_lna_gain');
   Pointer(hackrf_set_vga_gain)                            := Load('hackrf_set_vga_gain');
   Pointer(hackrf_set_amp_enable)                          := Load('hackrf_set_amp_enable');
+  Pointer(hackrf_set_antenna_enable)                      := Load('hackrf_set_antenna_enable');
   Pointer(hackrf_set_baseband_filter_bandwidth)           := Load('hackrf_set_baseband_filter_bandwidth');
   Pointer(hackrf_compute_baseband_filter_bw_round_down_lt) := Load('hackrf_compute_baseband_filter_bw_round_down_lt');
   Pointer(hackrf_error_name)                              := Load('hackrf_error_name');
@@ -244,6 +248,9 @@ begin
   FCapabilities.GainStages[1].Step := 2;
   FCapabilities.GainStages[2].Name := 'RF Amp';
   FCapabilities.GainStages[2].Kind := gkBoolean;
+
+  SetLength(FCapabilities.BoolOptions, 1);
+  FCapabilities.BoolOptions[0].Name := 'Bias-T (Antenna Power)';
 end;
 
 destructor THackRFDevice.Destroy;
@@ -329,6 +336,17 @@ begin
     2: Result := not CallFailed(hackrf_set_amp_enable(FDevice, Ord(Value <> 0)), 'hackrf_set_amp_enable');
   else
     FLastError := 'unknown gain stage ' + IntToStr(StageIndex);
+  end;
+end;
+
+function THackRFDevice.SetBoolOption(OptionIndex: Integer; Value: Boolean): Boolean;
+begin
+  Result := False;
+  if not FIsOpen then begin FLastError := 'device not open'; Exit; end;
+  case OptionIndex of
+    0: Result := not CallFailed(hackrf_set_antenna_enable(FDevice, Ord(Value)), 'hackrf_set_antenna_enable');
+  else
+    FLastError := 'unknown bool option ' + IntToStr(OptionIndex);
   end;
 end;
 

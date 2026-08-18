@@ -72,6 +72,7 @@ type
   { TForm1 }
 
   TForm1 = class(TForm)
+    BiasTCheckBox: TCheckBox;
     ConnectButton: TButton;
     ControlPanel: TPanel;
     FreqEdit: TFloatSpinEdit;
@@ -91,6 +92,7 @@ type
     ShowAxesCheckBox: TCheckBox;
     StartStopButton: TButton;
     StatusLabel: TLabel;
+    procedure BiasTCheckBoxChange(Sender: TObject);
     procedure ConnectButtonClick(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
@@ -288,16 +290,25 @@ begin
   if FDevice.IsOpen then FDevice.SetGain(2, Ord(GainStage2CheckBox.Checked));
 end;
 
-// Re-applies every currently-visible gain stage's control value to the
-// device - called once from StartStopButtonClick before starting RX, so
-// a device picks up whatever the user set the sliders/checkbox to before
-// pressing Start (mirroring the individual OnChange handlers, which only
-// apply live once already open/streaming).
+// Bias-T is a Capabilities.BoolOptions entry, not a gain stage (see
+// uSDRDevice.pas's own comment on why those are kept separate) - always
+// slot 0, since both current backends offer exactly one bool option each.
+procedure TForm1.BiasTCheckBoxChange(Sender: TObject);
+begin
+  if FDevice.IsOpen then FDevice.SetBoolOption(0, BiasTCheckBox.Checked);
+end;
+
+// Re-applies every currently-visible gain stage's/bool option's control
+// value to the device - called once from StartStopButtonClick before
+// starting RX, so a device picks up whatever the user set the
+// sliders/checkboxes to before pressing Start (mirroring the individual
+// OnChange handlers, which only apply live once already open/streaming).
 procedure TForm1.ApplyAllGains;
 begin
   if GainStage0TrackBar.Visible then GainStageTrackBarChanged(0, GainStage0Label, GainStage0TrackBar);
   if GainStage1TrackBar.Visible then GainStageTrackBarChanged(1, GainStage1Label, GainStage1TrackBar);
   if GainStage2CheckBox.Visible then FDevice.SetGain(2, Ord(GainStage2CheckBox.Checked));
+  if BiasTCheckBox.Visible then FDevice.SetBoolOption(0, BiasTCheckBox.Checked);
 end;
 
 // Rebuilds the whole control panel from FDevice.Capabilities - see this
@@ -350,6 +361,16 @@ begin
     GainStage2CheckBox.Checked := False;
     GainStage2CheckBox.Caption := Caps.GainStages[BooleanStage].Name;
   end;
+
+  // BoolOptions (bias-T etc) are independent of the gain-stage slots
+  // above - both current backends offer exactly one, so it's always
+  // slot 0 here; a future device with none simply hides the checkbox.
+  if Length(Caps.BoolOptions) > 0 then begin
+    BiasTCheckBox.Visible := True;
+    BiasTCheckBox.Checked := False;
+    BiasTCheckBox.Caption := Caps.BoolOptions[0].Name;
+  end else
+    BiasTCheckBox.Visible := False;
 end;
 
 procedure TForm1.ConnectButtonClick(Sender: TObject);
@@ -365,6 +386,7 @@ begin
     GainStage0Label.Visible := False; GainStage0TrackBar.Visible := False;
     GainStage1Label.Visible := False; GainStage1TrackBar.Visible := False;
     GainStage2CheckBox.Visible := False;
+    BiasTCheckBox.Visible := False;
     RateCombo.Items.Clear;
     Caption := 'newVM SDR Spectrum Analyser';
     StatusLabel.Caption := 'Not connected';

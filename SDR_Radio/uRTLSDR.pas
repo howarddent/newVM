@@ -109,6 +109,7 @@ type
   Trtlsdr_read_async = function(dev: Prtlsdr_dev; cb: Trtlsdr_read_async_cb_t; ctx: Pointer;
     buf_num: LongWord; buf_len: LongWord): Integer; cdecl;
   Trtlsdr_cancel_async = function(dev: Prtlsdr_dev): Integer; cdecl;
+  Trtlsdr_set_bias_tee = function(dev: Prtlsdr_dev; on_: Integer): Integer; cdecl;
 
 var
   rtlsdr_get_device_count: Trtlsdr_get_device_count;
@@ -125,6 +126,7 @@ var
   rtlsdr_reset_buffer: Trtlsdr_reset_buffer;
   rtlsdr_read_async: Trtlsdr_read_async;
   rtlsdr_cancel_async: Trtlsdr_cancel_async;
+  rtlsdr_set_bias_tee: Trtlsdr_set_bias_tee;
 
   RTLSDRLibLoaded: Boolean = False;
 
@@ -148,6 +150,7 @@ type
     function SetFrequencyHz(Hz: QWord): Boolean; override;
     function SetSampleRateHz(Hz: Double): Boolean; override;
     function SetGain(StageIndex: Integer; Value: Double): Boolean; override;
+    function SetBoolOption(OptionIndex: Integer; Value: Boolean): Boolean; override;
 
     function StartRX: Boolean; override;
     function StopRX: Boolean; override;
@@ -184,6 +187,7 @@ begin
   Pointer(rtlsdr_reset_buffer)     := Load('rtlsdr_reset_buffer');
   Pointer(rtlsdr_read_async)       := Load('rtlsdr_read_async');
   Pointer(rtlsdr_cancel_async)     := Load('rtlsdr_cancel_async');
+  Pointer(rtlsdr_set_bias_tee)     := Load('rtlsdr_set_bias_tee');
 end;
 
 function InitializeRTLSDRLib: Boolean;
@@ -287,6 +291,14 @@ begin
   FCapabilities.SampleRates[7] := 3.2e6;
   FCapabilities.DefaultSampleRateHz := 2.4e6;
   FCapabilities.DefaultFreqHz := 95000000;
+
+  // Unlike GainStages, this doesn't need a live device to populate -
+  // librtlsdr has no "does this dongle actually have bias-T hardware"
+  // query, so it's simply always offered (as rtl_biast/most SDR
+  // software does too); on a dongle with no bias-T circuit the call
+  // just has no effect.
+  SetLength(FCapabilities.BoolOptions, 1);
+  FCapabilities.BoolOptions[0].Name := 'Bias-T (Antenna Power)';
 end;
 
 destructor TRTLSDRDevice.Destroy;
@@ -411,6 +423,17 @@ begin
     end;
   else
     FLastError := 'unknown gain stage ' + IntToStr(StageIndex);
+  end;
+end;
+
+function TRTLSDRDevice.SetBoolOption(OptionIndex: Integer; Value: Boolean): Boolean;
+begin
+  Result := False;
+  if not FIsOpen then begin FLastError := 'device not open'; Exit; end;
+  case OptionIndex of
+    0: Result := not CallFailed(rtlsdr_set_bias_tee(FDevice, Ord(Value)), 'rtlsdr_set_bias_tee');
+  else
+    FLastError := 'unknown bool option ' + IntToStr(OptionIndex);
   end;
 end;
 

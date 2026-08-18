@@ -19,6 +19,10 @@ unit uSDRDevice;
        for a boolean stage) in every case - turning a UI control's raw
        position into that value is the FORM's job (using a stage's own
        Kind/Min/Max/Step/DiscreteValues), not the device's.
+       TSDRBoolOption/BoolOptions/SetBoolOption is the same idea for a
+       simple on/off feature that isn't part of the gain chain (e.g.
+       bias-T antenna power) - kept as its own list rather than a fourth
+       gkBoolean gain stage, since it isn't one.
      - TSDRRingBuffer, the fixed-size byte ring with skip-to-newest-epoch
        behaviour originally written for THackRFDevice, now shared since
        both backends need the exact same "USB thread writes, GUI thread
@@ -55,6 +59,14 @@ type
     DiscreteValues: array of Double; // gkDiscreteList only (real units, e.g. dB)
   end;
 
+  // A simple on/off device feature that isn't part of the receiver's
+  // gain chain - e.g. bias-T antenna DC power - so it's kept separate
+  // from GainStages/SetGain (which are specifically about amplification
+  // stages) rather than folded into a fourth "gkBoolean" gain stage.
+  TSDRBoolOption = record
+    Name: string;
+  end;
+
   TSDRCapabilities = record
     DeviceName: string;
     MinFreqHz, MaxFreqHz: Double;
@@ -62,6 +74,7 @@ type
     DefaultSampleRateHz: Double;
     DefaultFreqHz: QWord;
     GainStages: array of TSDRGainStage;
+    BoolOptions: array of TSDRBoolOption;
   end;
 
   { TSDRDevice }
@@ -83,6 +96,8 @@ type
     // physical unit - dB for gkContinuous/gkDiscreteList, 0/1 for
     // gkBoolean (see this unit's own header comment).
     function SetGain(StageIndex: Integer; Value: Double): Boolean; virtual; abstract;
+    // OptionIndex indexes Capabilities.BoolOptions.
+    function SetBoolOption(OptionIndex: Integer; Value: Boolean): Boolean; virtual; abstract;
 
     function StartRX: Boolean; virtual; abstract;
     function StopRX: Boolean; virtual; abstract;
