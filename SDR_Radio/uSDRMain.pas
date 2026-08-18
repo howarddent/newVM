@@ -71,6 +71,8 @@ type
     LNAGainLabel: TLabel;
     LNATrackBar: TTrackBar;
     PeakDetectCheckBox: TCheckBox;
+    PeakThresholdLabel: TLabel;
+    PeakThresholdTrackBar: TTrackBar;
     RateCombo: TComboBox;
     RateLabel: TLabel;
     ResetViewButton: TButton;
@@ -86,6 +88,7 @@ type
     procedure FreqEditEditingDone(Sender: TObject);
     procedure LNATrackBarChange(Sender: TObject);
     procedure PeakDetectCheckBoxChange(Sender: TObject);
+    procedure PeakThresholdTrackBarChange(Sender: TObject);
     procedure ResetViewButtonClick(Sender: TObject);
     procedure ShowAxesCheckBoxChange(Sender: TObject);
     procedure StartStopButtonClick(Sender: TObject);
@@ -96,6 +99,7 @@ type
     FEpochTimer: TTimer;
     procedure EpochTimerTick(Sender: TObject);
     procedure UpdateFrequencyAxis;
+    procedure UpdatePeakThreshold;
     procedure ReportError(const Where: string);
   end;
 
@@ -157,6 +161,24 @@ begin
   FPlot.UseFrequencyAxis := True;
   FPlot.XAxisMin := (FDevice.CenterFreqHz - FDevice.SampleRateHz / 2) / 1e6;
   FPlot.XAxisMax := (FDevice.CenterFreqHz + FDevice.SampleRateHz / 2) / 1e6;
+end;
+
+// PeakThresholdTrackBar is a 0-100% slider, not an absolute dB value -
+// the spectrum's actual dB scale isn't calibrated (no per-gain-setting
+// dBm reference), so an absolute slider range would either clip every
+// peak out at one gain setting or show everything at another. Instead
+// this maps the % position through FPlot's own live auto-fit range
+// (CurrentYMin/CurrentYMax - added to uVMPlotStack.pas for exactly this)
+// into the absolute Value-axis units TVMPlotStack.PeakThreshold actually
+// wants. Called both from the slider's own OnChange and every epoch (see
+// EpochTimerTick) so the effective threshold keeps tracking the live
+// noise floor/dynamic range as they drift, without needing the slider
+// touched again.
+procedure TForm1.UpdatePeakThreshold;
+begin
+  FPlot.PeakThreshold := FPlot.CurrentYMin +
+    (PeakThresholdTrackBar.Position / 100) * (FPlot.CurrentYMax - FPlot.CurrentYMin);
+  PeakThresholdLabel.Caption := Format('Peak Threshold: %d%%', [PeakThresholdTrackBar.Position]);
 end;
 
 procedure TForm1.ConnectButtonClick(Sender: TObject);
@@ -273,6 +295,12 @@ end;
 procedure TForm1.PeakDetectCheckBoxChange(Sender: TObject);
 begin
   FPlot.ShowPeakLabels := PeakDetectCheckBox.Checked;
+  UpdatePeakThreshold;
+end;
+
+procedure TForm1.PeakThresholdTrackBarChange(Sender: TObject);
+begin
+  UpdatePeakThreshold;
 end;
 
 procedure TForm1.ResetViewButtonClick(Sender: TObject);
@@ -302,6 +330,11 @@ begin
     PowerSpec[0, k] := 10 * Log10(Shifted[0, k] + 1e-12);
 
   FPlot.AddGraph(PowerSpec);
+
+  // Recalibrate the % threshold against this epoch's just-updated
+  // auto-fit range - see UpdatePeakThreshold's own comment for why this
+  // runs every epoch rather than only when the slider moves.
+  if FPlot.ShowPeakLabels then UpdatePeakThreshold;
 end;
 
 end.
