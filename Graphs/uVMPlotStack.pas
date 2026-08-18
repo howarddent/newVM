@@ -1118,8 +1118,17 @@ begin
       if infront then DrawTextTexture(FXAxisTitleTex, sx, sy - 8, 0, 0.5, 1);
     end;
     if FYAxisTitle <> '' then begin
+      // Rotated 90 degrees (DrawTextTexture's AngleDeg, unused elsewhere
+      // in this unit - every other label stays horizontal) so the label
+      // runs parallel to the vertical Value axis, reading bottom-to-top -
+      // the conventional orientation for a side axis title (read by
+      // tilting your head to the left), rather than sideways-on
+      // horizontal text competing for width with the tick labels next to
+      // it. HAlign/VAlign stay centred (0.5,0.5): DrawTextTexture rotates
+      // the quad about the (already-centred) anchor point, so this
+      // remains centred on the axis either way.
       WorldToScreen(-HalfW * 1.25, 0, -HalfD, VW, VH, sx, sy, infront);
-      if infront then DrawTextTexture(FYAxisTitleTex, sx, sy, 0, 0.5, 0.5);
+      if infront then DrawTextTexture(FYAxisTitleTex, sx, sy, 90, 0.5, 0.5);
     end;
     if FZAxisTitle <> '' then begin
       WorldToScreen(-HalfW, 0, 0, VW, VH, sx, sy, infront);
