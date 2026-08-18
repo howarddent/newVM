@@ -182,6 +182,11 @@ type
     FTitleTex, FXAxisTitleTex, FYAxisTitleTex, FZAxisTitleTex: TVMPlotTextTexture;
     FXTickTex, FYTickTex, FZTickTex: array of TVMPlotTextTexture;
 
+    FShowPeakLabels: Boolean;
+    FHasPeak: Boolean;                          // True once UpdatePeakLabel finds a front slice to search
+    FPeakWX, FPeakWY, FPeakWZ: Double;           // world position of the current peak marker
+    FPeakLabelTex: TVMPlotTextTexture;
+
     procedure SetMaxSeries(AValue: Integer);
     procedure SetAnimate(AValue: Boolean);
     procedure SetLowColor(AValue: TColor);
@@ -192,6 +197,9 @@ type
     procedure SetXAxisMin(AValue: Double);
     procedure SetXAxisMax(AValue: Double);
     function XValueToFrac(v: Double): Double;
+    procedure SetShowPeakLabels(AValue: Boolean);
+    procedure UpdatePeakLabel;
+    procedure DrawPeakMarker;
     procedure SetTitle(const AValue: string);
     procedure SetXAxisTitle(const AValue: string);
     procedure SetYAxisTitle(const AValue: string);
@@ -270,6 +278,13 @@ type
     property UseFrequencyAxis: Boolean read FUseFreqAxis write SetUseFrequencyAxis;
     property XAxisMin: Double read FXAxisMin write SetXAxisMin;
     property XAxisMax: Double read FXAxisMax write SetXAxisMax;
+    // False (default): no peak marker/label. True: the front (most
+    // recently added) slice's single highest point gets a marker dot
+    // (DrawPeakMarker) plus a text label (UpdatePeakLabel, built fresh on
+    // every AddGraph via the same InvalidateTextures/BuildTextures path
+    // every other label already uses) showing its X-axis value (bin
+    // index, or frequency when UseFrequencyAxis) and Y value together.
+    property ShowPeakLabels: Boolean read FShowPeakLabels write SetShowPeakLabels;
     property Title: string read FTitle write SetTitle;
     property XAxisTitle: string read FXAxisTitle write SetXAxisTitle;
     property YAxisTitle: string read FYAxisTitle write SetYAxisTitle;
@@ -392,6 +407,8 @@ begin
   FUseFreqAxis := False;
   FXAxisMin := 0;
   FXAxisMax := 1;
+  FShowPeakLabels := False;
+  FHasPeak := False;
   FYaw := DefaultYaw;
   FPitch := DefaultPitch;
   FZoom := DefaultZoom;
@@ -542,6 +559,77 @@ begin
       result := 0;
   end else
     result := v / Max(FFrontN - 1, 1);
+end;
+
+procedure TVMPlotStack.SetShowPeakLabels(AValue: Boolean);
+begin
+  if FShowPeakLabels = AValue then Exit;
+  FShowPeakLabels := AValue;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+// Searches the front (most recently added, index 0) slice for its single
+// highest point and records where that lands in world space (matching
+// DrawSlice's own per-vertex wx/wy/wz formulas exactly, so the marker
+// drawn from FPeakWX/WY/WZ overlays the ribbon precisely) plus builds the
+// text label naming its X-axis value (bin index, or frequency when
+// UseFrequencyAxis - same XValueToFrac domain the tick labels use) and Y
+// value. Called only from BuildTextures, same "only touch GL texture
+// state from inside a Paint call, once MakeCurrent has already succeeded"
+// discipline every other *Tex field here follows - so, like the rest of
+// them, this is recomputed fresh on every texture rebuild (i.e. after
+// every AddGraph, via InvalidateTextures) rather than cached, since the
+// front slice - and hence its peak - changes on every push.
+procedure TVMPlotStack.UpdatePeakLabel;
+const
+  PeakR = 255; PeakG = 255; PeakB = 120;   // pale yellow - distinct from the grey tick/axis labels
+var
+  Slice: TVMPlotStackSlice;
+  PeakIdx, j: Integer;
+  PeakVal, denom, XValue: Double;
+begin
+  FHasPeak := False;
+  if (not FShowPeakLabels) or (Length(FSlices) = 0) then Exit;
+
+  Slice := FSlices[0];
+  if Slice.N = 0 then Exit;
+
+  PeakIdx := 0;
+  PeakVal := Slice.Y[0];
+  for j := 1 to Slice.N - 1 do
+    if Slice.Y[j] > PeakVal then begin
+      PeakVal := Slice.Y[j];
+      PeakIdx := j;
+    end;
+
+  if Slice.N > 1 then denom := Slice.N - 1 else denom := 1;
+  FPeakWX := (PeakIdx / denom - 0.5) * WorldWidth;
+  FPeakWY := (PeakVal / FYScale) * HalfH;
+  FPeakWZ := (Slice.Age / FMaxSeries - 0.5) * StackDepth;
+
+  if FUseFreqAxis then
+    XValue := FXAxisMin + (PeakIdx / denom) * (FXAxisMax - FXAxisMin)
+  else
+    XValue := PeakIdx;
+
+  FPeakLabelTex := CreateTextTexture(FormatTick(XValue) + '  ' + FormatTick(PeakVal),
+    10, True, PeakR, PeakG, PeakB);
+  FHasPeak := True;
+end;
+
+// Small marker dot at the peak's world position, drawn in the same 3D
+// camera pass as the ribbons themselves (called from Paint right after
+// the slice loop) - independent of FShowAxes, since a peak marker is its
+// own feature, not part of the axis gizmo.
+procedure TVMPlotStack.DrawPeakMarker;
+begin
+  if not FHasPeak then Exit;
+  glPointSize(8);
+  glColor3f(1, 1, 1);
+  glBegin(GL_POINTS);
+    glVertex3d(FPeakWX, FPeakWY, FPeakWZ);
+  glEnd;
 end;
 
 procedure TVMPlotStack.SetTitle(const AValue: string);
@@ -960,6 +1048,7 @@ begin
   for i := 0 to High(FXTickTex) do FreeTextTexture(FXTickTex[i]);
   for i := 0 to High(FYTickTex) do FreeTextTexture(FYTickTex[i]);
   for i := 0 to High(FZTickTex) do FreeTextTexture(FZTickTex[i]);
+  FreeTextTexture(FPeakLabelTex);
 end;
 
 // Renders S once via the LCL font engine into an RGBA GL texture, text
@@ -1053,6 +1142,8 @@ begin
   SetLength(FZTickTex, Length(FZTicks));
   for i := 0 to High(FZTicks) do
     FZTickTex[i] := CreateTextTexture(FormatTick(FZTicks[i]), 9, False, LabelR, LabelG, LabelB);
+
+  UpdatePeakLabel;
 end;
 
 procedure TVMPlotStack.DrawTextTexture(const Tex: TVMPlotTextTexture;
@@ -1136,6 +1227,15 @@ begin
     end;
   end;
 
+  // Independent of FShowAxes - a peak marker/label is its own feature,
+  // not part of the axis gizmo. Anchored above the marker (VAlign=0, so
+  // the label sits entirely above its Y) so the label text never
+  // overlaps DrawPeakMarker's dot at the exact peak position.
+  if FHasPeak then begin
+    WorldToScreen(FPeakWX, FPeakWY, FPeakWZ, VW, VH, sx, sy, infront);
+    if infront then DrawTextTexture(FPeakLabelTex, sx, sy + 10, 0, 0.5, 0);
+  end;
+
   glDisable(GL_TEXTURE_2D);
 end;
 
@@ -1190,6 +1290,11 @@ begin
   // older one's overlapping features.
   for i := High(FSlices) downto 0 do
     DrawSlice(FSlices[i]);
+
+  // Drawn after every ribbon too, same reason as the axis lines below -
+  // with no depth test, an opaque frontmost ribbon would otherwise be
+  // able to paint over the marker.
+  DrawPeakMarker;
 
   // Axis lines/ticks are drawn AFTER every ribbon, not before - the
   // Index (X) axis sits at the same Z as the frontmost (Age=0) slice's

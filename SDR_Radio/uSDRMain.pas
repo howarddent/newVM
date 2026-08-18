@@ -70,6 +70,7 @@ type
     HintLabel: TLabel;
     LNAGainLabel: TLabel;
     LNATrackBar: TTrackBar;
+    PeakDetectCheckBox: TCheckBox;
     RateCombo: TComboBox;
     RateLabel: TLabel;
     ResetViewButton: TButton;
@@ -84,6 +85,7 @@ type
     procedure FormDestroy(Sender: TObject);
     procedure FreqEditEditingDone(Sender: TObject);
     procedure LNATrackBarChange(Sender: TObject);
+    procedure PeakDetectCheckBoxChange(Sender: TObject);
     procedure ResetViewButtonClick(Sender: TObject);
     procedure ShowAxesCheckBoxChange(Sender: TObject);
     procedure StartStopButtonClick(Sender: TObject);
@@ -266,6 +268,11 @@ end;
 procedure TForm1.ShowAxesCheckBoxChange(Sender: TObject);
 begin
   FPlot.ShowAxes := ShowAxesCheckBox.Checked;
+end;
+
+procedure TForm1.PeakDetectCheckBoxChange(Sender: TObject);
+begin
+  FPlot.ShowPeakLabels := PeakDetectCheckBox.Checked;
 end;
 
 procedure TForm1.ResetViewButtonClick(Sender: TObject);
