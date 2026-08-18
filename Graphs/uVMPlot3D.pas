@@ -45,6 +45,9 @@ uses
   Classes, SysUtils, Math, Controls, LCLType, Graphics, LResources,
   IntfGraphics, FPImage,
   GL, GLU, OpenGLContext,
+  {$IFDEF UNIX}
+  GLX,
+  {$ENDIF}
   newVM, newVMSingle;
 
 type
@@ -100,7 +103,15 @@ type
     FTexturesBuilt: Boolean;
     FTitleTex, FXAxisTitleTex, FYAxisTitleTex, FZAxisTitleTex: TVMPlotTextTexture;
     FXTickTex, FYTickTex, FZTickTex: array of TVMPlotTextTexture;
+    FVSync: Boolean;
+    // Set once ApplySwapInterval has actually issued the driver call for
+    // the CURRENT FVSync value - re-cleared by SetVSync so a change takes
+    // effect on the next Paint, without re-issuing the same driver call
+    // (cheap, but pointless) on every single frame in between.
+    FSwapIntervalApplied: Boolean;
 
+    procedure SetVSync(AValue: Boolean);
+    procedure ApplySwapInterval;
     procedure SetWireframe(AValue: Boolean);
     procedure SetShowAxes(AValue: Boolean);
     procedure SetShowLevelCurves(AValue: Boolean);
@@ -208,11 +219,56 @@ type
     // exposed, per the feature's own "XY position" scope.
     property LightX: Double read FLightX write SetLightX;
     property LightY: Double read FLightY write SetLightY;
+    // Explicitly requests (True, default) or releases (False) vsync-locked
+    // SwapBuffers, rather than leaving it to whatever the platform's GL
+    // driver happens to default to. Neither this component nor Lazarus's
+    // own cross-platform LOpenGLSwapBuffers binding (checked GTK2/GLX,
+    // Win32/WGL, Cocoa) ever called the vsync-control extension before this
+    // property existed - Win32/WGL even resolves wglSwapIntervalEXT's
+    // address but never called it - so SwapBuffers's blocking behaviour was
+    // 100% driver-default. Investigated after a report that Wave2D_FPC (the
+    // TVMPlot3D-based animated demo) felt less smooth on a particular Linux
+    // dev machine than on Windows/macOS/Raspberry Pi despite the solve loop
+    // itself measuring well within budget (~0.7ms/step, see
+    // demos/Chebyshev/Wave2D_FPC's own investigation) - confirmed via
+    // `glxgears` that this machine's Mesa/Intel driver defaults to vsync ON
+    // (165.778 FPS, matching the panel's 165Hz refresh exactly;
+    // `vblank_mode=0` jumped that to 3255 FPS). Since the whole app is
+    // single-threaded (the LCL event loop drives both a TTimer and Paint),
+    // a blocking SwapBuffers stalls the timer's own next tick too, capping
+    // the achievable step rate to whichever monitor's vblank period
+    // applies - uneven at fast timer settings whenever that period doesn't
+    // evenly divide the requested interval, worse on a 60Hz external
+    // display than a 165Hz laptop panel. Defaults True to preserve
+    // whatever behaviour a given platform/driver already had; set False for
+    // the lowest input latency/highest raw frame rate at the cost of
+    // tearing. See ApplySwapInterval for the GLX/WGL calls this drives.
+    property VSync: Boolean read FVSync write SetVSync default True;
   end;
 
 procedure Register;
 
 implementation
+
+{$IFDEF WINDOWS}
+// WGL's vsync-control extension - resolved at runtime via wglGetProcAddress
+// (which, unlike glXGetProcAddress, requires a context to already be
+// current, so this can't be resolved at unit-initialization time the way
+// GLX's own glXSwapIntervalEXT is; ApplySwapInterval resolves it lazily on
+// first use instead, matching the general runtime-binding approach
+// OneAPI.pas uses for MKL/IPP on Windows - see CLAUDE.md's "Cross-platform
+// library binding" section). LCL's own glwin32wglcontext.pas resolves this
+// exact same function pointer internally already, but doesn't expose it, so
+// it's re-resolved here rather than reaching into that unit's internals.
+type
+  TWglSwapIntervalEXT = function(interval: Integer): LongBool; stdcall;
+var
+  WglSwapIntervalEXTProc: TWglSwapIntervalEXT = nil;
+  WglSwapIntervalResolved: Boolean = False;
+
+function wglGetProcAddress(lpszProc: PAnsiChar): Pointer; stdcall;
+  external 'opengl32.dll';
+{$ENDIF}
 
 const
   // Initial/reset camera framing - see CLAUDE.md's Graphs/ section for the
@@ -289,6 +345,36 @@ begin
   result := FloatToStrF(v, ffGeneral, 4, 0);
 end;
 
+// True if the two tick sets would produce different rendered labels -
+// different lengths, or any differing value. Used by SetData (below) to
+// avoid calling InvalidateTextures - and so rebuilding EVERY title/tick GL
+// texture via a full LCL font-render + pixel upload, see BuildTextures -
+// on every single call, most of which don't actually change any label.
+// This was a real, measured bottleneck for animated callers like
+// demos/Chebyshev/Wave2D_FPC, which calls SetData once per timer tick:
+// BuildTextures measured 6-99ms per call on one Linux/GTK2 dev machine
+// (avg ~28ms, over ~19 textures - 4 titles plus X/Y/Z ticks - each doing a
+// TBitmap/Canvas.TextOut render, a CreateIntfImage pixel-format conversion,
+// and a glTexImage2D upload) - it was firing on the majority of frames
+// purely because SetData recomputed FXTicks/FYTicks/FZTicks and
+// unconditionally invalidated on every call, even though X/Y ticks don't
+// change at all in that demo (fixed XAxisMin/Max/YAxisMin/Max) and Z's
+// "nice" tick VALUES (ComputeTicks' own rounding) change far less often
+// than the raw per-frame data range does. This dwarfed both Solve() (under
+// 1ms) and the rest of SetData (well under 1ms), and directly explained
+// reported "runs slowly"/uneven-animation symptoms that turned out to have
+// nothing to do with vsync, GPU choice, or the compositor - all three were
+// investigated and ruled out first.
+function TicksChanged(const OldT, NewT: TVMPlotDoubleArray): Boolean;
+var
+  i: Integer;
+begin
+  if Length(OldT) <> Length(NewT) then begin Result := True; Exit; end;
+  for i := 0 to High(NewT) do
+    if OldT[i] <> NewT[i] then begin Result := True; Exit; end;
+  Result := False;
+end;
+
 { TVMPlot3D }
 
 constructor TVMPlot3D.Create(TheOwner: TComponent);
@@ -310,6 +396,8 @@ begin
   FLightY := DefaultLightY;
   FHasData := False;
   FTexturesBuilt := False;
+  FVSync := True;
+  FSwapIntervalApplied := False;
 
   // Default to the same "sinc ripple" surface the Graphs/Plot3D demo builds
   // in its own FormCreate (uplot3dmain.pas's BuildDemoMatrix), so a
@@ -451,6 +539,52 @@ begin
   Invalidate;
 end;
 
+procedure TVMPlot3D.SetVSync(AValue: Boolean);
+begin
+  if FVSync = AValue then Exit;
+  FVSync := AValue;
+  FSwapIntervalApplied := False;
+  Invalidate;
+end;
+
+// Issues the actual driver call for FVSync, once per change (see
+// FSwapIntervalApplied's own comment) - called from Paint, after
+// MakeCurrent has succeeded, since both the GLX and WGL calls below need a
+// live current context (GLX needs one to query glXGetCurrentDisplay/
+// glXGetCurrentDrawable; WGL needs one because wglGetProcAddress itself
+// requires a current context to resolve any extension function). See the
+// VSync property's own comment for why this exists at all - by default
+// neither this component nor Lazarus's cross-platform LOpenGLSwapBuffers
+// binding ever called either platform's swap-interval extension, so
+// SwapBuffers's blocking behaviour was purely whatever the GL driver
+// happened to default to.
+procedure TVMPlot3D.ApplySwapInterval;
+begin
+  if FSwapIntervalApplied then Exit;
+  {$IFDEF UNIX}
+  // Prefer the EXT variant (per-drawable, matching GLX_EXT_swap_control) -
+  // GLX.pas resolves all of these from libGL.so once at unit-initialization
+  // time (InitGLX), so by the time Paint first runs they're either already
+  // Assigned or the extension genuinely isn't supported by this driver.
+  // glXSwapIntervalMESA (global, not per-drawable) is a fallback for older
+  // Mesa builds that only exported that vendor extension.
+  if Assigned(glXSwapIntervalEXT) and Assigned(glXGetCurrentDisplay) and
+     Assigned(glXGetCurrentDrawable) then
+    glXSwapIntervalEXT(glXGetCurrentDisplay(), glXGetCurrentDrawable(), Ord(FVSync))
+  else if Assigned(glXSwapIntervalMESA) then
+    glXSwapIntervalMESA(Ord(FVSync));
+  {$ENDIF}
+  {$IFDEF WINDOWS}
+  if not WglSwapIntervalResolved then begin
+    Pointer(WglSwapIntervalEXTProc) := wglGetProcAddress('wglSwapIntervalEXT');
+    WglSwapIntervalResolved := True;
+  end;
+  if Assigned(WglSwapIntervalEXTProc) then
+    WglSwapIntervalEXTProc(Ord(FVSync));
+  {$ENDIF}
+  FSwapIntervalApplied := True;
+end;
+
 // Rebuilds FXTicks/FYTicks (the label values) and FXTickPos/FYTickPos (their
 // world-position-formula input, always in grid-index units - see the fields'
 // own comment) from FCols/FRows plus whichever mode XAxisMin/XAxisMax (resp.
@@ -512,6 +646,12 @@ procedure TVMPlot3D.SetData(const M: TVMobj);
 var
   r, c: Integer;
   ZRange, v, dxWorld, dyWorld, DataZMin, DataZMax: Double;
+  // Snapshotted before RecomputeXYTicks/ComputeTicks reassign FXTicks/
+  // FYTicks/FZTicks below - dynamic-array assignment shares the old
+  // buffer by reference until reassigned, so these stay valid old values
+  // to compare against even after the fields themselves are overwritten.
+  // See TicksChanged's own comment for why this comparison exists at all.
+  OldXTicks, OldYTicks, OldZTicks: TVMPlotDoubleArray;
 begin
   FRows := M.Rows;
   FCols := M.Cols;
@@ -553,11 +693,16 @@ begin
         FVerts[r, c].R, FVerts[r, c].G, FVerts[r, c].B);
     end;
 
+  OldXTicks := FXTicks;
+  OldYTicks := FYTicks;
+  OldZTicks := FZTicks;
   RecomputeXYTicks;
   FZTicks := ComputeTicks(FZMin, FZMax, 5);
 
   FHasData := True;
-  InvalidateTextures;
+  if TicksChanged(OldXTicks, FXTicks) or TicksChanged(OldYTicks, FYTicks) or
+     TicksChanged(OldZTicks, FZTicks) then
+    InvalidateTextures;
   Invalidate;
 end;
 
@@ -1038,6 +1183,7 @@ var
 begin
   if not MakeCurrent then Exit;
   if (Width = 0) or (Height = 0) then Exit;
+  ApplySwapInterval;
 
   if not FTexturesBuilt then begin
     BuildTextures;

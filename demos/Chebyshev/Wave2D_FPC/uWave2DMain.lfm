@@ -87,6 +87,17 @@ object fmMain: TfmMain
         OnClick = btnResetClick
       end
     end
+    object VSyncCheckBox: TCheckBox
+      Left = 8
+      Height = 19
+      Top = 510
+      Width = 90
+      Checked = True
+      Caption = 'VSync'
+      State = cbChecked
+      TabOrder = 3
+      OnChange = VSyncCheckBoxChange
+    end
   end
   object AnimTimer: TTimer
     Interval = 50
