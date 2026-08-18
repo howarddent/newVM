@@ -174,6 +174,8 @@ type
     FLastMouseX, FLastMouseY: Integer;
 
     FShowAxes: Boolean;
+    FUseFreqAxis: Boolean;
+    FXAxisMin, FXAxisMax: Double;
     FTitle, FXAxisTitle, FYAxisTitle, FZAxisTitle: string;
     FXTicks, FYTicks, FZTicks: TVMPlotDoubleArray;
     FTexturesBuilt: Boolean;
@@ -186,6 +188,10 @@ type
     procedure SetMidColor(AValue: TColor);
     procedure SetHighColor(AValue: TColor);
     procedure SetShowAxes(AValue: Boolean);
+    procedure SetUseFrequencyAxis(AValue: Boolean);
+    procedure SetXAxisMin(AValue: Double);
+    procedure SetXAxisMax(AValue: Double);
+    function XValueToFrac(v: Double): Double;
     procedure SetTitle(const AValue: string);
     procedure SetXAxisTitle(const AValue: string);
     procedure SetYAxisTitle(const AValue: string);
@@ -251,6 +257,19 @@ type
     property MidColor: TColor read FMidColor write SetMidColor;
     property HighColor: TColor read FHighColor write SetHighColor;
     property ShowAxes: Boolean read FShowAxes write SetShowAxes;
+    // False (default): the X axis is labelled/positioned purely by point
+    // index, 0..(N-1) of the most recently added slice - the original,
+    // only behaviour this component had. True: XAxisMin/XAxisMax (a real
+    // physical unit range, e.g. frequency in MHz) are used for both the
+    // axis tick VALUES (RecomputeBounds) and where those ticks are placed
+    // along the X axis (XValueToFrac, used by DrawAxisLines/
+    // DrawAxisLabels) - a slice's own point-index-to-world-X placement
+    // (DrawSlice) is unaffected either way, since a real X unit is always
+    // linear in point index (e.g. FFT bin -> frequency), just like index
+    // itself is.
+    property UseFrequencyAxis: Boolean read FUseFreqAxis write SetUseFrequencyAxis;
+    property XAxisMin: Double read FXAxisMin write SetXAxisMin;
+    property XAxisMax: Double read FXAxisMax write SetXAxisMax;
     property Title: string read FTitle write SetTitle;
     property XAxisTitle: string read FXAxisTitle write SetXAxisTitle;
     property YAxisTitle: string read FYAxisTitle write SetYAxisTitle;
@@ -370,6 +389,9 @@ begin
   SetMidColor(RGBToColor(224, 176, 255));   // mauve
   SetHighColor(RGBToColor(255, 0, 0));      // red
   FShowAxes := True;
+  FUseFreqAxis := False;
+  FXAxisMin := 0;
+  FXAxisMax := 1;
   FYaw := DefaultYaw;
   FPitch := DefaultPitch;
   FZoom := DefaultZoom;
@@ -472,6 +494,54 @@ begin
   if FShowAxes = AValue then Exit;
   FShowAxes := AValue;
   Invalidate;
+end;
+
+procedure TVMPlotStack.SetUseFrequencyAxis(AValue: Boolean);
+begin
+  if FUseFreqAxis = AValue then Exit;
+  FUseFreqAxis := AValue;
+  RecomputeBounds;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlotStack.SetXAxisMin(AValue: Double);
+begin
+  if FXAxisMin = AValue then Exit;
+  FXAxisMin := AValue;
+  if FUseFreqAxis then begin
+    RecomputeBounds;
+    InvalidateTextures;
+    Invalidate;
+  end;
+end;
+
+procedure TVMPlotStack.SetXAxisMax(AValue: Double);
+begin
+  if FXAxisMax = AValue then Exit;
+  FXAxisMax := AValue;
+  if FUseFreqAxis then begin
+    RecomputeBounds;
+    InvalidateTextures;
+    Invalidate;
+  end;
+end;
+
+// Single source of truth for "where along the X axis, as a [0,1] fraction,
+// does this value sit" - used by DrawAxisLines/DrawAxisLabels to place tick
+// marks/labels. FUseFreqAxis=False (default) reproduces the original
+// bin-index-only behaviour exactly (v IS the bin index, FFrontN-1 is the
+// last one); FUseFreqAxis=True maps v through XAxisMin..XAxisMax instead -
+// see UseFrequencyAxis's own property comment.
+function TVMPlotStack.XValueToFrac(v: Double): Double;
+begin
+  if FUseFreqAxis then begin
+    if FXAxisMax - FXAxisMin <> 0 then
+      result := (v - FXAxisMin) / (FXAxisMax - FXAxisMin)
+    else
+      result := 0;
+  end else
+    result := v / Max(FFrontN - 1, 1);
 end;
 
 procedure TVMPlotStack.SetTitle(const AValue: string);
@@ -581,7 +651,9 @@ begin
   if FYScale < 1e-9 then FYScale := 1;
 
   FYTicks := ComputeTicks(FYMin, FYMax, 5);
-  if FFrontN > 1 then
+  if FUseFreqAxis then
+    FXTicks := ComputeTicks(FXAxisMin, FXAxisMax, 5)
+  else if FFrontN > 1 then
     FXTicks := ComputeTicks(0, FFrontN - 1, 5)
   else
     FXTicks := ComputeTicks(0, 1, 2);
@@ -816,7 +888,7 @@ begin
     for i := 0 to High(FYTicks) do
       glVertex3d(-HalfW, (FYTicks[i] / FYScale) * HalfH, -HalfD);
     for i := 0 to High(FXTicks) do
-      glVertex3d((FXTicks[i] / Max(FFrontN - 1, 1) - 0.5) * WorldWidth, 0, -HalfD);
+      glVertex3d((XValueToFrac(FXTicks[i]) - 0.5) * WorldWidth, 0, -HalfD);
     for i := 0 to High(FZTicks) do
       glVertex3d(-HalfW, 0, (FZTicks[i] / FMaxSeries - 0.5) * StackDepth);
   glEnd;
@@ -1031,7 +1103,7 @@ begin
       if infront then DrawTextTexture(FYTickTex[i], sx - 8, sy, 0, 1, 0.5);
     end;
     for i := 0 to High(FXTicks) do begin
-      WorldToScreen((FXTicks[i] / Max(FFrontN - 1, 1) - 0.5) * WorldWidth, 0,
+      WorldToScreen((XValueToFrac(FXTicks[i]) - 0.5) * WorldWidth, 0,
         -HalfD, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FXTickTex[i], sx, sy - 8, 0, 0.5, 1);
     end;

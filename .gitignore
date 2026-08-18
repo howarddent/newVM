@@ -49,6 +49,12 @@ demos/Chebyshev/*/[A-Za-z0-9]*
 Graphs/*/[A-Za-z]*
 !Graphs/*/*.*
 
+# SDR_Radio is its own top-level project directory (one level shallower
+# than demos/<Name>/ or Graphs/<Name>/, so no /*/ here) - same
+# ignore-extensionless-binary/keep-extension pattern as those two.
+SDR_Radio/[A-Za-z]*
+!SDR_Radio/*.*
+
 # Windows demo binaries do have an extension (.exe), so the negations above
 # re-include them - this rule comes after those negations (later patterns
 # win) to actually exclude them, e.g. demos/SpectralDiff/SpectralDiff.exe.
