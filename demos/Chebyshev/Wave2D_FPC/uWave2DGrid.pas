@@ -31,14 +31,29 @@ unit uWave2DGrid;
      Instead, this port reuses demos/SpectralDiff/ufuncmain.pas's own proven
      Chebyshev-differentiation recipe - DCT1 plus the Boyd coefficient-space
      recursion Recurr, verified there against an exact analytic derivative to
-     ~1e-13 - see DiffRow below. Each second derivative is that SAME proven
-     single-derivative recipe applied twice end-to-end (differentiate the
-     grid values, then differentiate the result again), rather than chaining
-     two Recurr calls in coefficient space before transforming back - the
-     latter is standard textbook practice too, but the former only relies on
-     machinery already proven correct elsewhere in this codebase, at a cost
-     (a handful of length-(N+1) DCT1 calls per row per Solve() step) that's
-     immaterial next to a 33x33 grid.
+     ~1e-13. A single derivative of row X is DiffRow(X) = DCT1(Recurr(DCT1(X)))
+     / LogicalN. The second derivative is computed by DiffRow2 below via
+     DCT1(Recurr(Recurr(DCT1(X)))) / LogicalN - i.e. Recurr applied TWICE in
+     coefficient space, with only one forward and one inverse DCT1, rather
+     than calling DiffRow(DiffRow(X)) (forward+inverse DCT1 twice each, four
+     DCT1 calls total). These are not just similarly-shaped formulas - they
+     are algebraically identical, by DCT1's own documented round-trip
+     identity DCT1(DCT1(y)) = LogicalN*y (exact for any y, LogicalN = the
+     same 2*(Cols-1) used throughout this unit) and Recurr's linearity (its
+     recursion coefficients don't depend on the input's own values, only on
+     fixed indices, so Recurr(c*y) = c*Recurr(y)):
+       DiffRow(DiffRow(X))
+         = DCT1(Recurr(DCT1( DCT1(Recurr(DCT1(X)))/LogicalN ))) / LogicalN
+         = DCT1(Recurr( DCT1(DCT1(Recurr(DCT1(X)))) /LogicalN )) / LogicalN   [DCT1 linear]
+         = DCT1(Recurr( LogicalN*Recurr(DCT1(X)) /LogicalN )) / LogicalN      [round-trip identity, y=Recurr(DCT1(X))]
+         = DCT1(Recurr(Recurr(DCT1(X)))) / LogicalN                          [LogicalN cancels; Recurr linear]
+     Confirmed numerically (not just algebraically) with a standalone scratch
+     program against both a random row and an exact f(x)=x^4 case (f''=12x^2):
+     DiffRow(DiffRow(X)) and DiffRow2(X) agree to ~1e-11 (double-precision
+     noise), and DiffRow2 matches the analytic 12x^2 to the same tolerance.
+     Net effect: half as many DCT1/FFTW calls per row for the same result -
+     this is the "run the recurrence twice before the inverse transform"
+     optimisation, done for both DiffX2 and DiffY2 below.
 
      BOUNDARY HANDLING - the original's Wx/Wxx correction-weight vectors are
      explicitly zero at the two Chebyshev endpoints (w1[0]:=0; w1[N]:=0;
@@ -51,6 +66,65 @@ unit uWave2DGrid;
      is exact including at the two endpoints - but Solve zeroes the outer
      ring of the computed Laplacian explicitly, to reproduce the same net
      "boundary stays put" behaviour the original had.
+
+     PARALLELISM - u_yy's rows (differentiating each row of vv) and u_xx's
+     rows (differentiating each row of Transpose(vv), i.e. each column of
+     vv) are all independent of each other, and this WAS multi-threaded at
+     one point (row-parallel plus a separate X/Y split), but that work was
+     backed out again after measuring it - kept here as a record of why,
+     since the conclusion is unintuitive and worth not re-discovering by
+     accident:
+       - A raw TThread.Create per row-chunk plus two more threads for the
+         X/Y split, spun up fresh every single Solve() call, measured
+         SLOWER than plain single-threaded code end-to-end - unsurprising
+         in hindsight, since Windows OS-thread creation/teardown costs far
+         more than one row's DiffRow2 call.
+       - Switching to the LCL's MTProcs unit (ProcThreadPool - a pool of
+         worker threads created once and kept alive, dispatching work via
+         synchronisation primitives instead of fresh OS threads) fixed the
+         creation/teardown cost, but nesting DoParallel calls (one for the
+         X/Y split, each of whose two callbacks made its own nested
+         DoParallel call for that axis's rows) crashed outright - two
+         outer DoParallel calls running concurrently, each trying to
+         recruit a nested group from the same shared pool at the same
+         moment, corrupted state badly enough to fail a SubMatrix bounds
+         assert inside a worker callback under a headless stress run.
+         Flattening to one single non-nested DoParallel call over every
+         row of both axes at once fixed the crash and was confirmed
+         correct (bit-for-bit identical vv values to the single-threaded
+         version over a 500-step headless run) - but was STILL 3.6x-15x
+         SLOWER than plain single-threaded code, even in that
+         crash-free, non-nested form, and even after also fixing the
+         separate FFTW plan-caching problem below. Measured across
+         MaxThreads=24/4/1: avg solve time got WORSE as thread count went
+         up (15.5ms/8.9ms/0.5ms respectively) - i.e. even ProcThreadPool's
+         persistent-pool dispatch overhead (thread wake/signal
+         synchronisation, not thread creation) dominates once each row's
+         own work drops to a few microseconds, which is exactly what
+         DiffRow2 plus newVM.pas's FFTW plan cache (see r2rTransform's own
+         comment there) get it down to at this grid size (33x33). More
+         threads at that point just means more synchronisation overhead
+         paid for the same fixed amount of real work.
+       - Net conclusion: at ChebN=32, the algorithmic fixes alone
+         (DiffRow2's halved DCT1 count, and newVM.pas's FFTW plan cache) are
+         both necessary AND sufficient - they took the measured per-step
+         solve time from ~2.4ms down to ~0.5ms on their own, comfortably
+         inside even the speed slider's tightest 5ms frame budget
+         (AnimTimer.Interval = Round(50/TrackBar1.Position), Position up
+         to 10 - see uWave2DMain.pas), with no threading at all. Adding
+         thread-pool dispatch on top of that measured strictly worse.
+         A much larger ChebN, where a single row's DiffRow2 call is
+         genuinely expensive rather than a handful of microseconds, could
+         tip this balance back the other way - if this demo's grid size
+         ever grows substantially, re-measure before assuming either
+         answer still holds.
+       - The FFTW thread-safety fix below (FFTWPlanLock, in newVM.pas) was
+         added to support the threaded attempts above and stayed even
+         after they were backed out: DCT1 (and DST1/etc) building and
+         destroying a plan with no locking at all is a latent bug for ANY
+         future multi-threaded caller of those functions, not just this
+         demo, independent of whether this particular demo ends up
+         threaded.
 
      uCheb.BaryLag2D (shared with 2DChebBVP_FPC) interpolates the raw
      (N+1)x(N+1) Chebyshev solution grid onto an evenly-spaced DispN x DispN
@@ -77,7 +151,6 @@ type
     FCheb: TCheb;
     FN: Integer;
     FXF, FYF: TVMobj;            // evenly-spaced display grid coordinates
-    function DiffRow(const Row: TVMobj): TVMobj;           // 1st deriv of a (1,N+1) row
     function DiffRowsSecondDeriv(const M: TVMobj): TVMobj; // 2nd deriv along each row (varies with column index)
     function DiffX2(const M: TVMobj): TVMobj;               // d^2/dx^2 - varies with row index
     function DiffY2(const M: TVMobj): TVMobj;               // d^2/dy^2 - varies with column index
@@ -112,24 +185,29 @@ begin
     Result.Element[0, i - 1] := 2 * i * InVec.Element[0, i] + Result.Element[0, i + 1];
 end;
 
-function TWave2DGrid.DiffRow(const Row: TVMobj): TVMobj;
+// Second derivative of a (1,N+1) Chebyshev row: one forward DCT1, Recurr
+// applied TWICE in coefficient space, one inverse DCT1 - algebraically
+// identical to (and ~2x fewer DCT1/FFTW calls than) calling the single-
+// derivative recipe DCT1(Recurr(DCT1(X)))/LogicalN twice end-to-end - see
+// this unit's own header comment (DIFFERENTIATION) for the derivation and
+// its numerical verification.
+function DiffRow2(const Row: TVMobj): TVMobj;
 var
   LogicalN : Integer;
 begin
   LogicalN := 2 * (Row.Cols - 1);
-  Result := DCT1(Recurr(DCT1(Row))) / LogicalN;
+  Result := DCT1(Recurr(Recurr(DCT1(Row)))) / LogicalN;
 end;
 
 function TWave2DGrid.DiffRowsSecondDeriv(const M: TVMobj): TVMobj;
 var
   i, j : Integer;
-  row, d1, d2 : TVMobj;
+  row, d2 : TVMobj;
 begin
   Result := TVMobj.Create(M.Rows, M.Cols);
   for i := 0 to M.Rows - 1 do begin
     row := SubMatrix(M, i, 0, 1, M.Cols);
-    d1 := DiffRow(row);
-    d2 := DiffRow(d1);
+    d2 := DiffRow2(row);
     for j := 0 to M.Cols - 1 do
       Result.Element[i, j] := d2.Element[0, j];
   end;

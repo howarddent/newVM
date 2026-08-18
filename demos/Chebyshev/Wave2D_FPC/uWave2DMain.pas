@@ -117,6 +117,16 @@ begin
   FPlot.XAxisMax := 1;
   FPlot.YAxisMin := -1;
   FPlot.YAxisMax := 1;
+  // Z deliberately left at TVMPlot3D's default per-frame auto-fit rather
+  // than a fixed ZAxisMin/ZAxisMax (see that property's own comment in
+  // Graphs/uVMPlot3D.pas for the mechanism and why it was added): a fixed
+  // range was tried here and does keep the zero level visually anchored as
+  // the wave evolves, matching the original Delphi demo - the numerics
+  // were already confirmed correct either way (the boundary is exactly
+  // pinned in the raw solution grid regardless of how it's rendered - see
+  // uWave2DGrid.pas's own header comment, PARALLELISM's final entry) - but
+  // auto-fit's constantly-rescaling range was judged more visually
+  // appealing for this demo, so kept as the default.
   FPlot.SetData(FGrid.PlotGrid);
 
   LightLabel := TLabel.Create(Self);
