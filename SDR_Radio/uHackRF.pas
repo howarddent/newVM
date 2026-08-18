@@ -501,22 +501,22 @@ begin
   // meaningless - those epochs pass through uncorrected rather than
   // risking a division blowing the correction up.
   //
-  // CONFIRMED LIMITATION: at a 94.4MHz test tone (95MHz centre, 20Msps),
-  // this correction did NOT remove a same-amplitude image observed
-  // ~5.6MHz away, which tracks the real signal under retuning rather
-  // than sitting at a fixed offset from the centre frequency (ruling out
-  // both a zero-IF I/Q mirror - this correction targets exactly that,
-  // and had no effect - and a fixed internal Fs/4-type digital spur).
-  // Since this whole function only ever sees the already-digitised I/Q
-  // stream, an image that survives correct I/Q balance must be entering
-  // upstream of the ADC entirely - i.e. in HackRF's analog front-end.
-  // 95MHz is well below the MAX2837 transceiver's native ~2.3-2.7GHz
-  // band, so HackRF routes it through an internal upconversion mixer
-  // (the RFFC5071) first; that mixer's own imperfect image rejection is
-  // the most likely source, and by the time such an image reaches the
-  // ADC it is physically indistinguishable from a real received signal -
-  // no digital post-processing here can remove it. Left as a known,
-  // accepted HackRF VHF hardware limitation rather than chased further.
+  // NOT A GENERAL HACKRF LIMITATION - ONE UNIT WAS FAULTY: at a 94.4MHz
+  // test tone (95MHz centre, 20Msps) on a first HackRF, this correction
+  // did NOT remove a same-amplitude image observed ~5.6MHz away, which
+  // tracked the real signal under retuning rather than sitting at a
+  // fixed offset from the centre frequency. That was originally taken to
+  // mean the image was entering upstream of the ADC via HackRF's
+  // sub-2.3GHz RFFC5071 upconversion mixer (used since 95MHz is below
+  // the MAX2837 transceiver's native band) - an architectural VHF
+  // limitation no amount of digital I/Q correction could reach. A
+  // second HackRF unit, same software, same settings, showed no such
+  // image at all - so the real cause was a defective/miscalibrated first
+  // unit (most likely that same RFFC5071 image-reject path, just broken
+  // on that specific device rather than inherent to the design). No
+  // code change follows from this: the DC and I/Q corrections above are
+  // still correct and worth keeping regardless, and there is nothing
+  // left to "fix" for a residual that turned out to be one unit's fault.
   if Pii > 1e-9 then begin
     g := Piq / Pii;
     Pqq := 0;
