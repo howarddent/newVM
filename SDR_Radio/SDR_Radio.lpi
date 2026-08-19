@@ -58,6 +58,14 @@
         <UnitName Value="uRTLSDR"/>
       </Unit>
       <Unit>
+        <Filename Value="uFreqKeypad.pas"/>
+        <IsPartOfProject Value="True"/>
+        <ComponentName Value="FreqKeypadForm"/>
+        <HasResources Value="True"/>
+        <ResourceBaseClass Value="Form"/>
+        <UnitName Value="uFreqKeypad"/>
+      </Unit>
+      <Unit>
         <Filename Value="../Graphs/uVMPlotStack.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>

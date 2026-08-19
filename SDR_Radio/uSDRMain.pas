@@ -62,7 +62,7 @@ interface
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Spin,
-  newVM, newVMComplex, uVMPlotStack, uSDRDevice, uHackRF, uRTLSDR;
+  newVM, newVMComplex, uVMPlotStack, uSDRDevice, uHackRF, uRTLSDR, uFreqKeypad;
 
 const
   EpochSize = 8192;
@@ -83,6 +83,7 @@ type
     GainStage1TrackBar: TTrackBar;
     GainStage2CheckBox: TCheckBox;
     HintLabel: TLabel;
+    KeypadButton: TButton;
     PeakDetectCheckBox: TCheckBox;
     PeakThresholdLabel: TLabel;
     PeakThresholdTrackBar: TTrackBar;
@@ -100,6 +101,7 @@ type
     procedure GainStage0TrackBarChange(Sender: TObject);
     procedure GainStage1TrackBarChange(Sender: TObject);
     procedure GainStage2CheckBoxChange(Sender: TObject);
+    procedure KeypadButtonClick(Sender: TObject);
     procedure PeakDetectCheckBoxChange(Sender: TObject);
     procedure PeakThresholdTrackBarChange(Sender: TObject);
     procedure ResetViewButtonClick(Sender: TObject);
@@ -116,6 +118,7 @@ type
     procedure ApplyAllGains;
     procedure EpochTimerTick(Sender: TObject);
     procedure UpdateFrequencyAxis;
+    procedure CommitFrequencyHz(Hz: QWord);
     procedure UpdatePeakThreshold;
     procedure ReportError(const Where: string);
   end;
@@ -467,18 +470,49 @@ begin
   FEpochTimer.Enabled := True;
 end;
 
-// Live retune - works whether or not RX is currently running, on both
-// backends.
-procedure TForm1.FreqEditEditingDone(Sender: TObject);
+// Shared by FreqEditEditingDone and KeypadButtonClick - live retune,
+// works whether or not RX is currently running, on both backends.
+procedure TForm1.CommitFrequencyHz(Hz: QWord);
 begin
   if not (Assigned(FDevice) and FDevice.IsOpen) then Exit;
-  if FDevice.SetFrequencyHz(Round(FreqEdit.Value * 1e6)) then begin
+  if FDevice.SetFrequencyHz(Hz) then begin
     UpdateFrequencyAxis;
     if FDevice.IsStreaming then
       StatusLabel.Caption := Format('Streaming (%s) @ %.3f MHz, %.3f Msps',
         [FDevice.Capabilities.DeviceName, FDevice.CenterFreqHz / 1e6, FDevice.SampleRateHz / 1e6]);
   end else
     ReportError('set_freq');
+end;
+
+procedure TForm1.FreqEditEditingDone(Sender: TObject);
+begin
+  CommitFrequencyHz(Round(FreqEdit.Value * 1e6));
+end;
+
+// Opens the popup numeric keypad (uFreqKeypad.pas), clamped to whatever
+// frequency range the connected device actually supports (or
+// unclamped - 0/0 - if none is connected yet, since FreqEdit.MinValue/
+// MaxValue still hold their generic .lfm defaults at that point rather
+// than a real device's range). On a committed entry, keeps FreqEdit's
+// own displayed value in sync before retuning, so the two controls never
+// disagree with each other.
+procedure TForm1.KeypadButtonClick(Sender: TObject);
+var
+  ResultHz: Double;
+  MinHz, MaxHz: Double;
+begin
+  if Assigned(FDevice) and FDevice.IsOpen then begin
+    MinHz := FDevice.Capabilities.MinFreqHz;
+    MaxHz := FDevice.Capabilities.MaxFreqHz;
+  end else begin
+    MinHz := 0;
+    MaxHz := 0;
+  end;
+
+  if ShowFrequencyKeypad(MinHz, MaxHz, ResultHz) then begin
+    FreqEdit.Value := ResultHz / 1e6;
+    CommitFrequencyHz(Round(ResultHz));
+  end;
 end;
 
 procedure TForm1.ShowAxesCheckBoxChange(Sender: TObject);

@@ -193,6 +193,15 @@ object Form1: TForm1
       Visible = False
       OnChange = BiasTCheckBoxChange
     end
+    object KeypadButton: TButton
+      Left = 250
+      Height = 25
+      Top = 93
+      Width = 90
+      Caption = 'Keypad...'
+      TabOrder = 12
+      OnClick = KeypadButtonClick
+    end
     object HintLabel: TLabel
       Left = 12
       Height = 15
