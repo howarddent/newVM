@@ -1,37 +1,37 @@
 object Form1: TForm1
-  Left = 260
-  Height = 782
-  Top = 120
-  Width = 1100
+  Left = 200
+  Height = 862
+  Top = 80
+  Width = 1300
   Caption = 'newVM SDR Spectrum Analyser'
-  ClientHeight = 782
-  ClientWidth = 1100
+  ClientHeight = 862
+  ClientWidth = 1300
   OnCreate = FormCreate
   OnDestroy = FormDestroy
   Position = poScreenCenter
   LCLVersion = '4.99.0.0'
   object ControlPanel: TPanel
     Left = 0
-    Height = 140
+    Height = 220
     Top = 0
-    Width = 1100
+    Width = 1300
     Align = alTop
     BevelOuter = bvNone
-    ClientHeight = 140
-    ClientWidth = 1100
+    ClientHeight = 220
+    ClientWidth = 1300
     TabOrder = 0
     object FreqLabel: TLabel
-      Left = 12
+      Left = 20
       Height = 15
-      Top = 11
-      Width = 140
+      Top = 18
+      Width = 130
       Caption = 'Center Freq (MHz):'
     end
     object FreqEdit: TFloatSpinEdit
-      Left = 160
+      Left = 156
       Height = 23
-      Top = 7
-      Width = 90
+      Top = 14
+      Width = 100
       DecimalPlaces = 3
       Increment = 0.1
       MaxValue = 6000
@@ -40,72 +40,71 @@ object Form1: TForm1
       Value = 95
       OnEditingDone = FreqEditEditingDone
     end
+    object KeypadButton: TButton
+      Left = 264
+      Height = 25
+      Top = 13
+      Width = 90
+      Caption = 'Keypad...'
+      TabOrder = 1
+      OnClick = KeypadButtonClick
+    end
     object RateLabel: TLabel
-      Left = 270
+      Left = 372
       Height = 15
-      Top = 11
+      Top = 18
       Width = 130
       Caption = 'Sample Rate (Msps):'
     end
     object RateCombo: TComboBox
-      Left = 410
+      Left = 506
       Height = 23
-      Top = 7
-      Width = 70
+      Top = 14
+      Width = 80
       ItemHeight = 15
       Style = csDropDownList
-      TabOrder = 1
-    end
-    object GainStage2CheckBox: TCheckBox
-      Left = 500
-      Height = 19
-      Top = 9
-      Width = 140
-      Caption = 'Gain Stage 2'
       TabOrder = 2
-      Visible = False
-      OnChange = GainStage2CheckBoxChange
     end
     object ConnectButton: TButton
-      Left = 660
-      Height = 25
-      Top = 6
-      Width = 90
+      Left = 606
+      Height = 28
+      Top = 12
+      Width = 100
       Caption = 'Connect'
       TabOrder = 3
       OnClick = ConnectButtonClick
     end
     object StartStopButton: TButton
-      Left = 756
-      Height = 25
-      Top = 6
-      Width = 90
+      Left = 718
+      Height = 28
+      Top = 12
+      Width = 100
       Caption = 'Start'
       Enabled = False
       TabOrder = 4
       OnClick = StartStopButtonClick
     end
     object StatusLabel: TLabel
-      Left = 860
+      Left = 960
       Height = 15
-      Top = 11
-      Width = 220
+      Top = 18
+      Width = 320
       Anchors = [akTop, akRight]
       Caption = 'Not connected'
     end
     object GainStage0Label: TLabel
-      Left = 12
+      Left = 20
       Height = 15
-      Top = 42
-      Width = 110
+      Top = 62
+      Width = 140
       Caption = 'Gain Stage 0'
       Visible = False
     end
     object GainStage0TrackBar: TTrackBar
-      Left = 12
+      Left = 20
       Height = 30
-      Top = 58
-      Width = 220
+      Top = 80
+      Width = 260
       Frequency = 1
       Max = 1
       Min = 0
@@ -115,18 +114,18 @@ object Form1: TForm1
       OnChange = GainStage0TrackBarChange
     end
     object GainStage1Label: TLabel
-      Left = 250
+      Left = 300
       Height = 15
-      Top = 42
-      Width = 110
+      Top = 62
+      Width = 140
       Caption = 'Gain Stage 1'
       Visible = False
     end
     object GainStage1TrackBar: TTrackBar
-      Left = 250
+      Left = 300
       Height = 30
-      Top = 58
-      Width = 220
+      Top = 80
+      Width = 260
       Frequency = 1
       Max = 1
       Min = 0
@@ -135,78 +134,79 @@ object Form1: TForm1
       Visible = False
       OnChange = GainStage1TrackBarChange
     end
-    object ShowAxesCheckBox: TCheckBox
-      Left = 500
+    object GainStage2CheckBox: TCheckBox
+      Left = 580
       Height = 19
-      Top = 50
-      Width = 90
+      Top = 64
+      Width = 180
+      Caption = 'Gain Stage 2'
+      TabOrder = 7
+      Visible = False
+      OnChange = GainStage2CheckBoxChange
+    end
+    object BiasTCheckBox: TCheckBox
+      Left = 580
+      Height = 19
+      Top = 92
+      Width = 220
+      Caption = 'Bias-T (Antenna Power)'
+      TabOrder = 8
+      Visible = False
+      OnChange = BiasTCheckBoxChange
+    end
+    object ShowAxesCheckBox: TCheckBox
+      Left = 20
+      Height = 19
+      Top = 132
+      Width = 100
       Checked = True
       Caption = 'Show Axes'
       State = cbChecked
-      TabOrder = 7
+      TabOrder = 9
       OnChange = ShowAxesCheckBoxChange
     end
     object ResetViewButton: TButton
-      Left = 600
-      Height = 25
-      Top = 47
-      Width = 90
+      Left = 140
+      Height = 28
+      Top = 128
+      Width = 100
       Caption = 'Reset View'
-      TabOrder = 8
+      TabOrder = 10
       OnClick = ResetViewButtonClick
     end
     object PeakDetectCheckBox: TCheckBox
-      Left = 700
+      Left = 260
       Height = 19
-      Top = 50
-      Width = 110
+      Top = 132
+      Width = 120
       Caption = 'Peak Detect'
-      TabOrder = 9
+      TabOrder = 11
       OnChange = PeakDetectCheckBoxChange
     end
     object PeakThresholdLabel: TLabel
-      Left = 820
+      Left = 400
       Height = 15
-      Top = 42
-      Width = 130
+      Top = 118
+      Width = 180
       Caption = 'Peak Threshold: 60%'
     end
     object PeakThresholdTrackBar: TTrackBar
-      Left = 820
+      Left = 400
       Height = 30
-      Top = 58
-      Width = 180
+      Top = 134
+      Width = 220
       Frequency = 10
       Max = 100
       Min = 0
       Position = 60
-      TabOrder = 10
+      TabOrder = 12
       OnChange = PeakThresholdTrackBarChange
     end
-    object BiasTCheckBox: TCheckBox
-      Left = 12
-      Height = 19
-      Top = 96
-      Width = 220
-      Caption = 'Bias-T (Antenna Power)'
-      TabOrder = 11
-      Visible = False
-      OnChange = BiasTCheckBoxChange
-    end
-    object KeypadButton: TButton
-      Left = 250
-      Height = 25
-      Top = 93
-      Width = 90
-      Caption = 'Keypad...'
-      TabOrder = 12
-      OnClick = KeypadButtonClick
-    end
     object HintLabel: TLabel
-      Left = 12
+      Left = 20
       Height = 15
-      Top = 118
-      Width = 640
+      Top = 182
+      Width = 700
       Caption = '8192-sample epochs, Hamming windowed and FFT''d live. Drag to rotate, wheel to zoom.'
     end
   end
