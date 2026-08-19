@@ -1,0 +1,429 @@
+object fmMain: TfmMain
+  Left = 200
+  Height = 700
+  Top = 100
+  Width = 1100
+  Caption = 'newVM Anaesthetics PK/PD Simulator'
+  ClientHeight = 700
+  ClientWidth = 1100
+  OnCreate = FormCreate
+  OnDestroy = FormDestroy
+  Position = poScreenCenter
+  WindowState = wsMaximized
+  LCLVersion = '4.99.0.0'
+  object PageControl1: TPageControl
+    Left = 0
+    Height = 700
+    Top = 0
+    Width = 1100
+    ActivePage = TabSimulation
+    Align = alClient
+    TabIndex = 0
+    TabOrder = 0
+    object TabSimulation: TTabSheet
+      Caption = 'Simulation'
+      ClientHeight = 670
+      ClientWidth = 1092
+      object PanelControls: TPanel
+        Left = 0
+        Height = 670
+        Top = 0
+        Width = 260
+        Align = alLeft
+        BevelOuter = bvNone
+        TabOrder = 0
+        object LabelPatient: TLabel
+          Left = 8
+          Height = 15
+          Top = 8
+          Width = 244
+          Caption = 'Patient:'
+          WordWrap = True
+        end
+        object ButtonEditPatient: TButton
+          Left = 8
+          Height = 25
+          Top = 28
+          Width = 244
+          Caption = 'Edit Patient...'
+          OnClick = ButtonEditPatientClick
+          TabOrder = 0
+        end
+        object LabelDrugA: TLabel
+          Left = 8
+          Height = 15
+          Top = 64
+          Width = 46
+          Caption = 'Drug A:'
+        end
+        object cbDrugA: TComboBox
+          Left = 8
+          Height = 23
+          Top = 82
+          Width = 244
+          Style = csDropDownList
+          OnChange = cbDrugAChange
+          TabOrder = 1
+        end
+        object LabelModelA: TLabel
+          Left = 8
+          Height = 15
+          Top = 110
+          Width = 51
+          Caption = 'Model A:'
+        end
+        object cbModelA: TComboBox
+          Left = 8
+          Height = 23
+          Top = 128
+          Width = 244
+          Style = csDropDownList
+          TabOrder = 2
+        end
+        object LabelRegimen: TLabel
+          Left = 8
+          Height = 15
+          Top = 156
+          Width = 47
+          Caption = 'Regimen:'
+        end
+        object cbRegimen: TComboBox
+          Left = 8
+          Height = 23
+          Top = 174
+          Width = 244
+          Style = csDropDownList
+          OnChange = cbRegimenChange
+          TabOrder = 3
+        end
+        object LabelDrugB: TLabel
+          Left = 8
+          Height = 15
+          Top = 202
+          Width = 46
+          Caption = 'Drug B:'
+        end
+        object cbDrugB: TComboBox
+          Left = 8
+          Height = 23
+          Top = 220
+          Width = 244
+          Style = csDropDownList
+          OnChange = cbDrugBChange
+          TabOrder = 4
+        end
+        object LabelModelB: TLabel
+          Left = 8
+          Height = 15
+          Top = 248
+          Width = 51
+          Caption = 'Model B:'
+        end
+        object cbModelB: TComboBox
+          Left = 8
+          Height = 23
+          Top = 266
+          Width = 244
+          Style = csDropDownList
+          TabOrder = 5
+        end
+        object LabelTotalTime: TLabel
+          Left = 8
+          Height = 15
+          Top = 300
+          Width = 110
+          Caption = 'Total time (min):'
+        end
+        object EditTotalTime: TEdit
+          Left = 160
+          Height = 23
+          Top = 296
+          Width = 92
+          TabOrder = 6
+        end
+        object LabelInterval: TLabel
+          Left = 8
+          Height = 15
+          Top = 328
+          Width = 95
+          Caption = 'Interval (sec):'
+        end
+        object EditInterval: TEdit
+          Left = 160
+          Height = 23
+          Top = 324
+          Width = 92
+          TabOrder = 7
+        end
+        object LabelTarget: TLabel
+          Left = 8
+          Height = 15
+          Top = 356
+          Width = 90
+          Caption = 'Target A (conc.):'
+        end
+        object EditTarget: TEdit
+          Left = 160
+          Height = 23
+          Top = 352
+          Width = 92
+          TabOrder = 8
+        end
+        object LabelBolus: TLabel
+          Left = 8
+          Height = 15
+          Top = 384
+          Width = 70
+          Caption = 'Bolus A (mL):'
+        end
+        object EditBolus: TEdit
+          Left = 160
+          Height = 23
+          Top = 380
+          Width = 92
+          TabOrder = 9
+        end
+        object LabelBolusB: TLabel
+          Left = 8
+          Height = 15
+          Top = 412
+          Width = 70
+          Caption = 'Bolus B (mL):'
+        end
+        object EditBolusB: TEdit
+          Left = 160
+          Height = 23
+          Top = 408
+          Width = 92
+          TabOrder = 10
+        end
+        object LabelStopTime: TLabel
+          Left = 8
+          Height = 15
+          Top = 440
+          Width = 105
+          Caption = 'Stop time (min):'
+        end
+        object EditStopTime: TEdit
+          Left = 160
+          Height = 23
+          Top = 436
+          Width = 92
+          TabOrder = 11
+        end
+        object ButtonRun: TButton
+          Left = 8
+          Height = 27
+          Top = 472
+          Width = 118
+          Caption = 'Run'
+          OnClick = ButtonRunClick
+          TabOrder = 12
+        end
+        object ButtonReset: TButton
+          Left = 134
+          Height = 27
+          Top = 472
+          Width = 118
+          Caption = 'Reset'
+          OnClick = ButtonResetClick
+          TabOrder = 13
+        end
+        object MemoInfo: TMemo
+          Left = 8
+          Height = 178
+          Top = 512
+          Width = 244
+          ReadOnly = True
+          ScrollBars = ssVertical
+          TabOrder = 14
+        end
+      end
+      object PanelCharts: TPanel
+        Left = 260
+        Height = 670
+        Top = 0
+        Width = 832
+        Align = alClient
+        BevelOuter = bvNone
+        TabOrder = 1
+      object ChartConc: TChart
+        Left = 0
+        Height = 335
+        Top = 0
+        Width = 832
+        AxisList = <
+          item
+            Grid.Color = clSilver
+            Minors = <>
+            Title.LabelFont.Orientation = 900
+            Title.Caption = 'Concentration: mcg/ml (hypnotics), ng/ml (opioids)'
+            Title.Visible = True
+          end
+          item
+            Alignment = calBottom
+            Grid.Color = clSilver
+            Minors = <>
+            Title.Caption = 'Time (min)'
+            Title.Visible = True
+          end
+          item
+            Alignment = calRight
+            Grid.Style = psClear
+            Minors = <>
+            Title.LabelFont.Orientation = 900
+            Title.Caption = 'BIS'
+            Title.Visible = True
+          end>
+        Title.Text.Strings = (
+          'Plasma / Effect-site Concentration'
+        )
+        Title.Visible = True
+        Legend.Visible = True
+        Align = alTop
+        object SeriesC1: TLineSeries
+          Title = 'Plasma (C1)'
+          LinePen.Color = clRed
+          LinePen.Width = 2
+        end
+        object SeriesCe: TLineSeries
+          Title = 'Effect (Ce)'
+          LinePen.Color = clBlue
+          LinePen.Width = 2
+        end
+        object SeriesBIS: TLineSeries
+          Title = 'BIS'
+          AxisIndexY = 2
+          LinePen.Color = clGreen
+          LinePen.Width = 1
+          LinePen.Style = psDash
+        end
+        object SeriesC1B: TLineSeries
+          Title = 'Plasma B (C1)'
+          LinePen.Color = clMaroon
+          LinePen.Width = 2
+          LinePen.Style = psDot
+        end
+        object SeriesCeB: TLineSeries
+          Title = 'Effect B (Ce)'
+          LinePen.Color = clNavy
+          LinePen.Width = 2
+          LinePen.Style = psDot
+        end
+      end
+      object ChartRate: TChart
+        Left = 0
+        Height = 335
+        Top = 335
+        Width = 832
+        AxisList = <
+          item
+            Grid.Color = clSilver
+            Minors = <>
+            Title.LabelFont.Orientation = 900
+            Title.Caption = 'Rate (mL/hr)'
+            Title.Visible = True
+          end
+          item
+            Alignment = calBottom
+            Grid.Color = clSilver
+            Minors = <>
+            Title.Caption = 'Time (min)'
+            Title.Visible = True
+          end>
+        Title.Text.Strings = (
+          'Infusion Rate'
+        )
+        Title.Visible = True
+        Legend.Visible = True
+        Align = alClient
+        object SeriesRate: TLineSeries
+          Title = 'Rate (mL/hr)'
+          LinePen.Color = clPurple
+          LinePen.Width = 2
+        end
+      end
+      end
+    end
+    object TabDiagnostics: TTabSheet
+      Caption = 'Diagnostics'
+      ClientHeight = 670
+      ClientWidth = 1092
+      object ChartLBW: TChart
+        Left = 0
+        Height = 335
+        Top = 0
+        Width = 1092
+        AxisList = <
+          item
+            Grid.Color = clSilver
+            Minors = <>
+            Title.LabelFont.Orientation = 900
+            Title.Caption = 'Fat-Free Mass (kg)'
+            Title.Visible = True
+          end
+          item
+            Alignment = calBottom
+            Grid.Color = clSilver
+            Minors = <>
+            Title.Caption = 'Weight (kg)'
+            Title.Visible = True
+          end>
+        Title.Text.Strings = (
+          'Fat-Free Mass vs Weight (age 24, height 1.75m)'
+        )
+        Title.Visible = True
+        Legend.Visible = True
+        Align = alTop
+        object SeriesLBWMale: TLineSeries
+          Title = 'Male'
+          LinePen.Color = clBlue
+          LinePen.Width = 2
+        end
+        object SeriesLBWFemale: TLineSeries
+          Title = 'Female'
+          LinePen.Color = clRed
+          LinePen.Width = 2
+        end
+      end
+      object ChartKapsCompare: TChart
+        Left = 0
+        Height = 335
+        Top = 335
+        Width = 1092
+        AxisList = <
+          item
+            Grid.Color = clSilver
+            Minors = <>
+            Title.LabelFont.Orientation = 900
+            Title.Caption = 'Plasma Concentration'
+            Title.Visible = True
+          end
+          item
+            Alignment = calBottom
+            Grid.Color = clSilver
+            Minors = <>
+            Title.Caption = 'Time (min)'
+            Title.Visible = True
+          end>
+        Title.Text.Strings = (
+          'Kaps-Rentrop vs RK45: plasma concentration, 140mL Marsh bolus'
+        )
+        Title.Visible = True
+        Legend.Visible = True
+        Align = alClient
+        object SeriesKapsC1: TLineSeries
+          Title = 'Kaps-Rentrop'
+          LinePen.Color = clRed
+          LinePen.Width = 2
+        end
+        object SeriesRK45C1: TLineSeries
+          Title = 'RK45'
+          LinePen.Color = clBlue
+          LinePen.Width = 1
+          LinePen.Style = psDash
+        end
+      end
+    end
+  end
+end
