@@ -4,9 +4,9 @@
 // machine you are about to build newVM* on - this is a snapshot of THIS
 // machine's installed libraries, not a portability guarantee for any
 // other machine.)
-// Generated: 18-8-26 12:49:08
+// Generated: 19/08/2026 07:58:24
 
-{$DEFINE PLATFORM_LINUX}
+{$DEFINE PLATFORM_WINDOWS}
 {$DEFINE PLATFORM_X86_64}
 
 {$DEFINE HAVE_OPENBLAS}   // libopenblas found

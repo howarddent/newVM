@@ -1,51 +1,47 @@
 program newvmconfigure;
 
-{*******************************************************************************
-
-     Build-time platform/library detector for newVM.
-
-     FPC's {$IFDEF}/{$Linklib} directives are resolved at COMPILE time, but
-     "is libmkl_rt.so actually installed on this machine" is a fact about
-     the BUILD machine, not something the compiler can know on its own.
-     This standalone console program bridges that gap: run it once (before
-     lazbuild) on whatever machine you're about to build newVM* on, and it
-     writes newVMConfig.inc - a plain {$DEFINE ...} include file that
-     newVM.pas (and, as they gain the same fallback treatment, its sibling
-     units) {$I} at the top, gating their {$Linklib} blocks and choosing
-     between MKL/IPP/OpenBLAS-backed and plain-Pascal implementations.
-
-     Detection has two halves:
-       - OS and CPU architecture: free at compile time via FPC's own
-         built-in macros (WINDOWS/LINUX/DARWIN, CPUX86_64/CPUAARCH64/...) -
-         this tool just relays them into PLATFORM_* defines so the
-         generated include file documents what it was generated for.
-       - Library presence: NOT knowable at compile time, so this probes at
-         RUNTIME via LoadLibrary (DynLibs), the exact same "try to dlopen
-         it, see if it works" technique cblas.pas already uses for OpenBLAS
-         (TryInitializeCBLAS/LoadAddresses) and fftw3.pas uses for FFTW -
-         just done once here, ahead of the real build, rather than every
-         time the built program starts.
-
-     This program deliberately has no dependency on cblas.pas/OneAPI.pas/
-     fftw3.pas/newVM*.pas themselves (only SysUtils/DynLibs) - it has to be
-     buildable and runnable on a machine that might have NONE of MKL/IPP/
-     OpenBLAS/FFTW installed, which rules out anything that {$Linklib}s
-     against them.
-
-     Usage:
-       fpc newvmconfigure.lpr          (one-off compile; no MKL/IPP/
-                                         OpenBLAS/FFTW needed to build this
-                                         tool itself)
-       ./newvmconfigure                (writes newVMConfig.inc into the
-                                         current directory - run this from
-                                         the repo root)
-       lazbuild --lazarusdir=<path> newVMtest.lpi   (as before)
-
-     Re-run ./newvmconfigure whenever you build on a different machine, or
-     after installing/removing MKL/IPP/OpenBLAS/FFTW on this one - it is a
-     snapshot of the machine it ran on, not a portability guarantee.
-
-*******************************************************************************}
+// Build-time platform/library detector for newVM.
+//
+// FPC's IFDEF/Linklib directives are resolved at COMPILE time, but
+// "is libmkl_rt.so actually installed on this machine" is a fact about
+// the BUILD machine, not something the compiler can know on its own.
+// This standalone console program bridges that gap: run it once (before
+// lazbuild) on whatever machine you're about to build newVM* on, and it
+// writes newVMConfig.inc - a plain DEFINE ... include file that
+// newVM.pas (and, as they gain the same fallback treatment, its sibling
+// units) includes at the top, gating their Linklib blocks and choosing
+// between MKL/IPP/OpenBLAS-backed and plain-Pascal implementations.
+//
+// Detection has two halves:
+//   - OS and CPU architecture: free at compile time via FPC's own
+//     built-in macros (WINDOWS/LINUX/DARWIN, CPUX86_64/CPUAARCH64/...) -
+//     this tool just relays them into PLATFORM_* defines so the
+//     generated include file documents what it was generated for.
+//   - Library presence: NOT knowable at compile time, so this probes at
+//     RUNTIME via LoadLibrary (DynLibs), the exact same "try to dlopen
+//     it, see if it works" technique cblas.pas already uses for OpenBLAS
+//     (TryInitializeCBLAS/LoadAddresses) and fftw3.pas uses for FFTW -
+//     just done once here, ahead of the real build, rather than every
+//     time the built program starts.
+//
+// This program deliberately has no dependency on cblas.pas/OneAPI.pas/
+// fftw3.pas/newVM*.pas themselves (only SysUtils/DynLibs) - it has to be
+// buildable and runnable on a machine that might have NONE of MKL/IPP/
+// OpenBLAS/FFTW installed, which rules out anything that links
+// against them.
+//
+// Usage:
+//   fpc newvmconfigure.lpr          (one-off compile; no MKL/IPP/
+//                                     OpenBLAS/FFTW needed to build this
+//                                     tool itself)
+//   ./newvmconfigure                (writes newVMConfig.inc into the
+//                                     current directory - run this from
+//                                     the repo root)
+//   lazbuild --lazarusdir=<path> newVMtest.lpi   (as before)
+//
+// Re-run ./newvmconfigure whenever you build on a different machine, or
+// after installing/removing MKL/IPP/OpenBLAS/FFTW on this one - it is a
+// snapshot of the machine it ran on, not a portability guarantee.
 
 {$mode objfpc}{$H+}
 
@@ -208,13 +204,13 @@ begin
   WriteLn;
   WriteLn('Writing newVMConfig.inc ...');
 
-  { NOTE: every generated line below uses '//' line comments, never a
-    '{ ... }' block comment - Pascal block comments aren't nestable, so a
-    literal '{' or '}' anywhere in the prose (e.g. naming the very
-    {$IFDEF PUREPASCAL} directive this file drives) would silently
-    truncate the comment early and feed the rest of the sentence to the
-    compiler as code. '//' comments can't have that problem since they
-    always end at the line break regardless of their content. }
+  // NOTE: every generated line below uses '//' line comments, never a
+  // '{ ... }' block comment - Pascal block comments aren't nestable, so a
+  // literal '{' or '}' anywhere in the prose (e.g. naming the very
+  // IFDEF PUREPASCAL directive this file drives) would silently
+  // truncate the comment early and feed the rest of the sentence to the
+  // compiler as code. '//' comments can't have that problem since they
+  // always end at the line break regardless of their content.
   AssignFile(OutFile, 'newVMConfig.inc');
   Rewrite(OutFile);
   WriteLn(OutFile, '// newVMConfig.inc');
