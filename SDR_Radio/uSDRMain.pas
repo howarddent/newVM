@@ -151,7 +151,7 @@ begin
   FAnalyser.EpochSize := StrToIntDef(EpochCombo.Text, DefaultSDREpochSize);
   FAnalyser.OnGPUStatusKnown := @AnalyserGPUStatusKnown;
 
-  FAnalyser.WaterfallPlot.ScrollRate := ScrollRateTrackBar.Position;
+  FAnalyser.WaterfallScrollRate := ScrollRateTrackBar.Position;
   ScrollRateLabel.Caption := Format('Scroll Rate: %d/s', [ScrollRateTrackBar.Position]);
 
   YOffsetTrackBar.Position := 0;
@@ -310,8 +310,8 @@ begin
   Caps := FRFSource.Capabilities;
 
   Caption := 'newVM ' + Caps.DeviceName + ' Spectrum Analyser';
-  FAnalyser.SpectrumPlot.Title := Caps.DeviceName + ' Spectrum';
-  FAnalyser.WaterfallPlot.Title := Caps.DeviceName + ' Waterfall';
+  FAnalyser.SpectrumTitle := Caps.DeviceName + ' Spectrum';
+  FAnalyser.WaterfallTitle := Caps.DeviceName + ' Waterfall';
 
   FreqEdit.MinValue := Caps.MinFreqHz / 1e6;
   FreqEdit.MaxValue := Caps.MaxFreqHz / 1e6;
@@ -401,12 +401,9 @@ var
 begin
   Lo := (FRFSource.CenterFreqHz - FRFSource.SampleRateHz / 2) / 1e6;
   Hi := (FRFSource.CenterFreqHz + FRFSource.SampleRateHz / 2) / 1e6;
-  FAnalyser.SpectrumPlot.UseFrequencyAxis := True;
-  FAnalyser.SpectrumPlot.XAxisMin := Lo;
-  FAnalyser.SpectrumPlot.XAxisMax := Hi;
-  FAnalyser.WaterfallPlot.UseFrequencyAxis := True;
-  FAnalyser.WaterfallPlot.XAxisMin := Lo;
-  FAnalyser.WaterfallPlot.XAxisMax := Hi;
+  FAnalyser.UseFrequencyAxis := True;
+  FAnalyser.XAxisMin := Lo;
+  FAnalyser.XAxisMax := Hi;
 end;
 
 // PeakThresholdTrackBar is a 0-100% slider, not an absolute dB value -
@@ -422,9 +419,9 @@ end;
 // PeakDetectCheckBoxChange.
 procedure TForm1.UpdatePeakThreshold;
 begin
-  FAnalyser.SpectrumPlot.PeakThreshold := FAnalyser.SpectrumPlot.CurrentYMin +
+  FAnalyser.SpectrumPeakThreshold := FAnalyser.SpectrumCurrentYMin +
     (PeakThresholdTrackBar.Position / 100) *
-    (FAnalyser.SpectrumPlot.CurrentYMax - FAnalyser.SpectrumPlot.CurrentYMin);
+    (FAnalyser.SpectrumCurrentYMax - FAnalyser.SpectrumCurrentYMin);
   PeakThresholdLabel.Caption := Format('Peak Threshold: %d%%', [PeakThresholdTrackBar.Position]);
 end;
 
@@ -527,18 +524,17 @@ end;
 
 procedure TForm1.ShowAxesCheckBoxChange(Sender: TObject);
 begin
-  FAnalyser.SpectrumPlot.ShowAxes := ShowAxesCheckBox.Checked;
-  FAnalyser.WaterfallPlot.ShowAxes := ShowAxesCheckBox.Checked;
+  FAnalyser.ShowAxes := ShowAxesCheckBox.Checked;
 end;
 
 procedure TForm1.ShowAverageCheckBoxChange(Sender: TObject);
 begin
-  FAnalyser.SpectrumPlot.ShowAverage := ShowAverageCheckBox.Checked;
+  FAnalyser.SpectrumShowAverage := ShowAverageCheckBox.Checked;
 end;
 
 procedure TForm1.PeakDetectCheckBoxChange(Sender: TObject);
 begin
-  FAnalyser.SpectrumPlot.ShowPeakLabels := PeakDetectCheckBox.Checked;
+  FAnalyser.SpectrumShowPeakLabels := PeakDetectCheckBox.Checked;
   UpdatePeakThreshold;
 end;
 
@@ -549,7 +545,7 @@ end;
 
 procedure TForm1.ScrollRateTrackBarChange(Sender: TObject);
 begin
-  FAnalyser.WaterfallPlot.ScrollRate := ScrollRateTrackBar.Position;
+  FAnalyser.WaterfallScrollRate := ScrollRateTrackBar.Position;
   ScrollRateLabel.Caption := Format('Scroll Rate: %d/s', [ScrollRateTrackBar.Position]);
 end;
 
@@ -568,7 +564,7 @@ end;
 // - a display-only shift of the whole trace, independent of YGain.
 procedure TForm1.YOffsetTrackBarChange(Sender: TObject);
 begin
-  FAnalyser.SpectrumPlot.YOffset := YOffsetTrackBar.Position;
+  FAnalyser.SpectrumYOffset := YOffsetTrackBar.Position;
   YOffsetLabel.Caption := Format('Y Zero: %d dB', [YOffsetTrackBar.Position]);
 end;
 
@@ -581,7 +577,7 @@ var
   Gain: Double;
 begin
   Gain := YGainTrackBar.Position / 10.0;
-  FAnalyser.SpectrumPlot.YGain := Gain;
+  FAnalyser.SpectrumYGain := Gain;
   YGainLabel.Caption := Format('Y Gain: %.1fx', [Gain]);
 end;
 

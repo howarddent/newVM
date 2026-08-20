@@ -50,15 +50,22 @@ unit uVMPlotSDRSpectrum;
      with no usable OpenCL device. UsingGPU reports which path is
      actually active, for diagnostics.
 
-     Deliberately NOT a giant pass-through property list mirroring every
-     TVMPlotSpectrum/TVMPlotWaterfall property: SpectrumPlot/WaterfallPlot
-     are exposed directly (public, not published) so calling code sets
-     ShowAxes/YOffset/YGain/ScrollRate/etc. straight on the real control,
-     the same properties documented in uVMPlotSpectrum.pas/
-     uVMPlotWaterfall.pas themselves - duplicating dozens of forwarding
-     properties here would only be another place for them to drift out of
-     sync. Only Source/EpochSize/Active/UpdateIntervalMs - genuinely new
-     concepts this component itself introduces - are published.
+     PASS-THROUGH PROPERTIES: every display-relevant TVMPlotSpectrum/
+     TVMPlotWaterfall property is also published here, forwarding straight
+     to the real control (see uVMPlotSpectrum.pas/uVMPlotWaterfall.pas
+     themselves for what each one actually does) - so both plots'
+     appearance can be tuned from this component's own Object Inspector
+     entry at design time, without needing to reach into SpectrumPlot/
+     WaterfallPlot (still exposed, public, as an escape hatch for anything
+     not forwarded here). Properties whose name and meaning are identical
+     on both controls AND which uSDRMain.pas already always sets to the
+     same value on both (ShowAxes, UseFrequencyAxis, XAxisMin, XAxisMax,
+     XAxisTitle) are forwarded unprefixed, writing both controls together;
+     everything else is prefixed Spectrum*/Waterfall* to stay unambiguous,
+     since the two controls' values can otherwise differ (e.g. each has
+     its own Title, and only TVMPlotSpectrum has YOffset/YGain/peak
+     detection/averaging, only TVMPlotWaterfall has ScrollRate/
+     VisibleRows).
 
 *******************************************************************************}
 
@@ -69,7 +76,7 @@ interface
 {$I ..\newVMConfig.inc}
 
 uses
-  Classes, SysUtils, Controls, ExtCtrls, Math,
+  Classes, SysUtils, Controls, ExtCtrls, Graphics, Math,
   newVM, newVMSingle, newVMComplexSingle,
   {$IFDEF HAVE_OPENCL}
   OpenCLAPI, newVMCL,
@@ -102,6 +109,63 @@ type
     procedure SetActive(AValue: Boolean);
     function GetUpdateIntervalMs: Integer;
     procedure SetUpdateIntervalMs(AValue: Integer);
+
+    // Pass-through properties - see this unit's own header comment for
+    // the unprefixed-vs-Spectrum*/Waterfall* naming rule.
+    function GetShowAxes: Boolean;
+    procedure SetShowAxes(AValue: Boolean);
+    function GetUseFrequencyAxis: Boolean;
+    procedure SetUseFrequencyAxis(AValue: Boolean);
+    function GetXAxisMin: Double;
+    procedure SetXAxisMin(AValue: Double);
+    function GetXAxisMax: Double;
+    procedure SetXAxisMax(AValue: Double);
+    function GetXAxisTitle: string;
+    procedure SetXAxisTitle(const AValue: string);
+    function GetSpectrumTitle: string;
+    procedure SetSpectrumTitle(const AValue: string);
+    function GetSpectrumYAxisTitle: string;
+    procedure SetSpectrumYAxisTitle(const AValue: string);
+    function GetSpectrumFadeSeconds: Double;
+    procedure SetSpectrumFadeSeconds(AValue: Double);
+    function GetSpectrumLowColor: TColor;
+    procedure SetSpectrumLowColor(AValue: TColor);
+    function GetSpectrumMidColor: TColor;
+    procedure SetSpectrumMidColor(AValue: TColor);
+    function GetSpectrumHighColor: TColor;
+    procedure SetSpectrumHighColor(AValue: TColor);
+    function GetSpectrumYOffset: Double;
+    procedure SetSpectrumYOffset(AValue: Double);
+    function GetSpectrumYGain: Double;
+    procedure SetSpectrumYGain(AValue: Double);
+    function GetSpectrumShowPeakLabels: Boolean;
+    procedure SetSpectrumShowPeakLabels(AValue: Boolean);
+    function GetSpectrumPeakThreshold: Double;
+    procedure SetSpectrumPeakThreshold(AValue: Double);
+    function GetSpectrumShowAverage: Boolean;
+    procedure SetSpectrumShowAverage(AValue: Boolean);
+    function GetSpectrumAverageCount: Integer;
+    procedure SetSpectrumAverageCount(AValue: Integer);
+    function GetSpectrumCurrentYMin: Double;
+    function GetSpectrumCurrentYMax: Double;
+    function GetSpectrumCursorValue: Double;
+    procedure SetSpectrumCursorValue(AValue: Double);
+    function GetSpectrumCursorReading: Double;
+    function GetWaterfallTitle: string;
+    procedure SetWaterfallTitle(const AValue: string);
+    function GetWaterfallScrollRate: Double;
+    procedure SetWaterfallScrollRate(AValue: Double);
+    function GetWaterfallVisibleRows: Integer;
+    procedure SetWaterfallVisibleRows(AValue: Integer);
+    function GetWaterfallLowColor: TColor;
+    procedure SetWaterfallLowColor(AValue: TColor);
+    function GetWaterfallMidColor: TColor;
+    procedure SetWaterfallMidColor(AValue: TColor);
+    function GetWaterfallHighColor: TColor;
+    procedure SetWaterfallHighColor(AValue: TColor);
+    function GetWaterfallCurrentYMin: Double;
+    function GetWaterfallCurrentYMax: Double;
+
     procedure UpdateTick(Sender: TObject);
     procedure ProcessEpoch(const IQ: TVMobjC);
     function ProcessEpochCPU(const IQ: TVMobjC): TVMobj;
@@ -130,6 +194,41 @@ type
     // than reading them synchronously right after Active := True, before
     // the first epoch has run.
     property OnGPUStatusKnown: TNotifyEvent read FOnGPUStatusKnown write FOnGPUStatusKnown;
+
+    // Shared - forwarded to both SpectrumPlot and WaterfallPlot together.
+    property ShowAxes: Boolean read GetShowAxes write SetShowAxes;
+    property UseFrequencyAxis: Boolean read GetUseFrequencyAxis write SetUseFrequencyAxis;
+    property XAxisMin: Double read GetXAxisMin write SetXAxisMin;
+    property XAxisMax: Double read GetXAxisMax write SetXAxisMax;
+    property XAxisTitle: string read GetXAxisTitle write SetXAxisTitle;
+
+    // SpectrumPlot-only.
+    property SpectrumTitle: string read GetSpectrumTitle write SetSpectrumTitle;
+    property SpectrumYAxisTitle: string read GetSpectrumYAxisTitle write SetSpectrumYAxisTitle;
+    property SpectrumFadeSeconds: Double read GetSpectrumFadeSeconds write SetSpectrumFadeSeconds;
+    property SpectrumLowColor: TColor read GetSpectrumLowColor write SetSpectrumLowColor;
+    property SpectrumMidColor: TColor read GetSpectrumMidColor write SetSpectrumMidColor;
+    property SpectrumHighColor: TColor read GetSpectrumHighColor write SetSpectrumHighColor;
+    property SpectrumYOffset: Double read GetSpectrumYOffset write SetSpectrumYOffset;
+    property SpectrumYGain: Double read GetSpectrumYGain write SetSpectrumYGain;
+    property SpectrumShowPeakLabels: Boolean read GetSpectrumShowPeakLabels write SetSpectrumShowPeakLabels;
+    property SpectrumPeakThreshold: Double read GetSpectrumPeakThreshold write SetSpectrumPeakThreshold;
+    property SpectrumShowAverage: Boolean read GetSpectrumShowAverage write SetSpectrumShowAverage;
+    property SpectrumAverageCount: Integer read GetSpectrumAverageCount write SetSpectrumAverageCount;
+    property SpectrumCurrentYMin: Double read GetSpectrumCurrentYMin;
+    property SpectrumCurrentYMax: Double read GetSpectrumCurrentYMax;
+    property SpectrumCursorValue: Double read GetSpectrumCursorValue write SetSpectrumCursorValue;
+    property SpectrumCursorReading: Double read GetSpectrumCursorReading;
+
+    // WaterfallPlot-only.
+    property WaterfallTitle: string read GetWaterfallTitle write SetWaterfallTitle;
+    property WaterfallScrollRate: Double read GetWaterfallScrollRate write SetWaterfallScrollRate;
+    property WaterfallVisibleRows: Integer read GetWaterfallVisibleRows write SetWaterfallVisibleRows;
+    property WaterfallLowColor: TColor read GetWaterfallLowColor write SetWaterfallLowColor;
+    property WaterfallMidColor: TColor read GetWaterfallMidColor write SetWaterfallMidColor;
+    property WaterfallHighColor: TColor read GetWaterfallHighColor write SetWaterfallHighColor;
+    property WaterfallCurrentYMin: Double read GetWaterfallCurrentYMin;
+    property WaterfallCurrentYMax: Double read GetWaterfallCurrentYMax;
   end;
 
 procedure Register;
@@ -211,6 +310,276 @@ end;
 procedure TSDRSpectrumAnalyser.SetUpdateIntervalMs(AValue: Integer);
 begin
   FUpdateTimer.Interval := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetShowAxes: Boolean;
+begin
+  Result := FSpectrumPlot.ShowAxes;
+end;
+
+procedure TSDRSpectrumAnalyser.SetShowAxes(AValue: Boolean);
+begin
+  FSpectrumPlot.ShowAxes := AValue;
+  FWaterfallPlot.ShowAxes := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetUseFrequencyAxis: Boolean;
+begin
+  Result := FSpectrumPlot.UseFrequencyAxis;
+end;
+
+procedure TSDRSpectrumAnalyser.SetUseFrequencyAxis(AValue: Boolean);
+begin
+  FSpectrumPlot.UseFrequencyAxis := AValue;
+  FWaterfallPlot.UseFrequencyAxis := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetXAxisMin: Double;
+begin
+  Result := FSpectrumPlot.XAxisMin;
+end;
+
+procedure TSDRSpectrumAnalyser.SetXAxisMin(AValue: Double);
+begin
+  FSpectrumPlot.XAxisMin := AValue;
+  FWaterfallPlot.XAxisMin := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetXAxisMax: Double;
+begin
+  Result := FSpectrumPlot.XAxisMax;
+end;
+
+procedure TSDRSpectrumAnalyser.SetXAxisMax(AValue: Double);
+begin
+  FSpectrumPlot.XAxisMax := AValue;
+  FWaterfallPlot.XAxisMax := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetXAxisTitle: string;
+begin
+  Result := FSpectrumPlot.XAxisTitle;
+end;
+
+procedure TSDRSpectrumAnalyser.SetXAxisTitle(const AValue: string);
+begin
+  FSpectrumPlot.XAxisTitle := AValue;
+  FWaterfallPlot.XAxisTitle := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumTitle: string;
+begin
+  Result := FSpectrumPlot.Title;
+end;
+
+procedure TSDRSpectrumAnalyser.SetSpectrumTitle(const AValue: string);
+begin
+  FSpectrumPlot.Title := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumYAxisTitle: string;
+begin
+  Result := FSpectrumPlot.YAxisTitle;
+end;
+
+procedure TSDRSpectrumAnalyser.SetSpectrumYAxisTitle(const AValue: string);
+begin
+  FSpectrumPlot.YAxisTitle := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumFadeSeconds: Double;
+begin
+  Result := FSpectrumPlot.FadeSeconds;
+end;
+
+procedure TSDRSpectrumAnalyser.SetSpectrumFadeSeconds(AValue: Double);
+begin
+  FSpectrumPlot.FadeSeconds := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumLowColor: TColor;
+begin
+  Result := FSpectrumPlot.LowColor;
+end;
+
+procedure TSDRSpectrumAnalyser.SetSpectrumLowColor(AValue: TColor);
+begin
+  FSpectrumPlot.LowColor := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumMidColor: TColor;
+begin
+  Result := FSpectrumPlot.MidColor;
+end;
+
+procedure TSDRSpectrumAnalyser.SetSpectrumMidColor(AValue: TColor);
+begin
+  FSpectrumPlot.MidColor := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumHighColor: TColor;
+begin
+  Result := FSpectrumPlot.HighColor;
+end;
+
+procedure TSDRSpectrumAnalyser.SetSpectrumHighColor(AValue: TColor);
+begin
+  FSpectrumPlot.HighColor := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumYOffset: Double;
+begin
+  Result := FSpectrumPlot.YOffset;
+end;
+
+procedure TSDRSpectrumAnalyser.SetSpectrumYOffset(AValue: Double);
+begin
+  FSpectrumPlot.YOffset := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumYGain: Double;
+begin
+  Result := FSpectrumPlot.YGain;
+end;
+
+procedure TSDRSpectrumAnalyser.SetSpectrumYGain(AValue: Double);
+begin
+  FSpectrumPlot.YGain := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumShowPeakLabels: Boolean;
+begin
+  Result := FSpectrumPlot.ShowPeakLabels;
+end;
+
+procedure TSDRSpectrumAnalyser.SetSpectrumShowPeakLabels(AValue: Boolean);
+begin
+  FSpectrumPlot.ShowPeakLabels := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumPeakThreshold: Double;
+begin
+  Result := FSpectrumPlot.PeakThreshold;
+end;
+
+procedure TSDRSpectrumAnalyser.SetSpectrumPeakThreshold(AValue: Double);
+begin
+  FSpectrumPlot.PeakThreshold := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumShowAverage: Boolean;
+begin
+  Result := FSpectrumPlot.ShowAverage;
+end;
+
+procedure TSDRSpectrumAnalyser.SetSpectrumShowAverage(AValue: Boolean);
+begin
+  FSpectrumPlot.ShowAverage := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumAverageCount: Integer;
+begin
+  Result := FSpectrumPlot.AverageCount;
+end;
+
+procedure TSDRSpectrumAnalyser.SetSpectrumAverageCount(AValue: Integer);
+begin
+  FSpectrumPlot.AverageCount := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumCurrentYMin: Double;
+begin
+  Result := FSpectrumPlot.CurrentYMin;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumCurrentYMax: Double;
+begin
+  Result := FSpectrumPlot.CurrentYMax;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumCursorValue: Double;
+begin
+  Result := FSpectrumPlot.CursorValue;
+end;
+
+procedure TSDRSpectrumAnalyser.SetSpectrumCursorValue(AValue: Double);
+begin
+  FSpectrumPlot.CursorValue := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetSpectrumCursorReading: Double;
+begin
+  Result := FSpectrumPlot.CursorReading;
+end;
+
+function TSDRSpectrumAnalyser.GetWaterfallTitle: string;
+begin
+  Result := FWaterfallPlot.Title;
+end;
+
+procedure TSDRSpectrumAnalyser.SetWaterfallTitle(const AValue: string);
+begin
+  FWaterfallPlot.Title := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetWaterfallScrollRate: Double;
+begin
+  Result := FWaterfallPlot.ScrollRate;
+end;
+
+procedure TSDRSpectrumAnalyser.SetWaterfallScrollRate(AValue: Double);
+begin
+  FWaterfallPlot.ScrollRate := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetWaterfallVisibleRows: Integer;
+begin
+  Result := FWaterfallPlot.VisibleRows;
+end;
+
+procedure TSDRSpectrumAnalyser.SetWaterfallVisibleRows(AValue: Integer);
+begin
+  FWaterfallPlot.VisibleRows := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetWaterfallLowColor: TColor;
+begin
+  Result := FWaterfallPlot.LowColor;
+end;
+
+procedure TSDRSpectrumAnalyser.SetWaterfallLowColor(AValue: TColor);
+begin
+  FWaterfallPlot.LowColor := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetWaterfallMidColor: TColor;
+begin
+  Result := FWaterfallPlot.MidColor;
+end;
+
+procedure TSDRSpectrumAnalyser.SetWaterfallMidColor(AValue: TColor);
+begin
+  FWaterfallPlot.MidColor := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetWaterfallHighColor: TColor;
+begin
+  Result := FWaterfallPlot.HighColor;
+end;
+
+procedure TSDRSpectrumAnalyser.SetWaterfallHighColor(AValue: TColor);
+begin
+  FWaterfallPlot.HighColor := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetWaterfallCurrentYMin: Double;
+begin
+  Result := FWaterfallPlot.CurrentYMin;
+end;
+
+function TSDRSpectrumAnalyser.GetWaterfallCurrentYMax: Double;
+begin
+  Result := FWaterfallPlot.CurrentYMax;
 end;
 
 procedure TSDRSpectrumAnalyser.UpdateTick(Sender: TObject);
