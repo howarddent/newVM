@@ -45,7 +45,7 @@ uses
   Classes, SysUtils, Math, Controls, LCLType, Graphics, LResources,
   IntfGraphics, FPImage,
   GL, GLU, OpenGLContext,
-  {$IFDEF UNIX}
+  {$IFDEF LINUX}
   GLX,
   {$ENDIF}
   newVM, newVMSingle;
@@ -561,7 +561,7 @@ end;
 procedure TVMPlot3D.ApplySwapInterval;
 begin
   if FSwapIntervalApplied then Exit;
-  {$IFDEF UNIX}
+  {$IFDEF LINUX}
   // Prefer the EXT variant (per-drawable, matching GLX_EXT_swap_control) -
   // GLX.pas resolves all of these from libGL.so once at unit-initialization
   // time (InitGLX), so by the time Paint first runs they're either already
