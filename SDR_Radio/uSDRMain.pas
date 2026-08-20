@@ -26,11 +26,11 @@ unit uSDRMain;
      sample rate is than the GUI timer's cadence.
 
      AUTODETECTION: ConnectButtonClick doesn't assume any particular
-     hardware - DetectAndOpenDevice tries THackRFDevice then
-     TRTLSDRDevice in turn (actually attempting Open on each, not just
-     checking whether a library loaded - a library can be installed with
-     no matching hardware attached), and whichever one successfully opens
-     becomes FDevice.
+     hardware - DetectAndOpenDevice tries THackRFDevice, then
+     TRTLSDRDevice, then TSDRplayDevice in turn (actually attempting Open
+     on each, not just checking whether a library loaded - a library can
+     be installed with no matching hardware attached), and whichever one
+     successfully opens becomes FDevice.
 
      CAPABILITY-DRIVEN UI: once a device is open, ApplyDeviceCapabilities
      reconfigures the control panel from FDevice.Capabilities -
@@ -80,7 +80,7 @@ uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Spin,
   newVM, newVMComplex, uVMPlotSpectrum, uVMPlotWaterfall, uSDRDevice,
-  uHackRF, uRTLSDR, uFreqKeypad;
+  uHackRF, uRTLSDR, uSDRplay, uFreqKeypad;
 
 const
   DefaultEpochSize = 8192;
@@ -229,14 +229,15 @@ end;
 // Tries each known backend in turn, actually attempting Open (not just
 // checking whether its runtime library loaded - that only proves the
 // library is installed, not that this specific hardware is attached).
-// Whichever opens first wins; if HackRF and an RTL-SDR are both attached
-// simultaneously, HackRF is preferred purely by trying it first - no
-// other significance to the order. Returns nil (with a combined ErrMsg)
-// if neither responds.
+// Whichever opens first wins; if more than one is attached simultaneously,
+// the winner is decided purely by this order (HackRF, then RTL-SDR, then
+// SDRplay) - no other significance to it. Returns nil (with a combined
+// ErrMsg) if none respond.
 function TForm1.DetectAndOpenDevice(out ErrMsg: string): TSDRDevice;
 var
   HackRF: THackRFDevice;
   RTLSDR: TRTLSDRDevice;
+  SDRplay: TSDRplayDevice;
   Reasons: string;
 begin
   Result := nil;
@@ -257,6 +258,14 @@ begin
   end;
   Reasons := Reasons + '; RTL-SDR: ' + RTLSDR.LastError;
   RTLSDR.Free;
+
+  SDRplay := TSDRplayDevice.Create;
+  if SDRplay.Open then begin
+    Result := SDRplay;
+    Exit;
+  end;
+  Reasons := Reasons + '; SDRplay: ' + SDRplay.LastError;
+  SDRplay.Free;
 
   ErrMsg := 'no SDR device found (' + Reasons + ')';
 end;
@@ -285,11 +294,20 @@ begin
   Bar.Visible := True;
   case Stage.Kind of
     gkContinuous: begin
-      Bar.Min := Round(Stage.Min);
+      // Max before Min: TTrackBar silently clamps Min down to its CURRENT
+      // Max if you assign a Min above it, and that clamp sticks even after
+      // Max is raised afterward (only Position ends up wrong, silently -
+      // no exception) - harmless for HackRF/RTL-SDR, whose own Min is
+      // always 0, but hit for real switching devices once SDRplay's own
+      // Min (20, NORMAL_MIN_GR) landed above whatever trackbar range was
+      // already showing (e.g. this control's .lfm design-time default).
+      // Setting Max first means Min is never assigned above the (already
+      // wide enough) current range.
       Bar.Max := Round(Stage.Max);
+      Bar.Min := Round(Stage.Min);
       Bar.Frequency := Max(Round(Stage.Step), 1);
       Bar.Position := Bar.Min;
-      Lbl.Caption := Format('%s: %d', [Stage.Name, Bar.Position]);
+      Lbl.Caption := Format('%s: %d%s', [Stage.Name, Bar.Position, Stage.UnitSuffix]);
     end;
     gkDiscreteList: begin
       Bar.Min := 0;
@@ -297,7 +315,7 @@ begin
       Bar.Frequency := 1;
       Bar.Position := Bar.Max div 2;   // a reasonable mid-range default
       if Length(Stage.DiscreteValues) > 0 then
-        Lbl.Caption := Format('%s: %.1f dB', [Stage.Name, Stage.DiscreteValues[Bar.Position]])
+        Lbl.Caption := Format('%s: %.1f%s', [Stage.Name, Stage.DiscreteValues[Bar.Position], Stage.UnitSuffix])
       else
         Lbl.Caption := Stage.Name + ': n/a';
     end;
@@ -327,12 +345,12 @@ begin
         Exit;
       end;
       Value := V;
-      Lbl.Caption := Format('%s: %d', [Stage.Name, V]);
+      Lbl.Caption := Format('%s: %d%s', [Stage.Name, V, Stage.UnitSuffix]);
     end;
     gkDiscreteList: begin
       if Length(Stage.DiscreteValues) = 0 then Exit;
       Value := Stage.DiscreteValues[Bar.Position];
-      Lbl.Caption := Format('%s: %.1f dB', [Stage.Name, Value]);
+      Lbl.Caption := Format('%s: %.1f%s', [Stage.Name, Value, Stage.UnitSuffix]);
     end;
   else
     Exit;

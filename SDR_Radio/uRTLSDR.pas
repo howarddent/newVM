@@ -339,6 +339,7 @@ begin
   SetLength(FCapabilities.GainStages, 2);
   FCapabilities.GainStages[0].Name := 'Tuner Gain';
   FCapabilities.GainStages[0].Kind := gkDiscreteList;
+  FCapabilities.GainStages[0].UnitSuffix := 'dB';
   SetLength(FCapabilities.GainStages[0].DiscreteValues, NGains);
   for i := 0 to NGains - 1 do
     FCapabilities.GainStages[0].DiscreteValues[i] := RawGains[i] / 10.0;   // tenths of dB -> dB

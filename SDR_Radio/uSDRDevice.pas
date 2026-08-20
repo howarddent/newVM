@@ -51,12 +51,23 @@ type
 
   // One tunable gain control, in device-agnostic terms - see this unit's
   // own header comment for the "Value is always a real physical unit"
-  // convention every SetGain call follows regardless of Kind.
+  // convention every SetGain call follows regardless of Kind. That unit is
+  // usually dB (every gkContinuous/gkDiscreteList stage HackRF/RTL-SDR
+  // expose is), but isn't universally - SDRplay's RSP1A "LNA State" is a
+  // gkDiscreteList of raw 0-9 state indices, not a dB value (the actual
+  // attenuation per step varies by band and isn't a single published
+  // table) - so the display suffix is a per-stage property rather than a
+  // hardcoded assumption; see uSDRMain.pas's two label-formatting call
+  // sites. Defaults to 'dB' (SetLength-zeroing a string gives '', so every
+  // existing backend explicitly sets this rather than relying on a silent
+  // default) purely as documentation of the existing convention, not a
+  // magic empty-string special case.
   TSDRGainStage = record
     Name: string;
     Kind: TSDRGainStageKind;
     Min, Max, Step: Double;          // gkContinuous only
-    DiscreteValues: array of Double; // gkDiscreteList only (real units, e.g. dB)
+    DiscreteValues: array of Double; // gkDiscreteList only (real units, per UnitSuffix)
+    UnitSuffix: string;              // e.g. 'dB', or '' for a unitless index like LNA State
   end;
 
   // A simple on/off device feature that isn't part of the receiver's

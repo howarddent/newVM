@@ -241,11 +241,13 @@ begin
   FCapabilities.GainStages[0].Min := 0;
   FCapabilities.GainStages[0].Max := 40;
   FCapabilities.GainStages[0].Step := 8;
+  FCapabilities.GainStages[0].UnitSuffix := 'dB';
   FCapabilities.GainStages[1].Name := 'VGA Gain';
   FCapabilities.GainStages[1].Kind := gkContinuous;
   FCapabilities.GainStages[1].Min := 0;
   FCapabilities.GainStages[1].Max := 62;
   FCapabilities.GainStages[1].Step := 2;
+  FCapabilities.GainStages[1].UnitSuffix := 'dB';
   FCapabilities.GainStages[2].Name := 'RF Amp';
   FCapabilities.GainStages[2].Kind := gkBoolean;
 
