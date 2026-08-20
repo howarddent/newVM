@@ -186,6 +186,11 @@ function IFFT(const A: TVMobjCL): TVMobjCL; overload;
 // OpenBLAS/FFTW.
 function OpenCLReady: Boolean;
 
+// The reason OpenCLReady returned False, once it has - empty before the
+// first check, or if it succeeded. Exposed so calling code (e.g. a status
+// bar) can explain a CPU fallback rather than just silently taking it.
+function OpenCLLastError: string;
+
 implementation
 
 uses
@@ -311,6 +316,11 @@ function OpenCLReady: Boolean;
 begin
   EnsureOpenCLReady;
   Result := GReadyState = grReady;
+end;
+
+function OpenCLLastError: string;
+begin
+  Result := GInitError;
 end;
 
 { TVMobjCL }

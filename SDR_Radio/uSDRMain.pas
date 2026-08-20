@@ -2,38 +2,38 @@ unit uSDRMain;
 
 {*******************************************************************************
 
-     Main form for the spectrum analyser. Talks only to the abstract
-     TSDRDevice interface (uSDRDevice.pas) - never to THackRFDevice
-     (uHackRF.pas) or TRTLSDRDevice (uRTLSDR.pas) directly - so it works
-     identically regardless of which hardware is actually attached. Two
-     components - created and Parented to this form in code, same
-     convention as Graphs/PlotStack's and Graphs/SpectrumDemo's own demo
-     forms - are stacked vertically: FSpectrumPlot (TVMPlotSpectrum,
-     Graphs/uVMPlotSpectrum.pas), a flat front-on persistence spectrum
-     with a movable frequency cursor and peak labels, docked above
-     FWaterfallPlot (TVMPlotWaterfall, Graphs/uVMPlotWaterfall.pas), a
-     classic scrolling 2D waterfall filling the rest of the window. Both
-     are fed by EpochTimerTick, up to ~30 times/second, each tick pulling
-     one FEpochSize-sample complex IQ epoch (EpochCombo, default 8192 -
-     see DefaultEpochSize; a smaller epoch is a cheaper FFT/dB pass per
-     tick at the cost of coarser frequency resolution, and takes effect
-     on the very next tick with no need to stop/restart streaming, unlike
-     sample rate) off FDevice's ring buffer via TryReadEpoch. TryReadEpoch
-     deliberately skips forward to the newest
-     backlogged epoch each call (see uSDRDevice.pas's TSDRRingBuffer), so
-     the display always shows a live, up-to-date spectrum rather than
-     falling behind real time, however much faster the device's own
-     sample rate is than the GUI timer's cadence.
+     Main form for the spectrum analyser. Talks only through two
+     installable Lazarus components (uSDRRFSource.pas's TSDRRFSource,
+     uVMPlotSDRSpectrum.pas's TSDRSpectrumAnalyser) - never to
+     THackRFDevice/TRTLSDRDevice/TSDRplayDevice, or to
+     TVMPlotSpectrum/TVMPlotWaterfall, directly. This form used to own
+     that logic itself (device autodetection, the capability-driven gain
+     panel, the epoch-read/PowerSpectrum/fftshift/dB pipeline feeding two
+     hand-created OpenGL controls) - it has all since moved into those two
+     components specifically so it can be reused on any other form/
+     project without dragging this form's own layout along with it; see
+     each component unit's own header comment for the full rationale
+     (notably: TSDRSpectrumAnalyser now runs the windowing/FFT on the GPU
+     via newVMCL/OpenCL when available, falling back to the CPU
+     otherwise - this form doesn't need to know which).
 
-     AUTODETECTION: ConnectButtonClick doesn't assume any particular
-     hardware - DetectAndOpenDevice tries THackRFDevice, then
-     TRTLSDRDevice, then TSDRplayDevice in turn (actually attempting Open
-     on each, not just checking whether a library loaded - a library can
-     be installed with no matching hardware attached), and whichever one
-     successfully opens becomes FDevice.
+     FRFSource (TSDRRFSource) is created and Parented... - being
+     non-visual, it just needs an Owner (Self) - in FormCreate, alongside
+     FAnalyser (TSDRSpectrumAnalyser), which IS parented/aligned to fill
+     the window below ControlPanel, same layout convention every other
+     Graphs/SDR_Radio demo form here uses (create in code, Align to
+     alClient). FAnalyser.Source is pointed at FRFSource once, up front -
+     it's a design-time-style component link (like TDBGrid.DataSource),
+     unaffected by whether a device is actually connected yet.
 
-     CAPABILITY-DRIVEN UI: once a device is open, ApplyDeviceCapabilities
-     reconfigures the control panel from FDevice.Capabilities -
+     AUTODETECTION: ConnectButtonClick calls FRFSource.Connect, which
+     tries THackRFDevice, then TRTLSDRDevice, then TSDRplayDevice in turn
+     (actually attempting Open on each, not just checking whether a
+     library loaded - a library can be installed with no matching
+     hardware attached) - whichever succeeds becomes the source's device.
+
+     CAPABILITY-DRIVEN UI: once connected, ApplyDeviceCapabilities
+     reconfigures the control panel from FRFSource.Capabilities -
      FreqEdit's bounds, RateCombo's offered sample rates, and up to three
      generic gain-stage controls (GainStage0/1 as trackbars for
      continuous or discrete-list stages, GainStage2 as a checkbox for a
@@ -41,34 +41,18 @@ unit uSDRMain;
      rule) relabelled and shown/hidden per Capabilities.GainStages. This
      is what makes the window itself look different for HackRF (three
      visible controls: LNA/VGA/RF Amp) versus RTL-SDR (two: Tuner
-     Gain/Auto Gain) without any hardcoded "if HackRF then ... else
-     ..." branch in the layout code - the whole panel is driven by
-     whatever Capabilities the connected device actually reports.
+     Gain/Auto Gain) versus SDRplay, without any hardcoded "if HackRF
+     then ... else ..." branch in the layout code.
 
-     Per epoch, EpochTimerTick:
-       1. TryReadEpoch returns a (1,FEpochSize) TVMobjZ of normalised,
-          DC/I-Q-balance-corrected complex IQ samples (uSDRDevice.pas's
-          CorrectIQEpoch, called inside each device's own TryReadEpoch).
-       2. newVMComplex.pas's PowerSpectrum(A: TVMobjZ): TVMobj
-          Hamming-windows and FFTs it, returning all FEpochSize bins of
-          LINEAR power in standard (non-centred) FFT bin order.
-       3. That's reordered to ascending-frequency (most-negative first)
-          via an FFT shift - built from newVM.pas's own SubMatrix/MergeLR
-          rather than a hand-rolled swap loop.
-       4. Converted to dB (10*Log10(P+eps)) and pushed via both
-          FSpectrumPlot.AddGraph and FWaterfallPlot.AddGraph - the same
-          already-computed spectrum feeds both displays.
-
-     UseFrequencyAxis/XAxisMin/XAxisMax (both components support this,
-     same convention as TVMPlotStack originally introduced it) are kept in
-     sync with FDevice's actual CenterFreqHz/SampleRateHz by
-     UpdateFrequencyAxis, called after every successful StartRX or live
-     retune. Peak detection (ShowPeakLabels/PeakThreshold) lives on
-     FSpectrumPlot only - the front-on view is where it makes sense;
-     FWaterfallPlot has no such feature. YOffsetTrackBar/YGainTrackBar
-     likewise only ever touch FSpectrumPlot's own YOffset/YGain (a
-     display-only Y transform - see that property's own comment in
-     uVMPlotSpectrum.pas) - FWaterfallPlot's colour mapping is unaffected.
+     UseFrequencyAxis/XAxisMin/XAxisMax (both FAnalyser.SpectrumPlot and
+     FAnalyser.WaterfallPlot support this) are kept in sync with
+     FRFSource's actual CenterFreqHz/SampleRateHz by UpdateFrequencyAxis,
+     called after every successful start or live retune. Peak detection
+     (ShowPeakLabels/PeakThreshold) lives on FAnalyser.SpectrumPlot only -
+     the front-on view is where it makes sense. YOffsetTrackBar/
+     YGainTrackBar likewise only ever touch FAnalyser.SpectrumPlot's own
+     YOffset/YGain - FAnalyser.WaterfallPlot's colour mapping is
+     unaffected.
 
 *******************************************************************************}
 
@@ -79,11 +63,7 @@ interface
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Spin,
-  newVM, newVMComplex, uVMPlotSpectrum, uVMPlotWaterfall, uSDRDevice,
-  uHackRF, uRTLSDR, uSDRplay, uFreqKeypad;
-
-const
-  DefaultEpochSize = 8192;
+  uSDRDevice, uSDRRFSource, uVMPlotSDRSpectrum, uFreqKeypad;
 
 type
 
@@ -138,18 +118,13 @@ type
     procedure YGainTrackBarChange(Sender: TObject);
     procedure YOffsetTrackBarChange(Sender: TObject);
   private
-    PlotsPanel: TPanel;
-    FSpectrumPlot: TVMPlotSpectrum;
-    FWaterfallPlot: TVMPlotWaterfall;
-    FDevice: TSDRDevice;
-    FEpochTimer: TTimer;
-    FEpochSize: Integer;
-    function DetectAndOpenDevice(out ErrMsg: string): TSDRDevice;
+    FRFSource: TSDRRFSource;
+    FAnalyser: TSDRSpectrumAnalyser;
+    procedure AnalyserGPUStatusKnown(Sender: TObject);
     procedure ApplyDeviceCapabilities;
     procedure ApplyGainStageControl(StageIndex: Integer; Lbl: TLabel; Bar: TTrackBar);
     procedure GainStageTrackBarChanged(StageIndex: Integer; Lbl: TLabel; Bar: TTrackBar);
     procedure ApplyAllGains;
-    procedure EpochTimerTick(Sender: TObject);
     procedure UpdateFrequencyAxis;
     procedure CommitFrequencyHz(Hz: QWord);
     procedure UpdatePeakThreshold;
@@ -167,46 +142,18 @@ implementation
 
 procedure TForm1.FormCreate(Sender: TObject);
 begin
-  // PlotsPanel exists purely so FSpectrumPlot/FWaterfallPlot's alTop/
-  // alClient docking is resolved against EACH OTHER, not against
-  // ControlPanel (also alTop) as a third sibling - LCL docks same-Align
-  // siblings by Z-order/creation order, and having TWO alTop controls
-  // directly under Self (ControlPanel, then FSpectrumPlot) put the
-  // later-created one ABOVE ControlPanel instead of below it (confirmed
-  // by screenshot - FSpectrumPlot rendered at the very top of the
-  // window). Giving the plots their own alClient container collapses
-  // that to a single unambiguous alTop-vs-alClient pair at each level
-  // (ControlPanel vs PlotsPanel; FSpectrumPlot vs FWaterfallPlot).
-  PlotsPanel := TPanel.Create(Self);
-  PlotsPanel.Parent := Self;
-  PlotsPanel.Align := alClient;
-  PlotsPanel.BevelOuter := bvNone;
+  FRFSource := TSDRRFSource.Create(Self);
 
-  FSpectrumPlot := TVMPlotSpectrum.Create(Self);
-  FSpectrumPlot.Parent := PlotsPanel;
-  FSpectrumPlot.Align := alTop;
-  FSpectrumPlot.Height := 320;
-  FSpectrumPlot.Title := 'Spectrum';
-  FSpectrumPlot.XAxisTitle := 'Frequency (MHz)';
-  FSpectrumPlot.YAxisTitle := 'Power (dB)';
-  FSpectrumPlot.ClearStack;   // discard the component's own default demo data
+  FAnalyser := TSDRSpectrumAnalyser.Create(Self);
+  FAnalyser.Parent := Self;
+  FAnalyser.Align := alClient;
+  FAnalyser.Source := FRFSource;
+  FAnalyser.EpochSize := StrToIntDef(EpochCombo.Text, DefaultSDREpochSize);
+  FAnalyser.OnGPUStatusKnown := @AnalyserGPUStatusKnown;
 
-  FWaterfallPlot := TVMPlotWaterfall.Create(Self);
-  FWaterfallPlot.Parent := PlotsPanel;
-  FWaterfallPlot.Align := alClient;
-  FWaterfallPlot.Title := 'Waterfall';
-  FWaterfallPlot.XAxisTitle := 'Frequency (MHz)';
-  FWaterfallPlot.ClearStack;
-
-  FEpochTimer := TTimer.Create(Self);
-  FEpochTimer.Interval := 30;
-  FEpochTimer.Enabled := False;
-  FEpochTimer.OnTimer := @EpochTimerTick;
-
-  FWaterfallPlot.ScrollRate := ScrollRateTrackBar.Position;
+  FAnalyser.WaterfallPlot.ScrollRate := ScrollRateTrackBar.Position;
   ScrollRateLabel.Caption := Format('Scroll Rate: %d/s', [ScrollRateTrackBar.Position]);
 
-  FEpochSize := StrToIntDef(EpochCombo.Text, DefaultEpochSize);
   YOffsetTrackBar.Position := 0;
   YOffsetLabel.Caption := 'Y Zero: 0 dB';
   YGainTrackBar.Position := 10;
@@ -217,57 +164,13 @@ end;
 
 procedure TForm1.FormDestroy(Sender: TObject);
 begin
-  if Assigned(FEpochTimer) then FEpochTimer.Enabled := False;
-  FDevice.Free;   // stops RX and closes the device itself, if still open
+  if Assigned(FAnalyser) then FAnalyser.Active := False;
+  FRFSource.Free;   // stops RX and closes the device itself, if still open
 end;
 
 procedure TForm1.ReportError(const Where: string);
 begin
-  StatusLabel.Caption := 'Error (' + Where + '): ' + FDevice.LastError;
-end;
-
-// Tries each known backend in turn, actually attempting Open (not just
-// checking whether its runtime library loaded - that only proves the
-// library is installed, not that this specific hardware is attached).
-// Whichever opens first wins; if more than one is attached simultaneously,
-// the winner is decided purely by this order (HackRF, then RTL-SDR, then
-// SDRplay) - no other significance to it. Returns nil (with a combined
-// ErrMsg) if none respond.
-function TForm1.DetectAndOpenDevice(out ErrMsg: string): TSDRDevice;
-var
-  HackRF: THackRFDevice;
-  RTLSDR: TRTLSDRDevice;
-  SDRplay: TSDRplayDevice;
-  Reasons: string;
-begin
-  Result := nil;
-  Reasons := '';
-
-  HackRF := THackRFDevice.Create;
-  if HackRF.Open then begin
-    Result := HackRF;
-    Exit;
-  end;
-  Reasons := 'HackRF: ' + HackRF.LastError;
-  HackRF.Free;
-
-  RTLSDR := TRTLSDRDevice.Create;
-  if RTLSDR.Open then begin
-    Result := RTLSDR;
-    Exit;
-  end;
-  Reasons := Reasons + '; RTL-SDR: ' + RTLSDR.LastError;
-  RTLSDR.Free;
-
-  SDRplay := TSDRplayDevice.Create;
-  if SDRplay.Open then begin
-    Result := SDRplay;
-    Exit;
-  end;
-  Reasons := Reasons + '; SDRplay: ' + SDRplay.LastError;
-  SDRplay.Free;
-
-  ErrMsg := 'no SDR device found (' + Reasons + ')';
+  StatusLabel.Caption := 'Error (' + Where + '): ' + FRFSource.LastError;
 end;
 
 // Configures GainStage0/1 (trackbars, for a gkContinuous or
@@ -283,12 +186,12 @@ procedure TForm1.ApplyGainStageControl(StageIndex: Integer; Lbl: TLabel; Bar: TT
 var
   Stage: TSDRGainStage;
 begin
-  if (StageIndex < 0) or (StageIndex > High(FDevice.Capabilities.GainStages)) then begin
+  if (StageIndex < 0) or (StageIndex > High(FRFSource.Capabilities.GainStages)) then begin
     Lbl.Visible := False;
     Bar.Visible := False;
     Exit;
   end;
-  Stage := FDevice.Capabilities.GainStages[StageIndex];
+  Stage := FRFSource.Capabilities.GainStages[StageIndex];
 
   Lbl.Visible := True;
   Bar.Visible := True;
@@ -324,7 +227,7 @@ end;
 
 // Common body for GainStage0TrackBarChange/GainStage1TrackBarChange -
 // updates the label and, if a device is open, pushes the resulting real
-// value through FDevice.SetGain. Discrete-list stages look the actual
+// value through FRFSource.SetGain. Discrete-list stages look the actual
 // dB value up from Position (an index); continuous stages use Position
 // directly, snapped to the stage's own Step first (same snap-and-reenter
 // pattern the original LNA/VGA handlers used, generalised).
@@ -334,8 +237,8 @@ var
   V: Integer;
   Value: Double;
 begin
-  if (StageIndex < 0) or (StageIndex > High(FDevice.Capabilities.GainStages)) then Exit;
-  Stage := FDevice.Capabilities.GainStages[StageIndex];
+  if (StageIndex < 0) or (StageIndex > High(FRFSource.Capabilities.GainStages)) then Exit;
+  Stage := FRFSource.Capabilities.GainStages[StageIndex];
 
   case Stage.Kind of
     gkContinuous: begin
@@ -356,7 +259,7 @@ begin
     Exit;
   end;
 
-  if FDevice.IsOpen then FDevice.SetGain(StageIndex, Value);
+  if FRFSource.IsOpen then FRFSource.SetGain(StageIndex, Value);
 end;
 
 procedure TForm1.GainStage0TrackBarChange(Sender: TObject);
@@ -371,15 +274,15 @@ end;
 
 procedure TForm1.GainStage2CheckBoxChange(Sender: TObject);
 begin
-  if FDevice.IsOpen then FDevice.SetGain(2, Ord(GainStage2CheckBox.Checked));
+  if FRFSource.IsOpen then FRFSource.SetGain(2, Ord(GainStage2CheckBox.Checked));
 end;
 
 // Bias-T is a Capabilities.BoolOptions entry, not a gain stage (see
 // uSDRDevice.pas's own comment on why those are kept separate) - always
-// slot 0, since both current backends offer exactly one bool option each.
+// slot 0, since every current backend offers exactly one bool option.
 procedure TForm1.BiasTCheckBoxChange(Sender: TObject);
 begin
-  if FDevice.IsOpen then FDevice.SetBoolOption(0, BiasTCheckBox.Checked);
+  if FRFSource.IsOpen then FRFSource.SetBoolOption(0, BiasTCheckBox.Checked);
 end;
 
 // Re-applies every currently-visible gain stage's/bool option's control
@@ -391,11 +294,11 @@ procedure TForm1.ApplyAllGains;
 begin
   if GainStage0TrackBar.Visible then GainStageTrackBarChanged(0, GainStage0Label, GainStage0TrackBar);
   if GainStage1TrackBar.Visible then GainStageTrackBarChanged(1, GainStage1Label, GainStage1TrackBar);
-  if GainStage2CheckBox.Visible then FDevice.SetGain(2, Ord(GainStage2CheckBox.Checked));
-  if BiasTCheckBox.Visible then FDevice.SetBoolOption(0, BiasTCheckBox.Checked);
+  if GainStage2CheckBox.Visible then FRFSource.SetGain(2, Ord(GainStage2CheckBox.Checked));
+  if BiasTCheckBox.Visible then FRFSource.SetBoolOption(0, BiasTCheckBox.Checked);
 end;
 
-// Rebuilds the whole control panel from FDevice.Capabilities - see this
+// Rebuilds the whole control panel from FRFSource.Capabilities - see this
 // unit's own header comment for the overall rationale. Called once, from
 // ConnectButtonClick, right after a device is successfully opened.
 procedure TForm1.ApplyDeviceCapabilities;
@@ -404,11 +307,11 @@ var
   i, NumericSlot: Integer;
   BooleanStage: Integer;
 begin
-  Caps := FDevice.Capabilities;
+  Caps := FRFSource.Capabilities;
 
   Caption := 'newVM ' + Caps.DeviceName + ' Spectrum Analyser';
-  FSpectrumPlot.Title := Caps.DeviceName + ' Spectrum';
-  FWaterfallPlot.Title := Caps.DeviceName + ' Waterfall';
+  FAnalyser.SpectrumPlot.Title := Caps.DeviceName + ' Spectrum';
+  FAnalyser.WaterfallPlot.Title := Caps.DeviceName + ' Waterfall';
 
   FreqEdit.MinValue := Caps.MinFreqHz / 1e6;
   FreqEdit.MaxValue := Caps.MaxFreqHz / 1e6;
@@ -448,7 +351,7 @@ begin
   end;
 
   // BoolOptions (bias-T etc) are independent of the gain-stage slots
-  // above - both current backends offer exactly one, so it's always
+  // above - every current backend offers exactly one, so it's always
   // slot 0 here; a future device with none simply hides the checkbox.
   if Length(Caps.BoolOptions) > 0 then begin
     BiasTCheckBox.Visible := True;
@@ -462,10 +365,9 @@ procedure TForm1.ConnectButtonClick(Sender: TObject);
 var
   ErrMsg: string;
 begin
-  if Assigned(FDevice) then begin
-    if FDevice.IsStreaming then StartStopButtonClick(Sender);   // stop first
-    FDevice.Free;
-    FDevice := nil;
+  if FRFSource.IsOpen then begin
+    if FRFSource.IsStreaming then StartStopButtonClick(Sender);   // stop first
+    FRFSource.Disconnect;
     ConnectButton.Caption := 'Connect';
     StartStopButton.Enabled := False;
     GainStage0Label.Visible := False; GainStage0TrackBar.Visible := False;
@@ -478,8 +380,7 @@ begin
     Exit;
   end;
 
-  FDevice := DetectAndOpenDevice(ErrMsg);
-  if not Assigned(FDevice) then begin
+  if not FRFSource.Connect(ErrMsg) then begin
     StatusLabel.Caption := 'Error: ' + ErrMsg;
     Exit;
   end;
@@ -488,90 +389,107 @@ begin
   UpdateFrequencyAxis;
   ConnectButton.Caption := 'Disconnect';
   StartStopButton.Enabled := True;
-  StatusLabel.Caption := 'Connected (' + FDevice.Capabilities.DeviceName + ', idle)';
+  StatusLabel.Caption := 'Connected (' + FRFSource.Capabilities.DeviceName + ', idle)';
 end;
 
 // (CenterFreqHz -+ SampleRateHz/2), in MHz - recomputed after every
-// successful StartRX or live retune so the axis always matches what the
+// successful start or live retune so the axis always matches what the
 // device is actually doing, whatever its sample rate.
 procedure TForm1.UpdateFrequencyAxis;
 var
   Lo, Hi: Double;
 begin
-  Lo := (FDevice.CenterFreqHz - FDevice.SampleRateHz / 2) / 1e6;
-  Hi := (FDevice.CenterFreqHz + FDevice.SampleRateHz / 2) / 1e6;
-  FSpectrumPlot.UseFrequencyAxis := True;
-  FSpectrumPlot.XAxisMin := Lo;
-  FSpectrumPlot.XAxisMax := Hi;
-  FWaterfallPlot.UseFrequencyAxis := True;
-  FWaterfallPlot.XAxisMin := Lo;
-  FWaterfallPlot.XAxisMax := Hi;
+  Lo := (FRFSource.CenterFreqHz - FRFSource.SampleRateHz / 2) / 1e6;
+  Hi := (FRFSource.CenterFreqHz + FRFSource.SampleRateHz / 2) / 1e6;
+  FAnalyser.SpectrumPlot.UseFrequencyAxis := True;
+  FAnalyser.SpectrumPlot.XAxisMin := Lo;
+  FAnalyser.SpectrumPlot.XAxisMax := Hi;
+  FAnalyser.WaterfallPlot.UseFrequencyAxis := True;
+  FAnalyser.WaterfallPlot.XAxisMin := Lo;
+  FAnalyser.WaterfallPlot.XAxisMax := Hi;
 end;
 
 // PeakThresholdTrackBar is a 0-100% slider, not an absolute dB value -
 // the spectrum's actual dB scale isn't calibrated (no per-gain-setting
-// dBm reference, and now two different devices besides), so an absolute
+// dBm reference, and several different devices besides), so an absolute
 // slider range would be wrong for at least one of them. Instead this
-// maps the % position through FSpectrumPlot's own live auto-fit range
-// (CurrentYMin/CurrentYMax) into the absolute Value-axis units
-// TVMPlotSpectrum.PeakThreshold actually wants (peak detection is
-// FSpectrumPlot-only - see this unit's own header comment). Called both
-// from the slider's own OnChange and every epoch (see EpochTimerTick) so
-// the effective threshold keeps tracking the live noise floor/dynamic
-// range as they drift, without needing the slider touched again.
+// maps the % position through FAnalyser.SpectrumPlot's own live auto-fit
+// range (CurrentYMin/CurrentYMax) into the absolute Value-axis units
+// TVMPlotSpectrum.PeakThreshold actually wants. Called both from the
+// slider's own OnChange and whenever the effective threshold needs
+// recalibrating against the live noise floor/dynamic range as they
+// drift, without needing the slider touched again - see
+// PeakDetectCheckBoxChange.
 procedure TForm1.UpdatePeakThreshold;
 begin
-  FSpectrumPlot.PeakThreshold := FSpectrumPlot.CurrentYMin +
-    (PeakThresholdTrackBar.Position / 100) * (FSpectrumPlot.CurrentYMax - FSpectrumPlot.CurrentYMin);
+  FAnalyser.SpectrumPlot.PeakThreshold := FAnalyser.SpectrumPlot.CurrentYMin +
+    (PeakThresholdTrackBar.Position / 100) *
+    (FAnalyser.SpectrumPlot.CurrentYMax - FAnalyser.SpectrumPlot.CurrentYMin);
   PeakThresholdLabel.Caption := Format('Peak Threshold: %d%%', [PeakThresholdTrackBar.Position]);
 end;
 
 // Applies the current UI settings (sample rate first - some devices'
-// StartRX derives filter/decimation setup from it - then frequency, then
-// every visible gain control) and starts streaming; the reverse (stop)
-// just tears streaming down. RateCombo is disabled while streaming,
-// since changing sample rate invalidates the running epoch cadence -
-// stop first to pick a different one.
+// StartStreaming derives filter/decimation setup from it - then every
+// visible gain control) and starts streaming; the reverse (stop) just
+// tears streaming down. RateCombo is disabled while streaming, since
+// changing sample rate invalidates the running epoch cadence - stop
+// first to pick a different one.
 procedure TForm1.StartStopButtonClick(Sender: TObject);
 var
   RateHz: Double;
 begin
-  if FDevice.IsStreaming then begin
-    FEpochTimer.Enabled := False;
-    if not FDevice.StopRX then ReportError('stop_rx');
+  if FRFSource.IsStreaming then begin
+    FAnalyser.Active := False;
+    FRFSource.StopStreaming;
     StartStopButton.Caption := 'Start';
     RateCombo.Enabled := True;
     EpochCombo.Enabled := True;
-    StatusLabel.Caption := 'Connected (' + FDevice.Capabilities.DeviceName + ', idle)';
+    StatusLabel.Caption := 'Connected (' + FRFSource.Capabilities.DeviceName + ', idle)';
     Exit;
   end;
 
-  RateHz := StrToFloatDef(RateCombo.Text, FDevice.Capabilities.DefaultSampleRateHz / 1e6) * 1e6;
-  if not FDevice.SetSampleRateHz(RateHz) then begin ReportError('set_sample_rate'); Exit; end;
-  if not FDevice.SetFrequencyHz(Round(FreqEdit.Value * 1e6)) then begin ReportError('set_freq'); Exit; end;
+  RateHz := StrToFloatDef(RateCombo.Text, FRFSource.Capabilities.DefaultSampleRateHz / 1e6) * 1e6;
   ApplyAllGains;
 
-  if not FDevice.StartRX then begin ReportError('start_rx'); Exit; end;
+  if not FRFSource.StartStreaming(RateHz, Round(FreqEdit.Value * 1e6)) then begin
+    ReportError('start_streaming');
+    Exit;
+  end;
 
   UpdateFrequencyAxis;
   RateCombo.Enabled := False;
   EpochCombo.Enabled := False;
   StartStopButton.Caption := 'Stop';
+  // Deliberately no [GPU]/[CPU] tag here yet: UsingGPU/GPUStatusMessage
+  // aren't known until the first epoch actually runs through
+  // TSDRSpectrumAnalyser.ProcessEpoch (see that unit's OnGPUStatusKnown
+  // comment) - AnalyserGPUStatusKnown appends it once that happens.
   StatusLabel.Caption := Format('Streaming (%s) @ %.3f MHz, %.3f Msps',
-    [FDevice.Capabilities.DeviceName, FDevice.CenterFreqHz / 1e6, FDevice.SampleRateHz / 1e6]);
-  FEpochTimer.Enabled := True;
+    [FRFSource.Capabilities.DeviceName, FRFSource.CenterFreqHz / 1e6, FRFSource.SampleRateHz / 1e6]);
+  FAnalyser.Active := True;
+end;
+
+// Fired once per Start, from TSDRSpectrumAnalyser's first processed
+// epoch, once GPU-vs-CPU is actually known (see that unit's
+// OnGPUStatusKnown property comment).
+procedure TForm1.AnalyserGPUStatusKnown(Sender: TObject);
+begin
+  if FAnalyser.UsingGPU then
+    StatusLabel.Caption := StatusLabel.Caption + ' [GPU]'
+  else
+    StatusLabel.Caption := StatusLabel.Caption + ' [CPU: ' + FAnalyser.GPUStatusMessage + ']';
 end;
 
 // Shared by FreqEditEditingDone and KeypadButtonClick - live retune,
-// works whether or not RX is currently running, on both backends.
+// works whether or not RX is currently running, on any backend.
 procedure TForm1.CommitFrequencyHz(Hz: QWord);
 begin
-  if not (Assigned(FDevice) and FDevice.IsOpen) then Exit;
-  if FDevice.SetFrequencyHz(Hz) then begin
+  if not FRFSource.IsOpen then Exit;
+  if FRFSource.SetFrequencyHz(Hz) then begin
     UpdateFrequencyAxis;
-    if FDevice.IsStreaming then
+    if FRFSource.IsStreaming then
       StatusLabel.Caption := Format('Streaming (%s) @ %.3f MHz, %.3f Msps',
-        [FDevice.Capabilities.DeviceName, FDevice.CenterFreqHz / 1e6, FDevice.SampleRateHz / 1e6]);
+        [FRFSource.Capabilities.DeviceName, FRFSource.CenterFreqHz / 1e6, FRFSource.SampleRateHz / 1e6]);
   end else
     ReportError('set_freq');
 end;
@@ -593,9 +511,9 @@ var
   ResultHz: Double;
   MinHz, MaxHz: Double;
 begin
-  if Assigned(FDevice) and FDevice.IsOpen then begin
-    MinHz := FDevice.Capabilities.MinFreqHz;
-    MaxHz := FDevice.Capabilities.MaxFreqHz;
+  if FRFSource.IsOpen then begin
+    MinHz := FRFSource.Capabilities.MinFreqHz;
+    MaxHz := FRFSource.Capabilities.MaxFreqHz;
   end else begin
     MinHz := 0;
     MaxHz := 0;
@@ -609,18 +527,18 @@ end;
 
 procedure TForm1.ShowAxesCheckBoxChange(Sender: TObject);
 begin
-  FSpectrumPlot.ShowAxes := ShowAxesCheckBox.Checked;
-  FWaterfallPlot.ShowAxes := ShowAxesCheckBox.Checked;
+  FAnalyser.SpectrumPlot.ShowAxes := ShowAxesCheckBox.Checked;
+  FAnalyser.WaterfallPlot.ShowAxes := ShowAxesCheckBox.Checked;
 end;
 
 procedure TForm1.ShowAverageCheckBoxChange(Sender: TObject);
 begin
-  FSpectrumPlot.ShowAverage := ShowAverageCheckBox.Checked;
+  FAnalyser.SpectrumPlot.ShowAverage := ShowAverageCheckBox.Checked;
 end;
 
 procedure TForm1.PeakDetectCheckBoxChange(Sender: TObject);
 begin
-  FSpectrumPlot.ShowPeakLabels := PeakDetectCheckBox.Checked;
+  FAnalyser.SpectrumPlot.ShowPeakLabels := PeakDetectCheckBox.Checked;
   UpdatePeakThreshold;
 end;
 
@@ -631,27 +549,26 @@ end;
 
 procedure TForm1.ScrollRateTrackBarChange(Sender: TObject);
 begin
-  FWaterfallPlot.ScrollRate := ScrollRateTrackBar.Position;
+  FAnalyser.WaterfallPlot.ScrollRate := ScrollRateTrackBar.Position;
   ScrollRateLabel.Caption := Format('Scroll Rate: %d/s', [ScrollRateTrackBar.Position]);
 end;
 
-// Epoch size only affects how many raw IQ samples TryReadEpoch pulls per
-// tick (see EpochTimerTick) - nothing in FDevice's own state depends on
-// it, unlike sample rate, so this takes effect on the very next epoch
-// with no need to stop/restart streaming. A smaller epoch means fewer
-// FFT bins (coarser frequency resolution) but a cheaper FFT per epoch
-// and a shorter Hamming-window/FFT/dB-conversion pass - the "smaller
-// might improve performance" the control is for.
+// Epoch size only affects how many raw IQ samples are pulled per tick -
+// nothing in FRFSource's own state depends on it, unlike sample rate, so
+// this takes effect on the very next epoch with no need to stop/restart
+// streaming. A smaller epoch means fewer FFT bins (coarser frequency
+// resolution) but a cheaper FFT per epoch - the "smaller might improve
+// performance" the control is for.
 procedure TForm1.EpochComboChange(Sender: TObject);
 begin
-  FEpochSize := StrToIntDef(EpochCombo.Text, DefaultEpochSize);
+  FAnalyser.EpochSize := StrToIntDef(EpochCombo.Text, DefaultSDREpochSize);
 end;
 
 // See TVMPlotSpectrum.YOffset's own property comment (uVMPlotSpectrum.pas)
 // - a display-only shift of the whole trace, independent of YGain.
 procedure TForm1.YOffsetTrackBarChange(Sender: TObject);
 begin
-  FSpectrumPlot.YOffset := YOffsetTrackBar.Position;
+  FAnalyser.SpectrumPlot.YOffset := YOffsetTrackBar.Position;
   YOffsetLabel.Caption := Format('Y Zero: %d dB', [YOffsetTrackBar.Position]);
 end;
 
@@ -664,38 +581,8 @@ var
   Gain: Double;
 begin
   Gain := YGainTrackBar.Position / 10.0;
-  FSpectrumPlot.YGain := Gain;
+  FAnalyser.SpectrumPlot.YGain := Gain;
   YGainLabel.Caption := Format('Y Gain: %.1fx', [Gain]);
-end;
-
-procedure TForm1.EpochTimerTick(Sender: TObject);
-var
-  IQ: TVMobjZ;
-  LinearPower, Shifted, PowerSpec: TVMobj;
-  HalfN, k: Integer;
-begin
-  if not FDevice.TryReadEpoch(FEpochSize, IQ) then Exit;
-
-  LinearPower := PowerSpectrum(IQ);   // newVMComplex.pas - Hamming window + FFT + |X|^2
-
-  HalfN := FEpochSize div 2;
-  // FFT shift: negative-frequency bins (upper half of LinearPower) first,
-  // then DC and positive-frequency bins - ascending frequency order,
-  // matching XAxisMin..XAxisMax on both plots.
-  Shifted := MergeLR(SubMatrix(LinearPower, 0, HalfN, 1, HalfN),
-                      SubMatrix(LinearPower, 0, 0, 1, HalfN));
-
-  PowerSpec := TVMobj.Create(1, FEpochSize);
-  for k := 0 to FEpochSize - 1 do
-    PowerSpec[0, k] := 10 * Log10(Shifted[0, k] + 1e-12);
-
-  FSpectrumPlot.AddGraph(PowerSpec);
-  FWaterfallPlot.AddGraph(PowerSpec);
-
-  // Recalibrate the % threshold against this epoch's just-updated
-  // auto-fit range - see UpdatePeakThreshold's own comment for why this
-  // runs every epoch rather than only when the slider moves.
-  if FSpectrumPlot.ShowPeakLabels then UpdatePeakThreshold;
 end;
 
 end.

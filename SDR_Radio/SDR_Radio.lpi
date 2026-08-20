@@ -78,6 +78,16 @@
         <Filename Value="../Graphs/uVMPlotWaterfall.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
+      <Unit>
+        <Filename Value="uSDRRFSource.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="uSDRRFSource"/>
+      </Unit>
+      <Unit>
+        <Filename Value="uVMPlotSDRSpectrum.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="uVMPlotSDRSpectrum"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
