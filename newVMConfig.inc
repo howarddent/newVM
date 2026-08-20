@@ -4,7 +4,7 @@
 // machine you are about to build newVM* on - this is a snapshot of THIS
 // machine's installed libraries, not a portability guarantee for any
 // other machine.)
-// Generated: 19/08/2026 07:58:24
+// Generated: 20/08/2026 13:56:15
 
 {$DEFINE PLATFORM_WINDOWS}
 {$DEFINE PLATFORM_X86_64}
@@ -14,6 +14,7 @@
 {$DEFINE HAVE_MKL}        // libmkl_rt found
 {$DEFINE HAVE_IPP}        // libippcore+libippvm+libipps all found
 {$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found
+{$DEFINE HAVE_OPENCL}     // OpenCL.dll+clFFT.dll both found - gates newVMCL.pas/TVMobjCL and its test registration
 
 // Derived: true when a LAPACKE_* implementation is available from EITHER
 // MKL or Arm Performance Libraries (ArmPL exports a standard LAPACKE_* ABI

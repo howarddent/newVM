@@ -66,6 +66,15 @@ const
   // guessing, so HAVE_ARMPL simply never fires on Windows until someone
   // verifies and fills this in.
   ArmPLCandidates: array of string = ();
+  // OpenCL.dll is a normal Windows driver-installed DLL (this machine's
+  // AMD/NVIDIA GPU drivers put it in System32) - bare name only. clFFT.dll
+  // has no such standard install location (there's no official installer
+  // the way SDRplay's API has - see OpenCLAPI.pas's own header comment);
+  // the fallback path is this machine's own confirmed-working build
+  // output, same "bare name first, then a known location" pattern
+  // uSDRplay.pas/OpenCLAPI.pas already use for their own non-standard DLLs.
+  OpenCLCandidates: array of string = ('OpenCL.dll');
+  clFFTCandidates: array of string = ('clFFT.dll', 'C:\Users\howard\clFFT\src\clFFTpas\clFFT.dll');
 {$ELSE}
   {$IFDEF DARWIN}
 const
@@ -89,6 +98,10 @@ const
   AccelerateCandidates: array of string = ('/System/Library/Frameworks/Accelerate.framework/Accelerate');
   // ArmPL doesn't ship a Darwin build - left empty.
   ArmPLCandidates: array of string = ();
+  // Not verified on a Darwin machine - left empty rather than guessing,
+  // same rationale as ArmPLCandidates on Windows above.
+  OpenCLCandidates: array of string = ();
+  clFFTCandidates: array of string = ();
   {$ELSE}
 const
   PlatformDefine = 'PLATFORM_LINUX';
@@ -109,6 +122,10 @@ const
   // linker search path, same as every other candidate in this file, and
   // ArmPL's own installer does not add such an entry itself).
   ArmPLCandidates: array of string = ('libarmpl_lp64.so');
+  // Not verified on a Linux machine - left empty rather than guessing,
+  // same rationale as ArmPLCandidates on Windows above.
+  OpenCLCandidates: array of string = ();
+  clFFTCandidates: array of string = ();
   {$ENDIF}
 {$ENDIF}
 
@@ -157,7 +174,7 @@ end;
 var
   OutFile: TextFile;
   HaveMKL, HaveIPPCore, HaveIPPVM, HaveIPPS, HaveIPP, HaveOpenBLAS, HaveFFTWD, HaveFFTWS, HaveFFTW,
-  HaveAccelerate, HaveArmPL, HaveBLAS, HaveLAPACKE: Boolean;
+  HaveAccelerate, HaveArmPL, HaveBLAS, HaveLAPACKE, HaveOpenCLLib, HaveclFFTLib, HaveOpenCL: Boolean;
   FoundName: string;
 
   procedure Report(const Label_: string; Found: Boolean; const Via: string);
@@ -201,6 +218,14 @@ begin
   Report('FFTW3 (double+single, both)', HaveFFTW,
     Format('double=%s single=%s', [BoolToStr(HaveFFTWD,True), BoolToStr(HaveFFTWS,True)]));
 
+  HaveOpenCLLib := ProbeLibrary(OpenCLCandidates, FoundName);
+  Report('OpenCL', HaveOpenCLLib, FoundName);
+  HaveclFFTLib := ProbeLibrary(clFFTCandidates, FoundName);
+  Report('clFFT', HaveclFFTLib, FoundName);
+  HaveOpenCL := HaveOpenCLLib and HaveclFFTLib;
+  Report('OpenCL+clFFT (both, gates newVMCL.pas/TVMobjCL)', HaveOpenCL,
+    Format('opencl=%s clfft=%s', [BoolToStr(HaveOpenCLLib,True), BoolToStr(HaveclFFTLib,True)]));
+
   WriteLn;
   WriteLn('Writing newVMConfig.inc ...');
 
@@ -231,6 +256,7 @@ begin
   if HaveMKL        then WriteLn(OutFile, '{$DEFINE HAVE_MKL}        // libmkl_rt found');
   if HaveIPP        then WriteLn(OutFile, '{$DEFINE HAVE_IPP}        // libippcore+libippvm+libipps all found');
   if HaveFFTW       then WriteLn(OutFile, '{$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found');
+  if HaveOpenCL     then WriteLn(OutFile, '{$DEFINE HAVE_OPENCL}     // OpenCL.dll+clFFT.dll both found - gates newVMCL.pas/TVMobjCL and its test registration');
   WriteLn(OutFile);
   WriteLn(OutFile, '// Derived: true when a LAPACKE_* implementation is available from EITHER');
   WriteLn(OutFile, '// MKL or Arm Performance Libraries (ArmPL exports a standard LAPACKE_* ABI');
@@ -295,4 +321,8 @@ begin
       IfThen(HaveMKL, 'MKL', 'Arm Performance Libraries'), '''s LAPACKE_*, not their PUREPASCAL fallback.')
   else
     WriteLn('HAVE_LAPACKE is inactive - LinearSolve/Invert/Det/Id/EigDecompose will use their PUREPASCAL fallback (no MKL or ArmPL found).');
+  if HaveOpenCL then
+    WriteLn('HAVE_OPENCL is active - newVMCL.pas/TVMobjCL will build and its tests will run.')
+  else
+    WriteLn('HAVE_OPENCL is inactive - newVMCL.pas/TVMobjCL is excluded from the build (OpenCL.dll and/or clFFT.dll not found).');
 end.
