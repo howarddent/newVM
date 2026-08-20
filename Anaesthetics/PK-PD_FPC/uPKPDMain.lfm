@@ -174,7 +174,7 @@ object fmMain: TfmMain
           Height = 15
           Top = 384
           Width = 70
-          Caption = 'Bolus A (mL):'
+          Caption = 'Bolus A (mg):'
         end
         object EditBolus: TEdit
           Left = 160
@@ -188,7 +188,7 @@ object fmMain: TfmMain
           Height = 15
           Top = 412
           Width = 70
-          Caption = 'Bolus B (mL):'
+          Caption = 'Bolus B (mcg):'
         end
         object EditBolusB: TEdit
           Left = 160

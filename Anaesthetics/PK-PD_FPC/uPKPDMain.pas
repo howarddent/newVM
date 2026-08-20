@@ -114,6 +114,7 @@ type
     // marks back to the true 0..100 BIS scale - see both below.
     FConcMax : Double;
     procedure PopulateModelCombo(Drug: TDrugs; ModelCombo: TComboBox);
+    procedure UpdateBolusUnitLabels;
     procedure UpdateLinkedTCIVisibility;
     procedure RebuildModels;
     procedure RunCurrentRegimen;
@@ -141,9 +142,16 @@ const
     [Domino]                               // Ketamine
   );
   // Drug B (the driven side of "Linked TCI") only ever makes sense as an
-  // opioid co-administered alongside model A - restricting cbDrugB to these
-  // keeps the picker from offering nonsensical pairings (e.g. two hypnotics).
-  OpioidDrugs: array[0..3] of TDrugs = (Fentanyl, Alfentanil, Remifentanil, Ketamine);
+  // opioid/opioid-style adjunct co-administered alongside model A -
+  // restricting cbDrugB to these keeps the picker from offering nonsensical
+  // pairings (e.g. two hypnotics). Also doubles as the "mcg-dose" group for
+  // bolus units (LabelBolus/LabelBolusB - see UpdateBolusUnitLabels) and the
+  // ng/ml concentration scale (ConcDisplayScale): the three opioids plus
+  // Dexmedetomidine (an alpha-2 agonist, not an opioid, but dosed/scaled the
+  // same way - a real clinical adjunct infusion alongside a hypnotic, unlike
+  // the drug this list used to contain here, Ketamine, which is a hypnotic
+  // itself and never belongs in this group).
+  McgDoseDrugs: array[0..3] of TDrugs = (Fentanyl, Alfentanil, Remifentanil, Dexmedetomidine);
 
 implementation
 
@@ -165,11 +173,13 @@ end;
 procedure TfmMain.cbDrugAChange(Sender: TObject);
 begin
   PopulateModelCombo(TDrugs(cbDrugA.ItemIndex), cbModelA);
+  UpdateBolusUnitLabels;
 end;
 
 procedure TfmMain.cbDrugBChange(Sender: TObject);
 begin
-  PopulateModelCombo(OpioidDrugs[cbDrugB.ItemIndex], cbModelB);
+  PopulateModelCombo(McgDoseDrugs[cbDrugB.ItemIndex], cbModelB);
+  UpdateBolusUnitLabels;
 end;
 
 procedure TfmMain.UpdateLinkedTCIVisibility;
@@ -247,9 +257,10 @@ begin
   // current regimen mode - it's cheap (pure arithmetic plus one 4x4
   // eigendecomposition), and keeps it ready the instant the user switches
   // to "Linked TCI" without needing a separate rebuild step. cbDrugB only
-  // lists the opioid subset (see OpioidDrugs), so its ItemIndex must be
-  // mapped through that array, not cast to TDrugs directly.
-  DrugB := OpioidDrugs[cbDrugB.ItemIndex];
+  // lists the opioid/opioid-style subset (see McgDoseDrugs), so its
+  // ItemIndex must be mapped through that array, not cast to TDrugs
+  // directly.
+  DrugB := McgDoseDrugs[cbDrugB.ItemIndex];
   ModelNameB := cbModelB.Text;
   ModelB := Low(TModels);
   for M := Low(TModels) to High(TModels) do
@@ -278,19 +289,46 @@ begin
   Ce := SubMatrix(R, CeRow, 0, 1, R.Cols);
 end;
 
+// True for the four McgDoseDrugs (the three opioids plus Dexmedetomidine) -
+// see that array's own comment for why they're grouped together (mcg bolus
+// dosing, ng/ml plasma display) rather than mg/mcg-ml like the hypnotics.
+function IsMcgDoseDrug(Drug: TDrugs): Boolean;
+var
+  i : Integer;
+begin
+  result := False;
+  for i := Low(McgDoseDrugs) to High(McgDoseDrugs) do
+    if McgDoseDrugs[i] = Drug then begin
+      result := True;
+      Exit;
+    end;
+end;
+
 // The left concentration axis is labelled mcg/ml for hypnotics and ng/ml
 // for opioids - opioid C1/Ce need dividing by 1000 to read correctly on
 // that ng/ml scale (per direct observation against the running app).
 function ConcDisplayScale(Drug: TDrugs): Double;
-var
-  i : Integer;
 begin
-  result := 1.0;
-  for i := Low(OpioidDrugs) to High(OpioidDrugs) do
-    if OpioidDrugs[i] = Drug then begin
-      result := 1/1000;
-      Exit;
-    end;
+  if IsMcgDoseDrug(Drug) then result := 1/1000 else result := 1.0;
+end;
+
+// Keeps LabelBolus/LabelBolusB's units in sync with whichever drug is
+// currently selected: mg for the hypnotics (Propofol/Midazolam/
+// Thiopentone/Ketamine), mcg for the McgDoseDrugs group Drug B is always
+// drawn from. Called from cbDrugAChange/cbDrugBChange and once from
+// FormCreate (ItemIndex assignments made directly in code don't fire
+// OnChange, so FormCreate has to trigger this explicitly - same reasoning
+// as its own explicit cbRegimenChange(nil) call).
+procedure TfmMain.UpdateBolusUnitLabels;
+begin
+  if IsMcgDoseDrug(TDrugs(cbDrugA.ItemIndex)) then
+    LabelBolus.Caption := 'Bolus A (mcg):'
+  else
+    LabelBolus.Caption := 'Bolus A (mg):';
+  if IsMcgDoseDrug(McgDoseDrugs[cbDrugB.ItemIndex]) then
+    LabelBolusB.Caption := 'Bolus B (mcg):'
+  else
+    LabelBolusB.Caption := 'Bolus B (mg):';
 end;
 
 procedure PlotSeries(const T, Y: TVMobj; Series: TLineSeries);
@@ -439,12 +477,13 @@ var
 begin
   for D := Low(TDrugs) to High(TDrugs) do
     cbDrugA.Items.Add(DrugNameStrings[D]);
-  for i := Low(OpioidDrugs) to High(OpioidDrugs) do
-    cbDrugB.Items.Add(DrugNameStrings[OpioidDrugs[i]]);
+  for i := Low(McgDoseDrugs) to High(McgDoseDrugs) do
+    cbDrugB.Items.Add(DrugNameStrings[McgDoseDrugs[i]]);
   cbDrugA.ItemIndex := 0; // Propofol
   cbDrugB.ItemIndex := 2; // Remifentanil - the classic co-induction pairing
   PopulateModelCombo(TDrugs(cbDrugA.ItemIndex), cbModelA);
-  PopulateModelCombo(OpioidDrugs[cbDrugB.ItemIndex], cbModelB);
+  PopulateModelCombo(McgDoseDrugs[cbDrugB.ItemIndex], cbModelB);
+  UpdateBolusUnitLabels;
 
   cbRegimen.Items.Add('Bolus (RK4)');
   cbRegimen.Items.Add('Bolus (RK45 adaptive)');
