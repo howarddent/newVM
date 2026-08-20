@@ -95,6 +95,7 @@ type
     FWaterfallPlot: TVMPlotWaterfall;
     FUpdateTimer: TTimer;
     FSource: TSDRRFSource;
+    FSourceCursor: TSDRStreamCursor;
     FEpochSize: Integer;
     FUseGPU, FGPUChecked: Boolean;
     FGPUStatusMessage: string;
@@ -278,7 +279,15 @@ begin
   if FSource = AValue then Exit;
   if Assigned(FSource) then FSource.RemoveFreeNotification(Self);
   FSource := AValue;
-  if Assigned(FSource) then FSource.FreeNotification(Self);
+  if Assigned(FSource) then begin
+    FSource.FreeNotification(Self);
+    // Fresh independent cursor into the source's shared stream - see
+    // uSDRRFSource.pas's own header comment for why every consumer needs
+    // its own (TryReadEpoch used to be a single-consumer destructive
+    // read, which silently corrupted both this component's own stream
+    // and TFMBroadcastReceiver's the moment both were active at once).
+    FSourceCursor := FSource.NewStreamCursor;
+  end;
 end;
 
 procedure TSDRSpectrumAnalyser.SetEpochSize(AValue: Integer);
@@ -298,7 +307,12 @@ begin
   // though OpenCLReady itself is cheap to re-call once cached - so a
   // status bar wired to OnGPUStatusKnown updates on every Start, not just
   // the component's very first one.
-  if AValue and not FUpdateTimer.Enabled then FGPUChecked := False;
+  if AValue and not FUpdateTimer.Enabled then begin
+    FGPUChecked := False;
+    // A fresh cursor for this streaming session - see
+    // TFMBroadcastReceiver.BuildChain's identical comment for why.
+    if Assigned(FSource) then FSourceCursor := FSource.NewStreamCursor;
+  end;
   FUpdateTimer.Enabled := AValue;
 end;
 
@@ -587,7 +601,7 @@ var
   IQ: TVMobjC;
 begin
   if not Assigned(FSource) then Exit;
-  if not FSource.TryReadEpoch(FEpochSize, IQ) then Exit;
+  if not FSource.TryReadEpoch(FEpochSize, FSourceCursor, IQ) then Exit;
   ProcessEpoch(IQ);
 end;
 

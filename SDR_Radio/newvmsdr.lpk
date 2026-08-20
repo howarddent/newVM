@@ -20,7 +20,7 @@
     <Description Value="Design-time/run-time LCL components for newVM's SDR_Radio project: TSDRRFSource, a non-visual component wrapping USB SDR front-end detection (HackRF/RTL-SDR/SDRplay) and exposing a single-precision complex IQ epoch stream, and TSDRSpectrumAnalyser, a spectrum+waterfall display component that consumes that stream and runs its windowing/FFT on the GPU via newVMCL/OpenCL when available."/>
     <License Value="Same terms as the parent newVM project."/>
     <Version Release="1"/>
-    <Files Count="2">
+    <Files Count="5">
       <Item1>
         <Filename Value="uSDRRFSource.pas"/>
         <HasRegisterProc Value="True"/>
@@ -31,6 +31,19 @@
         <HasRegisterProc Value="True"/>
         <UnitName Value="uVMPlotSDRSpectrum"/>
       </Item2>
+      <Item3>
+        <Filename Value="uDSPBlocks.pas"/>
+        <UnitName Value="uDSPBlocks"/>
+      </Item3>
+      <Item4>
+        <Filename Value="uWaveOutPlayer.pas"/>
+        <UnitName Value="uWaveOutPlayer"/>
+      </Item4>
+      <Item5>
+        <Filename Value="uFMReceiver.pas"/>
+        <HasRegisterProc Value="True"/>
+        <UnitName Value="uFMReceiver"/>
+      </Item5>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>

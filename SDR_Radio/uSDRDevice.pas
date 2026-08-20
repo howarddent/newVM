@@ -126,13 +126,34 @@ type
   end;
 
   // Fixed-size byte ring buffer, one producer (a hardware read
-  // thread/callback) and one consumer (the GUI thread's epoch timer).
-  // TryReadNewest deliberately skips forward to the newest full epoch
-  // when more than one is backlogged, and Write silently overwrites the
-  // oldest unread bytes when full, rather than ever blocking the
+  // thread/callback) and one consumer. Write silently overwrites the
+  // oldest unwritten bytes when full, rather than ever blocking the
   // producer - see uHackRF.pas's original header comment (the behaviour
-  // this class was extracted from, unchanged) for the full live-display
-  // rationale.
+  // this class was extracted from, unchanged) for the full rationale.
+  //
+  // TryReadNewest reads a plain, lossless FIFO sequence - the oldest
+  // NeedBytes not yet read, in order, nothing skipped or discarded (the
+  // name is now a historical misnomer - see below). It used to
+  // deliberately SKIP FORWARD to the newest full epoch whenever more
+  // than one was backlogged, discarding the rest, which was the right
+  // behaviour for its original sole caller (a live spectrum display
+  // that only ever wanted the newest snapshot and was happy to drop
+  // stale frames). That stopped being safe once TSDRRFSource
+  // (uSDRRFSource.pas) became this buffer's ONLY reader - it now has to
+  // deliver every sample losslessly to its own internal stream, which
+  // is what actually feeds one or more independent downstream consumers
+  // (each with their own "catch up" logic, per-consumer, at that
+  // higher level - see TSDRRFSource.TryReadEpoch's own comment).
+  // Skipping data here would silently corrupt that stream instead:
+  // confirmed the hard way - real-time FM demodulation went from
+  // "occasional pops and clicks, largely silent" to correct once this
+  // method stopped discarding backlogged epochs. The one remaining
+  // consumer of this class-level discard behaviour was TSDRRFSource's
+  // OWN poll timer being too coarse to keep up sample-for-sample - fixed
+  // there (PollTick now drains everything currently available in a
+  // loop, rather than assuming one fixed-size read per timer tick) so
+  // this buffer's producer side never has to fall back on its own
+  // overwrite-when-full behaviour in normal operation either.
   { TSDRRingBuffer }
   TSDRRingBuffer = class
   private
@@ -145,7 +166,7 @@ type
     procedure Reset;
     // Called from the producer thread only.
     procedure Write(Buf: PByte; Len: Integer);
-    // Called from the GUI thread only.
+    // Called from the (single) consumer only.
     function TryReadNewest(NeedBytes: Integer; out Buf: TSDRByteArray): Boolean;
   end;
 
@@ -228,7 +249,7 @@ end;
 
 function TSDRRingBuffer.TryReadNewest(NeedBytes: Integer; out Buf: TSDRByteArray): Boolean;
 var
-  Epochs, SkipBytes, RingLen, Tail: Integer;
+  RingLen, Tail: Integer;
 begin
   Result := False;
   RingLen := Length(FRing);
@@ -236,13 +257,6 @@ begin
   FLock.Enter;
   try
     if FFill < NeedBytes then Exit;
-
-    Epochs := FFill div NeedBytes;
-    if Epochs > 1 then begin
-      SkipBytes := (Epochs - 1) * NeedBytes;
-      FReadIdx := (FReadIdx + SkipBytes) mod RingLen;
-      FFill := FFill - SkipBytes;
-    end;
 
     SetLength(Buf, NeedBytes);
     if FReadIdx + NeedBytes <= RingLen then

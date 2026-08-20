@@ -88,6 +88,21 @@
         <IsPartOfProject Value="True"/>
         <UnitName Value="uVMPlotSDRSpectrum"/>
       </Unit>
+      <Unit>
+        <Filename Value="uDSPBlocks.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="uDSPBlocks"/>
+      </Unit>
+      <Unit>
+        <Filename Value="uWaveOutPlayer.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="uWaveOutPlayer"/>
+      </Unit>
+      <Unit>
+        <Filename Value="uFMReceiver.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="uFMReceiver"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

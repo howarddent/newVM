@@ -42,18 +42,34 @@ unit newVMCL;
      NOTHING would ever release the GPU buffer, since records have no
      destructor. The "AdvancedRecords" modeswitch (see this unit's own
      mode/modeswitch directives below) enables class operators
-     (Initialize/Finalize/AddRef/Copy) that close that gap: Copy increments a
-     shared refcount on assignment (exactly mirroring what a dynamic
-     array's own hidden refcount does on TVMobjS assignment), Finalize
-     decrements it on scope exit and frees the GPU buffer only once it
-     reaches zero. Confirmed correct (construct/copy/scope-exit, freed
-     exactly once) with a standalone probe before being relied on here -
-     same "verify the mechanism against a minimal case first" discipline
-     the rest of this codebase's FFI work follows. The practical result:
-     TVMobjCL needs no manual Free/Release call anywhere, same as
-     TVMobjS - CopyObjCL is still there for the same reason CopyObj/
-     CopyObjS are (an explicitly INDEPENDENT copy, e.g. before a
-     destructive operation), not because ordinary assignment leaks.
+     (Initialize/Finalize/AddRef/Copy) that close that gap: Copy handles
+     plain ':=' assignment (FPC does not fall back to a bitwise copy +
+     AddRef for this specific case when a Copy operator exists - confirmed
+     empirically: removing Copy and keeping only AddRef causes a
+     use-after-free crash within the first few thousand iterations of a
+     stress-test loop), AddRef handles the other copy paths the compiler
+     generates bit-copies for (value-parameter passing, function returns),
+     and Finalize decrements the shared refcount on scope exit, freeing
+     the GPU buffer only once it reaches zero.
+
+     Real bug, found and fixed here: Copy's first version only ever
+     ADDED a reference to Src's buffer - it never released whatever Dst
+     had PREVIOUSLY held before overwriting Dst's fields. For a
+     reassigned variable (e.g. a loop body's `B := A * 2.0;`, executed
+     once per iteration), each iteration's old B silently lost its last
+     reference with nothing left to decrement it - a leak of one GPU
+     buffer (and its refcount cell) per reassignment, confirmed via a
+     standalone stress test (20,000 create/reassign iterations; process
+     memory climbed by hundreds of MB and never came back down) and
+     fixed by releasing Dst's old reference first (guarded against
+     self-assignment, so reassigning a variable to itself can't
+     transiently hit refcount zero and free a buffer that's still live).
+     The same stress test now holds memory flat for the full 20,000
+     iterations. The practical result: TVMobjCL needs no manual
+     Free/Release call anywhere, same as TVMobjS - CopyObjCL is still
+     there for the same reason CopyObj/CopyObjS are (an explicitly
+     INDEPENDENT copy, e.g. before a destructive operation), not because
+     ordinary assignment leaks.
 
      ELEMENT[r,c] IS SLOW BY DESIGN, UNLIKE EVERY OTHER TVMobj*'S: each
      access is its own blocking clEnqueueReadBuffer/WriteBuffer round trip
@@ -340,6 +356,26 @@ end;
 
 class operator TVMobjCL.Copy(constref Src: TVMobjCL; var Dst: TVMobjCL);
 begin
+  // Release whatever Dst previously held BEFORE overwriting it with
+  // Src - Dst may already hold a valid, DIFFERENT reference from an
+  // earlier assignment (e.g. a loop variable reassigned on every
+  // iteration: B := A * 2.0 inside a loop reassigns the SAME B every
+  // time). The original version of this operator skipped this step
+  // entirely and just clobbered Dst's fields - confirmed, via a
+  // standalone stress test (20,000 create/reassign iterations), to leak
+  // the previous buffer on every single reassignment, since nothing
+  // ever decremented its refcount once Dst stopped pointing at it.
+  // Guarded against self-assignment (A := A, or Dst already aliasing
+  // Src) so a release-then-reacquire of the SAME refcount can't
+  // transiently hit zero and free a buffer that's actually still live.
+  if Assigned(Dst.FRefCount) and (Dst.FRefCount <> Src.FRefCount) then begin
+    Dec(Dst.FRefCount^);
+    if Dst.FRefCount^ = 0 then begin
+      clReleaseMemObject(Dst.FBuffer);
+      Dispose(Dst.FRefCount);
+    end;
+  end;
+
   Dst.FBuffer := Src.FBuffer;
   Dst.FRefCount := Src.FRefCount;
   Dst.frows := Src.frows;

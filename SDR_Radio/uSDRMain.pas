@@ -54,6 +54,25 @@ unit uSDRMain;
      YOffset/YGain - FAnalyser.WaterfallPlot's colour mapping is
      unaffected.
 
+     LISTEN (FReceiver, uFMReceiver.pas's TFMBroadcastReceiver): a third
+     component, pointed at the same FRFSource, demonstrating this
+     project's onward-CPU-signal-processing story - it runs a full
+     modular broadcast-FM receive chain (local oscillator/mixer,
+     rational resamplers, FM demodulator, stereo decoder - see
+     uDSPBlocks.pas) on the wideband IQ stream and plays the result
+     through the sound card (uWaveOutPlayer.pas). ListenFreqEdit is
+     deliberately a SEPARATE control from FreqEdit: FreqEdit retunes the
+     RF front end's own centre frequency (moving what's captured at
+     all), while ListenFreqEdit only moves FReceiver's internal mixer
+     within whatever's already captured - the two can legitimately
+     differ (e.g. capture centred at 100.000MHz, 2Msps, listening to a
+     station actually sitting at 99.500MHz within that capture), which is
+     the whole point of doing the tuning in software rather than by
+     retuning hardware. Like the rest of this form's controls,
+     ListenCheckBox/ListenFreqEdit/VolumeTrackBar are created in code in
+     FormCreate rather than hand-placed in the .lfm, same reasoning as
+     FRFSource/FAnalyser's own header comment above.
+
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
@@ -63,7 +82,7 @@ interface
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Spin,
-  uSDRDevice, uSDRRFSource, uVMPlotSDRSpectrum, uFreqKeypad;
+  uSDRDevice, uSDRRFSource, uVMPlotSDRSpectrum, uFreqKeypad, uFMReceiver;
 
 type
 
@@ -120,6 +139,12 @@ type
   private
     FRFSource: TSDRRFSource;
     FAnalyser: TSDRSpectrumAnalyser;
+    FReceiver: TFMBroadcastReceiver;
+    ListenCheckBox: TCheckBox;
+    ListenFreqLabel: TLabel;
+    ListenFreqEdit: TFloatSpinEdit;
+    VolumeLabel: TLabel;
+    VolumeTrackBar: TTrackBar;
     procedure AnalyserGPUStatusKnown(Sender: TObject);
     procedure ApplyDeviceCapabilities;
     procedure ApplyGainStageControl(StageIndex: Integer; Lbl: TLabel; Bar: TTrackBar);
@@ -129,6 +154,9 @@ type
     procedure CommitFrequencyHz(Hz: QWord);
     procedure UpdatePeakThreshold;
     procedure ReportError(const Where: string);
+    procedure ListenCheckBoxChange(Sender: TObject);
+    procedure ListenFreqEditEditingDone(Sender: TObject);
+    procedure VolumeTrackBarChange(Sender: TObject);
   end;
 
 var
@@ -159,12 +187,52 @@ begin
   YGainTrackBar.Position := 10;
   YGainLabel.Caption := 'Y Gain: 1.0x';
 
+  FReceiver := TFMBroadcastReceiver.Create(Self);
+  FReceiver.Source := FRFSource;
+
+  ListenCheckBox := TCheckBox.Create(Self);
+  ListenCheckBox.Parent := ControlPanel;
+  ListenCheckBox.SetBounds(880, 168, 100, 19);
+  ListenCheckBox.Caption := 'Listen (FM)';
+  ListenCheckBox.OnChange := @ListenCheckBoxChange;
+
+  ListenFreqLabel := TLabel.Create(Self);
+  ListenFreqLabel.Parent := ControlPanel;
+  ListenFreqLabel.SetBounds(880, 194, 110, 15);
+  ListenFreqLabel.Caption := 'Listen Freq (MHz):';
+
+  ListenFreqEdit := TFloatSpinEdit.Create(Self);
+  ListenFreqEdit.Parent := ControlPanel;
+  ListenFreqEdit.SetBounds(1000, 190, 100, 23);
+  ListenFreqEdit.DecimalPlaces := 3;
+  ListenFreqEdit.Increment := 0.1;
+  ListenFreqEdit.MinValue := 0;
+  ListenFreqEdit.MaxValue := 999999;
+  ListenFreqEdit.Value := FreqEdit.Value;
+  ListenFreqEdit.OnEditingDone := @ListenFreqEditEditingDone;
+
+  VolumeLabel := TLabel.Create(Self);
+  VolumeLabel.Parent := ControlPanel;
+  VolumeLabel.SetBounds(880, 224, 150, 15);
+  VolumeLabel.Caption := 'Volume: 70%';
+
+  VolumeTrackBar := TTrackBar.Create(Self);
+  VolumeTrackBar.Parent := ControlPanel;
+  VolumeTrackBar.SetBounds(880, 240, 200, 30);
+  VolumeTrackBar.Min := 0;
+  VolumeTrackBar.Max := 100;
+  VolumeTrackBar.Position := 70;
+  VolumeTrackBar.Frequency := 10;
+  VolumeTrackBar.OnChange := @VolumeTrackBarChange;
+  FReceiver.Volume := 0.7;
+
   StatusLabel.Caption := 'Not connected';
 end;
 
 procedure TForm1.FormDestroy(Sender: TObject);
 begin
   if Assigned(FAnalyser) then FAnalyser.Active := False;
+  if Assigned(FReceiver) then FReceiver.Active := False;
   FRFSource.Free;   // stops RX and closes the device itself, if still open
 end;
 
@@ -317,6 +385,16 @@ begin
   FreqEdit.MaxValue := Caps.MaxFreqHz / 1e6;
   FreqEdit.Value := Caps.DefaultFreqHz / 1e6;
 
+  // ListenFreqEdit isn't bounded any tighter than the device's own
+  // hardware range here - it should really also stay within whatever's
+  // currently captured (CenterFreqHz +- SampleRateHz/2), but that range
+  // moves with every retune/rate change, so enforcing it precisely is
+  // left as a soft user responsibility for this first cut (see this
+  // unit's own header comment on ListenFreqEdit).
+  ListenFreqEdit.MinValue := Caps.MinFreqHz / 1e6;
+  ListenFreqEdit.MaxValue := Caps.MaxFreqHz / 1e6;
+  ListenFreqEdit.Value := Caps.DefaultFreqHz / 1e6;
+
   RateCombo.Items.Clear;
   for i := 0 to High(Caps.SampleRates) do
     RateCombo.Items.Add(FormatFloat('0.###', Caps.SampleRates[i] / 1e6));
@@ -437,6 +515,8 @@ var
 begin
   if FRFSource.IsStreaming then begin
     FAnalyser.Active := False;
+    FReceiver.Active := False;
+    ListenCheckBox.Checked := False;
     FRFSource.StopStreaming;
     StartStopButton.Caption := 'Start';
     RateCombo.Enabled := True;
@@ -579,6 +659,31 @@ begin
   Gain := YGainTrackBar.Position / 10.0;
   FAnalyser.SpectrumYGain := Gain;
   YGainLabel.Caption := Format('Y Gain: %.1fx', [Gain]);
+end;
+
+// Starts/stops the onward-CPU FM receive chain (see uFMReceiver.pas) -
+// only meaningful once FRFSource is actually streaming, same requirement
+// TFMBroadcastReceiver.SetActive itself enforces (Active silently stays
+// False if Source isn't open yet).
+procedure TForm1.ListenCheckBoxChange(Sender: TObject);
+begin
+  FReceiver.TunedFrequencyHz := ListenFreqEdit.Value * 1e6;
+  FReceiver.Active := ListenCheckBox.Checked;
+end;
+
+// Live retune - only touches the receive chain's own mixer (see
+// TFMBroadcastReceiver.SetTunedFrequencyHz's own comment for why this is
+// safe to do without interrupting playback), works whether or not
+// FReceiver is currently Active.
+procedure TForm1.ListenFreqEditEditingDone(Sender: TObject);
+begin
+  FReceiver.TunedFrequencyHz := ListenFreqEdit.Value * 1e6;
+end;
+
+procedure TForm1.VolumeTrackBarChange(Sender: TObject);
+begin
+  FReceiver.Volume := VolumeTrackBar.Position / 100.0;
+  VolumeLabel.Caption := Format('Volume: %d%%', [VolumeTrackBar.Position]);
 end;
 
 end.

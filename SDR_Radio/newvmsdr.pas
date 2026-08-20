@@ -2,13 +2,14 @@
   This source is only used to compile and install the package.
  }
 
-unit newvmsdr;
+unit newVMSDR;
 
 {$warn 5023 off : no warning about unused units}
 interface
 
 uses
-  uSDRRFSource, uVMPlotSDRSpectrum, LazarusPackageIntf;
+  uSDRRFSource, uVMPlotSDRSpectrum, uDSPBlocks, uWaveOutPlayer, uFMReceiver, 
+  LazarusPackageIntf;
 
 implementation
 
@@ -16,6 +17,7 @@ procedure Register;
 begin
   RegisterUnit('uSDRRFSource', @uSDRRFSource.Register);
   RegisterUnit('uVMPlotSDRSpectrum', @uVMPlotSDRSpectrum.Register);
+  RegisterUnit('uFMReceiver', @uFMReceiver.Register);
 end;
 
 initialization
