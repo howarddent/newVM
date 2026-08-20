@@ -100,6 +100,9 @@ const
   DefaultPeakDeviationHz = 75000;
   DefaultDeEmphasisTauSeconds = 75e-6;   // US broadcast-FM standard; most of the rest of the world uses 50e-6
   DefaultEpochDurationMs = 20;
+  // Safe margin under TVMobjC/TVMobjS's real 65535-per-dimension cap -
+  // see ProcessOnce's own comment for why this exists at all.
+  MaxEpochSamples = 60000;
 
 type
   TFMBroadcastReceiver = class;
@@ -272,18 +275,30 @@ begin
   // couldn't keep up with the wideband capture rate - TFIRFilterS/
   // TRationalResamplerC/S are all direct-form (O(N*NumTaps)), and
   // NumTaps roughly halves for each doubling of TransitionBW (see
-  // ChooseNumTaps's own comment). 50kHz here is the single biggest lever
-  // available: this filter runs at FsIn (e.g. 2MHz), an order of
-  // magnitude higher than every other filter in the chain (which run at
-  // BasebandRateHz, 200kHz), so for the SAME TransitionBW-in-Hz it costs
-  // ~10x as many taps - it needs a proportionally wider transition to
-  // stay cheap. This does NOT touch BasebandRateHz itself (still exactly
-  // 200,000 - the actual 200kHz channel-bandwidth spec, unchanged); it
-  // only loosens how sharply the antialiasing filter rolls off at that
-  // boundary, trading a little out-of-channel rejection for real-time
-  // headroom.
+  // ChooseNumTaps's own comment). This does NOT touch BasebandRateHz
+  // itself (still exactly 200,000 - the actual 200kHz channel-bandwidth
+  // spec, unchanged); it only loosens how sharply the antialiasing
+  // filter rolls off at that boundary, trading a little out-of-channel
+  // rejection for real-time headroom.
+  //
+  // The wideband resampler's TransitionBW is scaled PROPORTIONALLY to
+  // FsIn (2.5%, i.e. 50kHz at the 2Msps this ratio was originally tuned
+  // and verified against) rather than left as a fixed 50kHz - this
+  // filter runs at FsIn itself (an order of magnitude higher than every
+  // other filter in the chain, which run at BasebandRateHz), so its
+  // absolute compute cost per second of audio scales directly with
+  // FsIn for ANY fixed TransitionBW-in-Hz. A fixed 50kHz, validated only
+  // at 2Msps, meant this stage silently got proportionally more
+  // expensive at every higher sample rate a device offers (e.g. an
+  // SDRplay's 8-10Msps modes) - confirmed as a real bug: audio worked at
+  // 2-3Msps and fell to silence at higher rates once the DSP thread
+  // could no longer keep up with real time and TWaveOutPlayer's buffer
+  // ran dry. Scaling TransitionBW with FsIn keeps NumTaps - and so this
+  // stage's absolute cost - roughly CONSTANT across every sample rate a
+  // device supports, rather than tuned for one and silently breaking at
+  // others.
   FMixer := TComplexMixer.Create(FsIn, -(FTunedFrequencyHz - FSource.CenterFreqHz));
-  FResamplerToBaseband := TRationalResamplerC.Create(FsIn, DefaultBasebandRateHz, 50000);
+  FResamplerToBaseband := TRationalResamplerC.Create(FsIn, DefaultBasebandRateHz, FsIn * 0.025);
   FDemod := TFMDemodulator.Create(DefaultBasebandRateHz, DefaultPeakDeviationHz);
   FStereoDecoder := TFMStereoDecoder.Create(DefaultBasebandRateHz, DefaultDeEmphasisTauSeconds);
   FResamplerL := TRationalResamplerS.Create(DefaultBasebandRateHz, DefaultAudioRateHz, 8000);
@@ -328,7 +343,23 @@ begin
   Result := False;
   if not (FChainBuilt and Assigned(FSource)) then Exit;
 
+  // TVMobjC/TVMobjS both cap any single dimension at 65535 (TDimC/TDimS
+  // = 0..MaxDimC-1/MaxDimS-1, MaxDimC/MaxDimS = 65536 - a bound from
+  // this library's matrix-algebra heritage, never designed for
+  // audio-scale per-epoch sample counts). At FEpochDurationMs=20 that's
+  // only exceeded above 3.27Msps - confirmed as the actual cause of
+  // "works at 2-3Msps, silence at higher rates": TVMobjC.Create raised
+  // an assertion once N passed 65535, and since this runs on FDSPThread
+  // (see this unit's own header comment), the unhandled exception
+  // silently killed the DSP thread rather than crashing visibly or
+  // logging anything - audio just stopped. Every stage AFTER this one
+  // only ever decimates (baseband/audio rates are always <= FsIn), so
+  // capping N here keeps every downstream TVMobjC/TVMobjS safely under
+  // the limit too. A capped N just means shorter (but still fully
+  // correct - every DSP block here is stateful/streaming across calls)
+  // epochs at high sample rates, not a functional loss.
   N := Round(FSource.SampleRateHz * FEpochDurationMs / 1000);
+  if N > MaxEpochSamples then N := MaxEpochSamples;
   if not FSource.TryReadEpoch(N, FSourceCursor, IQ) then Exit;
 
   Baseband := FResamplerToBaseband.Process(FMixer.Process(IQ));

@@ -211,6 +211,17 @@ const
   // TTimer-based version this never has to correctly guess a real
   // firing interval.
   PollChunkMs = 5;
+  // Safe margin under TVMobjZ's real per-dimension cap (TDim =
+  // 0..MaxDim-1, MaxDim=65536 in newVM.pas - a bound from this
+  // library's matrix-algebra heritage, never designed for audio-scale
+  // per-call sample counts). PollChunkMs*SampleRateHz alone would
+  // exceed this above ~13.1Msps (e.g. HackRF's own 16/20Msps modes),
+  // which crashed FDevice.TryReadEpoch's TVMobjZ.Create with an
+  // assertion INSIDE FPollThread - not just silencing one consumer's
+  // audio the way the same bug did in TFMBroadcastReceiver (see that
+  // unit's own ProcessOnce comment), but killing the single poll thread
+  // every other consumer (including TSDRSpectrumAnalyser) depends on.
+  MaxPollChunkSamples = 60000;
 
 constructor TSDRRFSource.Create(AOwner: TComponent);
 begin
@@ -353,7 +364,7 @@ begin
   FStreamCapacity := Max(Round(SampleRateHz * StreamRingSeconds), 1);
   SetLength(FStreamRing, FStreamCapacity);
   FStreamTotalWritten := 0;
-  FPollChunkSamples := Max(Round(SampleRateHz * PollChunkMs / 1000), 256);
+  FPollChunkSamples := Min(Max(Round(SampleRateHz * PollChunkMs / 1000), 256), MaxPollChunkSamples);
 
   FPollThread := TSDRPollThread.Create(Self);
 end;
