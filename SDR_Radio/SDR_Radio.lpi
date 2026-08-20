@@ -66,7 +66,11 @@
         <UnitName Value="uFreqKeypad"/>
       </Unit>
       <Unit>
-        <Filename Value="../Graphs/uVMPlotStack.pas"/>
+        <Filename Value="../Graphs/uVMPlotSpectrum.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="../Graphs/uVMPlotWaterfall.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
     </Units>

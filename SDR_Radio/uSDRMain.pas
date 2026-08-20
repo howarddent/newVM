@@ -5,17 +5,25 @@ unit uSDRMain;
      Main form for the spectrum analyser. Talks only to the abstract
      TSDRDevice interface (uSDRDevice.pas) - never to THackRFDevice
      (uHackRF.pas) or TRTLSDRDevice (uRTLSDR.pas) directly - so it works
-     identically regardless of which hardware is actually attached. A
-     TVMPlotStack (Graphs/uVMPlotStack.pas) - created and Parented to this
-     form in code, same convention as Graphs/PlotStack's and
-     Graphs/SpectrumDemo's own demo forms - is fed by EpochTimerTick, up
-     to ~30 times/second, each tick pulling one 8192-sample complex IQ
-     epoch off FDevice's ring buffer via TryReadEpoch. TryReadEpoch
-     deliberately skips forward to the newest backlogged epoch each call
-     (see uSDRDevice.pas's TSDRRingBuffer), so the display always shows a
-     live, up-to-date spectrum rather than falling behind real time,
-     however much faster the device's own sample rate is than the GUI
-     timer's cadence.
+     identically regardless of which hardware is actually attached. Two
+     components - created and Parented to this form in code, same
+     convention as Graphs/PlotStack's and Graphs/SpectrumDemo's own demo
+     forms - are stacked vertically: FSpectrumPlot (TVMPlotSpectrum,
+     Graphs/uVMPlotSpectrum.pas), a flat front-on persistence spectrum
+     with a movable frequency cursor and peak labels, docked above
+     FWaterfallPlot (TVMPlotWaterfall, Graphs/uVMPlotWaterfall.pas), a
+     classic scrolling 2D waterfall filling the rest of the window. Both
+     are fed by EpochTimerTick, up to ~30 times/second, each tick pulling
+     one FEpochSize-sample complex IQ epoch (EpochCombo, default 8192 -
+     see DefaultEpochSize; a smaller epoch is a cheaper FFT/dB pass per
+     tick at the cost of coarser frequency resolution, and takes effect
+     on the very next tick with no need to stop/restart streaming, unlike
+     sample rate) off FDevice's ring buffer via TryReadEpoch. TryReadEpoch
+     deliberately skips forward to the newest
+     backlogged epoch each call (see uSDRDevice.pas's TSDRRingBuffer), so
+     the display always shows a live, up-to-date spectrum rather than
+     falling behind real time, however much faster the device's own
+     sample rate is than the GUI timer's cadence.
 
      AUTODETECTION: ConnectButtonClick doesn't assume any particular
      hardware - DetectAndOpenDevice tries THackRFDevice then
@@ -38,20 +46,29 @@ unit uSDRMain;
      whatever Capabilities the connected device actually reports.
 
      Per epoch, EpochTimerTick:
-       1. TryReadEpoch returns a (1,8192) TVMobjZ of normalised,
+       1. TryReadEpoch returns a (1,FEpochSize) TVMobjZ of normalised,
           DC/I-Q-balance-corrected complex IQ samples (uSDRDevice.pas's
           CorrectIQEpoch, called inside each device's own TryReadEpoch).
        2. newVMComplex.pas's PowerSpectrum(A: TVMobjZ): TVMobj
-          Hamming-windows and FFTs it, returning all 8192 bins of LINEAR
-          power in standard (non-centred) FFT bin order.
+          Hamming-windows and FFTs it, returning all FEpochSize bins of
+          LINEAR power in standard (non-centred) FFT bin order.
        3. That's reordered to ascending-frequency (most-negative first)
           via an FFT shift - built from newVM.pas's own SubMatrix/MergeLR
           rather than a hand-rolled swap loop.
-       4. Converted to dB (10*Log10(P+eps)) and pushed via FPlot.AddGraph.
+       4. Converted to dB (10*Log10(P+eps)) and pushed via both
+          FSpectrumPlot.AddGraph and FWaterfallPlot.AddGraph - the same
+          already-computed spectrum feeds both displays.
 
-     TVMPlotStack.UseFrequencyAxis/XAxisMin/XAxisMax are kept in sync with
-     FDevice's actual CenterFreqHz/SampleRateHz by UpdateFrequencyAxis,
-     called after every successful StartRX or live retune.
+     UseFrequencyAxis/XAxisMin/XAxisMax (both components support this,
+     same convention as TVMPlotStack originally introduced it) are kept in
+     sync with FDevice's actual CenterFreqHz/SampleRateHz by
+     UpdateFrequencyAxis, called after every successful StartRX or live
+     retune. Peak detection (ShowPeakLabels/PeakThreshold) lives on
+     FSpectrumPlot only - the front-on view is where it makes sense;
+     FWaterfallPlot has no such feature. YOffsetTrackBar/YGainTrackBar
+     likewise only ever touch FSpectrumPlot's own YOffset/YGain (a
+     display-only Y transform - see that property's own comment in
+     uVMPlotSpectrum.pas) - FWaterfallPlot's colour mapping is unaffected.
 
 *******************************************************************************}
 
@@ -62,10 +79,11 @@ interface
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Spin,
-  newVM, newVMComplex, uVMPlotStack, uSDRDevice, uHackRF, uRTLSDR, uFreqKeypad;
+  newVM, newVMComplex, uVMPlotSpectrum, uVMPlotWaterfall, uSDRDevice,
+  uHackRF, uRTLSDR, uFreqKeypad;
 
 const
-  EpochSize = 8192;
+  DefaultEpochSize = 8192;
 
 type
 
@@ -75,6 +93,8 @@ type
     BiasTCheckBox: TCheckBox;
     ConnectButton: TButton;
     ControlPanel: TPanel;
+    EpochCombo: TComboBox;
+    EpochLabel: TLabel;
     FreqEdit: TFloatSpinEdit;
     FreqLabel: TLabel;
     GainStage0Label: TLabel;
@@ -89,12 +109,19 @@ type
     PeakThresholdTrackBar: TTrackBar;
     RateCombo: TComboBox;
     RateLabel: TLabel;
-    ResetViewButton: TButton;
+    ScrollRateLabel: TLabel;
+    ScrollRateTrackBar: TTrackBar;
+    ShowAverageCheckBox: TCheckBox;
     ShowAxesCheckBox: TCheckBox;
     StartStopButton: TButton;
     StatusLabel: TLabel;
+    YGainLabel: TLabel;
+    YGainTrackBar: TTrackBar;
+    YOffsetLabel: TLabel;
+    YOffsetTrackBar: TTrackBar;
     procedure BiasTCheckBoxChange(Sender: TObject);
     procedure ConnectButtonClick(Sender: TObject);
+    procedure EpochComboChange(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FreqEditEditingDone(Sender: TObject);
@@ -104,13 +131,19 @@ type
     procedure KeypadButtonClick(Sender: TObject);
     procedure PeakDetectCheckBoxChange(Sender: TObject);
     procedure PeakThresholdTrackBarChange(Sender: TObject);
-    procedure ResetViewButtonClick(Sender: TObject);
+    procedure ScrollRateTrackBarChange(Sender: TObject);
+    procedure ShowAverageCheckBoxChange(Sender: TObject);
     procedure ShowAxesCheckBoxChange(Sender: TObject);
     procedure StartStopButtonClick(Sender: TObject);
+    procedure YGainTrackBarChange(Sender: TObject);
+    procedure YOffsetTrackBarChange(Sender: TObject);
   private
-    FPlot: TVMPlotStack;
+    PlotsPanel: TPanel;
+    FSpectrumPlot: TVMPlotSpectrum;
+    FWaterfallPlot: TVMPlotWaterfall;
     FDevice: TSDRDevice;
     FEpochTimer: TTimer;
+    FEpochSize: Integer;
     function DetectAndOpenDevice(out ErrMsg: string): TSDRDevice;
     procedure ApplyDeviceCapabilities;
     procedure ApplyGainStageControl(StageIndex: Integer; Lbl: TLabel; Bar: TTrackBar);
@@ -134,20 +167,50 @@ implementation
 
 procedure TForm1.FormCreate(Sender: TObject);
 begin
-  FPlot := TVMPlotStack.Create(Self);
-  FPlot.Parent := Self;
-  FPlot.Align := alClient;
-  FPlot.Title := 'Spectrum Analyser';
-  FPlot.XAxisTitle := 'Frequency (MHz)';
-  FPlot.YAxisTitle := 'Power (dB)';
-  FPlot.ZAxisTitle := 'Time';
-  FPlot.MaxSeries := 60;
-  FPlot.ClearStack;   // discard the component's own default demo data
+  // PlotsPanel exists purely so FSpectrumPlot/FWaterfallPlot's alTop/
+  // alClient docking is resolved against EACH OTHER, not against
+  // ControlPanel (also alTop) as a third sibling - LCL docks same-Align
+  // siblings by Z-order/creation order, and having TWO alTop controls
+  // directly under Self (ControlPanel, then FSpectrumPlot) put the
+  // later-created one ABOVE ControlPanel instead of below it (confirmed
+  // by screenshot - FSpectrumPlot rendered at the very top of the
+  // window). Giving the plots their own alClient container collapses
+  // that to a single unambiguous alTop-vs-alClient pair at each level
+  // (ControlPanel vs PlotsPanel; FSpectrumPlot vs FWaterfallPlot).
+  PlotsPanel := TPanel.Create(Self);
+  PlotsPanel.Parent := Self;
+  PlotsPanel.Align := alClient;
+  PlotsPanel.BevelOuter := bvNone;
+
+  FSpectrumPlot := TVMPlotSpectrum.Create(Self);
+  FSpectrumPlot.Parent := PlotsPanel;
+  FSpectrumPlot.Align := alTop;
+  FSpectrumPlot.Height := 320;
+  FSpectrumPlot.Title := 'Spectrum';
+  FSpectrumPlot.XAxisTitle := 'Frequency (MHz)';
+  FSpectrumPlot.YAxisTitle := 'Power (dB)';
+  FSpectrumPlot.ClearStack;   // discard the component's own default demo data
+
+  FWaterfallPlot := TVMPlotWaterfall.Create(Self);
+  FWaterfallPlot.Parent := PlotsPanel;
+  FWaterfallPlot.Align := alClient;
+  FWaterfallPlot.Title := 'Waterfall';
+  FWaterfallPlot.XAxisTitle := 'Frequency (MHz)';
+  FWaterfallPlot.ClearStack;
 
   FEpochTimer := TTimer.Create(Self);
   FEpochTimer.Interval := 30;
   FEpochTimer.Enabled := False;
   FEpochTimer.OnTimer := @EpochTimerTick;
+
+  FWaterfallPlot.ScrollRate := ScrollRateTrackBar.Position;
+  ScrollRateLabel.Caption := Format('Scroll Rate: %d/s', [ScrollRateTrackBar.Position]);
+
+  FEpochSize := StrToIntDef(EpochCombo.Text, DefaultEpochSize);
+  YOffsetTrackBar.Position := 0;
+  YOffsetLabel.Caption := 'Y Zero: 0 dB';
+  YGainTrackBar.Position := 10;
+  YGainLabel.Caption := 'Y Gain: 1.0x';
 
   StatusLabel.Caption := 'Not connected';
 end;
@@ -326,7 +389,8 @@ begin
   Caps := FDevice.Capabilities;
 
   Caption := 'newVM ' + Caps.DeviceName + ' Spectrum Analyser';
-  FPlot.Title := Caps.DeviceName + ' Spectrum Analyser';
+  FSpectrumPlot.Title := Caps.DeviceName + ' Spectrum';
+  FWaterfallPlot.Title := Caps.DeviceName + ' Waterfall';
 
   FreqEdit.MinValue := Caps.MinFreqHz / 1e6;
   FreqEdit.MaxValue := Caps.MaxFreqHz / 1e6;
@@ -413,26 +477,34 @@ end;
 // successful StartRX or live retune so the axis always matches what the
 // device is actually doing, whatever its sample rate.
 procedure TForm1.UpdateFrequencyAxis;
+var
+  Lo, Hi: Double;
 begin
-  FPlot.UseFrequencyAxis := True;
-  FPlot.XAxisMin := (FDevice.CenterFreqHz - FDevice.SampleRateHz / 2) / 1e6;
-  FPlot.XAxisMax := (FDevice.CenterFreqHz + FDevice.SampleRateHz / 2) / 1e6;
+  Lo := (FDevice.CenterFreqHz - FDevice.SampleRateHz / 2) / 1e6;
+  Hi := (FDevice.CenterFreqHz + FDevice.SampleRateHz / 2) / 1e6;
+  FSpectrumPlot.UseFrequencyAxis := True;
+  FSpectrumPlot.XAxisMin := Lo;
+  FSpectrumPlot.XAxisMax := Hi;
+  FWaterfallPlot.UseFrequencyAxis := True;
+  FWaterfallPlot.XAxisMin := Lo;
+  FWaterfallPlot.XAxisMax := Hi;
 end;
 
 // PeakThresholdTrackBar is a 0-100% slider, not an absolute dB value -
 // the spectrum's actual dB scale isn't calibrated (no per-gain-setting
 // dBm reference, and now two different devices besides), so an absolute
 // slider range would be wrong for at least one of them. Instead this
-// maps the % position through FPlot's own live auto-fit range
+// maps the % position through FSpectrumPlot's own live auto-fit range
 // (CurrentYMin/CurrentYMax) into the absolute Value-axis units
-// TVMPlotStack.PeakThreshold actually wants. Called both from the
-// slider's own OnChange and every epoch (see EpochTimerTick) so the
-// effective threshold keeps tracking the live noise floor/dynamic range
-// as they drift, without needing the slider touched again.
+// TVMPlotSpectrum.PeakThreshold actually wants (peak detection is
+// FSpectrumPlot-only - see this unit's own header comment). Called both
+// from the slider's own OnChange and every epoch (see EpochTimerTick) so
+// the effective threshold keeps tracking the live noise floor/dynamic
+// range as they drift, without needing the slider touched again.
 procedure TForm1.UpdatePeakThreshold;
 begin
-  FPlot.PeakThreshold := FPlot.CurrentYMin +
-    (PeakThresholdTrackBar.Position / 100) * (FPlot.CurrentYMax - FPlot.CurrentYMin);
+  FSpectrumPlot.PeakThreshold := FSpectrumPlot.CurrentYMin +
+    (PeakThresholdTrackBar.Position / 100) * (FSpectrumPlot.CurrentYMax - FSpectrumPlot.CurrentYMin);
   PeakThresholdLabel.Caption := Format('Peak Threshold: %d%%', [PeakThresholdTrackBar.Position]);
 end;
 
@@ -451,6 +523,7 @@ begin
     if not FDevice.StopRX then ReportError('stop_rx');
     StartStopButton.Caption := 'Start';
     RateCombo.Enabled := True;
+    EpochCombo.Enabled := True;
     StatusLabel.Caption := 'Connected (' + FDevice.Capabilities.DeviceName + ', idle)';
     Exit;
   end;
@@ -464,6 +537,7 @@ begin
 
   UpdateFrequencyAxis;
   RateCombo.Enabled := False;
+  EpochCombo.Enabled := False;
   StartStopButton.Caption := 'Stop';
   StatusLabel.Caption := Format('Streaming (%s) @ %.3f MHz, %.3f Msps',
     [FDevice.Capabilities.DeviceName, FDevice.CenterFreqHz / 1e6, FDevice.SampleRateHz / 1e6]);
@@ -517,12 +591,18 @@ end;
 
 procedure TForm1.ShowAxesCheckBoxChange(Sender: TObject);
 begin
-  FPlot.ShowAxes := ShowAxesCheckBox.Checked;
+  FSpectrumPlot.ShowAxes := ShowAxesCheckBox.Checked;
+  FWaterfallPlot.ShowAxes := ShowAxesCheckBox.Checked;
+end;
+
+procedure TForm1.ShowAverageCheckBoxChange(Sender: TObject);
+begin
+  FSpectrumPlot.ShowAverage := ShowAverageCheckBox.Checked;
 end;
 
 procedure TForm1.PeakDetectCheckBoxChange(Sender: TObject);
 begin
-  FPlot.ShowPeakLabels := PeakDetectCheckBox.Checked;
+  FSpectrumPlot.ShowPeakLabels := PeakDetectCheckBox.Checked;
   UpdatePeakThreshold;
 end;
 
@@ -531,9 +611,43 @@ begin
   UpdatePeakThreshold;
 end;
 
-procedure TForm1.ResetViewButtonClick(Sender: TObject);
+procedure TForm1.ScrollRateTrackBarChange(Sender: TObject);
 begin
-  FPlot.ResetView;
+  FWaterfallPlot.ScrollRate := ScrollRateTrackBar.Position;
+  ScrollRateLabel.Caption := Format('Scroll Rate: %d/s', [ScrollRateTrackBar.Position]);
+end;
+
+// Epoch size only affects how many raw IQ samples TryReadEpoch pulls per
+// tick (see EpochTimerTick) - nothing in FDevice's own state depends on
+// it, unlike sample rate, so this takes effect on the very next epoch
+// with no need to stop/restart streaming. A smaller epoch means fewer
+// FFT bins (coarser frequency resolution) but a cheaper FFT per epoch
+// and a shorter Hamming-window/FFT/dB-conversion pass - the "smaller
+// might improve performance" the control is for.
+procedure TForm1.EpochComboChange(Sender: TObject);
+begin
+  FEpochSize := StrToIntDef(EpochCombo.Text, DefaultEpochSize);
+end;
+
+// See TVMPlotSpectrum.YOffset's own property comment (uVMPlotSpectrum.pas)
+// - a display-only shift of the whole trace, independent of YGain.
+procedure TForm1.YOffsetTrackBarChange(Sender: TObject);
+begin
+  FSpectrumPlot.YOffset := YOffsetTrackBar.Position;
+  YOffsetLabel.Caption := Format('Y Zero: %d dB', [YOffsetTrackBar.Position]);
+end;
+
+// TTrackBar positions are integers, so this maps Position 1..50 to a
+// 0.1x..5.0x gain in 0.1 steps (Position/10) rather than exposing
+// TVMPlotSpectrum.YGain's real-valued range directly on the slider - see
+// that property's own comment for what YGain does.
+procedure TForm1.YGainTrackBarChange(Sender: TObject);
+var
+  Gain: Double;
+begin
+  Gain := YGainTrackBar.Position / 10.0;
+  FSpectrumPlot.YGain := Gain;
+  YGainLabel.Caption := Format('Y Gain: %.1fx', [Gain]);
 end;
 
 procedure TForm1.EpochTimerTick(Sender: TObject);
@@ -542,27 +656,28 @@ var
   LinearPower, Shifted, PowerSpec: TVMobj;
   HalfN, k: Integer;
 begin
-  if not FDevice.TryReadEpoch(EpochSize, IQ) then Exit;
+  if not FDevice.TryReadEpoch(FEpochSize, IQ) then Exit;
 
   LinearPower := PowerSpectrum(IQ);   // newVMComplex.pas - Hamming window + FFT + |X|^2
 
-  HalfN := EpochSize div 2;
+  HalfN := FEpochSize div 2;
   // FFT shift: negative-frequency bins (upper half of LinearPower) first,
   // then DC and positive-frequency bins - ascending frequency order,
-  // matching FPlot.XAxisMin..XAxisMax.
+  // matching XAxisMin..XAxisMax on both plots.
   Shifted := MergeLR(SubMatrix(LinearPower, 0, HalfN, 1, HalfN),
                       SubMatrix(LinearPower, 0, 0, 1, HalfN));
 
-  PowerSpec := TVMobj.Create(1, EpochSize);
-  for k := 0 to EpochSize - 1 do
+  PowerSpec := TVMobj.Create(1, FEpochSize);
+  for k := 0 to FEpochSize - 1 do
     PowerSpec[0, k] := 10 * Log10(Shifted[0, k] + 1e-12);
 
-  FPlot.AddGraph(PowerSpec);
+  FSpectrumPlot.AddGraph(PowerSpec);
+  FWaterfallPlot.AddGraph(PowerSpec);
 
   // Recalibrate the % threshold against this epoch's just-updated
   // auto-fit range - see UpdatePeakThreshold's own comment for why this
   // runs every epoch rather than only when the slider moves.
-  if FPlot.ShowPeakLabels then UpdatePeakThreshold;
+  if FSpectrumPlot.ShowPeakLabels then UpdatePeakThreshold;
 end;
 
 end.

@@ -1,10 +1,10 @@
 object Form1: TForm1
   Left = 200
-  Height = 862
+  Height = 922
   Top = 80
   Width = 1300
   Caption = 'newVM SDR Spectrum Analyser'
-  ClientHeight = 862
+  ClientHeight = 922
   ClientWidth = 1300
   OnCreate = FormCreate
   OnDestroy = FormDestroy
@@ -12,12 +12,12 @@ object Form1: TForm1
   LCLVersion = '4.99.0.0'
   object ControlPanel: TPanel
     Left = 0
-    Height = 220
+    Height = 280
     Top = 0
     Width = 1300
     Align = alTop
     BevelOuter = bvNone
-    ClientHeight = 220
+    ClientHeight = 280
     ClientWidth = 1300
     TabOrder = 0
     object FreqLabel: TLabel
@@ -165,15 +165,6 @@ object Form1: TForm1
       TabOrder = 9
       OnChange = ShowAxesCheckBoxChange
     end
-    object ResetViewButton: TButton
-      Left = 140
-      Height = 28
-      Top = 128
-      Width = 100
-      Caption = 'Reset View'
-      TabOrder = 10
-      OnClick = ResetViewButtonClick
-    end
     object PeakDetectCheckBox: TCheckBox
       Left = 260
       Height = 19
@@ -202,12 +193,107 @@ object Form1: TForm1
       TabOrder = 12
       OnChange = PeakThresholdTrackBarChange
     end
+    object ScrollRateLabel: TLabel
+      Left = 650
+      Height = 15
+      Top = 118
+      Width = 150
+      Caption = 'Scroll Rate: 10/s'
+    end
+    object ScrollRateTrackBar: TTrackBar
+      Left = 650
+      Height = 30
+      Top = 134
+      Width = 200
+      Frequency = 5
+      Max = 50
+      Min = 1
+      Position = 10
+      TabOrder = 13
+      OnChange = ScrollRateTrackBarChange
+    end
+    object ShowAverageCheckBox: TCheckBox
+      Left = 880
+      Height = 19
+      Top = 132
+      Width = 160
+      Checked = True
+      Caption = 'Show Average (10 epochs)'
+      State = cbChecked
+      TabOrder = 17
+      OnChange = ShowAverageCheckBoxChange
+    end
+    object EpochLabel: TLabel
+      Left = 20
+      Height = 15
+      Top = 204
+      Width = 140
+      Caption = 'FFT Epoch Size:'
+    end
+    object EpochCombo: TComboBox
+      Left = 170
+      Height = 23
+      Top = 200
+      Width = 90
+      ItemHeight = 15
+      ItemIndex = 4
+      Items.Strings = (
+        '512'
+        '1024'
+        '2048'
+        '4096'
+        '8192'
+        '16384'
+      )
+      Style = csDropDownList
+      TabOrder = 14
+      Text = '8192'
+      OnChange = EpochComboChange
+    end
+    object YOffsetLabel: TLabel
+      Left = 300
+      Height = 15
+      Top = 204
+      Width = 150
+      Caption = 'Y Zero: 0 dB'
+    end
+    object YOffsetTrackBar: TTrackBar
+      Left = 300
+      Height = 30
+      Top = 220
+      Width = 220
+      Frequency = 20
+      Max = 100
+      Min = -100
+      Position = 0
+      TabOrder = 15
+      OnChange = YOffsetTrackBarChange
+    end
+    object YGainLabel: TLabel
+      Left = 560
+      Height = 15
+      Top = 204
+      Width = 150
+      Caption = 'Y Gain: 1.0x'
+    end
+    object YGainTrackBar: TTrackBar
+      Left = 560
+      Height = 30
+      Top = 220
+      Width = 220
+      Frequency = 5
+      Max = 50
+      Min = 1
+      Position = 10
+      TabOrder = 16
+      OnChange = YGainTrackBarChange
+    end
     object HintLabel: TLabel
       Left = 20
       Height = 15
-      Top = 182
+      Top = 260
       Width = 700
-      Caption = '8192-sample epochs, Hamming windowed and FFT''d live. Drag to rotate, wheel to zoom.'
+      Caption = 'Each epoch is Hamming windowed and FFT''d live. Drag the spectrum, or use Left/Right, to move its cursor.'
     end
   end
 end
