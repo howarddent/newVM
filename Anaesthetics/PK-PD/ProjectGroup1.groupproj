@@ -1,0 +1,36 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{452CDADB-58FB-4C3F-AB8E-4CABEBCBAC47}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="..\..\..\Delphi projects\PD_PK_Demo\RemiPropModel\prjRemiProp.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="prjRemiProp">
+        <MSBuild Projects="..\..\..\Delphi projects\PD_PK_Demo\RemiPropModel\prjRemiProp.dproj"/>
+    </Target>
+    <Target Name="prjRemiProp:Clean">
+        <MSBuild Projects="..\..\..\Delphi projects\PD_PK_Demo\RemiPropModel\prjRemiProp.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="prjRemiProp:Make">
+        <MSBuild Projects="..\..\..\Delphi projects\PD_PK_Demo\RemiPropModel\prjRemiProp.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="prjRemiProp"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="prjRemiProp:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="prjRemiProp:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>
