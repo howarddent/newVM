@@ -125,6 +125,7 @@ type
     FPCMHandle: Pointer;          // snd_pcm_t*, opaque handle from ALSA
     FScratch: array of SmallInt;  // interleaved L/R, 16-bit PCM, reused across calls
     {$ENDIF}
+    FUnderrunCount: Integer;
   public
     constructor Create(BufferCount: Integer = 16);
     destructor Destroy; override;
@@ -135,6 +136,13 @@ type
     procedure Close;
     procedure QueueStereo(const L, R: TVMobjS);
     property IsOpen: Boolean read FOpen;
+    // Diagnostic only. On the ALSA (non-Windows) backend, counts real
+    // xrun recoveries (snd_pcm_writei returning a negative error other
+    // than -EAGAIN) - added while chasing an intermittently distorted
+    // tone reported on real FM audio; see QueueStereo's own comment on
+    // this branch. Always 0 on Windows (waveOut's ring-buffer design
+    // doesn't have an equivalent recoverable-error notion).
+    property UnderrunCount: Integer read FUnderrunCount;
   end;
 
 implementation
@@ -342,12 +350,19 @@ begin
   if snd_pcm_open(@Handle, PAnsiChar('default'), SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) <> 0 then
     Exit;
 
-  // soft_resample=1, ~100ms requested latency - ALSA sizes its own
-  // internal ring to this and leaves the stream prepared; see this
-  // unit's own header comment for why a generous latency matches the
-  // Windows path's 16-buffer (~320ms) headroom rationale.
+  // soft_resample=1, ~300ms requested latency - ALSA sizes its own
+  // internal ring to this and leaves the stream prepared. Originally
+  // 100ms, widened to match the Windows path's own 16-buffer (~320ms)
+  // headroom after 100ms proved too tight in practice: a direct
+  // speaker-test at the identical rate/format (48000Hz S16_LE stereo)
+  // played several seconds clean with zero underruns using ALSA's own
+  // much larger default buffer, which pointed squarely at our own
+  // request being the tight part, not this machine's audio stack
+  // (PipeWire's ALSA compatibility layer) - see QueueStereo's own
+  // comment for the underrun-recovery path this headroom is meant to
+  // make rare.
   if snd_pcm_set_params(Handle, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED,
-       2, SampleRateHz, 1, 100000) <> 0 then begin
+       2, SampleRateHz, 1, 300000) <> 0 then begin
     snd_pcm_close(Handle);
     Exit;
   end;
@@ -391,16 +406,14 @@ begin
   // count, same as a short write() on a socket. The first cut of this
   // backend treated any non-negative return as "fully queued", silently
   // dropping the unwritten remainder mid-epoch - splicing two unrelated
-  // points in the waveform together, an audible click each time it
-  // happened. Confirmed as the cause of "intermittent distorted tone"
-  // reported when actually listening to a demodulated FM signal (a clean
-  // 385Hz test tone came through with occasional glitches) - a synthetic
-  // round-trip test that only checked for exceptions, not waveform
-  // continuity, had not caught this. Looping here re-offers only the
-  // still-unwritten tail each pass, so a full epoch is written across
-  // however many calls it actually takes; the loop cannot block, since
-  // NONBLOCK mode still returns immediately (with -EAGAIN once the ring
-  // is genuinely full) rather than waiting for room.
+  // points in the waveform together, an audible click. Fixed here by
+  // looping to send only the still-unwritten tail each pass; the loop
+  // cannot block, since NONBLOCK mode still returns immediately (with
+  // -EAGAIN once the ring is genuinely full) rather than waiting for
+  // room. This alone did NOT eliminate the reported "intermittent
+  // distorted tone" on real FM audio, though - see Open's own comment
+  // for the other half of the fix (widened buffering), and
+  // UnderrunCount above for how to confirm which path is actually firing.
   Sent := 0;
   Remaining := N;
   while Remaining > 0 do begin
@@ -409,11 +422,13 @@ begin
       // -EAGAIN: ring is genuinely full right now - drop whatever's left
       // of this epoch rather than block, the same "drop rather than
       // stall the receive chain" contract the Windows path documents.
-      // Any other negative error (e.g. -EPIPE, an underrun) is handed to
-      // snd_pcm_recover so playback resumes instead of staying wedged
-      // after the first glitch.
-      if Written <> -ALSA_EAGAIN then
+      // Any other negative error (e.g. -EPIPE, an underrun) is a real
+      // xrun - counted (FUnderrunCount) and handed to snd_pcm_recover so
+      // playback resumes instead of staying wedged after the first glitch.
+      if Written <> -ALSA_EAGAIN then begin
+        Inc(FUnderrunCount);
         snd_pcm_recover(FPCMHandle, cint(Written), 1);
+      end;
       Break;
     end;
     if Written = 0 then Break;   // defensive - avoid spinning if ALSA ever reports this
