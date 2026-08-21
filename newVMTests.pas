@@ -50,6 +50,15 @@ unit newVMTests;
      rather than registering tests that would need their own runtime
      skip/pass-vacuously logic.
 
+     TVMobjMTLTests (newVMMetal.pas, GPU-resident single via Metal +
+     MetalPerformanceShadersGraph) - a SEVENTH TTestCase, the Metal analogue
+     of TVMobjCLTests immediately above: same coverage, same scope, same
+     {$IFDEF HAVE_METAL}-end-to-end gating (this time from newvmconfigure's
+     Apple-Silicon-only Metal+MPSGraph probe), for newVMMetal.pas's TVMobjMTL
+     instead of newVMCL.pas's TVMobjCL. See newVMMetal.pas's own header
+     comment for why this is a new, parallel unit rather than a change to
+     newVMCL.pas itself.
+
      Run via the console test runner in newVMtest.lpr.
 
 *******************************************************************************}
@@ -63,7 +72,8 @@ interface
 uses
   Classes, SysUtils, fpcunit, testregistry,
   OneAPI, newVM, newVMSingle, newVMComplex, newVMComplexSingle, newVMI
-  {$IFDEF HAVE_OPENCL}, OpenCLAPI, newVMCL{$ENDIF};
+  {$IFDEF HAVE_OPENCL}, OpenCLAPI, newVMCL{$ENDIF}
+  {$IFDEF HAVE_METAL}, MetalAPI, newVMMetal{$ENDIF};
 
 type
 
@@ -452,6 +462,56 @@ type
   { TVMobjCLTests - newVMCL.pas, GPU-resident single via OpenCL+clFFT }
 
   TVMobjCLTests = class(TTestCase)
+  private
+    procedure Raise_CreateZeroRows;
+    procedure Raise_CreateZeroCols;
+    procedure Raise_CreateValuesMismatch;
+    procedure Raise_ElementRowOutOfRange;
+    procedure Raise_ElementColOutOfRange;
+    procedure Raise_IdNonSquare;
+    procedure Raise_MatMultDimMismatch;
+    procedure Raise_OperatorAddDimMismatch;
+    procedure Raise_ScalarDivByZero;
+    procedure Raise_LinspaceNonVector;
+    procedure Raise_FFTNonVector;
+  published
+    procedure TestCreateInvalidDimsAsserts;
+    procedure TestCreateWithValues;
+    procedure TestCreateWithValuesMismatchAsserts;
+    procedure TestElementRoundTripNonSquare;
+    procedure TestElementOutOfRangeAsserts;
+    procedure TestWriteMatrixRowCount;
+    procedure TestFillRandomDeterministic;
+    procedure TestFillRandomNonZero;
+    procedure TestIdIdentity;
+    procedure TestIdNonSquareAsserts;
+    procedure TestToDeviceToHostRoundTrip;
+    procedure TestCopyObjIndependence;
+    procedure TestTransposeKnownValues;
+    procedure TestLinspaceKnownValues;
+    procedure TestLinspaceNonVectorAsserts;
+    procedure TestMatMultKnownValues;
+    procedure TestMatMultDimMismatchAsserts;
+    procedure TestOperatorAddSub;
+    procedure TestOperatorUnaryNeg;
+    procedure TestOperatorMulIsElementwise;
+    procedure TestOperatorScalarMulDiv;
+    procedure TestOperatorScalarDivByZeroAsserts;
+    procedure TestOperatorDimMismatchAsserts;
+    procedure TestOperatorEquality;
+    procedure TestElementwiseTrig;
+    procedure TestElementwiseSqrtSqr;
+    procedure TestElementwiseExpLnRoundTrip;
+    procedure TestFFTKnownValues;
+    procedure TestFFTNonVectorAsserts;
+    procedure TestIFFTRoundTrip;
+  end;
+  {$ENDIF}
+
+  {$IFDEF HAVE_METAL}
+  { TVMobjMTLTests - newVMMetal.pas, GPU-resident single via Metal+MPSGraph }
+
+  TVMobjMTLTests = class(TTestCase)
   private
     procedure Raise_CreateZeroRows;
     procedure Raise_CreateZeroCols;
@@ -4245,6 +4305,372 @@ begin
 end;
 {$ENDIF}
 
+{$IFDEF HAVE_METAL}
+procedure TVMobjMTLTests.Raise_CreateZeroRows;
+var X: TVMobjMTL;
+begin
+  X := TVMobjMTL.Create(0, 3);
+end;
+
+procedure TVMobjMTLTests.Raise_CreateZeroCols;
+var X: TVMobjMTL;
+begin
+  X := TVMobjMTL.Create(3, 0);
+end;
+
+procedure TVMobjMTLTests.Raise_CreateValuesMismatch;
+var X: TVMobjMTL;
+begin
+  X := TVMobjMTL.Create(2, 2, [1, 2, 3]);
+end;
+
+procedure TVMobjMTLTests.Raise_ElementRowOutOfRange;
+var X: TVMobjMTL; V: Single;
+begin
+  X := TVMobjMTL.Create(2, 2);
+  V := X[2, 0];
+end;
+
+procedure TVMobjMTLTests.Raise_ElementColOutOfRange;
+var X: TVMobjMTL; V: Single;
+begin
+  X := TVMobjMTL.Create(2, 2);
+  V := X[0, 2];
+end;
+
+procedure TVMobjMTLTests.Raise_IdNonSquare;
+var X: TVMobjMTL;
+begin
+  X := TVMobjMTL.Create(2, 3);
+  X.Id;
+end;
+
+procedure TVMobjMTLTests.Raise_MatMultDimMismatch;
+var A, B: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(2, 3);
+  B := TVMobjMTL.Create(2, 3);
+  A := MatMultMTL(A, B);
+end;
+
+procedure TVMobjMTLTests.Raise_OperatorAddDimMismatch;
+var A, B, C: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(2, 2);
+  B := TVMobjMTL.Create(2, 3);
+  C := A + B;
+end;
+
+procedure TVMobjMTLTests.Raise_ScalarDivByZero;
+var A, B: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(2, 2);
+  B := A / 0.0;
+end;
+
+procedure TVMobjMTLTests.Raise_LinspaceNonVector;
+var A: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(2, 2);
+  A.linspace(0, 1);
+end;
+
+procedure TVMobjMTLTests.Raise_FFTNonVector;
+var A, B: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(2, 2);
+  B := FFT(A);
+end;
+
+procedure TVMobjMTLTests.TestCreateInvalidDimsAsserts;
+begin
+  AssertException('zero rows', EAssertionFailed, @Raise_CreateZeroRows);
+  AssertException('zero cols', EAssertionFailed, @Raise_CreateZeroCols);
+end;
+
+procedure TVMobjMTLTests.TestCreateWithValues;
+var A: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(2, 2, [1, 2, 3, 4]);
+  AssertEquals(1.0, A[0, 0], SngTol);
+  AssertEquals(2.0, A[0, 1], SngTol);
+  AssertEquals(3.0, A[1, 0], SngTol);
+  AssertEquals(4.0, A[1, 1], SngTol);
+end;
+
+procedure TVMobjMTLTests.TestCreateWithValuesMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_CreateValuesMismatch);
+end;
+
+procedure TVMobjMTLTests.TestElementRoundTripNonSquare;
+var A: TVMobjMTL; r, c: Integer;
+begin
+  A := TVMobjMTL.Create(3, 4, [1,2,3,4, 5,6,7,8, 9,10,11,12]);
+  for r := 0 to 2 do
+    for c := 0 to 3 do
+      AssertEquals(Format('[%d,%d]', [r, c]), r*4 + c + 1, A[r, c], SngTol);
+end;
+
+procedure TVMobjMTLTests.TestElementOutOfRangeAsserts;
+begin
+  AssertException('row out of range', EAssertionFailed, @Raise_ElementRowOutOfRange);
+  AssertException('col out of range', EAssertionFailed, @Raise_ElementColOutOfRange);
+end;
+
+procedure TVMobjMTLTests.TestWriteMatrixRowCount;
+var A: TVMobjMTL; S: TStringList;
+begin
+  A := TVMobjMTL.Create(3, 4);
+  S := A.writeMatrix;
+  try
+    AssertEquals(3, S.Count);
+  finally
+    S.Free;
+  end;
+end;
+
+procedure TVMobjMTLTests.TestFillRandomDeterministic;
+var A, B: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(3, 3);
+  A.fillRandom;
+  B := TVMobjMTL.Create(3, 3);
+  B.fillRandom;
+  AssertTrue(A = B);
+end;
+
+procedure TVMobjMTLTests.TestFillRandomNonZero;
+var A: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(3, 3);
+  A.fillRandom;
+  AssertFalse(A[0, 0] = 0.0);
+end;
+
+procedure TVMobjMTLTests.TestIdIdentity;
+var A: TVMobjMTL; r, c: Integer;
+begin
+  A := TVMobjMTL.Create(3, 3);
+  A.Id;
+  for r := 0 to 2 do
+    for c := 0 to 2 do
+      if r = c then
+        AssertEquals(1.0, A[r, c], SngTol)
+      else
+        AssertEquals(0.0, A[r, c], SngTol);
+end;
+
+procedure TVMobjMTLTests.TestIdNonSquareAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_IdNonSquare);
+end;
+
+procedure TVMobjMTLTests.TestToDeviceToHostRoundTrip;
+var Host, Host2: TVMobjS; Dev: TVMobjMTL;
+begin
+  Host := TVMobjS.Create(2, 2, [1, 2, 3, 4]);
+  Dev := ToDeviceMTL(Host);
+  Host2 := ToHost(Dev);
+  AssertTrue(Host = Host2);
+end;
+
+procedure TVMobjMTLTests.TestCopyObjIndependence;
+var A, B: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(2, 2);
+  A.fillRandom;
+  B := CopyObjMTL(A);
+  AssertTrue(A = B);
+  B[1, 1] := B[1, 1] + 1;
+  AssertFalse(A = B);
+end;
+
+procedure TVMobjMTLTests.TestTransposeKnownValues;
+var A, B: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(2, 3, [1, 2, 3, 4, 5, 6]);
+  B := A.Transpose;
+  AssertEquals('Rows', 3, B.Rows);
+  AssertEquals('Cols', 2, B.Cols);
+  AssertTrue(B = TVMobjMTL.Create(3, 2, [1, 4, 2, 5, 3, 6]));
+end;
+
+procedure TVMobjMTLTests.TestLinspaceKnownValues;
+var A: TVMobjMTL; i: Integer;
+begin
+  A := TVMobjMTL.Create(1, 5);
+  A.linspace(10, 2);
+  for i := 0 to 4 do
+    AssertEquals(Format('[0,%d]', [i]), 10 + i*2, A[0, i], SngTol);
+end;
+
+procedure TVMobjMTLTests.TestLinspaceNonVectorAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_LinspaceNonVector);
+end;
+
+procedure TVMobjMTLTests.TestMatMultKnownValues;
+var A, B, C: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(2, 2, [1, 2, 3, 4]);
+  B := TVMobjMTL.Create(2, 2, [5, 6, 7, 8]);
+  C := MatMultMTL(A, B);
+  AssertEquals(19.0, C[0, 0], SngTol);
+  AssertEquals(22.0, C[0, 1], SngTol);
+  AssertEquals(43.0, C[1, 0], SngTol);
+  AssertEquals(50.0, C[1, 1], SngTol);
+end;
+
+procedure TVMobjMTLTests.TestMatMultDimMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_MatMultDimMismatch);
+end;
+
+procedure TVMobjMTLTests.TestOperatorAddSub;
+var A, B, S1, D1: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(2, 2, [1, 2, 3, 4]);
+  B := TVMobjMTL.Create(2, 2, [5, 6, 7, 8]);
+  S1 := A + B;
+  AssertTrue(S1 = TVMobjMTL.Create(2, 2, [6, 8, 10, 12]));
+  D1 := A - B;
+  AssertTrue(D1 = TVMobjMTL.Create(2, 2, [-4, -4, -4, -4]));
+end;
+
+procedure TVMobjMTLTests.TestOperatorUnaryNeg;
+var A: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(2, 2, [1, 2, 3, 4]);
+  AssertTrue(-A = TVMobjMTL.Create(2, 2, [-1, -2, -3, -4]));
+  AssertTrue(-(-A) = A);
+end;
+
+procedure TVMobjMTLTests.TestOperatorMulIsElementwise;
+var A, B: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(2, 2, [1, 2, 3, 4]);
+  B := TVMobjMTL.Create(2, 2, [5, 6, 7, 8]);
+  AssertTrue(A * B = TVMobjMTL.Create(2, 2, [5, 12, 21, 32]));
+end;
+
+procedure TVMobjMTLTests.TestOperatorScalarMulDiv;
+var A: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(2, 2, [1, 2, 3, 4]);
+  AssertTrue(A * 2.0 = TVMobjMTL.Create(2, 2, [2, 4, 6, 8]));
+  AssertTrue(2.0 * A = A * 2.0);
+  AssertTrue(A / 2.0 = TVMobjMTL.Create(2, 2, [0.5, 1, 1.5, 2]));
+end;
+
+procedure TVMobjMTLTests.TestOperatorScalarDivByZeroAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_ScalarDivByZero);
+end;
+
+procedure TVMobjMTLTests.TestOperatorDimMismatchAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_OperatorAddDimMismatch);
+end;
+
+procedure TVMobjMTLTests.TestOperatorEquality;
+var A, B: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(3, 3);
+  A.fillRandom;
+  AssertTrue(A = A);
+  B := CopyObjMTL(A);
+  AssertTrue(A = B);
+  B[0, 0] := B[0, 0] + 1;
+  AssertFalse(A = B);
+  B := TVMobjMTL.Create(3, 4);
+  AssertFalse(A = B);
+end;
+
+procedure TVMobjMTLTests.TestElementwiseTrig;
+var A, S, C, T: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(1, 3, [0, Pi/6, Pi/2]);
+  S := newVMMetal.Sin(A);
+  C := newVMMetal.Cos(A);
+  T := newVMMetal.Tan(TVMobjMTL.Create(1, 1, [Pi/4]));
+  AssertEquals(0.0, S[0, 0], SngTol);
+  AssertEquals(0.5, S[0, 1], SngTol);
+  AssertEquals(1.0, S[0, 2], SngTol);
+  AssertEquals(1.0, C[0, 0], SngTol);
+  AssertEquals(0.0, C[0, 2], SngTol);
+  AssertEquals(1.0, T[0, 0], SngTol);
+end;
+
+procedure TVMobjMTLTests.TestElementwiseSqrtSqr;
+var A, Q, R: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(1, 3, [4, 9, 16]);
+  R := newVMMetal.Sqrt(A);
+  AssertEquals(2.0, R[0, 0], SngTol);
+  AssertEquals(3.0, R[0, 1], SngTol);
+  AssertEquals(4.0, R[0, 2], SngTol);
+  Q := newVMMetal.Sqr(TVMobjMTL.Create(1, 2, [3, -3]));
+  AssertEquals(9.0, Q[0, 0], SngTol);
+  AssertEquals(9.0, Q[0, 1], SngTol);
+end;
+
+procedure TVMobjMTLTests.TestElementwiseExpLnRoundTrip;
+var A, E, L: TVMobjMTL;
+begin
+  A := TVMobjMTL.Create(1, 3, [0, 1, 2]);
+  E := newVMMetal.Exp(A);
+  L := newVMMetal.Ln(E);
+  AssertEquals(0.0, L[0, 0], SngTol);
+  AssertEquals(1.0, L[0, 1], SngTol);
+  AssertEquals(2.0, L[0, 2], SngTol);
+end;
+
+// Same known-value check as TVMobjCLTests.TestFFTKnownValues - see that
+// test's own comment for the derivation.
+procedure TVMobjMTLTests.TestFFTKnownValues;
+const N = 16;
+var A, B: TVMobjMTL; i: Integer; MagAtBin2, MagAtBin14: Double;
+begin
+  A := TVMobjMTL.Create(1, 2*N);
+  for i := 0 to N-1 do begin
+    A[0, i*2] := Cos(2*Pi*2*i/N);
+    A[0, i*2+1] := 0;
+  end;
+  B := FFT(A);
+  MagAtBin2 := Sqrt(Sqr(B[0,4]) + Sqr(B[0,5]));
+  MagAtBin14 := Sqrt(Sqr(B[0,28]) + Sqr(B[0,29]));
+  AssertEquals(8.0, MagAtBin2, SngTol);
+  AssertEquals(8.0, MagAtBin14, SngTol);
+  AssertEquals(0.0, Sqrt(Sqr(B[0,0])+Sqr(B[0,1])), SngTol);
+end;
+
+procedure TVMobjMTLTests.TestFFTNonVectorAsserts;
+begin
+  AssertException(EAssertionFailed, @Raise_FFTNonVector);
+end;
+
+// Same round-trip rationale as TVMobjCLTests.TestIFFTRoundTrip - checking
+// every element (not just one) is what would catch a double-normalisation
+// bug in MetalAPI.pas's own MTLIFFT scaling, mirroring the exact bug
+// newVMCL.pas's own IFFT comment documents finding via this same style of
+// check.
+procedure TVMobjMTLTests.TestIFFTRoundTrip;
+const N = 16;
+var A, B, C: TVMobjMTL; i: Integer;
+begin
+  A := TVMobjMTL.Create(1, 2*N);
+  for i := 0 to N-1 do begin
+    A[0, i*2] := Cos(2*Pi*2*i/N) + 0.5*Sin(2*Pi*5*i/N);
+    A[0, i*2+1] := 0;
+  end;
+  B := FFT(A);
+  C := IFFT(B);
+  for i := 0 to 2*N-1 do
+    AssertEquals(Format('[0,%d]', [i]), A[0,i], C[0,i], SngTol);
+end;
+{$ENDIF}
+
 initialization
   RegisterTest(TVMobjTests);
   RegisterTest(TVMobjSTests);
@@ -4253,6 +4679,9 @@ initialization
   RegisterTest(TVMobjITests);
   {$IFDEF HAVE_OPENCL}
   RegisterTest(TVMobjCLTests);
+  {$ENDIF}
+  {$IFDEF HAVE_METAL}
+  RegisterTest(TVMobjMTLTests);
   {$ENDIF}
 
 end.

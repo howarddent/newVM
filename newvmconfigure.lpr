@@ -79,6 +79,8 @@ const
   clFFTCandidates: array of string = ('clFFT.dll',
     'C:\Users\howard\clFFT\src\clFFTpas\clFFT.dll',
     'C:\Users\howar\vcpkg\installed\x64-windows\bin\clFFT.dll');
+  MetalCandidates: array of string = (); // Darwin-only framework
+  MPSGraphCandidates: array of string = (); // Darwin-only framework
 {$ELSE}
   {$IFDEF DARWIN}
 const
@@ -106,6 +108,19 @@ const
   // same rationale as ArmPLCandidates on Windows above.
   OpenCLCandidates: array of string = ();
   clFFTCandidates: array of string = ();
+  // Metal and MetalPerformanceShadersGraph ship on every Mac (no install
+  // needed, unlike OpenCL/clFFT above - see MetalAPI.pas's own header
+  // comment for why this codebase links these at compile time rather than
+  // dlopen-probing them the way OpenCL.dll/clFFT.dll needed on Windows).
+  // Probed here the same way anyway (dlopen'ing the framework's full binary
+  // path, same as AccelerateCandidates above), purely as a presence check -
+  // this is only ever False on a Darwin machine too old to have these
+  // frameworks at all (Metal: pre-10.11; the MPSGraph FFT ops MetalAPI.pas
+  // uses: pre-14.0). HAVE_METAL itself is further restricted to AArch64
+  // below (Apple Silicon only, matching the machine this was built/verified
+  // on) even though these two frameworks alone don't require it.
+  MetalCandidates: array of string = ('/System/Library/Frameworks/Metal.framework/Metal');
+  MPSGraphCandidates: array of string = ('/System/Library/Frameworks/MetalPerformanceShadersGraph.framework/MetalPerformanceShadersGraph');
   {$ELSE}
 const
   PlatformDefine = 'PLATFORM_LINUX';
@@ -130,6 +145,8 @@ const
   // same rationale as ArmPLCandidates on Windows above.
   OpenCLCandidates: array of string = ();
   clFFTCandidates: array of string = ();
+  MetalCandidates: array of string = (); // Darwin-only framework
+  MPSGraphCandidates: array of string = (); // Darwin-only framework
   {$ENDIF}
 {$ENDIF}
 
@@ -178,7 +195,8 @@ end;
 var
   OutFile: TextFile;
   HaveMKL, HaveIPPCore, HaveIPPVM, HaveIPPS, HaveIPP, HaveOpenBLAS, HaveFFTWD, HaveFFTWS, HaveFFTW,
-  HaveAccelerate, HaveArmPL, HaveBLAS, HaveLAPACKE, HaveOpenCLLib, HaveclFFTLib, HaveOpenCL: Boolean;
+  HaveAccelerate, HaveArmPL, HaveBLAS, HaveLAPACKE, HaveOpenCLLib, HaveclFFTLib, HaveOpenCL,
+  HaveMetalLib, HaveMPSGraphLib, HaveMetal: Boolean;
   FoundName: string;
 
   procedure Report(const Label_: string; Found: Boolean; const Via: string);
@@ -230,6 +248,23 @@ begin
   Report('OpenCL+clFFT (both, gates newVMCL.pas/TVMobjCL)', HaveOpenCL,
     Format('opencl=%s clfft=%s', [BoolToStr(HaveOpenCLLib,True), BoolToStr(HaveclFFTLib,True)]));
 
+  HaveMetalLib := ProbeLibrary(MetalCandidates, FoundName);
+  Report('Metal', HaveMetalLib, FoundName);
+  HaveMPSGraphLib := ProbeLibrary(MPSGraphCandidates, FoundName);
+  Report('MetalPerformanceShadersGraph', HaveMPSGraphLib, FoundName);
+  // Apple Silicon only (see MetalAPI.pas's own header comment) - both
+  // frameworks being present isn't itself an AArch64 signal (Intel Macs
+  // have them too), so HAVE_METAL is explicitly narrowed here rather than
+  // relying on MetalCandidates/MPSGraphCandidates alone.
+  {$IFDEF CPUAARCH64}
+  HaveMetal := HaveMetalLib and HaveMPSGraphLib;
+  {$ELSE}
+  HaveMetal := False;
+  {$ENDIF}
+  Report('Metal+MetalPerformanceShadersGraph on Apple Silicon (both, gates newVMMetal.pas/TVMobjMTL)', HaveMetal,
+    Format('metal=%s mpsgraph=%s aarch64=%s', [BoolToStr(HaveMetalLib,True), BoolToStr(HaveMPSGraphLib,True),
+      {$IFDEF CPUAARCH64}'True'{$ELSE}'False'{$ENDIF}]));
+
   WriteLn;
   WriteLn('Writing newVMConfig.inc ...');
 
@@ -261,6 +296,7 @@ begin
   if HaveIPP        then WriteLn(OutFile, '{$DEFINE HAVE_IPP}        // libippcore+libippvm+libipps all found');
   if HaveFFTW       then WriteLn(OutFile, '{$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found');
   if HaveOpenCL     then WriteLn(OutFile, '{$DEFINE HAVE_OPENCL}     // OpenCL.dll+clFFT.dll both found - gates newVMCL.pas/TVMobjCL and its test registration');
+  if HaveMetal      then WriteLn(OutFile, '{$DEFINE HAVE_METAL}      // Metal+MetalPerformanceShadersGraph found on Apple Silicon - gates newVMMetal.pas/TVMobjMTL and its test registration');
   WriteLn(OutFile);
   WriteLn(OutFile, '// Derived: true when a LAPACKE_* implementation is available from EITHER');
   WriteLn(OutFile, '// MKL or Arm Performance Libraries (ArmPL exports a standard LAPACKE_* ABI');
@@ -329,4 +365,8 @@ begin
     WriteLn('HAVE_OPENCL is active - newVMCL.pas/TVMobjCL will build and its tests will run.')
   else
     WriteLn('HAVE_OPENCL is inactive - newVMCL.pas/TVMobjCL is excluded from the build (OpenCL.dll and/or clFFT.dll not found).');
+  if HaveMetal then
+    WriteLn('HAVE_METAL is active - newVMMetal.pas/TVMobjMTL will build and its tests will run.')
+  else
+    WriteLn('HAVE_METAL is inactive - newVMMetal.pas/TVMobjMTL is excluded from the build (not Apple Silicon, or Metal/MetalPerformanceShadersGraph not found).');
 end.
