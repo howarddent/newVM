@@ -367,7 +367,7 @@ end;
 
 procedure TWaveOutPlayer.QueueStereo(const L, R: TVMobjS);
 var
-  N, i: Integer;
+  N, i, Sent, Remaining: Integer;
   v: Single;
   Written: clong;
 begin
@@ -385,15 +385,40 @@ begin
     FScratch[i * 2 + 1] := Round(v * 32767);
   end;
 
-  Written := snd_pcm_writei(FPCMHandle, @FScratch[0], culong(N));
-  if Written < 0 then begin
-    // -EAGAIN: ALSA's own ring is still full from the previous call -
-    // drop this epoch rather than block, exactly the semantics
-    // documented for the Windows path above. Any other negative error
-    // (e.g. -EPIPE, an underrun) is handed to snd_pcm_recover so
-    // playback resumes instead of staying wedged after the first glitch.
-    if Written <> -ALSA_EAGAIN then
-      snd_pcm_recover(FPCMHandle, cint(Written), 1);
+  // snd_pcm_writei in NONBLOCK mode does not just return the full count or
+  // -EAGAIN - if the ring has SOME but not all of the requested room, it
+  // writes only that many frames and returns that (smaller, positive)
+  // count, same as a short write() on a socket. The first cut of this
+  // backend treated any non-negative return as "fully queued", silently
+  // dropping the unwritten remainder mid-epoch - splicing two unrelated
+  // points in the waveform together, an audible click each time it
+  // happened. Confirmed as the cause of "intermittent distorted tone"
+  // reported when actually listening to a demodulated FM signal (a clean
+  // 385Hz test tone came through with occasional glitches) - a synthetic
+  // round-trip test that only checked for exceptions, not waveform
+  // continuity, had not caught this. Looping here re-offers only the
+  // still-unwritten tail each pass, so a full epoch is written across
+  // however many calls it actually takes; the loop cannot block, since
+  // NONBLOCK mode still returns immediately (with -EAGAIN once the ring
+  // is genuinely full) rather than waiting for room.
+  Sent := 0;
+  Remaining := N;
+  while Remaining > 0 do begin
+    Written := snd_pcm_writei(FPCMHandle, @FScratch[Sent * 2], culong(Remaining));
+    if Written < 0 then begin
+      // -EAGAIN: ring is genuinely full right now - drop whatever's left
+      // of this epoch rather than block, the same "drop rather than
+      // stall the receive chain" contract the Windows path documents.
+      // Any other negative error (e.g. -EPIPE, an underrun) is handed to
+      // snd_pcm_recover so playback resumes instead of staying wedged
+      // after the first glitch.
+      if Written <> -ALSA_EAGAIN then
+        snd_pcm_recover(FPCMHandle, cint(Written), 1);
+      Break;
+    end;
+    if Written = 0 then Break;   // defensive - avoid spinning if ALSA ever reports this
+    Inc(Sent, Written);
+    Dec(Remaining, Written);
   end;
 end;
 
