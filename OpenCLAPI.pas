@@ -97,8 +97,15 @@ const
   {$ELSE}
   OpenCLLibName = 'libOpenCL.so.1';
   clFFTLibName = 'libclFFT.so.0';
-  clFFTLibFallbackPath = '';   // no non-Windows machine available to confirm an install path
-  clFFTLibFallbackPath2 = '';
+  // Confirmed on a real Linux dev machine: clFFT is only present as
+  // libclFFT.so.2 (a newer major SONAME than libclFFT.so.0), no
+  // libclFFT.so.0 compatibility symlink - same "try the primary name, fall
+  // back to a known-good alternate" pattern the Windows branch above uses
+  // for clFFT.dll's own fallback path, just reusing that path as a library
+  // name rather than a filesystem path since LoadLibrary/dlopen resolves it
+  // via the standard search path either way.
+  clFFTLibFallbackPath = 'libclFFT.so.2';
+  clFFTLibFallbackPath2 = '';   // no second non-Windows fallback needed yet
   {$ENDIF}
 
   // ---- A minimal subset of OpenCL's own constants - just what newVMCL.pas
