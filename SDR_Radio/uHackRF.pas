@@ -232,7 +232,23 @@ begin
   FCapabilities.SampleRates[3] := 10.0e6;
   FCapabilities.SampleRates[4] := 16.0e6;
   FCapabilities.SampleRates[5] := 20.0e6;
-  FCapabilities.DefaultSampleRateHz := 20.0e6;
+  // Default to the lowest offered rate, not the highest - uFMReceiver.pas's
+  // DSP chain (TRationalResamplerC's wideband antialiasing filter runs
+  // directly at FsIn) is direct-form and single-threaded, and its own
+  // header comment documents "audio worked at 2-3Msps and fell to silence
+  // at higher rates once the DSP thread could no longer keep up with real
+  // time" - 20Msps was ~7-10x that ceiling. RTL-SDR (2.4Msps) and SDRplay
+  // (2.0Msps) already default within the sustainable range; HackRF alone
+  // was defaulting to its hardware maximum, causing the shared stream
+  // ring (uSDRRFSource.pas, 1 second of capacity) to fill faster than the
+  // DSP thread could drain it - confirmed as the cause of a reported
+  // periodic (~1s) audio glitch: once a consumer falls a full ring's
+  // worth of RF time behind, TryReadEpoch hard-skips its cursor forward,
+  // discarding whatever audio derived from the skipped samples. A single
+  // FM channel only ever needs ~200kHz of that bandwidth regardless, so
+  // there's no reception-quality reason to prefer a wider capture by
+  // default.
+  FCapabilities.DefaultSampleRateHz := 2.0e6;
   FCapabilities.DefaultFreqHz := 95000000;
 
   SetLength(FCapabilities.GainStages, 3);
