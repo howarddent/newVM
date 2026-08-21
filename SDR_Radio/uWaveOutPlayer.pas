@@ -46,27 +46,61 @@ unit uWaveOutPlayer;
      remove the need to compensate with buffering depth at all, but is
      a much larger change.
 
-     LINUX BACKEND (ALSA): non-Windows platforms play back via a runtime
-     (dlopen) binding to libasound.so.2's "simple" PCM API
-     (snd_pcm_open/set_params/writei/recover/close) - same
-     LoadLibrary/GetProcedureAddress-once, tolerant-of-absence pattern
-     this repo already uses for other optional runtime libraries
-     (cblas.pas/OpenBLAS, fftw3.pas/FFTW, uRTLSDR.pas/uHackRF.pas), kept
-     local to this unit since nothing else needs ALSA. The PCM device is
-     opened with SND_PCM_NONBLOCK, and snd_pcm_set_params (channels=2,
-     format=S16_LE, access=RW_INTERLEAVED, a ~100ms requested latency) is
-     used instead of the individual hw_params calls - it's ALSA's own
-     one-call convenience wrapper that picks sane defaults and leaves the
-     stream prepared, so no separate snd_pcm_prepare call is needed. A
-     single reused scratch buffer stands in for the Windows path's ring
-     of WAVEHDRs, since ALSA already provides its own internal ring
-     (sized via that latency parameter) - queueing here is just one
-     snd_pcm_writei call per QueueStereo. Non-blocking mode means a full
-     ALSA ring reports back as -EAGAIN rather than blocking the GUI
-     thread, which this treats as "drop this epoch", exactly the
-     Windows path's own documented behaviour above; any other negative
-     return (e.g. -EPIPE, an underrun) is handed to snd_pcm_recover so
-     playback resumes instead of staying wedged after the first glitch.
+     macOS BACKEND (CoreAudio AudioQueue): plays back via AudioToolbox's
+     AudioQueue services (AudioQueueNewOutput/AllocateBuffer/EnqueueBuffer/
+     Start/Stop/Dispose), linked directly (a linkframework AudioToolbox
+     directive, right below this unit's Darwin type declarations - see
+     "Cross-platform library binding" in CLAUDE.md and MetalAPI.pas's
+     own header comment for why Apple frameworks are linked at compile
+     time, not dlopen'd the way OpenCL/ALSA are: they're always present, at
+     a fixed location, on every real Mac, unlike genuinely optional
+     third-party libraries). Chosen over the lower-level AudioUnit/AUHAL
+     API specifically because AudioQueue's own programming model - submit
+     a ring of pre-allocated buffers, get a completion callback back when
+     each has finished playing - is already exactly this unit's existing
+     shape (the same "ring of buffers, poll/callback for done, drop rather
+     than block if none are free" contract the Windows waveOut and Linux
+     ALSA backends above already established), where AudioUnit's pull-based
+     render callback would have required building a second, separate ring
+     buffer inside this unit just to bridge push-style QueueStereo calls
+     into it - no benefit for a receiver that doesn't need AudioUnit's
+     lower latency.
+
+     Buffers are pre-allocated once, at Open, sized to
+     MaxSamplesPerChannel*4 bytes each (2 channels * 2 bytes/sample) -
+     same "no allocation on the real-time path" contract as the Windows
+     ring. Each AudioQueueBuffer's own mUserData field is set once, at
+     allocation, to that buffer's index into FAQBuffers - the completion
+     callback (which only receives the AudioQueueBufferRef itself, not an
+     index) reads it straight back out rather than needing to search for
+     which buffer just finished. The callback fires on an AudioQueue-owned
+     internal thread (inCallbackRunLoop=nil to AudioQueueNewOutput asks
+     AudioQueue to manage that thread itself, rather than requiring this
+     component to pump a CFRunLoop) - it does nothing but flip that
+     buffer's own Free flag to True, the same single-writer/single-reader
+     boolean-flag-polling pattern the Windows path's own WHDR_DONE checking
+     already relies on being safe without a mutex. QueueStereo drops
+     (rather than blocks) exactly when the next buffer in the ring isn't
+     free yet, identical to both other backends' own documented behaviour.
+     UnderrunCount stays 0 on this backend, same as (and for the same
+     reason as) the Windows path: AudioQueue doesn't surface a simple
+     per-enqueue "this was a real hardware xrun" signal the way ALSA's
+     snd_pcm_writei return code does, so there's nothing genuine to count
+     here without a materially larger diagnostics integration.
+
+     GOTCHA, FOUND BY A STANDALONE PROBE BEFORE THIS WAS WRITTEN (mirroring
+     MetalAPI.pas's own "verified against the real API" discipline, and
+     hitting the exact same underlying bug that unit's header comment
+     documents): calling AudioQueueStart from a plain FPC binary crashes
+     deterministically on this machine's actual audio hardware, on
+     CoreAudio's own internal processing thread, for the identical reason
+     Metal's AGX driver did - FPC leaves FPU exception trapping armed in a
+     way clang-generated code doesn't, and CoreAudio's own internal DSP
+     code was never written expecting a caller with traps enabled. Fixed
+     the same way: Math.SetExceptionMask masks every FPU exception before
+     the first AudioQueue call (Open below) - confirmed by the same probe,
+     which played a 4-buffer test tone and observed all 4 completion
+     callbacks fire cleanly only once this mask was in place.
 
 *******************************************************************************}
 
@@ -109,6 +143,48 @@ type
   end;
 {$ENDIF}
 
+{$IFDEF DARWIN}
+type
+  // CoreAudio types, hand-declared here rather than pulled from a shared
+  // binding unit - only the subset this component actually needs (same
+  // "hand-curated, not a wholesale header translation" convention as
+  // MetalAPI.pas/OpenCLAPI.pas). Struct layouts taken from the real
+  // AudioQueue.h/CoreAudioBaseTypes.h headers and confirmed against a
+  // real running AudioQueue by a standalone probe before being used here -
+  // see this unit's own header comment (macOS BACKEND).
+  OSStatus = LongInt;
+  AudioQueueRef = Pointer;
+  AudioFormatID = LongWord;
+  AudioFormatFlags = LongWord;
+
+  AudioStreamBasicDescription = record
+    mSampleRate: Double;
+    mFormatID: AudioFormatID;
+    mFormatFlags: AudioFormatFlags;
+    mBytesPerPacket: LongWord;
+    mFramesPerPacket: LongWord;
+    mBytesPerFrame: LongWord;
+    mChannelsPerFrame: LongWord;
+    mBitsPerChannel: LongWord;
+    mReserved: LongWord;
+  end;
+  PAudioStreamBasicDescription = ^AudioStreamBasicDescription;
+
+  AudioQueueBuffer = record
+    mAudioDataBytesCapacity: LongWord;
+    mAudioData: Pointer;
+    mAudioDataByteSize: LongWord;
+    mUserData: Pointer;
+    mPacketDescriptionCapacity: LongWord;
+    mPacketDescriptions: Pointer;
+    mPacketDescriptionCount: LongWord;
+  end;
+  AudioQueueBufferRef = ^AudioQueueBuffer;
+
+  AudioQueueOutputCallback = procedure(inUserData: Pointer; inAQ: AudioQueueRef;
+    inBuffer: AudioQueueBufferRef); cdecl;
+{$ENDIF}
+
 type
   { TWaveOutPlayer }
   TWaveOutPlayer = class
@@ -122,11 +198,20 @@ type
     end;
     FNextBuffer: Integer;
     {$ELSE}
+      {$IFDEF DARWIN}
+    FAQ: AudioQueueRef;
+    FAQBuffers: array of record
+      Buf: AudioQueueBufferRef;
+      Free: Boolean;
+    end;
+    FNextBuffer: Integer;
+      {$ELSE}
     FPCMHandle: Pointer;          // snd_pcm_t*, opaque handle from ALSA
     FScratch: array of SmallInt;  // interleaved L/R, 16-bit PCM, reused across calls
     // Target queued-frame level for the drift-compensation nudge in
     // QueueStereo - see that method's own comment.
     FLatencyTargetFrames: Integer;
+      {$ENDIF}
     {$ENDIF}
     FUnderrunCount: Integer;
   public
@@ -139,12 +224,15 @@ type
     procedure Close;
     procedure QueueStereo(const L, R: TVMobjS);
     property IsOpen: Boolean read FOpen;
-    // Diagnostic only. On the ALSA (non-Windows) backend, counts real
-    // xrun recoveries (snd_pcm_writei returning a negative error other
-    // than -EAGAIN) - added while chasing an intermittently distorted
-    // tone reported on real FM audio; see QueueStereo's own comment on
-    // this branch. Always 0 on Windows (waveOut's ring-buffer design
-    // doesn't have an equivalent recoverable-error notion).
+    // Diagnostic only. On the ALSA backend, counts real xrun recoveries
+    // (snd_pcm_writei returning a negative error other than -EAGAIN) -
+    // added while chasing an intermittently distorted tone reported on
+    // real FM audio; see QueueStereo's own comment on that branch. Always
+    // 0 on Windows and on the macOS/CoreAudio backend - neither waveOut's
+    // ring-buffer design nor AudioQueue's own completion-callback model
+    // surfaces an equivalent recoverable-hardware-xrun notion this
+    // property could meaningfully count (see this unit's own header
+    // comment, macOS BACKEND, for why).
     property UnderrunCount: Integer read FUnderrunCount;
   end;
 
@@ -268,6 +356,147 @@ begin
 end;
 
 {$ELSE}
+  {$IFDEF DARWIN}
+
+const
+  kAudioFormatLinearPCM = $6C70636D;             // 'lpcm', see this unit's own header comment
+  kAudioFormatFlagIsSignedInteger = 1 shl 2;
+  kAudioFormatFlagIsPacked = 1 shl 3;
+
+function AudioQueueNewOutput(inFormat: PAudioStreamBasicDescription; inCallbackProc: AudioQueueOutputCallback;
+  inUserData: Pointer; inCallbackRunLoop: Pointer; inCallbackRunLoopMode: Pointer; inFlags: LongWord;
+  out outAQ: AudioQueueRef): OSStatus; cdecl; external name 'AudioQueueNewOutput';
+function AudioQueueDispose(inAQ: AudioQueueRef; inImmediate: Boolean): OSStatus; cdecl; external name 'AudioQueueDispose';
+function AudioQueueAllocateBuffer(inAQ: AudioQueueRef; inBufferByteSize: LongWord;
+  out outBuffer: AudioQueueBufferRef): OSStatus; cdecl; external name 'AudioQueueAllocateBuffer';
+function AudioQueueEnqueueBuffer(inAQ: AudioQueueRef; inBuffer: AudioQueueBufferRef;
+  inNumPacketDescs: LongWord; inPacketDescs: Pointer): OSStatus; cdecl; external name 'AudioQueueEnqueueBuffer';
+function AudioQueueStart(inAQ: AudioQueueRef; inStartTime: Pointer): OSStatus; cdecl; external name 'AudioQueueStart';
+function AudioQueueStop(inAQ: AudioQueueRef; inImmediate: Boolean): OSStatus; cdecl; external name 'AudioQueueStop';
+
+{$linkframework AudioToolbox}
+{$linkframework CoreFoundation}
+
+// AudioQueue-owned internal thread, not the GUI thread (inCallbackRunLoop
+// is nil, see Open below) - does nothing but flip the finished buffer's
+// own Free flag, mirroring the Windows path's WHDR_DONE-polling safety
+// argument (single writer here, single reader in QueueStereo, one
+// Boolean - see this unit's own header comment).
+procedure AQOutputCallback(inUserData: Pointer; inAQ: AudioQueueRef; inBuffer: AudioQueueBufferRef); cdecl;
+var
+  Player: TWaveOutPlayer;
+  Idx: PtrInt;
+begin
+  Player := TWaveOutPlayer(inUserData);
+  Idx := PtrInt(inBuffer^.mUserData);
+  Player.FAQBuffers[Idx].Free := True;
+end;
+
+constructor TWaveOutPlayer.Create(BufferCount: Integer);
+begin
+  inherited Create;
+  SetLength(FAQBuffers, BufferCount);
+  FNextBuffer := 0;
+  FAQ := nil;
+  FOpen := False;
+end;
+
+destructor TWaveOutPlayer.Destroy;
+begin
+  Close;
+  inherited Destroy;
+end;
+
+procedure TWaveOutPlayer.Open(SampleRateHz, MaxSamplesPerChannel: Integer);
+const
+  s = 'TWaveOutPlayer.Open : ';
+var
+  Fmt: AudioStreamBasicDescription;
+  i: Integer;
+  Status: OSStatus;
+begin
+  assert(not FOpen, s + 'already open');
+
+  // See this unit's own header comment (GOTCHA) - must happen before the
+  // first AudioQueue call in the process.
+  SetExceptionMask([exInvalidOp, exOverflow, exUnderflow, exZeroDivide, exPrecision, exDenormalized]);
+
+  FillChar(Fmt, SizeOf(Fmt), 0);
+  Fmt.mSampleRate := SampleRateHz;
+  Fmt.mFormatID := kAudioFormatLinearPCM;
+  Fmt.mFormatFlags := kAudioFormatFlagIsSignedInteger or kAudioFormatFlagIsPacked;
+  Fmt.mChannelsPerFrame := 2;
+  Fmt.mBitsPerChannel := 16;
+  Fmt.mBytesPerFrame := (Fmt.mChannelsPerFrame * Fmt.mBitsPerChannel) div 8;
+  Fmt.mFramesPerPacket := 1;
+  Fmt.mBytesPerPacket := Fmt.mBytesPerFrame * Fmt.mFramesPerPacket;
+
+  Status := AudioQueueNewOutput(@Fmt, @AQOutputCallback, Self, nil, nil, 0, FAQ);
+  if Status <> 0 then begin
+    FOpen := False;
+    Exit;
+  end;
+
+  for i := 0 to High(FAQBuffers) do begin
+    Status := AudioQueueAllocateBuffer(FAQ, MaxSamplesPerChannel * 4, FAQBuffers[i].Buf);
+    if Status <> 0 then begin
+      AudioQueueDispose(FAQ, True);
+      FAQ := nil;
+      FOpen := False;
+      Exit;
+    end;
+    FAQBuffers[i].Buf^.mUserData := Pointer(PtrInt(i));   // see AQOutputCallback above
+    FAQBuffers[i].Free := True;
+  end;
+
+  AudioQueueStart(FAQ, nil);
+  FOpen := True;
+end;
+
+procedure TWaveOutPlayer.Close;
+begin
+  if not FOpen then Exit;
+  AudioQueueStop(FAQ, True);
+  AudioQueueDispose(FAQ, True);   // also frees every buffer allocated against this queue
+  FAQ := nil;
+  FOpen := False;
+end;
+
+procedure TWaveOutPlayer.QueueStereo(const L, R: TVMobjS);
+var
+  N, i, bufIdx: Integer;
+  v: Single;
+  Samples: PSmallInt;
+begin
+  if not FOpen then Exit;
+  N := L.Rows * L.Cols;
+  bufIdx := FNextBuffer;
+
+  // Buffer not yet finished playing - drop this call rather than block;
+  // see this unit's own header comment for why.
+  if not FAQBuffers[bufIdx].Free then Exit;
+
+  if N > FAQBuffers[bufIdx].Buf^.mAudioDataBytesCapacity div 4 then
+    N := FAQBuffers[bufIdx].Buf^.mAudioDataBytesCapacity div 4;   // clamp to the pre-sized buffer
+
+  // Same soft (tanh) saturation as the Windows/ALSA paths - see the
+  // Windows path's own comment (above) for why a hard clamp isn't used.
+  Samples := PSmallInt(FAQBuffers[bufIdx].Buf^.mAudioData);
+  for i := 0 to N - 1 do begin
+    v := Tanh(L[0, i]);
+    Samples[i * 2] := Round(v * 32767);
+    v := Tanh(R[0, i]);
+    Samples[i * 2 + 1] := Round(v * 32767);
+  end;
+
+  FAQBuffers[bufIdx].Buf^.mAudioDataByteSize := N * 4;
+  FAQBuffers[bufIdx].Free := False;
+  AudioQueueEnqueueBuffer(FAQ, FAQBuffers[bufIdx].Buf, 0, nil);
+
+  FNextBuffer := (FNextBuffer + 1) mod Length(FAQBuffers);
+end;
+
+  {$ELSE}
 
 uses
   DynLibs, ctypes;
@@ -576,6 +805,7 @@ begin
   end;
 end;
 
+  {$ENDIF}
 {$ENDIF}
 
 end.
