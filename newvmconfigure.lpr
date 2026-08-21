@@ -70,11 +70,15 @@ const
   // AMD/NVIDIA GPU drivers put it in System32) - bare name only. clFFT.dll
   // has no such standard install location (there's no official installer
   // the way SDRplay's API has - see OpenCLAPI.pas's own header comment);
-  // the fallback path is this machine's own confirmed-working build
-  // output, same "bare name first, then a known location" pattern
+  // the fallback paths are confirmed-working build/install outputs across
+  // the different machines this project has been built on (a self-built
+  // clFFT.pas tree under user "howard", a vcpkg install under user
+  // "howar") - same "bare name first, then a known location" pattern
   // uSDRplay.pas/OpenCLAPI.pas already use for their own non-standard DLLs.
   OpenCLCandidates: array of string = ('OpenCL.dll');
-  clFFTCandidates: array of string = ('clFFT.dll', 'C:\Users\howard\clFFT\src\clFFTpas\clFFT.dll');
+  clFFTCandidates: array of string = ('clFFT.dll',
+    'C:\Users\howard\clFFT\src\clFFTpas\clFFT.dll',
+    'C:\Users\howar\vcpkg\installed\x64-windows\bin\clFFT.dll');
 {$ELSE}
   {$IFDEF DARWIN}
 const

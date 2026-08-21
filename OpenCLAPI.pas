@@ -88,13 +88,17 @@ const
   {$IFDEF WINDOWS}
   OpenCLLibName = 'OpenCL.dll';
   clFFTLibName = 'clFFT.dll';
-  // Confirmed working build output on this machine - see this unit's own
-  // header comment for why clFFT.dll needs a fallback path at all.
+  // Confirmed working build/install outputs across the machines this
+  // project has been built on - see this unit's own header comment for why
+  // clFFT.dll needs a fallback path at all. Tried in order after the bare
+  // name.
   clFFTLibFallbackPath = 'C:\Users\howard\clFFT\src\clFFTpas\clFFT.dll';
+  clFFTLibFallbackPath2 = 'C:\Users\howar\vcpkg\installed\x64-windows\bin\clFFT.dll';
   {$ELSE}
   OpenCLLibName = 'libOpenCL.so.1';
   clFFTLibName = 'libclFFT.so.0';
   clFFTLibFallbackPath = '';   // no non-Windows machine available to confirm an install path
+  clFFTLibFallbackPath2 = '';
   {$ENDIF}
 
   // ---- A minimal subset of OpenCL's own constants - just what newVMCL.pas
@@ -288,6 +292,8 @@ begin
   clFFTHandle := LoadLibrary(clFFTLibName);
   if (clFFTHandle = NilHandle) and (clFFTLibFallbackPath <> '') then
     clFFTHandle := LoadLibrary(clFFTLibFallbackPath);
+  if (clFFTHandle = NilHandle) and (clFFTLibFallbackPath2 <> '') then
+    clFFTHandle := LoadLibrary(clFFTLibFallbackPath2);
   if clFFTHandle = NilHandle then begin
     Result := False;
     Exit;
