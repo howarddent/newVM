@@ -4,16 +4,15 @@
 // machine you are about to build newVM* on - this is a snapshot of THIS
 // machine's installed libraries, not a portability guarantee for any
 // other machine.)
-// Generated: 22-8-26 15:37:21
+// Generated: 23-8-26 00:22:11
 
-{$DEFINE PLATFORM_LINUX}
+{$DEFINE PLATFORM_DARWIN}
 {$DEFINE PLATFORM_AARCH64}
 
-{$DEFINE HAVE_OPENBLAS}   // libopenblas found
-{$DEFINE HAVE_ARMPL}      // Arm Performance Libraries (libarmpl_lp64) found - cblas.pas prefers this over HAVE_OPENBLAS when both are present
+{$DEFINE HAVE_ACCELERATE} // Apple Accelerate/vecLib found (Darwin only)
 {$DEFINE HAVE_BLAS}       // derived: HAVE_OPENBLAS or HAVE_ACCELERATE or HAVE_ARMPL
 {$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found
-{$DEFINE HAVE_OPENCL}     // OpenCL.dll+clFFT.dll both found - gates newVMCL.pas/TVMobjCL and its test registration
+{$DEFINE HAVE_METAL}      // Metal+MetalPerformanceShadersGraph found on Apple Silicon - gates newVMMetal.pas/TVMobjMTL and its test registration
 
 // Derived: true when a LAPACKE_* implementation is available from EITHER
 // MKL or Arm Performance Libraries (ArmPL exports a standard LAPACKE_* ABI
@@ -25,7 +24,7 @@
 // dependent routines (Sin/Cos/etc, fillRandom, linspace/AddScalar/FlipLR/etc)
 // stay on their PUREPASCAL fallback, since ArmPL provides no equivalent for
 // those under matching names.
-{$DEFINE HAVE_LAPACKE}
+// {$DEFINE HAVE_LAPACKE} left undefined: no LAPACKE_* implementation found
 
 // Derived: set whenever any of the three libraries the "core" linear algebra
 // (MatMult/Invert/LinearSolve/Det/operators/elementwise math/EigDecompose/etc)

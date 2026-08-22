@@ -206,13 +206,37 @@ end;
 
 class operator TVMobjMTL.Copy(constref Src: TVMobjMTL; var Dst: TVMobjMTL);
 begin
-  // See this unit's own header comment - release Dst's OLD reference
-  // before overwriting it, guarded against self-assignment (the exact fix
-  // TVMobjCL's own header comment documents needing, for the exact same
-  // reason: a loop-reassigned variable would otherwise leak its previous
-  // buffer on every iteration, since nothing would ever decrement its
-  // refcount once Dst stopped pointing at it).
-  if Assigned(Dst.FRefCount) and (Dst.FRefCount <> Src.FRefCount) then begin
+  // If Dst already aliases exactly the same buffer as Src (true
+  // self-assignment A := A, OR - the case that actually bit TVMobjCL's own
+  // identical Copy operator, fixed upstream and mirrored here - a
+  // constructor's "Self := Create(r, c);" delegation idiom, where the
+  // compiler's return-value optimisation makes the nested Create's
+  // implicit result and the outer Self literally the SAME memory, so Src
+  // and Dst here are one object copying onto itself), there is nothing to
+  // do: no reference is being dropped and none is being gained. Exiting
+  // immediately - rather than just guarding the decrement below and
+  // unconditionally Inc'ing afterwards, which is what this operator
+  // originally did - is required, not merely tidier: guarding only the
+  // Dec/Dispose half while still running the final
+  // "if Assigned(Dst.FRefCount) then Inc(Dst.FRefCount^)" unconditionally
+  // means every TVMobjMTL.Create(r, c, Values) call (the only constructor
+  // that self-delegates like this) silently leaves its refcount
+  // permanently inflated by one extra, un-droppable reference - Finalize
+  // on scope exit then only ever brings the count down to 1, never 0, so
+  // MTLReleaseBuffer/Dispose never runs and both the GPU buffer and its
+  // refcount cell leak on every single Values-constructed TVMobjMTL. See
+  // newVMCL.pas's own Copy operator, where this exact bug was found and
+  // fixed first (confirmed there via instrumented Initialize/Finalize/Copy
+  // traces and a heaptrc-measured leak drop across the full test suite).
+  if Dst.FRefCount = Src.FRefCount then Exit;
+
+  // Release whatever Dst previously held BEFORE overwriting it with
+  // Src - Dst may already hold a valid, DIFFERENT reference from an
+  // earlier assignment (e.g. a loop variable reassigned on every
+  // iteration: B := A * 2.0 inside a loop reassigns the SAME B every
+  // time) - nothing would ever decrement its refcount once Dst stopped
+  // pointing at it otherwise.
+  if Assigned(Dst.FRefCount) then begin
     Dec(Dst.FRefCount^);
     if Dst.FRefCount^ = 0 then begin
       MTLReleaseBuffer(Dst.FBuffer);
