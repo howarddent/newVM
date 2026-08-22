@@ -40,15 +40,31 @@ unit uVMPlotSDRSpectrum;
      move the expensive FFT/windowing work off the CPU, not literally
      every scalar operation.
 
-     CPU FALLBACK: if OpenCL/newVMCL isn't available at all (HAVE_OPENCL
-     undefined - see newVMConfig.inc) or clFFT/the OpenCL runtime don't
-     actually initialise on this machine (OpenCLReady = False, checked
-     once, lazily, on the first epoch), every epoch instead goes through
-     newVMComplexSingle.pas's existing PowerSpectrum(TVMobjC): TVMobjS -
-     the same Hamming-window+FFT+|X|^2 math, just CPU-side - so this
-     component still works, just without the GPU offload, on a machine
-     with no usable OpenCL device. UsingGPU reports which path is
-     actually active, for diagnostics.
+     THREE BACKENDS, NOT TWO: the same GPU pipeline above also runs via
+     newVMMetal.pas (TVMobjMTL, Apple's own Metal + MetalPerformanceShaders-
+     Graph) wherever HAVE_METAL is defined (Darwin/Apple-Silicon machines -
+     see newvmconfigure.lpr's own HAVE_METAL probe and newVMMetal.pas's
+     header comment for why this exists alongside, not instead of,
+     newVMCL.pas's OpenCL path) - same windowing/FFT/download steps,
+     ToDeviceMTL/EnsureWindowMTL/FFT/ToHost in place of
+     ToDevice/EnsureWindowCL/FFT/ToHost. ProcessEpoch picks a backend once,
+     lazily, on the first epoch, preferring Metal, then OpenCL, then CPU -
+     in practice at most one of HAVE_METAL/HAVE_OPENCL is ever defined on a
+     given machine today (Metal is Darwin-only, OpenCL detection is
+     deliberately left Windows-only - see newvmconfigure.lpr), so this
+     ordering is mostly future-proofing rather than a live choice.
+
+     CPU FALLBACK: if neither GPU backend is available at all (both
+     HAVE_METAL and HAVE_OPENCL undefined - see newVMConfig.inc) or
+     whichever backend IS compiled in doesn't actually initialise on this
+     machine (MetalReady/OpenCLReady = False, checked once, lazily, on the
+     first epoch), every epoch instead goes through newVMComplexSingle.pas's
+     existing PowerSpectrum(TVMobjC): TVMobjS - the same Hamming-window+
+     FFT+|X|^2 math, just CPU-side - so this component still works, just
+     without the GPU offload, on a machine with no usable GPU backend.
+     UsingGPU reports whether GPU offload is active at all, for
+     diagnostics; GPUStatusMessage's own text distinguishes which backend
+     (or lack thereof) is actually in play.
 
      PASS-THROUGH PROPERTIES: every display-relevant TVMPlotSpectrum/
      TVMPlotWaterfall property is also published here, forwarding straight
@@ -78,6 +94,9 @@ interface
 uses
   Classes, SysUtils, Controls, ExtCtrls, Graphics, Math,
   newVM, newVMSingle, newVMComplexSingle,
+  {$IFDEF HAVE_METAL}
+  MetalAPI, newVMMetal,
+  {$ENDIF}
   {$IFDEF HAVE_OPENCL}
   OpenCLAPI, newVMCL,
   {$ENDIF}
@@ -88,6 +107,11 @@ const
   DefaultSDRUpdateIntervalMs = 30;
 
 type
+  // Which GPU backend (if any) ProcessEpoch picked on its first-epoch
+  // check - see this unit's own header comment (THREE BACKENDS, NOT TWO)
+  // for the Metal-then-OpenCL-then-CPU preference order this drives.
+  TSDRGPUBackend = (gbCPU, gbMetal, gbOpenCL);
+
   { TSDRSpectrumAnalyser }
   TSDRSpectrumAnalyser = class(TPanel)
   private
@@ -98,9 +122,14 @@ type
     FSourceCursor: TSDRStreamCursor;
     FEpochSize: Integer;
     FUseGPU, FGPUChecked: Boolean;
+    FGPUBackend: TSDRGPUBackend;
     FGPUStatusMessage: string;
     FOnGPUStatusKnown: TNotifyEvent;
     FOnCursorChange: TNotifyEvent;
+    {$IFDEF HAVE_METAL}
+    FWindowMTL: TVMobjMTL;
+    FWindowEpochSizeMTL: Integer;
+    {$ENDIF}
     {$IFDEF HAVE_OPENCL}
     FWindowCL: TVMobjCL;
     FWindowEpochSize: Integer;
@@ -174,6 +203,10 @@ type
     procedure UpdateTick(Sender: TObject);
     procedure ProcessEpoch(const IQ: TVMobjC);
     function ProcessEpochCPU(const IQ: TVMobjC): TVMobj;
+    {$IFDEF HAVE_METAL}
+    procedure EnsureWindowMTL;
+    function ProcessEpochMetal(const IQ: TVMobjC): TVMobj;
+    {$ENDIF}
     {$IFDEF HAVE_OPENCL}
     procedure EnsureWindowCL;
     function ProcessEpochGPU(const IQ: TVMobjC): TVMobj;
@@ -274,6 +307,9 @@ begin
   FUpdateTimer.OnTimer := @UpdateTick;
 
   FEpochSize := DefaultSDREpochSize;
+  {$IFDEF HAVE_METAL}
+  FWindowEpochSizeMTL := 0;
+  {$ENDIF}
   {$IFDEF HAVE_OPENCL}
   FWindowEpochSize := 0;
   {$ENDIF}
@@ -631,30 +667,52 @@ begin
   ProcessEpoch(IQ);
 end;
 
+// Picks a backend once, lazily, on the first epoch - preferring Metal,
+// then OpenCL, then CPU (see this unit's own header comment, THREE
+// BACKENDS, NOT TWO). At most one of HAVE_METAL/HAVE_OPENCL is ever
+// defined on a given machine today, so in practice this resolves to
+// "whichever GPU backend this build has, if it's actually ready, else
+// CPU" - the explicit preference order only matters on a hypothetical
+// future machine with both compiled in.
 procedure TSDRSpectrumAnalyser.ProcessEpoch(const IQ: TVMobjC);
 var
   PowerSpec: TVMobj;
 begin
-  {$IFDEF HAVE_OPENCL}
   if not FGPUChecked then begin
-    FUseGPU := OpenCLReady;
-    if FUseGPU then FGPUStatusMessage := '' else FGPUStatusMessage := OpenCLLastError;
+    FGPUBackend := gbCPU;
+    FGPUStatusMessage := 'no GPU backend available in this build';
+    {$IFDEF HAVE_METAL}
+    if FGPUBackend = gbCPU then begin
+      if MetalReady then begin
+        FGPUBackend := gbMetal;
+        FGPUStatusMessage := '';
+      end else
+        FGPUStatusMessage := MetalLastError;
+    end;
+    {$ENDIF}
+    {$IFDEF HAVE_OPENCL}
+    if FGPUBackend = gbCPU then begin
+      if OpenCLReady then begin
+        FGPUBackend := gbOpenCL;
+        FGPUStatusMessage := '';
+      end else
+        FGPUStatusMessage := OpenCLLastError;
+    end;
+    {$ENDIF}
+    FUseGPU := FGPUBackend <> gbCPU;
     FGPUChecked := True;
     if Assigned(FOnGPUStatusKnown) then FOnGPUStatusKnown(Self);
   end;
-  if FUseGPU then
-    PowerSpec := ProcessEpochGPU(IQ)
-  else
-    PowerSpec := ProcessEpochCPU(IQ);
-  {$ELSE}
-  if not FGPUChecked then begin
-    FGPUChecked := True;
-    FUseGPU := False;
-    FGPUStatusMessage := 'OpenCL/newVMCL not available in this build';
-    if Assigned(FOnGPUStatusKnown) then FOnGPUStatusKnown(Self);
+
+  case FGPUBackend of
+    {$IFDEF HAVE_METAL}
+    gbMetal: PowerSpec := ProcessEpochMetal(IQ);
+    {$ENDIF}
+    {$IFDEF HAVE_OPENCL}
+    gbOpenCL: PowerSpec := ProcessEpochGPU(IQ);
+    {$ENDIF}
+    else PowerSpec := ProcessEpochCPU(IQ);
   end;
-  PowerSpec := ProcessEpochCPU(IQ);
-  {$ENDIF}
 
   FSpectrumPlot.AddGraph(PowerSpec);
   FWaterfallPlot.AddGraph(PowerSpec);
@@ -678,6 +736,60 @@ begin
     Result[0, k] := 10 * Log10(LinearPower[0, srcBin] + 1e-12);
   end;
 end;
+
+{$IFDEF HAVE_METAL}
+// Metal analogue of EnsureWindowCL below - same cached-per-EpochSize
+// Hamming window, uploaded once via ToDeviceMTL instead of ToDevice.
+procedure TSDRSpectrumAnalyser.EnsureWindowMTL;
+var
+  WHost: TVMobjS;
+  i: Integer;
+  w: Single;
+begin
+  if FWindowEpochSizeMTL = FEpochSize then Exit;
+  WHost := TVMobjS.Create(1, 2 * FEpochSize);
+  for i := 0 to FEpochSize - 1 do begin
+    w := 0.54 - 0.46 * cos(2 * Pi * i / (FEpochSize - 1));
+    WHost[0, 2*i]   := w;
+    WHost[0, 2*i+1] := w;
+  end;
+  FWindowMTL := ToDeviceMTL(WHost);
+  FWindowEpochSizeMTL := FEpochSize;
+end;
+
+// Metal analogue of ProcessEpochGPU below - identical pipeline (interleave
+// -> upload -> window -> FFT -> download -> fftshift+dB), ToDeviceMTL/
+// TVMobjMTL/FFT/ToHost in place of ToDevice/TVMobjCL/FFT/ToHost.
+function TSDRSpectrumAnalyser.ProcessEpochMetal(const IQ: TVMobjC): TVMobj;
+var
+  Interleaved, HostSpec: TVMobjS;
+  IQMTL, Windowed, Spec: TVMobjMTL;
+  i, HalfN, k, srcBin: Integer;
+  re, im: Single;
+begin
+  EnsureWindowMTL;
+
+  Interleaved := TVMobjS.Create(1, 2 * FEpochSize);
+  for i := 0 to FEpochSize - 1 do begin
+    Interleaved[0, 2*i]   := IQ[0, i].re;
+    Interleaved[0, 2*i+1] := IQ[0, i].im;
+  end;
+
+  IQMTL := ToDeviceMTL(Interleaved);
+  Windowed := IQMTL * FWindowMTL;
+  Spec := FFT(Windowed);
+  HostSpec := ToHost(Spec);
+
+  HalfN := FEpochSize div 2;
+  Result := TVMobj.Create(1, FEpochSize);
+  for k := 0 to FEpochSize - 1 do begin
+    srcBin := (k + HalfN) mod FEpochSize;
+    re := HostSpec[0, 2*srcBin];
+    im := HostSpec[0, 2*srcBin+1];
+    Result[0, k] := 10 * Log10(re*re + im*im + 1e-12);
+  end;
+end;
+{$ENDIF}
 
 {$IFDEF HAVE_OPENCL}
 procedure TSDRSpectrumAnalyser.EnsureWindowCL;

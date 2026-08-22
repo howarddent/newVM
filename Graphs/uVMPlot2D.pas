@@ -78,7 +78,7 @@ uses
   Classes, SysUtils, Math, Graphics, LResources,
   IntfGraphics, FPImage,
   GL, OpenGLContext,
-  {$IFDEF UNIX}
+  {$IFDEF LINUX}
   GLX,
   {$ENDIF}
   newVM;
@@ -546,7 +546,7 @@ end;
 procedure TVMPlot2D.ApplySwapInterval;
 begin
   if FSwapIntervalApplied then Exit;
-  {$IFDEF UNIX}
+  {$IFDEF LINUX}
   if Assigned(glXSwapIntervalEXT) and Assigned(glXGetCurrentDisplay) and
      Assigned(glXGetCurrentDrawable) then
     glXSwapIntervalEXT(glXGetCurrentDisplay(), glXGetCurrentDrawable(), Ord(FVSync))
