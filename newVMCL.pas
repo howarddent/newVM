@@ -356,6 +356,28 @@ end;
 
 class operator TVMobjCL.Copy(constref Src: TVMobjCL; var Dst: TVMobjCL);
 begin
+  // If Dst already aliases exactly the same buffer as Src (true
+  // self-assignment A := A, OR - the case that actually bit us - a
+  // constructor's "Self := Create(r, c);" delegation idiom, where the
+  // compiler's return-value optimisation makes the nested Create's
+  // implicit result and the outer Self literally the SAME memory, so
+  // Src and Dst here are one object copying onto itself), there is
+  // nothing to do: no reference is being dropped and none is being
+  // gained. Exiting immediately - rather than just guarding the
+  // decrement below and unconditionally Inc'ing afterwards - is
+  // required, not merely tidier: the original code guarded only the
+  // Dec/Dispose half against this case but still ran the final
+  // "if Assigned(Dst.FRefCount) then Inc(Dst.FRefCount^)" unconditionally,
+  // so every TVMobjCL.Create(r, c, Values) call (the only constructor
+  // that self-delegates like this) silently left its refcount permanently
+  // inflated by one extra, un-droppable reference - confirmed via a
+  // standalone repro and instrumented Initialize/Finalize/Copy trace:
+  // the object's own Finalize (procedure/scope exit) then only ever
+  // brought the count down to 1, never 0, so clReleaseMemObject/Dispose
+  // never ran and both the GPU buffer and its refcount cell leaked on
+  // every single Values-constructed TVMobjCL.
+  if Dst.FRefCount = Src.FRefCount then Exit;
+
   // Release whatever Dst previously held BEFORE overwriting it with
   // Src - Dst may already hold a valid, DIFFERENT reference from an
   // earlier assignment (e.g. a loop variable reassigned on every
@@ -365,10 +387,7 @@ begin
   // standalone stress test (20,000 create/reassign iterations), to leak
   // the previous buffer on every single reassignment, since nothing
   // ever decremented its refcount once Dst stopped pointing at it.
-  // Guarded against self-assignment (A := A, or Dst already aliasing
-  // Src) so a release-then-reacquire of the SAME refcount can't
-  // transiently hit zero and free a buffer that's actually still live.
-  if Assigned(Dst.FRefCount) and (Dst.FRefCount <> Src.FRefCount) then begin
+  if Assigned(Dst.FRefCount) then begin
     Dec(Dst.FRefCount^);
     if Dst.FRefCount^ = 0 then begin
       clReleaseMemObject(Dst.FBuffer);
