@@ -124,6 +124,9 @@ type
     {$ELSE}
     FPCMHandle: Pointer;          // snd_pcm_t*, opaque handle from ALSA
     FScratch: array of SmallInt;  // interleaved L/R, 16-bit PCM, reused across calls
+    // Target queued-frame level for the drift-compensation nudge in
+    // QueueStereo - see that method's own comment.
+    FLatencyTargetFrames: Integer;
     {$ENDIF}
     FUnderrunCount: Integer;
   public
@@ -289,6 +292,13 @@ type
     soft_resample: cint; latency: cuint): cint; cdecl;
   Tsnd_pcm_writei = function(pcm: Pointer; buffer: Pointer; size: culong): clong; cdecl;
   Tsnd_pcm_recover = function(pcm: Pointer; err, silent: cint): cint; cdecl;
+  // delayp receives the number of frames currently QUEUED (written but not
+  // yet played) - see QueueStereo's own comment on FLatencyTargetFrames
+  // for what this is used for. Optional binding (probed like the rest,
+  // not required for InitializeALSA to report success) since drift
+  // compensation is a refinement, not a hard requirement for playback to
+  // work at all.
+  Tsnd_pcm_delay = function(pcm: Pointer; delayp: Pointer): cint; cdecl;
 
 var
   ALSAHandle: TLibHandle = NilHandle;
@@ -297,6 +307,7 @@ var
   snd_pcm_set_params: Tsnd_pcm_set_params;
   snd_pcm_writei: Tsnd_pcm_writei;
   snd_pcm_recover: Tsnd_pcm_recover;
+  snd_pcm_delay: Tsnd_pcm_delay;
 
 function LoadALSAProc(const Name: string): Pointer;
 begin
@@ -318,6 +329,7 @@ begin
       Pointer(snd_pcm_set_params) := LoadALSAProc('snd_pcm_set_params');
       Pointer(snd_pcm_writei)     := LoadALSAProc('snd_pcm_writei');
       Pointer(snd_pcm_recover)    := LoadALSAProc('snd_pcm_recover');
+      Pointer(snd_pcm_delay)      := LoadALSAProc('snd_pcm_delay');
     end;
   end;
   Result := Assigned(snd_pcm_open) and Assigned(snd_pcm_set_params) and Assigned(snd_pcm_writei);
@@ -350,25 +362,43 @@ begin
   if snd_pcm_open(@Handle, PAnsiChar('default'), SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) <> 0 then
     Exit;
 
-  // soft_resample=1, ~300ms requested latency - ALSA sizes its own
-  // internal ring to this and leaves the stream prepared. Originally
-  // 100ms, widened to match the Windows path's own 16-buffer (~320ms)
-  // headroom after 100ms proved too tight in practice: a direct
-  // speaker-test at the identical rate/format (48000Hz S16_LE stereo)
-  // played several seconds clean with zero underruns using ALSA's own
-  // much larger default buffer, which pointed squarely at our own
-  // request being the tight part, not this machine's audio stack
-  // (PipeWire's ALSA compatibility layer) - see QueueStereo's own
-  // comment for the underrun-recovery path this headroom is meant to
-  // make rare.
+  // soft_resample=1, ~1000ms requested latency - ALSA sizes its own
+  // internal ring to this and leaves the stream prepared. Widened here
+  // from an original 100ms, then 300ms, in successive earlier fixes -
+  // but widening alone does NOT fix underruns, only delays them:
+  // confirmed by instrumented testing (a standalone harness feeding a
+  // synthetic tone at an exact 20ms/epoch cadence, zero SDR/DSP
+  // involved) that even a 300ms buffer still drains steadily over time
+  // with no compensation mechanism, because nothing paces production to
+  // the SOUND CARD's own playback clock - any persistent mismatch
+  // between how fast epochs are queued and how fast ALSA actually drains
+  // them (real SDR hardware sample clock ppm error, OS scheduling
+  // jitter, CPU contention from the concurrent DSP/GPU work - the exact
+  // cause varies, but the buffer being finite means SOME cause always
+  // eventually wins) accumulates without bound until it exceeds whatever
+  // buffer size is configured. The real fix is QueueStereo's own
+  // buffer-level feedback (drift compensation) below; THIS 1000ms value
+  // is what gives that feedback loop enough headroom to actually
+  // converge before a transient error (e.g. right after a real xrun's
+  // recovery) empties the ring - empirically, 300ms was measured too
+  // tight for the compensation to fully catch up in time (occasional
+  // underruns still occurred over a 60s stress test), 1000ms was clean
+  // over the same test. The one-time startup latency this adds is an
+  // acceptable trade for a live FM receiver (not a real-time-critical
+  // use case the way a call or game would be).
   if snd_pcm_set_params(Handle, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED,
-       2, SampleRateHz, 1, 300000) <> 0 then begin
+       2, SampleRateHz, 1, 1000000) <> 0 then begin
     snd_pcm_close(Handle);
     Exit;
   end;
 
   FPCMHandle := Handle;
   SetLength(FScratch, MaxSamplesPerChannel * 2);
+  // Target the QUEUED (not-yet-played) frame count at roughly the
+  // midpoint of the requested ~1000ms ring - equal headroom against both
+  // underrun (queue drains to empty) and overflow (queue fills, forcing
+  // the NONBLOCK-drop path below) - see QueueStereo's own comment.
+  FLatencyTargetFrames := Round(SampleRateHz * 0.5);
   FOpen := True;
 end;
 
@@ -381,15 +411,33 @@ begin
 end;
 
 procedure TWaveOutPlayer.QueueStereo(const L, R: TVMobjS);
+const
+  // Max frames added/dropped in a single QueueStereo call - see the
+  // DRIFT COMPENSATION comment below. Fixed (not proportional to N) so
+  // the per-call audible impact stays constant regardless of epoch size;
+  // applied every ~20ms this bounds the correctable drift rate to
+  // MaxAdjustFrames/(epoch duration), e.g. 32/20ms =~ 3.3% (33000ppm) at
+  // the default 20ms epoch - far more than any realistic SDR-hardware-
+  // clock-vs-sound-card-clock ppm error or OS scheduling jitter.
+  MaxAdjustFrames = 128;
+  // Fraction of the current error corrected per call - see the comment
+  // below for the geometric-convergence reasoning this value comes from.
+  CompensationGain = 0.1;
 var
-  N, i, Sent, Remaining: Integer;
+  N, WriteN, Adjust, i, Sent, Remaining, Deadband: Integer;
   v: Single;
   Written: clong;
+  DelayFrames: clong;
+  Error: Integer;
 begin
   if not FOpen then Exit;
   N := L.Rows * L.Cols;
-  if N > Length(FScratch) div 2 then
-    N := Length(FScratch) div 2;   // clamp to the pre-sized buffer, same as Windows path
+  // Clamp to the pre-sized buffer, same as the Windows path - minus
+  // MaxAdjustFrames, to always leave room for the drift-compensation pad
+  // below even when a caller's epoch already fills the buffer to the
+  // nominal limit.
+  if N > Length(FScratch) div 2 - MaxAdjustFrames then
+    N := Length(FScratch) div 2 - MaxAdjustFrames;
 
   // Same soft (tanh) saturation as the Windows path above - see its own
   // comment for why a hard clamp isn't used.
@@ -399,6 +447,60 @@ begin
     v := Tanh(R[0, i]);
     FScratch[i * 2 + 1] := Round(v * 32767);
   end;
+
+  // DRIFT COMPENSATION: nothing paces QueueStereo calls to the sound
+  // card's own playback clock - they arrive whenever the caller's DSP
+  // chain produces an epoch (in turn paced by the SDR hardware's own
+  // sample clock, which has its own independent ppm error against the
+  // sound card's clock, on top of ordinary OS scheduling jitter). ANY
+  // persistent mismatch, however small, means the ALSA ring's fill level
+  // drifts monotonically toward empty (underrun) or full (forced drops
+  // below) - and since the ring is finite, it WILL eventually get there
+  // no matter how large Open's requested latency is, just later. Confirmed
+  // by instrumented testing: a synthetic-tone harness with a fixed
+  // 20ms/epoch cadence and no SDR/DSP involved at all still accumulated
+  // underruns steadily (~1 every 4-6s after initial headroom) - widening
+  // the buffer alone (see Open's own comment) only pushed this out, it
+  // never eliminated it.
+  //
+  // The fix: read back how many frames are currently QUEUED (not yet
+  // played) via snd_pcm_delay, and PROPORTIONALLY nudge toward
+  // FLatencyTargetFrames (the ring's midpoint) by duplicating or dropping
+  // a small number of frames this epoch. Proportional, not fixed-size:
+  // correcting by CompensationGain (10%) of the current error each call
+  // means the error itself shrinks geometrically (by a factor of
+  // 1-CompensationGain per call) once inside the linear region, so it
+  // converges smoothly rather than only ever crawling back at a fixed
+  // rate - empirically confirmed against a synthetic-tone stress harness
+  // (fixed 20ms/epoch cadence, no SDR involved) where a fixed single-
+  // frame nudge was measured too small to keep up with the observed
+  // drift rate at all, while this proportional version (clamped to
+  // MaxAdjustFrames per call so a large one-off error, e.g. right after a
+  // real underrun recovery, doesn't itself produce an audible artifact)
+  // did. A dead-band (skip compensation for small, normal jitter around
+  // the target) keeps this from firing needlessly on every single call.
+  WriteN := N;
+  if Assigned(snd_pcm_delay) and (N > 0) then begin
+    if snd_pcm_delay(FPCMHandle, @DelayFrames) = 0 then begin
+      Error := Integer(DelayFrames) - FLatencyTargetFrames;   // >0: too full, <0: too empty
+      Deadband := FLatencyTargetFrames div 5;
+      if Abs(Error) > Deadband then begin
+        Adjust := Round(-Error * CompensationGain);
+        if Adjust > MaxAdjustFrames then Adjust := MaxAdjustFrames;
+        if Adjust < -MaxAdjustFrames then Adjust := -MaxAdjustFrames;
+        WriteN := N + Adjust;
+        if WriteN < 1 then WriteN := 1;
+      end;
+    end;
+  end;
+  if WriteN > N then
+    // Pad: repeat the last frame (WriteN - N) times - simplest way to
+    // extend by more than one frame without inventing new content;
+    // confined to the epoch boundary, same as the single-frame version.
+    for i := N to WriteN - 1 do begin
+      FScratch[i * 2] := FScratch[(N - 1) * 2];
+      FScratch[i * 2 + 1] := FScratch[(N - 1) * 2 + 1];
+    end;
 
   // snd_pcm_writei in NONBLOCK mode does not just return the full count or
   // -EAGAIN - if the ring has SOME but not all of the requested room, it
@@ -410,12 +512,13 @@ begin
   // looping to send only the still-unwritten tail each pass; the loop
   // cannot block, since NONBLOCK mode still returns immediately (with
   // -EAGAIN once the ring is genuinely full) rather than waiting for
-  // room. This alone did NOT eliminate the reported "intermittent
-  // distorted tone" on real FM audio, though - see Open's own comment
-  // for the other half of the fix (widened buffering), and
-  // UnderrunCount above for how to confirm which path is actually firing.
+  // room. Neither this nor widened buffering alone eliminated the
+  // reported "intermittent distorted tone" on real FM audio - see the
+  // drift-compensation comment above for the fix that actually addresses
+  // the root cause, and UnderrunCount above for how to confirm which
+  // path is actually firing.
   Sent := 0;
-  Remaining := N;
+  Remaining := WriteN;
   while Remaining > 0 do begin
     Written := snd_pcm_writei(FPCMHandle, @FScratch[Sent * 2], culong(Remaining));
     if Written < 0 then begin

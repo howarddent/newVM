@@ -138,6 +138,7 @@ type
     FPlayer: TWaveOutPlayer;
     FDSPThread: TFMDSPThread;
     FChainBuilt: Boolean;
+    FLastError: string;
 
     procedure SetSource(AValue: TSDRRFSource);
     procedure SetTunedFrequencyHz(AValue: Double);
@@ -154,6 +155,13 @@ type
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
+    // Set if FDSPThread's per-epoch processing raised an exception - see
+    // that thread's own Execute for why this is caught rather than left
+    // to kill the thread. Empty string means no error has occurred.
+    property LastError: string read FLastError;
+    // Forwards TWaveOutPlayer.UnderrunCount - see that property's own
+    // comment. 0 before Active is ever set True (FPlayer isn't open yet).
+    function AudioUnderrunCount: Integer;
   published
     property Source: TSDRRFSource read FSource write SetSource;
     // Absolute RF frequency to listen to, in Hz - independent of
@@ -199,7 +207,20 @@ end;
 procedure TFMDSPThread.Execute;
 begin
   while not Terminated do
-    if not FOwner.ProcessOnce then Sleep(1);
+    // An unhandled exception here would otherwise silently and
+    // PERMANENTLY kill this thread for the rest of the session (the
+    // same class of failure ProcessOnce's own MaxEpochSamples comment
+    // documents for one specific cause of it) - caught here so a single
+    // bad epoch degrades to "one dropped epoch" (FOwner.LastError set,
+    // logged for diagnosis) rather than silencing audio for good.
+    try
+      if not FOwner.ProcessOnce then Sleep(1);
+    except
+      on E: Exception do begin
+        FOwner.FLastError := E.ClassName + ': ' + E.Message;
+        Sleep(1);
+      end;
+    end;
 end;
 
 procedure TFMBroadcastReceiver.Notification(AComponent: TComponent; Operation: TOperation);
@@ -242,6 +263,11 @@ end;
 function TFMBroadcastReceiver.GetActive: Boolean;
 begin
   Result := Assigned(FDSPThread);
+end;
+
+function TFMBroadcastReceiver.AudioUnderrunCount: Integer;
+begin
+  Result := FPlayer.UnderrunCount;
 end;
 
 procedure TFMBroadcastReceiver.SetActive(AValue: Boolean);
