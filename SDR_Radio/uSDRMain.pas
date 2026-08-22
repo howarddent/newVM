@@ -145,13 +145,18 @@ type
     ListenFreqEdit: TFloatSpinEdit;
     VolumeLabel: TLabel;
     VolumeTrackBar: TTrackBar;
+    FFreqRetryTimer: TTimer;
     procedure AnalyserGPUStatusKnown(Sender: TObject);
+    procedure AnalyserCursorChanged(Sender: TObject);
     procedure ApplyDeviceCapabilities;
     procedure ApplyGainStageControl(StageIndex: Integer; Lbl: TLabel; Bar: TTrackBar);
     procedure GainStageTrackBarChanged(StageIndex: Integer; Lbl: TLabel; Bar: TTrackBar);
     procedure ApplyAllGains;
     procedure UpdateFrequencyAxis;
     procedure CommitFrequencyHz(Hz: QWord);
+    procedure RFSourceFrequencyChanged(Sender: TObject);
+    procedure ApplyFrequencyChangedUI;
+    procedure FreqRetryTimerTick(Sender: TObject);
     procedure UpdatePeakThreshold;
     procedure ReportError(const Where: string);
     procedure ListenCheckBoxChange(Sender: TObject);
@@ -171,6 +176,16 @@ implementation
 procedure TForm1.FormCreate(Sender: TObject);
 begin
   FRFSource := TSDRRFSource.Create(Self);
+  FRFSource.OnFrequencyChanged := @RFSourceFrequencyChanged;
+
+  // See RFSourceFrequencyChanged's own comment - retries applying the
+  // completed retune's UI side effects shortly after a modal dialog
+  // (e.g. the frequency keypad) closes, rather than doing GL/Invalidate
+  // work while one might still be tearing down.
+  FFreqRetryTimer := TTimer.Create(Self);
+  FFreqRetryTimer.Interval := 50;
+  FFreqRetryTimer.Enabled := False;
+  FFreqRetryTimer.OnTimer := @FreqRetryTimerTick;
 
   FAnalyser := TSDRSpectrumAnalyser.Create(Self);
   FAnalyser.Parent := Self;
@@ -178,6 +193,11 @@ begin
   FAnalyser.Source := FRFSource;
   FAnalyser.EpochSize := StrToIntDef(EpochCombo.Text, DefaultSDREpochSize);
   FAnalyser.OnGPUStatusKnown := @AnalyserGPUStatusKnown;
+  FAnalyser.OnCursorChange := @AnalyserCursorChanged;
+  // 0.2 MHz = broadcast FM's own 200kHz channel bandwidth (see
+  // uFMReceiver.pas's DefaultBasebandRateHz) - shows what the tuned
+  // channel actually occupies around the cursor, not just its centre.
+  FAnalyser.SpectrumCursorBandwidth := 0.2;
 
   FAnalyser.WaterfallScrollRate := ScrollRateTrackBar.Position;
   ScrollRateLabel.Caption := Format('Scroll Rate: %d/s', [ScrollRateTrackBar.Position]);
@@ -465,6 +485,12 @@ begin
 
   ApplyDeviceCapabilities;
   UpdateFrequencyAxis;
+  // Must come after UpdateFrequencyAxis - SpectrumCursorValue clamps
+  // against the spectrum's current X-axis range, which UseFrequencyAxis/
+  // XAxisMin/XAxisMax (set by UpdateFrequencyAxis) only just became valid
+  // MHz bounds; set any earlier and this would clamp against the
+  // constructor's own placeholder [0,1] domain instead.
+  FAnalyser.SpectrumCursorValue := ListenFreqEdit.Value;
   ConnectButton.Caption := 'Disconnect';
   StartStopButton.Enabled := True;
   StatusLabel.Caption := 'Connected (' + FRFSource.Capabilities.DeviceName + ', idle)';
@@ -557,18 +583,74 @@ begin
     StatusLabel.Caption := StatusLabel.Caption + ' [CPU: ' + FAnalyser.GPUStatusMessage + ']';
 end;
 
+// "select a station by dragging the cursor to a strong signal": fires on
+// every real move of the spectrum's own draggable cursor (dragging,
+// arrow keys, or FAnalyser.SpectrumCursorValue set programmatically -
+// see uVMPlotSpectrum.pas's own OnCursorChange comment), and retunes
+// FReceiver's software local oscillator to match, live, the same way
+// ListenFreqEditEditingDone already does for typed entry - the two are
+// just two different ways of moving the same "where within the capture
+// am I listening" value. ListenFreqEdit is kept in sync purely so its
+// displayed number doesn't silently go stale while dragging; it does NOT
+// retune anything itself here (that would recurse into this handler via
+// EditingDone, which only fires on focus loss/Enter, so no infinite loop
+// either way).
+procedure TForm1.AnalyserCursorChanged(Sender: TObject);
+begin
+  ListenFreqEdit.Value := FAnalyser.SpectrumCursorValue;
+  FReceiver.TunedFrequencyHz := FAnalyser.SpectrumCursorValue * 1e6;
+end;
+
 // Shared by FreqEditEditingDone and KeypadButtonClick - live retune,
-// works whether or not RX is currently running, on any backend.
+// works whether or not RX is currently running, on any backend. Async
+// (TSDRRFSource.RequestFrequencyHz, uSDRRFSource.pas's own ASYNC RETUNE
+// header comment) so a slow vendor driver call (confirmed, real-world:
+// this used to freeze the whole application until Task Manager-killed)
+// never blocks the GUI thread - RFSourceFrequencyChanged reports the
+// actual outcome once it's known, rather than this returning it directly.
 procedure TForm1.CommitFrequencyHz(Hz: QWord);
 begin
   if not FRFSource.IsOpen then Exit;
-  if FRFSource.SetFrequencyHz(Hz) then begin
-    UpdateFrequencyAxis;
-    if FRFSource.IsStreaming then
-      StatusLabel.Caption := Format('Streaming (%s) @ %.3f MHz, %.3f Msps',
-        [FRFSource.Capabilities.DeviceName, FRFSource.CenterFreqHz / 1e6, FRFSource.SampleRateHz / 1e6]);
-  end else
+  FRFSource.RequestFrequencyHz(Hz);
+end;
+
+// Fires once a RequestFrequencyHz call actually completes (see
+// uSDRRFSource.pas's own OnFrequencyChanged/ASYNC RETUNE comments), via
+// TThread.Queue - possibly well after CommitFrequencyHz itself already
+// returned, and (unlike the original synchronous call, which could only
+// ever run once any modal dialog had already fully closed) at an
+// otherwise-unpredictable moment relative to the GUI's own state. If a
+// modal dialog (e.g. the frequency keypad, uFreqKeypad.pas - the
+// keypad's own commit button calls CommitFrequencyHz right before its
+// ModalResult closes it) is still active/tearing down right now,
+// UpdateFrequencyAxis's own Invalidate calls on FAnalyser's OpenGL
+// controls would run concurrently with that teardown - defer via
+// FFreqRetryTimer instead of risking it.
+procedure TForm1.RFSourceFrequencyChanged(Sender: TObject);
+begin
+  if Application.ModalLevel > 0 then begin
+    FFreqRetryTimer.Enabled := True;
+    Exit;
+  end;
+  ApplyFrequencyChangedUI;
+end;
+
+procedure TForm1.FreqRetryTimerTick(Sender: TObject);
+begin
+  FFreqRetryTimer.Enabled := False;
+  RFSourceFrequencyChanged(Self);   // re-checks ModalLevel; re-arms itself if still modal
+end;
+
+procedure TForm1.ApplyFrequencyChangedUI;
+begin
+  if not FRFSource.LastFrequencyChangeOk then begin
     ReportError('set_freq');
+    Exit;
+  end;
+  UpdateFrequencyAxis;
+  if FRFSource.IsStreaming then
+    StatusLabel.Caption := Format('Streaming (%s) @ %.3f MHz, %.3f Msps',
+      [FRFSource.Capabilities.DeviceName, FRFSource.CenterFreqHz / 1e6, FRFSource.SampleRateHz / 1e6]);
 end;
 
 procedure TForm1.FreqEditEditingDone(Sender: TObject);
@@ -583,10 +665,33 @@ end;
 // than a real device's range). On a committed entry, keeps FreqEdit's
 // own displayed value in sync before retuning, so the two controls never
 // disagree with each other.
+//
+// FAnalyser.Active is paused for the dialog's duration - confirmed, via
+// direct Win32 message injection into the keypad's own controls
+// (bypassing mouse/focus entirely), that its modal loop genuinely stops
+// processing input while streaming - every button, including Cancel and
+// the window's own Close button, silently did nothing - but ONLY while
+// streaming; idle, the same dialog works fine. The one thing that
+// differs is FAnalyser's own GUI-thread timer, driving GPU/OpenCL Paint
+// calls on TVMPlotSpectrum/TVMPlotWaterfall roughly every 30ms; the
+// leading theory is that call, when it fires from inside the keypad's
+// *nested* modal message loop rather than the app's normal top-level
+// one, hits a GL-driver/reentrancy issue neither control has otherwise
+// been exercised against (this codebase has hit GL-vs-host-message-loop
+// surprises before - see uVMPlotSpectrum.pas/uVMPlot3D.pas's own
+// design-time-rendering history). Nothing behind a modal dialog is
+// visible anyway, and FRFSource's own FPollThread keeps draining the
+// device in the background regardless (streaming/acquisition isn't
+// touched here, only this component's own repaint timer), so pausing it
+// for the dialog's duration costs nothing and sidesteps whatever the
+// exact mechanism is - confirmed via the same direct-message-injection
+// technique that this actually restores normal, responsive click
+// handling inside the keypad.
 procedure TForm1.KeypadButtonClick(Sender: TObject);
 var
   ResultHz: Double;
   MinHz, MaxHz: Double;
+  WasAnalyserActive: Boolean;
 begin
   if FRFSource.IsOpen then begin
     MinHz := FRFSource.Capabilities.MinFreqHz;
@@ -596,9 +701,15 @@ begin
     MaxHz := 0;
   end;
 
-  if ShowFrequencyKeypad(MinHz, MaxHz, ResultHz) then begin
-    FreqEdit.Value := ResultHz / 1e6;
-    CommitFrequencyHz(Round(ResultHz));
+  WasAnalyserActive := FAnalyser.Active;
+  FAnalyser.Active := False;
+  try
+    if ShowFrequencyKeypad(MinHz, MaxHz, ResultHz) then begin
+      FreqEdit.Value := ResultHz / 1e6;
+      CommitFrequencyHz(Round(ResultHz));
+    end;
+  finally
+    FAnalyser.Active := WasAnalyserActive;
   end;
 end;
 
@@ -668,16 +779,22 @@ end;
 procedure TForm1.ListenCheckBoxChange(Sender: TObject);
 begin
   FReceiver.TunedFrequencyHz := ListenFreqEdit.Value * 1e6;
+  FAnalyser.SpectrumCursorValue := ListenFreqEdit.Value;
   FReceiver.Active := ListenCheckBox.Checked;
 end;
 
 // Live retune - only touches the receive chain's own mixer (see
 // TFMBroadcastReceiver.SetTunedFrequencyHz's own comment for why this is
 // safe to do without interrupting playback), works whether or not
-// FReceiver is currently Active.
+// FReceiver is currently Active. Also moves the spectrum cursor to match
+// (which harmlessly re-fires AnalyserCursorChanged with the same values -
+// see that handler's own comment), so the two ways of choosing a
+// frequency - typing here, or dragging the cursor - always agree on
+// where the cursor is drawn.
 procedure TForm1.ListenFreqEditEditingDone(Sender: TObject);
 begin
   FReceiver.TunedFrequencyHz := ListenFreqEdit.Value * 1e6;
+  FAnalyser.SpectrumCursorValue := ListenFreqEdit.Value;
 end;
 
 procedure TForm1.VolumeTrackBarChange(Sender: TObject);

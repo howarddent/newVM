@@ -76,6 +76,35 @@ unit uSDRRFSource;
      producer/consumer locking pattern TSDRRingBuffer itself already
      uses between the device's own USB callback thread and this one.
 
+     ASYNC RETUNE (FControlThread, RequestFrequencyHz): each backend's own
+     SetFrequencyHz (uHackRF.pas/uRTLSDR.pas/uSDRplay.pas) makes a
+     synchronous, potentially slow call straight into the vendor driver/
+     API whenever already streaming (e.g. SDRplay's sdrplay_api_Update -
+     a real IPC round-trip to sdrplay_apiService.exe, not a fire-and-
+     forget register write) - calling it directly from the GUI thread, as
+     uSDRMain.pas's FreqEdit/keypad retune handlers originally did, froze
+     the entire application's message loop for however long that call
+     took under real concurrent load (this component's own FPollThread
+     plus a running FMBroadcastReceiver plus TSDRSpectrumAnalyser's GPU
+     work all competing for the same USB/IPC bandwidth) - long enough
+     that a user watching Windows mark the window "Not Responding" would
+     reasonably conclude it had hung outright and kill it via Task
+     Manager. RequestFrequencyHz fixes this by handing the actual device
+     call to a small dedicated background thread (FControlThread, same
+     "one persistent thread, not a thread per call" shape as FPollThread
+     itself - concurrent calls into the same device handle from multiple
+     threads at once would be unsafe regardless of blocking) and
+     returning immediately; FOnFrequencyChanged fires once the call has
+     actually completed (success or failure - see LastFrequencyChangeOk),
+     via TThread.Queue so the worker thread never waits on the GUI
+     thread's own responsiveness to make progress. Only frequency is
+     covered here, since that's what actually gets driven from a live
+     control while streaming in this app (FreqEdit/the keypad) - SetGain/
+     SetBoolOption carry the identical risk (the same backends route them
+     through the same blocking vendor Update call while streaming) but
+     aren't wired through this mechanism yet; extending it to them would
+     follow the same shape if that ever becomes a reported problem too.
+
      OUTPUT STREAM: TryReadEpoch fills a (1,N) TVMobjC - SINGLE precision
      complex (newVMComplexSingle.pas), not the double-precision TVMobjZ
      TSDRDevice.TryReadEpoch itself returns - converted once, in
@@ -128,6 +157,30 @@ type
     constructor Create(AOwner: TSDRRFSource);
   end;
 
+  // Runs FDevice.SetFrequencyHz off the GUI thread - see this unit's own
+  // header comment ("ASYNC RETUNE") for why that call can otherwise
+  // freeze the whole application. RequestFrequencyHz just records the
+  // latest requested Hz under FLock and returns immediately; Execute
+  // picks it up on its own schedule. Deliberately coalescing, not
+  // queuing, successive requests: only the LAST one issued (e.g. several
+  // keypad/spinner edits in quick succession) is ever worth actually
+  // applying, the same way a human turning a real tuning knob only cares
+  // where it ends up, not every intermediate value it passed through.
+  { TSDRControlThread }
+  TSDRControlThread = class(TThread)
+  private
+    FOwner: TSDRRFSource;
+    FLock: TCriticalSection;
+    FPendingHz: QWord;
+    FHasPending: Boolean;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(AOwner: TSDRRFSource);
+    destructor Destroy; override;
+    procedure RequestFrequencyHz(Hz: QWord);
+  end;
+
   { TSDRRFSource }
   TSDRRFSource = class(TComponent)
   private
@@ -141,6 +194,10 @@ type
     FPollThread: TSDRPollThread;
     FPollChunkSamples: Integer;
 
+    FControlThread: TSDRControlThread;
+    FLastFrequencyChangeOk: Boolean;
+    FOnFrequencyChanged: TNotifyEvent;
+
     function GetCapabilities: TSDRCapabilities;
     function GetIsOpen: Boolean;
     function GetIsStreaming: Boolean;
@@ -150,6 +207,10 @@ type
     // Called only from FPollThread. Returns True iff a chunk was read
     // and appended to FStreamRing.
     function PollOnce: Boolean;
+    // Called (via TThread.Queue, so on the main thread) once
+    // FControlThread finishes applying a requested frequency - see this
+    // unit's own ASYNC RETUNE header comment.
+    procedure ControlThreadFrequencyApplied;
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
@@ -165,6 +226,15 @@ type
     procedure StopStreaming;
 
     function SetFrequencyHz(Hz: QWord): Boolean;
+    // Asynchronous equivalent of SetFrequencyHz - returns immediately;
+    // see this unit's own ASYNC RETUNE header comment. Safe to call
+    // whether or not currently streaming - while streaming the actual
+    // device call runs on FControlThread; otherwise (no live vendor call
+    // to block on - see each backend's own SetFrequencyHz) it runs
+    // synchronously right here, but either way OnFrequencyChanged fires
+    // exactly once per call once the outcome (LastFrequencyChangeOk) is
+    // known, so callers don't need to special-case which path was taken.
+    procedure RequestFrequencyHz(Hz: QWord);
     function SetGain(StageIndex: Integer; Value: Double): Boolean;
     function SetBoolOption(OptionIndex: Integer; Value: Boolean): Boolean;
 
@@ -188,6 +258,11 @@ type
     property SampleRateHz: Double read GetSampleRateHz;
     property DeviceName: string read GetDeviceName;
     property LastError: string read FLastError;
+    // Outcome of the most recently completed RequestFrequencyHz call -
+    // meaningful once OnFrequencyChanged has fired for it (LastError
+    // holds the reason on False, same as every other method here).
+    property LastFrequencyChangeOk: Boolean read FLastFrequencyChangeOk;
+    property OnFrequencyChanged: TNotifyEvent read FOnFrequencyChanged write FOnFrequencyChanged;
   end;
 
 procedure Register;
@@ -250,6 +325,64 @@ procedure TSDRPollThread.Execute;
 begin
   while not Terminated do
     if not FOwner.PollOnce then Sleep(1);
+end;
+
+{ TSDRControlThread }
+
+constructor TSDRControlThread.Create(AOwner: TSDRRFSource);
+begin
+  inherited Create(False);   // start running immediately
+  FOwner := AOwner;
+  FreeOnTerminate := False;   // TSDRRFSource owns and frees this explicitly
+  FLock := TCriticalSection.Create;
+end;
+
+destructor TSDRControlThread.Destroy;
+begin
+  FLock.Free;
+  inherited Destroy;
+end;
+
+procedure TSDRControlThread.RequestFrequencyHz(Hz: QWord);
+begin
+  FLock.Enter;
+  try
+    FPendingHz := Hz;
+    FHasPending := True;
+  finally
+    FLock.Leave;
+  end;
+end;
+
+procedure TSDRControlThread.Execute;
+var
+  Hz: QWord;
+  Have: Boolean;
+begin
+  while not Terminated do begin
+    FLock.Enter;
+    try
+      Have := FHasPending;
+      Hz := FPendingHz;
+      FHasPending := False;
+    finally
+      FLock.Leave;
+    end;
+
+    if Have and Assigned(FOwner.FDevice) then begin
+      // The potentially slow/blocking vendor call this whole thread
+      // exists to keep off the GUI thread - see this unit's own ASYNC
+      // RETUNE header comment.
+      FOwner.FLastFrequencyChangeOk := FOwner.FDevice.SetFrequencyHz(Hz);
+      if not FOwner.FLastFrequencyChangeOk then FOwner.FLastError := FOwner.FDevice.LastError;
+      // Queue, not Synchronize - this thread must never wait on the GUI
+      // thread's own message-loop responsiveness to make progress
+      // (Synchronize would block Execute until the main thread gets
+      // around to running the callback; Queue posts and moves on).
+      TThread.Queue(nil, @FOwner.ControlThreadFrequencyApplied);
+    end else
+      Sleep(5);
+  end;
 end;
 
 function TSDRRFSource.GetCapabilities: TSDRCapabilities;
@@ -367,10 +500,19 @@ begin
   FPollChunkSamples := Min(Max(Round(SampleRateHz * PollChunkMs / 1000), 256), MaxPollChunkSamples);
 
   FPollThread := TSDRPollThread.Create(Self);
+  FControlThread := TSDRControlThread.Create(Self);
 end;
 
 procedure TSDRRFSource.StopStreaming;
 begin
+  // Stop FControlThread before FPollThread/FDevice.StopRX - any retune
+  // it might currently be mid-call on should finish (or be abandoned via
+  // WaitFor same as FPollThread) before the device itself is torn down.
+  if Assigned(FControlThread) then begin
+    FControlThread.Terminate;
+    FControlThread.WaitFor;
+    FreeAndNil(FControlThread);
+  end;
   if Assigned(FPollThread) then begin
     FPollThread.Terminate;
     FPollThread.WaitFor;
@@ -383,6 +525,27 @@ function TSDRRFSource.SetFrequencyHz(Hz: QWord): Boolean;
 begin
   Result := Assigned(FDevice) and FDevice.SetFrequencyHz(Hz);
   if not Result and Assigned(FDevice) then FLastError := FDevice.LastError;
+end;
+
+procedure TSDRRFSource.RequestFrequencyHz(Hz: QWord);
+begin
+  if Assigned(FControlThread) then
+    FControlThread.RequestFrequencyHz(Hz)
+  else begin
+    // Not streaming - no live vendor call happens here (see each
+    // backend's own SetFrequencyHz), so this is already fast/non-
+    // blocking; apply it synchronously and fire the same completion
+    // event immediately, so callers don't need to know or care which
+    // path was actually taken.
+    FLastFrequencyChangeOk := Assigned(FDevice) and FDevice.SetFrequencyHz(Hz);
+    if not FLastFrequencyChangeOk and Assigned(FDevice) then FLastError := FDevice.LastError;
+    if Assigned(FOnFrequencyChanged) then FOnFrequencyChanged(Self);
+  end;
+end;
+
+procedure TSDRRFSource.ControlThreadFrequencyApplied;
+begin
+  if Assigned(FOnFrequencyChanged) then FOnFrequencyChanged(Self);
 end;
 
 function TSDRRFSource.SetGain(StageIndex: Integer; Value: Double): Boolean;

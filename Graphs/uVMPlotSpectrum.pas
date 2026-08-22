@@ -68,7 +68,29 @@ unit uVMPlotSpectrum;
      both CursorValue and CursorReading, is drawn on top of everything else
      every frame (DrawCursor) - the visual half of "read programmatically":
      the property pair below is for calling code, the on-screen label is for
-     a human looking at the same display.
+     a human looking at the same display. OnCursorChange fires every time
+     CursorValue actually moves - a drag, an arrow key, or a programmatic
+     assignment alike - so calling code (SDR_Radio's uSDRMain.pas) can
+     retune a receiver's own local oscillator live as the cursor is
+     dragged onto a station, without needing to poll CursorValue itself.
+     CursorBandwidth (see that property's own comment) draws a translucent
+     shaded band around the cursor showing the tuned channel's actual
+     occupied bandwidth, independent of the single-frequency cursor line.
+     Besides dragging/arrow keys, the mouse wheel also nudges CursorValue
+     by one CursorStep per notch (DoMouseWheel) - a finer-grained way to
+     tune than a drag, without needing to click/focus the control first
+     (mirroring TVMPlot3D's own wheel-to-zoom, uVMPlot3D.pas).
+
+     BIG FREQUENCY READOUT: a second, fixed-position HUD element -
+     independent of DrawCursor's own label, which follows the cursor's X
+     position and would run off the visible plot area near either edge -
+     shows CursorValue at a literal BigFreqDisplayHeight (50) pixel
+     character height in the upper-right corner, so the currently selected
+     frequency stays readable at a glance regardless of where in the
+     spectrum the cursor itself currently sits. Drawn via DrawTextTextureH,
+     which scales the (variable, font-metric-dependent) native texture size
+     to an exact target pixel height rather than 1:1 like every other
+     DrawTextTexture call in this unit - see that procedure's own comment.
 
      PEAK DETECTION: ShowPeakLabels/PeakThreshold/UpdatePeakLabel/
      DrawPeakMarker are a direct port of TVMPlotStack's own (confirmed
@@ -162,8 +184,11 @@ type
     FAverageCount: Integer;
 
     FCursorValue: Double;
+    FCursorBandwidth: Double;
     FCursorLabelTex: TVMPlotTextTexture;
     FDragging: Boolean;
+    FOnCursorChange: TNotifyEvent;
+    FBigFreqTex: TVMPlotTextTexture;
 
     procedure SetFadeSeconds(AValue: Double);
     procedure SetLowColor(AValue: TColor);
@@ -187,8 +212,11 @@ type
     procedure SetXAxisTitle(const AValue: string);
     procedure SetYAxisTitle(const AValue: string);
     procedure SetCursorValue(AValue: Double);
+    procedure SetCursorBandwidth(AValue: Double);
     function GetCursorReading: Double;
+    function CursorStep: Double;
     procedure UpdateCursorFromPixelX(PixelX: Integer);
+    procedure DrawCursorBand;
     procedure TimerTick(Sender: TObject);
     procedure TrimStack;
     procedure RecomputeBounds;
@@ -204,6 +232,9 @@ type
     procedure BuildTextures;
     procedure DrawTextTexture(const Tex: TVMPlotTextTexture;
       X, Y, AngleDeg, HAlign, VAlign: Double);
+    procedure DrawTextTextureH(const Tex: TVMPlotTextTexture;
+      X, Y, TargetH, HAlign, VAlign: Double);
+    function FormatBigFreqText: string;
   protected
     procedure Paint; override;
     procedure Resize; override;
@@ -213,6 +244,8 @@ type
     procedure MouseUp(Button: TMouseButton; Shift: TShiftState;
       X, Y: Integer); override;
     procedure KeyDown(var Key: Word; Shift: TShiftState); override;
+    function DoMouseWheel(Shift: TShiftState; WheelDelta: Integer;
+      MousePos: TPoint): Boolean; override;
   public
     constructor Create(TheOwner: TComponent); override;
     destructor Destroy; override;
@@ -263,6 +296,17 @@ type
     // See this unit's own CURSOR header comment.
     property CursorValue: Double read FCursorValue write SetCursorValue;
     property CursorReading: Double read GetCursorReading;
+    // Width (in X-axis data units - e.g. MHz when UseFrequencyAxis) of a
+    // translucent dark-blue band drawn centred on CursorValue, spanning
+    // the full Y range - a "this is roughly how much spectrum the tuned
+    // channel actually occupies" indicator (e.g. SDR_Radio sets this to
+    // broadcast FM's own 200kHz channel bandwidth), independent of the
+    // thin single-frequency cursor line itself. 0 (default) draws no
+    // band at all, so existing standalone usage is unaffected.
+    property CursorBandwidth: Double read FCursorBandwidth write SetCursorBandwidth;
+    // Fires whenever CursorValue actually moves - see this unit's own
+    // CURSOR/BIG FREQUENCY READOUT header comments.
+    property OnCursorChange: TNotifyEvent read FOnCursorChange write FOnCursorChange;
     property Title: string read FTitle write SetTitle;
     property XAxisTitle: string read FXAxisTitle write SetXAxisTitle;
     property YAxisTitle: string read FYAxisTitle write SetYAxisTitle;
@@ -289,6 +333,11 @@ const
   NoPeakThreshold = -1.0E300;
 
   DefaultAverageCount = 10;
+
+  // Literal pixel character height of the big frequency HUD readout -
+  // see this unit's own BIG FREQUENCY READOUT header comment.
+  BigFreqDisplayHeight = 50;
+  BigFreqMargin = 8;
 
 function NiceNum(x: Double): Double;
 var
@@ -352,6 +401,7 @@ begin
   FShowAverage := True;
   FAverageCount := DefaultAverageCount;
   FCursorValue := 0.5;
+  FCursorBandwidth := 0;
   FYOffset := 0;
   FYGain := 1;
   FTexturesBuilt := False;
@@ -636,10 +686,43 @@ begin
 end;
 
 procedure TVMPlotSpectrum.SetCursorValue(AValue: Double);
+var
+  OldValue: Double;
 begin
+  OldValue := FCursorValue;
   FCursorValue := EnsureRange(AValue, Min(FPlotXMin, FPlotXMax), Max(FPlotXMin, FPlotXMax));
   InvalidateTextures;
   Invalidate;
+  // Only fires on an actual change - a drag generates one MouseMove (and
+  // so one SetCursorValue call) per pixel, most of which land on the same
+  // already-clamped value; firing OnCursorChange unconditionally would
+  // mean SDR_Radio's uSDRMain.pas retunes FReceiver's mixer (and rewrites
+  // ListenFreqEdit.Value) every such call for no actual change - harmless
+  // but wasteful, so this guards it the same way every other setter in
+  // this unit already guards its own Invalidate.
+  if (FCursorValue <> OldValue) and Assigned(FOnCursorChange) then FOnCursorChange(Self);
+end;
+
+procedure TVMPlotSpectrum.SetCursorBandwidth(AValue: Double);
+begin
+  if FCursorBandwidth = AValue then Exit;
+  FCursorBandwidth := AValue;
+  Invalidate;
+end;
+
+// Shared step size for both the Left/Right arrow-key nudge (KeyDown) and
+// mouse-wheel fine-tuning (DoMouseWheel) - one bin of the frontmost
+// slice's own N, so wheel/arrow-key tuning granularity always matches the
+// actual frequency resolution of whatever's currently displayed (e.g.
+// SDR_Radio: capture bandwidth / EpochSize) rather than an arbitrary
+// fixed step that would be too coarse or too fine depending on the
+// current capture/epoch settings.
+function TVMPlotSpectrum.CursorStep: Double;
+begin
+  if (Length(FSlices) > 0) and (FSlices[0].N > 1) then
+    Result := (FPlotXMax - FPlotXMin) / (FSlices[0].N - 1)
+  else
+    Result := (FPlotXMax - FPlotXMin) * 0.01;
 end;
 
 // Linear interpolation of the frontmost (most recently added) slice's own
@@ -938,6 +1021,33 @@ begin
   end;
 end;
 
+// Translucent dark-blue band spanning [CursorValue-CursorBandwidth/2,
+// CursorValue+CursorBandwidth/2] across the full Y range - see
+// CursorBandwidth's own property comment. Drawn in the data-space pass,
+// before DrawCursor's own opaque line, so the thin single-frequency
+// cursor still reads clearly on top of the wider band. Pass 1 disables
+// GL_BLEND by default (Paint) since every other data-space draw call is
+// fully opaque; this is the one exception, so it enables blending itself
+// rather than requiring Paint to do it globally.
+procedure TVMPlotSpectrum.DrawCursorBand;
+var
+  lo, hi: Double;
+begin
+  if FCursorBandwidth <= 0 then Exit;
+  lo := FCursorValue - FCursorBandwidth / 2;
+  hi := FCursorValue + FCursorBandwidth / 2;
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glColor4f(0.10, 0.16, 0.55, 0.32);
+  glBegin(GL_QUADS);
+    glVertex2d(lo, FYMin);
+    glVertex2d(hi, FYMin);
+    glVertex2d(hi, FYMax);
+    glVertex2d(lo, FYMax);
+  glEnd;
+  glDisable(GL_BLEND);
+end;
+
 // A bright vertical line at CursorValue, spanning the full Y range - drawn
 // in the data-space pass, distinct from the Low/Mid/High data gradient
 // (cyan, which none of the three default gradient stops are close to).
@@ -975,6 +1085,7 @@ begin
   for i := 0 to High(FYTickTex) do FreeTextTexture(FYTickTex[i]);
   for i := 0 to High(FPeakLabelTex) do FreeTextTexture(FPeakLabelTex[i]);
   FreeTextTexture(FCursorLabelTex);
+  FreeTextTexture(FBigFreqTex);
 end;
 
 function TVMPlotSpectrum.CreateTextTexture(const S: string; FontSize: Integer;
@@ -1061,6 +1172,11 @@ begin
     FormatTick(FCursorValue) + '  ' + FormatTick(GetCursorReading),
     10, True, CursorR, CursorG, CursorB);
 
+  // Rendered at a large native font size and then scaled to an exact
+  // BigFreqDisplayHeight pixels by DrawTextTextureH - the font size here
+  // just needs to be "large enough for crisp scaling", not exact.
+  FBigFreqTex := CreateTextTexture(FormatBigFreqText, 32, True, CursorR, CursorG, CursorB);
+
   UpdatePeakLabel;
 end;
 
@@ -1082,6 +1198,45 @@ begin
     glTexCoord2f(0, 0); glVertex2d(x0, y0 + Tex.H);
   glEnd;
   glPopMatrix;
+end;
+
+// Like DrawTextTexture, but scales the texture's own (font-metric-
+// dependent, not otherwise controllable to the pixel) native size to an
+// exact TargetH pixel height, preserving aspect ratio - used only by the
+// big frequency HUD readout (see this unit's own BIG FREQUENCY READOUT
+// header comment), which needs a literal, guaranteed pixel height
+// regardless of platform font rendering differences.
+procedure TVMPlotSpectrum.DrawTextTextureH(const Tex: TVMPlotTextTexture;
+  X, Y, TargetH, HAlign, VAlign: Double);
+var
+  Scale, w0, h0, x0, y0: Double;
+begin
+  if (not Tex.Built) or (Tex.H = 0) then Exit;
+  Scale := TargetH / Tex.H;
+  w0 := Tex.W * Scale;
+  h0 := TargetH;
+  x0 := X - w0 * HAlign;
+  y0 := Y - h0 * VAlign;
+  glBindTexture(GL_TEXTURE_2D, Tex.TexID);
+  glBegin(GL_QUADS);
+    glTexCoord2f(0, 1); glVertex2d(x0, y0);
+    glTexCoord2f(1, 1); glVertex2d(x0 + w0, y0);
+    glTexCoord2f(1, 0); glVertex2d(x0 + w0, y0 + h0);
+    glTexCoord2f(0, 0); glVertex2d(x0, y0 + h0);
+  glEnd;
+end;
+
+// The big HUD readout's own text - MHz-suffixed and 3-decimal-formatted
+// to match ListenFreqEdit's own convention when this is genuinely a
+// frequency axis; falls back to the same FormatTick every tick label
+// already uses otherwise, since this component is also used standalone
+// (Graphs/SpectrumDemo) with no frequency semantics at all.
+function TVMPlotSpectrum.FormatBigFreqText: string;
+begin
+  if FUseFreqAxis then
+    Result := FormatFloat('0.000', FCursorValue) + ' MHz'
+  else
+    Result := FormatTick(FCursorValue);
 end;
 
 procedure TVMPlotSpectrum.Paint;
@@ -1130,6 +1285,7 @@ begin
 
   DrawAverageLine;
   DrawPeakMarker;
+  DrawCursorBand;
   DrawCursor;
 
   // --- pass 2: pixel-space chrome ---
@@ -1181,6 +1337,13 @@ begin
   px := PlotLeft + (FCursorValue - FPlotXMin) / (FPlotXMax - FPlotXMin) * PlotW;
   DrawTextTexture(FCursorLabelTex, px, PlotBottom + PlotH - 4, 0, 0.5, 1);
 
+  // Big HUD frequency readout, fixed in the upper-right corner - see this
+  // unit's own BIG FREQUENCY READOUT header comment for why this is
+  // separate from the cursor label above (which tracks the cursor's own
+  // X position instead of staying put).
+  DrawTextTextureH(FBigFreqTex, W - BigFreqMargin, H - BigFreqMargin,
+    BigFreqDisplayHeight, 1, 1);
+
   glDisable(GL_TEXTURE_2D);
 
   SwapBuffers;
@@ -1220,19 +1383,28 @@ end;
 // see this unit's own CURSOR header comment. Key := 0 marks the key
 // handled, so it isn't also consumed as e.g. dialog/focus navigation.
 procedure TVMPlotSpectrum.KeyDown(var Key: Word; Shift: TShiftState);
-var
-  Step: Double;
 begin
   inherited KeyDown(Key, Shift);
   if (Key = VK_LEFT) or (Key = VK_RIGHT) then begin
-    if (Length(FSlices) > 0) and (FSlices[0].N > 1) then
-      Step := (FPlotXMax - FPlotXMin) / (FSlices[0].N - 1)
-    else
-      Step := (FPlotXMax - FPlotXMin) * 0.01;
-    if Key = VK_LEFT then SetCursorValue(FCursorValue - Step)
-    else SetCursorValue(FCursorValue + Step);
+    if Key = VK_LEFT then SetCursorValue(FCursorValue - CursorStep)
+    else SetCursorValue(FCursorValue + CursorStep);
     Key := 0;
   end;
+end;
+
+// Fine-tunes CursorValue by one CursorStep per wheel notch (120 units in
+// the LCL's own WheelDelta convention, matching TVMPlot3D.DoMouseWheel's
+// same /120 usage, uVMPlot3D.pas) - fires whenever the mouse is over this
+// control, regardless of focus/click state, so scrolling to fine-tune a
+// station doesn't require clicking (and so dragging) first.
+function TVMPlotSpectrum.DoMouseWheel(Shift: TShiftState; WheelDelta: Integer;
+  MousePos: TPoint): Boolean;
+var
+  Notches: Integer;
+begin
+  Notches := Round(WheelDelta / 120);
+  if Notches <> 0 then SetCursorValue(FCursorValue + Notches * CursorStep);
+  Result := True;
 end;
 
 procedure Register;

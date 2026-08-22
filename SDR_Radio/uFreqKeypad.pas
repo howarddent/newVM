@@ -93,6 +93,23 @@ var
 begin
   Frm := TFreqKeypadForm.Create(nil);
   try
+    // Owner is nil above (this form isn't auto-created/owned by the main
+    // form the way IDE-designed forms are), which otherwise leaves it
+    // with no Win32 owner window at all - harmless when nothing else is
+    // actively happening, but with SDR_Radio.exe actively streaming, the
+    // main form's own OpenGL child controls (TVMPlotSpectrum's fade
+    // timer in particular runs unconditionally, ~30Hz, whether or not
+    // anything is even streaming) keep repainting continuously, and an
+    // ownerless modal dialog can end up visually on top but never
+    // actually receiving focus/input at all - confirmed: the reported
+    // symptom was that even Cancel (self-contained; no device/thread
+    // interaction whatsoever) didn't work, which only makes sense if the
+    // dialog window itself wasn't getting the clicks, not that anything
+    // was hung. PopupMode/PopupParent tell the LCL to properly establish
+    // this as a real Win32-owned popup of whichever form is currently
+    // active, fixing the underlying window-ownership gap directly.
+    Frm.PopupParent := Screen.ActiveForm;
+    Frm.PopupMode := pmExplicit;
     Frm.MinHz := MinHz;
     Frm.MaxHz := MaxHz;
     Result := Frm.ShowModal = mrOK;

@@ -100,6 +100,7 @@ type
     FUseGPU, FGPUChecked: Boolean;
     FGPUStatusMessage: string;
     FOnGPUStatusKnown: TNotifyEvent;
+    FOnCursorChange: TNotifyEvent;
     {$IFDEF HAVE_OPENCL}
     FWindowCL: TVMobjCL;
     FWindowEpochSize: Integer;
@@ -152,6 +153,8 @@ type
     function GetSpectrumCursorValue: Double;
     procedure SetSpectrumCursorValue(AValue: Double);
     function GetSpectrumCursorReading: Double;
+    function GetSpectrumCursorBandwidth: Double;
+    procedure SetSpectrumCursorBandwidth(AValue: Double);
     function GetWaterfallTitle: string;
     procedure SetWaterfallTitle(const AValue: string);
     function GetWaterfallScrollRate: Double;
@@ -167,6 +170,7 @@ type
     function GetWaterfallCurrentYMin: Double;
     function GetWaterfallCurrentYMax: Double;
 
+    procedure SpectrumCursorChanged(Sender: TObject);
     procedure UpdateTick(Sender: TObject);
     procedure ProcessEpoch(const IQ: TVMobjC);
     function ProcessEpochCPU(const IQ: TVMobjC): TVMobj;
@@ -195,6 +199,11 @@ type
     // than reading them synchronously right after Active := True, before
     // the first epoch has run.
     property OnGPUStatusKnown: TNotifyEvent read FOnGPUStatusKnown write FOnGPUStatusKnown;
+    // Forwards SpectrumPlot's own OnCursorChange (uVMPlotSpectrum.pas) -
+    // fires whenever SpectrumCursorValue moves (drag, arrow key, or
+    // programmatic), so a host form (uSDRMain.pas) can retune a receiver's
+    // local oscillator live as the cursor is dragged onto a station.
+    property OnCursorChange: TNotifyEvent read FOnCursorChange write FOnCursorChange;
 
     // Shared - forwarded to both SpectrumPlot and WaterfallPlot together.
     property ShowAxes: Boolean read GetShowAxes write SetShowAxes;
@@ -220,6 +229,7 @@ type
     property SpectrumCurrentYMax: Double read GetSpectrumCurrentYMax;
     property SpectrumCursorValue: Double read GetSpectrumCursorValue write SetSpectrumCursorValue;
     property SpectrumCursorReading: Double read GetSpectrumCursorReading;
+    property SpectrumCursorBandwidth: Double read GetSpectrumCursorBandwidth write SetSpectrumCursorBandwidth;
 
     // WaterfallPlot-only.
     property WaterfallTitle: string read GetWaterfallTitle write SetWaterfallTitle;
@@ -248,6 +258,7 @@ begin
   FSpectrumPlot.Title := 'Spectrum';
   FSpectrumPlot.XAxisTitle := 'Frequency (MHz)';
   FSpectrumPlot.YAxisTitle := 'Power (dB)';
+  FSpectrumPlot.OnCursorChange := @SpectrumCursorChanged;
   FSpectrumPlot.ClearStack;   // discard the component's own default demo data
 
   FWaterfallPlot := TVMPlotWaterfall.Create(Self);
@@ -526,6 +537,16 @@ begin
   Result := FSpectrumPlot.CursorReading;
 end;
 
+function TSDRSpectrumAnalyser.GetSpectrumCursorBandwidth: Double;
+begin
+  Result := FSpectrumPlot.CursorBandwidth;
+end;
+
+procedure TSDRSpectrumAnalyser.SetSpectrumCursorBandwidth(AValue: Double);
+begin
+  FSpectrumPlot.CursorBandwidth := AValue;
+end;
+
 function TSDRSpectrumAnalyser.GetWaterfallTitle: string;
 begin
   Result := FWaterfallPlot.Title;
@@ -594,6 +615,11 @@ end;
 function TSDRSpectrumAnalyser.GetWaterfallCurrentYMax: Double;
 begin
   Result := FWaterfallPlot.CurrentYMax;
+end;
+
+procedure TSDRSpectrumAnalyser.SpectrumCursorChanged(Sender: TObject);
+begin
+  if Assigned(FOnCursorChange) then FOnCursorChange(Self);
 end;
 
 procedure TSDRSpectrumAnalyser.UpdateTick(Sender: TObject);
