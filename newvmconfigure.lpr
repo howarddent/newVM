@@ -1,51 +1,47 @@
 program newvmconfigure;
 
-{*******************************************************************************
-
-     Build-time platform/library detector for newVM.
-
-     FPC's {$IFDEF}/{$Linklib} directives are resolved at COMPILE time, but
-     "is libmkl_rt.so actually installed on this machine" is a fact about
-     the BUILD machine, not something the compiler can know on its own.
-     This standalone console program bridges that gap: run it once (before
-     lazbuild) on whatever machine you're about to build newVM* on, and it
-     writes newVMConfig.inc - a plain {$DEFINE ...} include file that
-     newVM.pas (and, as they gain the same fallback treatment, its sibling
-     units) {$I} at the top, gating their {$Linklib} blocks and choosing
-     between MKL/IPP/OpenBLAS-backed and plain-Pascal implementations.
-
-     Detection has two halves:
-       - OS and CPU architecture: free at compile time via FPC's own
-         built-in macros (WINDOWS/LINUX/DARWIN, CPUX86_64/CPUAARCH64/...) -
-         this tool just relays them into PLATFORM_* defines so the
-         generated include file documents what it was generated for.
-       - Library presence: NOT knowable at compile time, so this probes at
-         RUNTIME via LoadLibrary (DynLibs), the exact same "try to dlopen
-         it, see if it works" technique cblas.pas already uses for OpenBLAS
-         (TryInitializeCBLAS/LoadAddresses) and fftw3.pas uses for FFTW -
-         just done once here, ahead of the real build, rather than every
-         time the built program starts.
-
-     This program deliberately has no dependency on cblas.pas/OneAPI.pas/
-     fftw3.pas/newVM*.pas themselves (only SysUtils/DynLibs) - it has to be
-     buildable and runnable on a machine that might have NONE of MKL/IPP/
-     OpenBLAS/FFTW installed, which rules out anything that {$Linklib}s
-     against them.
-
-     Usage:
-       fpc newvmconfigure.lpr          (one-off compile; no MKL/IPP/
-                                         OpenBLAS/FFTW needed to build this
-                                         tool itself)
-       ./newvmconfigure                (writes newVMConfig.inc into the
-                                         current directory - run this from
-                                         the repo root)
-       lazbuild --lazarusdir=<path> newVMtest.lpi   (as before)
-
-     Re-run ./newvmconfigure whenever you build on a different machine, or
-     after installing/removing MKL/IPP/OpenBLAS/FFTW on this one - it is a
-     snapshot of the machine it ran on, not a portability guarantee.
-
-*******************************************************************************}
+// Build-time platform/library detector for newVM.
+//
+// FPC's IFDEF/Linklib directives are resolved at COMPILE time, but
+// "is libmkl_rt.so actually installed on this machine" is a fact about
+// the BUILD machine, not something the compiler can know on its own.
+// This standalone console program bridges that gap: run it once (before
+// lazbuild) on whatever machine you're about to build newVM* on, and it
+// writes newVMConfig.inc - a plain DEFINE ... include file that
+// newVM.pas (and, as they gain the same fallback treatment, its sibling
+// units) includes at the top, gating their Linklib blocks and choosing
+// between MKL/IPP/OpenBLAS-backed and plain-Pascal implementations.
+//
+// Detection has two halves:
+//   - OS and CPU architecture: free at compile time via FPC's own
+//     built-in macros (WINDOWS/LINUX/DARWIN, CPUX86_64/CPUAARCH64/...) -
+//     this tool just relays them into PLATFORM_* defines so the
+//     generated include file documents what it was generated for.
+//   - Library presence: NOT knowable at compile time, so this probes at
+//     RUNTIME via LoadLibrary (DynLibs), the exact same "try to dlopen
+//     it, see if it works" technique cblas.pas already uses for OpenBLAS
+//     (TryInitializeCBLAS/LoadAddresses) and fftw3.pas uses for FFTW -
+//     just done once here, ahead of the real build, rather than every
+//     time the built program starts.
+//
+// This program deliberately has no dependency on cblas.pas/OneAPI.pas/
+// fftw3.pas/newVM*.pas themselves (only SysUtils/DynLibs) - it has to be
+// buildable and runnable on a machine that might have NONE of MKL/IPP/
+// OpenBLAS/FFTW installed, which rules out anything that links
+// against them.
+//
+// Usage:
+//   fpc newvmconfigure.lpr          (one-off compile; no MKL/IPP/
+//                                     OpenBLAS/FFTW needed to build this
+//                                     tool itself)
+//   ./newvmconfigure                (writes newVMConfig.inc into the
+//                                     current directory - run this from
+//                                     the repo root)
+//   lazbuild --lazarusdir=<path> newVMtest.lpi   (as before)
+//
+// Re-run ./newvmconfigure whenever you build on a different machine, or
+// after installing/removing MKL/IPP/OpenBLAS/FFTW on this one - it is a
+// snapshot of the machine it ran on, not a portability guarantee.
 
 {$mode objfpc}{$H+}
 
@@ -70,6 +66,21 @@ const
   // guessing, so HAVE_ARMPL simply never fires on Windows until someone
   // verifies and fills this in.
   ArmPLCandidates: array of string = ();
+  // OpenCL.dll is a normal Windows driver-installed DLL (this machine's
+  // AMD/NVIDIA GPU drivers put it in System32) - bare name only. clFFT.dll
+  // has no such standard install location (there's no official installer
+  // the way SDRplay's API has - see OpenCLAPI.pas's own header comment);
+  // the fallback paths are confirmed-working build/install outputs across
+  // the different machines this project has been built on (a self-built
+  // clFFT.pas tree under user "howard", a vcpkg install under user
+  // "howar") - same "bare name first, then a known location" pattern
+  // uSDRplay.pas/OpenCLAPI.pas already use for their own non-standard DLLs.
+  OpenCLCandidates: array of string = ('OpenCL.dll');
+  clFFTCandidates: array of string = ('clFFT.dll',
+    'C:\Users\howard\clFFT\src\clFFTpas\clFFT.dll',
+    'C:\Users\howar\vcpkg\installed\x64-windows\bin\clFFT.dll');
+  MetalCandidates: array of string = (); // Darwin-only framework
+  MPSGraphCandidates: array of string = (); // Darwin-only framework
 {$ELSE}
   {$IFDEF DARWIN}
 const
@@ -93,6 +104,23 @@ const
   AccelerateCandidates: array of string = ('/System/Library/Frameworks/Accelerate.framework/Accelerate');
   // ArmPL doesn't ship a Darwin build - left empty.
   ArmPLCandidates: array of string = ();
+  // Not verified on a Darwin machine - left empty rather than guessing,
+  // same rationale as ArmPLCandidates on Windows above.
+  OpenCLCandidates: array of string = ();
+  clFFTCandidates: array of string = ();
+  // Metal and MetalPerformanceShadersGraph ship on every Mac (no install
+  // needed, unlike OpenCL/clFFT above - see MetalAPI.pas's own header
+  // comment for why this codebase links these at compile time rather than
+  // dlopen-probing them the way OpenCL.dll/clFFT.dll needed on Windows).
+  // Probed here the same way anyway (dlopen'ing the framework's full binary
+  // path, same as AccelerateCandidates above), purely as a presence check -
+  // this is only ever False on a Darwin machine too old to have these
+  // frameworks at all (Metal: pre-10.11; the MPSGraph FFT ops MetalAPI.pas
+  // uses: pre-14.0). HAVE_METAL itself is further restricted to AArch64
+  // below (Apple Silicon only, matching the machine this was built/verified
+  // on) even though these two frameworks alone don't require it.
+  MetalCandidates: array of string = ('/System/Library/Frameworks/Metal.framework/Metal');
+  MPSGraphCandidates: array of string = ('/System/Library/Frameworks/MetalPerformanceShadersGraph.framework/MetalPerformanceShadersGraph');
   {$ELSE}
 const
   PlatformDefine = 'PLATFORM_LINUX';
@@ -113,6 +141,18 @@ const
   // linker search path, same as every other candidate in this file, and
   // ArmPL's own installer does not add such an entry itself).
   ArmPLCandidates: array of string = ('libarmpl_lp64.so');
+  // Confirmed present on this Linux machine (real OpenCL ICD loader plus
+  // an NVIDIA GPU and an Intel iGPU both exposing OpenCL 3.0, verified via
+  // clinfo) and a manually-built clFFT (libclFFT.so.2, no unversioned
+  // libclFFT.so.0 compatibility symlink) - same bare-name-plus-versioned-
+  // fallback candidates OpenCLAPI.pas's own Unix branch already probes at
+  // runtime (OpenCLLibName/clFFTLibName/clFFTLibFallbackPath), just
+  // mirrored here so newvmconfigure's static probe agrees with what the
+  // unit itself actually finds.
+  OpenCLCandidates: array of string = ('libOpenCL.so.1', 'libOpenCL.so');
+  clFFTCandidates: array of string = ('libclFFT.so.0', 'libclFFT.so.2', 'libclFFT.so');
+  MetalCandidates: array of string = (); // Darwin-only framework
+  MPSGraphCandidates: array of string = (); // Darwin-only framework
   {$ENDIF}
 {$ENDIF}
 
@@ -161,7 +201,8 @@ end;
 var
   OutFile: TextFile;
   HaveMKL, HaveIPPCore, HaveIPPVM, HaveIPPS, HaveIPP, HaveOpenBLAS, HaveFFTWD, HaveFFTWS, HaveFFTW,
-  HaveAccelerate, HaveArmPL, HaveBLAS, HaveLAPACKE: Boolean;
+  HaveAccelerate, HaveArmPL, HaveBLAS, HaveLAPACKE, HaveOpenCLLib, HaveclFFTLib, HaveOpenCL,
+  HaveMetalLib, HaveMPSGraphLib, HaveMetal: Boolean;
   FoundName: string;
 
   procedure Report(const Label_: string; Found: Boolean; const Via: string);
@@ -205,16 +246,41 @@ begin
   Report('FFTW3 (double+single, both)', HaveFFTW,
     Format('double=%s single=%s', [BoolToStr(HaveFFTWD,True), BoolToStr(HaveFFTWS,True)]));
 
+  HaveOpenCLLib := ProbeLibrary(OpenCLCandidates, FoundName);
+  Report('OpenCL', HaveOpenCLLib, FoundName);
+  HaveclFFTLib := ProbeLibrary(clFFTCandidates, FoundName);
+  Report('clFFT', HaveclFFTLib, FoundName);
+  HaveOpenCL := HaveOpenCLLib and HaveclFFTLib;
+  Report('OpenCL+clFFT (both, gates newVMCL.pas/TVMobjCL)', HaveOpenCL,
+    Format('opencl=%s clfft=%s', [BoolToStr(HaveOpenCLLib,True), BoolToStr(HaveclFFTLib,True)]));
+
+  HaveMetalLib := ProbeLibrary(MetalCandidates, FoundName);
+  Report('Metal', HaveMetalLib, FoundName);
+  HaveMPSGraphLib := ProbeLibrary(MPSGraphCandidates, FoundName);
+  Report('MetalPerformanceShadersGraph', HaveMPSGraphLib, FoundName);
+  // Apple Silicon only (see MetalAPI.pas's own header comment) - both
+  // frameworks being present isn't itself an AArch64 signal (Intel Macs
+  // have them too), so HAVE_METAL is explicitly narrowed here rather than
+  // relying on MetalCandidates/MPSGraphCandidates alone.
+  {$IFDEF CPUAARCH64}
+  HaveMetal := HaveMetalLib and HaveMPSGraphLib;
+  {$ELSE}
+  HaveMetal := False;
+  {$ENDIF}
+  Report('Metal+MetalPerformanceShadersGraph on Apple Silicon (both, gates newVMMetal.pas/TVMobjMTL)', HaveMetal,
+    Format('metal=%s mpsgraph=%s aarch64=%s', [BoolToStr(HaveMetalLib,True), BoolToStr(HaveMPSGraphLib,True),
+      {$IFDEF CPUAARCH64}'True'{$ELSE}'False'{$ENDIF}]));
+
   WriteLn;
   WriteLn('Writing newVMConfig.inc ...');
 
-  { NOTE: every generated line below uses '//' line comments, never a
-    '{ ... }' block comment - Pascal block comments aren't nestable, so a
-    literal '{' or '}' anywhere in the prose (e.g. naming the very
-    {$IFDEF PUREPASCAL} directive this file drives) would silently
-    truncate the comment early and feed the rest of the sentence to the
-    compiler as code. '//' comments can't have that problem since they
-    always end at the line break regardless of their content. }
+  // NOTE: every generated line below uses '//' line comments, never a
+  // '{ ... }' block comment - Pascal block comments aren't nestable, so a
+  // literal '{' or '}' anywhere in the prose (e.g. naming the very
+  // IFDEF PUREPASCAL directive this file drives) would silently
+  // truncate the comment early and feed the rest of the sentence to the
+  // compiler as code. '//' comments can't have that problem since they
+  // always end at the line break regardless of their content.
   AssignFile(OutFile, 'newVMConfig.inc');
   Rewrite(OutFile);
   WriteLn(OutFile, '// newVMConfig.inc');
@@ -235,6 +301,8 @@ begin
   if HaveMKL        then WriteLn(OutFile, '{$DEFINE HAVE_MKL}        // libmkl_rt found');
   if HaveIPP        then WriteLn(OutFile, '{$DEFINE HAVE_IPP}        // libippcore+libippvm+libipps all found');
   if HaveFFTW       then WriteLn(OutFile, '{$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found');
+  if HaveOpenCL     then WriteLn(OutFile, '{$DEFINE HAVE_OPENCL}     // OpenCL.dll+clFFT.dll both found - gates newVMCL.pas/TVMobjCL and its test registration');
+  if HaveMetal      then WriteLn(OutFile, '{$DEFINE HAVE_METAL}      // Metal+MetalPerformanceShadersGraph found on Apple Silicon - gates newVMMetal.pas/TVMobjMTL and its test registration');
   WriteLn(OutFile);
   WriteLn(OutFile, '// Derived: true when a LAPACKE_* implementation is available from EITHER');
   WriteLn(OutFile, '// MKL or Arm Performance Libraries (ArmPL exports a standard LAPACKE_* ABI');
@@ -299,4 +367,12 @@ begin
       IfThen(HaveMKL, 'MKL', 'Arm Performance Libraries'), '''s LAPACKE_*, not their PUREPASCAL fallback.')
   else
     WriteLn('HAVE_LAPACKE is inactive - LinearSolve/Invert/Det/Id/EigDecompose will use their PUREPASCAL fallback (no MKL or ArmPL found).');
+  if HaveOpenCL then
+    WriteLn('HAVE_OPENCL is active - newVMCL.pas/TVMobjCL will build and its tests will run.')
+  else
+    WriteLn('HAVE_OPENCL is inactive - newVMCL.pas/TVMobjCL is excluded from the build (OpenCL.dll and/or clFFT.dll not found).');
+  if HaveMetal then
+    WriteLn('HAVE_METAL is active - newVMMetal.pas/TVMobjMTL will build and its tests will run.')
+  else
+    WriteLn('HAVE_METAL is inactive - newVMMetal.pas/TVMobjMTL is excluded from the build (not Apple Silicon, or Metal/MetalPerformanceShadersGraph not found).');
 end.

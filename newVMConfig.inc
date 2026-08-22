@@ -4,7 +4,7 @@
 // machine you are about to build newVM* on - this is a snapshot of THIS
 // machine's installed libraries, not a portability guarantee for any
 // other machine.)
-// Generated: 18-8-26 10:48:39
+// Generated: 22-8-26 15:37:21
 
 {$DEFINE PLATFORM_LINUX}
 {$DEFINE PLATFORM_AARCH64}
@@ -13,6 +13,7 @@
 {$DEFINE HAVE_ARMPL}      // Arm Performance Libraries (libarmpl_lp64) found - cblas.pas prefers this over HAVE_OPENBLAS when both are present
 {$DEFINE HAVE_BLAS}       // derived: HAVE_OPENBLAS or HAVE_ACCELERATE or HAVE_ARMPL
 {$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found
+{$DEFINE HAVE_OPENCL}     // OpenCL.dll+clFFT.dll both found - gates newVMCL.pas/TVMobjCL and its test registration
 
 // Derived: true when a LAPACKE_* implementation is available from EITHER
 // MKL or Arm Performance Libraries (ArmPL exports a standard LAPACKE_* ABI

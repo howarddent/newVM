@@ -25,6 +25,21 @@ unit uWave2DMain;
          "0.05/Position" formula (here: Round(50/Position) milliseconds).
        - btnRun/btnStop/btnReset and the Ready/Running/Halted status
          machine are a direct port of the original's SetStatus.
+       - VSyncCheckBox forwards to TVMPlot3D's own VSync property (see
+         Graphs/uVMPlot3D.pas) - added after this demo was reported to feel
+         less smooth on a Linux dev machine than on Windows/macOS/Raspberry
+         Pi despite Solve() itself measuring well within budget. Neither
+         this component nor Lazarus's own cross-platform SwapBuffers binding
+         ever called the platform's vsync-control extension before VSync
+         existed, so SwapBuffers's blocking behaviour was 100% GL-driver-
+         default; on the Linux machine that turned out to be vsync ON,
+         capping the achievable step rate to the display's own refresh
+         period and - since AnimTimer and Paint share one thread - stalling
+         the NEXT timer tick too, uneven at the faster TrackBar1 settings.
+         Unchecking this swaps to raw/uncapped SwapBuffers (higher frame
+         rate, possible tearing) to test whether that's the actual cause on
+         a given machine, without changing TVMPlot3D's own default
+         (VSync=True, checkbox starts checked to match).
 
      Unlike the original - which used a bespoke GLHeightField height
      callback, a hand-rolled colorizer (uColorizer.pas), hand-placed
@@ -67,6 +82,7 @@ type
     btnStop: TButton;
     btnReset: TButton;
     AnimTimer: TTimer;
+    VSyncCheckBox: TCheckBox;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure btnRunClick(Sender: TObject);
@@ -75,6 +91,7 @@ type
     procedure TrackBar1Change(Sender: TObject);
     procedure RadioGroup1Click(Sender: TObject);
     procedure AnimTimerTimer(Sender: TObject);
+    procedure VSyncCheckBoxChange(Sender: TObject);
   private
     FGrid: TWave2DGrid;
     FPlot: TVMPlot3D;
@@ -229,6 +246,11 @@ procedure TfmMain.LightPadChange(Sender: TObject);
 begin
   FPlot.LightX := FLightPad.LightX;
   FPlot.LightY := FLightPad.LightY;
+end;
+
+procedure TfmMain.VSyncCheckBoxChange(Sender: TObject);
+begin
+  FPlot.VSync := VSyncCheckBox.Checked;
 end;
 
 end.

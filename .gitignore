@@ -13,6 +13,10 @@ newVMbench
 newVMbench.exe
 newVMbench_purepascal
 newVMbench_purepascal.exe
+newVMCLbench
+newVMCLbench.exe
+newVMCLfft8192bench
+newVMCLfft8192bench.exe
 
 # Third-party runtime DLLs that are sometimes copied next to the exe for
 # local testing (see CLAUDE.md's Windows build notes) - not project sources
@@ -48,6 +52,12 @@ demos/Chebyshev/*/[A-Za-z0-9]*
 # are caught by the unscoped *.exe rule below either way.
 Graphs/*/[A-Za-z]*
 !Graphs/*/*.*
+
+# SDR_Radio is its own top-level project directory (one level shallower
+# than demos/<Name>/ or Graphs/<Name>/, so no /*/ here) - same
+# ignore-extensionless-binary/keep-extension pattern as those two.
+SDR_Radio/[A-Za-z]*
+!SDR_Radio/*.*
 
 # Windows demo binaries do have an extension (.exe), so the negations above
 # re-include them - this rule comes after those negations (later patterns

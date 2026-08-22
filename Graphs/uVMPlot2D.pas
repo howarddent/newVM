@@ -78,6 +78,9 @@ uses
   Classes, SysUtils, Math, Graphics, LResources,
   IntfGraphics, FPImage,
   GL, OpenGLContext,
+  {$IFDEF LINUX}
+  GLX,
+  {$ENDIF}
   newVM;
 
 const
@@ -179,6 +182,12 @@ type
     FTexturesBuilt: Boolean;
     FTitleTex, FXAxisTitleTex, FYAxisTitleTex: TVMPlotTextTexture;
     FXTickTex, FYTickTex, FLegendTex: array of TVMPlotTextTexture;
+    FVSync: Boolean;
+    // See TVMPlot3D's own FSwapIntervalApplied comment (uVMPlot3D.pas) -
+    // same idiom, mirrored here.
+    FSwapIntervalApplied: Boolean;
+    procedure SetVSync(AValue: Boolean);
+    procedure ApplySwapInterval;
     procedure SetTitle(const AValue: string);
     procedure SetXAxisTitle(const AValue: string);
     procedure SetYAxisTitle(const AValue: string);
@@ -218,11 +227,33 @@ type
     property XAxisTitle: string read FXAxisTitle write SetXAxisTitle;
     property YAxisTitle: string read FYAxisTitle write SetYAxisTitle;
     property Series: TVMPlotSeriesStyles read FSeriesStyles write SetSeriesStyles;
+    // See TVMPlot3D's own VSync property comment (uVMPlot3D.pas) for the
+    // full investigation - explicitly requests (True, default) or releases
+    // (False) vsync-locked SwapBuffers, rather than leaving it to whatever
+    // the platform's GL driver defaults to. Mirrored here for the same
+    // reason: this component's Paint also ends in an unconditional
+    // SwapBuffers with no swap-interval control of its own.
+    property VSync: Boolean read FVSync write SetVSync default True;
   end;
 
 procedure Register;
 
 implementation
+
+{$IFDEF WINDOWS}
+// See TVMPlot3D's own identical block (uVMPlot3D.pas) for the full
+// rationale - duplicated rather than shared, matching this codebase's
+// general per-unit-self-contained convention (e.g. the four TVMobj* units
+// themselves).
+type
+  TWglSwapIntervalEXT = function(interval: Integer): LongBool; stdcall;
+var
+  WglSwapIntervalEXTProc: TWglSwapIntervalEXT = nil;
+  WglSwapIntervalResolved: Boolean = False;
+
+function wglGetProcAddress(lpszProc: PAnsiChar): Pointer; stdcall;
+  external 'opengl32.dll';
+{$ENDIF}
 
 const
   s = 'TVMPlot2D : ';
@@ -365,6 +396,22 @@ begin
   result := FloatToStrF(v, ffGeneral, 4, 0);
 end;
 
+// See TVMPlot3D's identical function (uVMPlot3D.pas) for the full
+// rationale and the measured BuildTextures cost that motivated it (6-99ms
+// per call on one Linux/GTK2 dev machine) - same fix, mirrored here since
+// this component's SetData/PlotXY unconditionally called InvalidateTextures
+// on every call too, which matters just as much for PlotXY's streaming/
+// point-at-a-time use as it did for TVMPlot3D's animated SetData caller.
+function TicksChanged(const OldT, NewT: TVMPlotDoubleArray): Boolean;
+var
+  i: Integer;
+begin
+  if Length(OldT) <> Length(NewT) then begin Result := True; Exit; end;
+  for i := 0 to High(NewT) do
+    if OldT[i] <> NewT[i] then begin Result := True; Exit; end;
+  Result := False;
+end;
+
 { TVMPlot2D }
 
 constructor TVMPlot2D.Create(TheOwner: TComponent);
@@ -394,6 +441,8 @@ begin
   FSeriesCount := 0;
   FHasData := False;
   FTexturesBuilt := False;
+  FVSync := True;
+  FSwapIntervalApplied := False;
 
   // Default to the same "exp(-0.1x^2).{sin(3x),cos(3x)}" example the
   // Graphs/Plot2D demo builds in its own FormCreate (uplot2dmain.pas), so a
@@ -481,6 +530,38 @@ procedure TVMPlot2D.SetSeriesStyles(AValue: TVMPlotSeriesStyles);
 begin
   FSeriesStyles.Assign(AValue);
   Invalidate;
+end;
+
+procedure TVMPlot2D.SetVSync(AValue: Boolean);
+begin
+  if FVSync = AValue then Exit;
+  FVSync := AValue;
+  FSwapIntervalApplied := False;
+  Invalidate;
+end;
+
+// See TVMPlot3D.ApplySwapInterval's own comment (uVMPlot3D.pas) - identical
+// logic, mirrored here since this component ends its own Paint in an
+// unconditional SwapBuffers too.
+procedure TVMPlot2D.ApplySwapInterval;
+begin
+  if FSwapIntervalApplied then Exit;
+  {$IFDEF LINUX}
+  if Assigned(glXSwapIntervalEXT) and Assigned(glXGetCurrentDisplay) and
+     Assigned(glXGetCurrentDrawable) then
+    glXSwapIntervalEXT(glXGetCurrentDisplay(), glXGetCurrentDrawable(), Ord(FVSync))
+  else if Assigned(glXSwapIntervalMESA) then
+    glXSwapIntervalMESA(Ord(FVSync));
+  {$ENDIF}
+  {$IFDEF WINDOWS}
+  if not WglSwapIntervalResolved then begin
+    Pointer(WglSwapIntervalEXTProc) := wglGetProcAddress('wglSwapIntervalEXT');
+    WglSwapIntervalResolved := True;
+  end;
+  if Assigned(WglSwapIntervalEXTProc) then
+    WglSwapIntervalEXTProc(Ord(FVSync));
+  {$ENDIF}
+  FSwapIntervalApplied := True;
 end;
 
 procedure TVMPlot2D.SetSeriesStyle(Index: Integer; AColor: TColor;
@@ -632,6 +713,9 @@ procedure TVMPlot2D.SetData(const X: TVMobj; const YSeries: array of TVMobj);
 var
   N, i, iser: Integer;
   XVals: TVMPlotSeriesData;
+  // See TVMPlot3D.SetData's identical snapshot/compare (uVMPlot3D.pas) -
+  // same rationale, mirrored here.
+  OldXTicks, OldYTicks: TVMPlotDoubleArray;
 begin
   assert((Length(YSeries) >= 1) and (Length(YSeries) <= VMPlotMaxSeries),
     s + 'SetData : between 1 and ' + IntToStr(VMPlotMaxSeries) + ' Y series required');
@@ -649,10 +733,13 @@ begin
     for i := 0 to N - 1 do FYData[iser][i] := VecAt(YSeries[iser], i);
   end;
 
+  OldXTicks := FXTicks;
+  OldYTicks := FYTicks;
   RecomputeBounds;
 
   FHasData := True;
-  InvalidateTextures;
+  if TicksChanged(OldXTicks, FXTicks) or TicksChanged(OldYTicks, FYTicks) then
+    InvalidateTextures;
   Invalidate;
 end;
 
@@ -677,6 +764,11 @@ end;
 procedure TVMPlot2D.PlotXY(X, Y: Double; PlotLine: Integer);
 var
   n: Integer;
+  // See TVMPlot3D.SetData's identical snapshot/compare (uVMPlot3D.pas) -
+  // matters even more here than for SetData: PlotXY is meant for
+  // high-frequency streaming/interactive callers, exactly the case where
+  // rebuilding every text texture on every single point would hurt most.
+  OldXTicks, OldYTicks: TVMPlotDoubleArray;
 begin
   assert((PlotLine >= 0) and (PlotLine < VMPlotMaxSeries),
     s + 'PlotXY : PlotLine out of range');
@@ -690,10 +782,13 @@ begin
 
   if PlotLine + 1 > FSeriesCount then FSeriesCount := PlotLine + 1;
 
+  OldXTicks := FXTicks;
+  OldYTicks := FYTicks;
   RecomputeBounds;
 
   FHasData := True;
-  InvalidateTextures;
+  if TicksChanged(OldXTicks, FXTicks) or TicksChanged(OldYTicks, FYTicks) then
+    InvalidateTextures;
   Invalidate;
 end;
 
@@ -1111,6 +1206,7 @@ begin
   W := Width;
   H := Height;
   if (W = 0) or (H = 0) then Exit;
+  ApplySwapInterval;
 
   if not FTexturesBuilt then begin
     BuildTextures;

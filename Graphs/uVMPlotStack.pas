@@ -174,11 +174,19 @@ type
     FLastMouseX, FLastMouseY: Integer;
 
     FShowAxes: Boolean;
+    FUseFreqAxis: Boolean;
+    FXAxisMin, FXAxisMax: Double;
     FTitle, FXAxisTitle, FYAxisTitle, FZAxisTitle: string;
     FXTicks, FYTicks, FZTicks: TVMPlotDoubleArray;
     FTexturesBuilt: Boolean;
     FTitleTex, FXAxisTitleTex, FYAxisTitleTex, FZAxisTitleTex: TVMPlotTextTexture;
     FXTickTex, FYTickTex, FZTickTex: array of TVMPlotTextTexture;
+
+    FShowPeakLabels: Boolean;
+    FPeakThreshold: Double;
+    FPeakCount: Integer;                                    // how many of the arrays below are valid, 0..MaxPeakLabels
+    FPeakWX, FPeakWY, FPeakWZ: array of Double;              // world positions of the current peak markers
+    FPeakLabelTex: array of TVMPlotTextTexture;
 
     procedure SetMaxSeries(AValue: Integer);
     procedure SetAnimate(AValue: Boolean);
@@ -186,6 +194,14 @@ type
     procedure SetMidColor(AValue: TColor);
     procedure SetHighColor(AValue: TColor);
     procedure SetShowAxes(AValue: Boolean);
+    procedure SetUseFrequencyAxis(AValue: Boolean);
+    procedure SetXAxisMin(AValue: Double);
+    procedure SetXAxisMax(AValue: Double);
+    function XValueToFrac(v: Double): Double;
+    procedure SetShowPeakLabels(AValue: Boolean);
+    procedure SetPeakThreshold(AValue: Double);
+    procedure UpdatePeakLabel;
+    procedure DrawPeakMarker;
     procedure SetTitle(const AValue: string);
     procedure SetXAxisTitle(const AValue: string);
     procedure SetYAxisTitle(const AValue: string);
@@ -251,6 +267,48 @@ type
     property MidColor: TColor read FMidColor write SetMidColor;
     property HighColor: TColor read FHighColor write SetHighColor;
     property ShowAxes: Boolean read FShowAxes write SetShowAxes;
+    // False (default): the X axis is labelled/positioned purely by point
+    // index, 0..(N-1) of the most recently added slice - the original,
+    // only behaviour this component had. True: XAxisMin/XAxisMax (a real
+    // physical unit range, e.g. frequency in MHz) are used for both the
+    // axis tick VALUES (RecomputeBounds) and where those ticks are placed
+    // along the X axis (XValueToFrac, used by DrawAxisLines/
+    // DrawAxisLabels) - a slice's own point-index-to-world-X placement
+    // (DrawSlice) is unaffected either way, since a real X unit is always
+    // linear in point index (e.g. FFT bin -> frequency), just like index
+    // itself is.
+    property UseFrequencyAxis: Boolean read FUseFreqAxis write SetUseFrequencyAxis;
+    property XAxisMin: Double read FXAxisMin write SetXAxisMin;
+    property XAxisMax: Double read FXAxisMax write SetXAxisMax;
+    // False (default): no peak markers/labels. True: every local maximum
+    // of the front (most recently added) slice at or above PeakThreshold
+    // gets a marker dot (DrawPeakMarker) plus a text label (UpdatePeakLabel,
+    // built fresh on every AddGraph via the same InvalidateTextures/
+    // BuildTextures path every other label already uses) showing its
+    // X-axis value (bin index, or frequency when UseFrequencyAxis) and Y
+    // value together - capped at MaxPeakLabels strongest, and thinned so
+    // no two reported peaks sit within the same real spectral feature
+    // (see UpdatePeakLabel's own comment for both).
+    property ShowPeakLabels: Boolean read FShowPeakLabels write SetShowPeakLabels;
+    // Minimum Y value (same units as the Value axis - e.g. dB, for a
+    // power spectrum) a local maximum must reach to be reported. Only
+    // meaningful in combination with ShowPeakLabels. Defaults far below
+    // any real data (see Create) so out of the box every slice's local
+    // maxima are eligible, subject only to MaxPeakLabels' cap - i.e.
+    // "top N peaks, whatever their level" until raised. Since a
+    // recalibrated absolute number (e.g. real dBm) isn't available in
+    // general, a caller wanting an adaptive cutoff (e.g. "60% up the
+    // currently visible range") should compute it from CurrentYMin/
+    // CurrentYMax below, rather than this component guessing a fixed
+    // absolute default.
+    property PeakThreshold: Double read FPeakThreshold write SetPeakThreshold;
+    // Read-only: the auto-fit Value-axis range currently in effect
+    // (RecomputeBounds - the min/max across every held slice, not just
+    // the front one). Exposed so a caller can derive an adaptive
+    // PeakThreshold (e.g. a percentage slider) without needing to know
+    // this data's real absolute scale up front.
+    property CurrentYMin: Double read FYMin;
+    property CurrentYMax: Double read FYMax;
     property Title: string read FTitle write SetTitle;
     property XAxisTitle: string read FXAxisTitle write SetXAxisTitle;
     property YAxisTitle: string read FYAxisTitle write SetYAxisTitle;
@@ -306,6 +364,22 @@ const
   DefaultMaxSeries = 40;
   DefaultAnimationSpeed = 1.0;
   TimerIntervalMs = 33;   // ~30 Hz
+
+  // Peak detection (UpdatePeakLabel): at most this many labels are drawn
+  // regardless of how many local maxima clear PeakThreshold, so a low
+  // threshold on a noisy signal can't flood the display with labels.
+  // MinPeakSeparationFrac*Slice.N (floored to MinPeakSeparationBins) is
+  // the closest, in bins, two reported peaks are allowed to sit - greedy
+  // non-maximum suppression, strongest candidate first, so one real
+  // spectral feature a few bins wide (window leakage spreads any tone
+  // across more than one bin) is reported once, not once per bin.
+  MaxPeakLabels = 10;
+  MinPeakSeparationFrac = 0.01;
+  MinPeakSeparationBins = 4;
+  // Default PeakThreshold: far below any real Value-axis data, so out of
+  // the box every local maximum is eligible and MaxPeakLabels' cap alone
+  // determines what's shown ("top N peaks, whatever their level").
+  NoPeakThreshold = -1.0E300;
 
 // "Nice" round tick step (1/2/5 x 10^n) closest to x - Heckbert's classic
 // "Nice Numbers for Graph Labels" algorithm. Ported unchanged from
@@ -370,6 +444,12 @@ begin
   SetMidColor(RGBToColor(224, 176, 255));   // mauve
   SetHighColor(RGBToColor(255, 0, 0));      // red
   FShowAxes := True;
+  FUseFreqAxis := False;
+  FXAxisMin := 0;
+  FXAxisMax := 1;
+  FShowPeakLabels := False;
+  FPeakThreshold := NoPeakThreshold;
+  FPeakCount := 0;
   FYaw := DefaultYaw;
   FPitch := DefaultPitch;
   FZoom := DefaultZoom;
@@ -472,6 +552,194 @@ begin
   if FShowAxes = AValue then Exit;
   FShowAxes := AValue;
   Invalidate;
+end;
+
+procedure TVMPlotStack.SetUseFrequencyAxis(AValue: Boolean);
+begin
+  if FUseFreqAxis = AValue then Exit;
+  FUseFreqAxis := AValue;
+  RecomputeBounds;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlotStack.SetXAxisMin(AValue: Double);
+begin
+  if FXAxisMin = AValue then Exit;
+  FXAxisMin := AValue;
+  if FUseFreqAxis then begin
+    RecomputeBounds;
+    InvalidateTextures;
+    Invalidate;
+  end;
+end;
+
+procedure TVMPlotStack.SetXAxisMax(AValue: Double);
+begin
+  if FXAxisMax = AValue then Exit;
+  FXAxisMax := AValue;
+  if FUseFreqAxis then begin
+    RecomputeBounds;
+    InvalidateTextures;
+    Invalidate;
+  end;
+end;
+
+// Single source of truth for "where along the X axis, as a [0,1] fraction,
+// does this value sit" - used by DrawAxisLines/DrawAxisLabels to place tick
+// marks/labels. FUseFreqAxis=False (default) reproduces the original
+// bin-index-only behaviour exactly (v IS the bin index, FFrontN-1 is the
+// last one); FUseFreqAxis=True maps v through XAxisMin..XAxisMax instead -
+// see UseFrequencyAxis's own property comment.
+function TVMPlotStack.XValueToFrac(v: Double): Double;
+begin
+  if FUseFreqAxis then begin
+    if FXAxisMax - FXAxisMin <> 0 then
+      result := (v - FXAxisMin) / (FXAxisMax - FXAxisMin)
+    else
+      result := 0;
+  end else
+    result := v / Max(FFrontN - 1, 1);
+end;
+
+procedure TVMPlotStack.SetShowPeakLabels(AValue: Boolean);
+begin
+  if FShowPeakLabels = AValue then Exit;
+  FShowPeakLabels := AValue;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlotStack.SetPeakThreshold(AValue: Double);
+begin
+  if FPeakThreshold = AValue then Exit;
+  FPeakThreshold := AValue;
+  if FShowPeakLabels then begin
+    InvalidateTextures;
+    Invalidate;
+  end;
+end;
+
+// Searches the front (most recently added, index 0) slice for every
+// local maximum (Y[j] >= both neighbours, or the lone exposed edge value
+// where there's only one neighbour) at or above PeakThreshold, then keeps
+// at most MaxPeakLabels of them: sorted strongest-first, greedily
+// accepting each candidate only if it's at least
+// Max(Slice.N*MinPeakSeparationFrac, MinPeakSeparationBins) bins away
+// from every already-accepted one (classic non-maximum suppression) -
+// without this, Hamming-window leakage spreading one real tone's energy
+// across several adjacent bins would otherwise report that single
+// feature several times over. Records each accepted peak's world
+// position (matching DrawSlice's own per-vertex wx/wy/wz formulas
+// exactly, so DrawPeakMarker's dots overlay the ribbon precisely) and
+// builds its label text (X-axis value - bin index, or frequency when
+// UseFrequencyAxis, same domain the tick labels use - and Y value
+// together). Called only from BuildTextures, same "only touch GL texture
+// state from inside a Paint call, once MakeCurrent has already
+// succeeded" discipline every other *Tex field here follows - so, like
+// the rest of them, this is recomputed fresh on every texture rebuild
+// (i.e. after every AddGraph, via InvalidateTextures) rather than
+// cached, since the front slice - and hence its peaks - changes on every
+// push.
+procedure TVMPlotStack.UpdatePeakLabel;
+const
+  PeakR = 255; PeakG = 255; PeakB = 120;   // pale yellow - distinct from the grey tick/axis labels
+var
+  Slice: TVMPlotStackSlice;
+  CandIdx: array of Integer;
+  CandVal: array of Double;
+  NCand, MinSep, i, j, k: Integer;
+  denom, XValue, TmpVal: Double;
+  TmpIdx: Integer;
+  Accepted: array of Integer;
+  TooClose: Boolean;
+begin
+  FPeakCount := 0;
+  if (not FShowPeakLabels) or (Length(FSlices) = 0) then Exit;
+
+  Slice := FSlices[0];
+  if Slice.N = 0 then Exit;
+
+  // 1. Every local maximum at or above the threshold.
+  SetLength(CandIdx, Slice.N);
+  SetLength(CandVal, Slice.N);
+  NCand := 0;
+  for j := 0 to Slice.N - 1 do begin
+    if Slice.Y[j] < FPeakThreshold then Continue;
+    if (j > 0) and (Slice.Y[j - 1] > Slice.Y[j]) then Continue;
+    if (j < Slice.N - 1) and (Slice.Y[j + 1] > Slice.Y[j]) then Continue;
+    CandIdx[NCand] := j;
+    CandVal[NCand] := Slice.Y[j];
+    Inc(NCand);
+  end;
+
+  // 2. Sort candidates strongest-first (plain insertion sort - NCand is
+  //    bounded by the number of genuine local maxima in one spectrum,
+  //    never by Slice.N itself, so this stays cheap in practice).
+  for i := 1 to NCand - 1 do begin
+    j := i;
+    while (j > 0) and (CandVal[j] > CandVal[j - 1]) do begin
+      TmpVal := CandVal[j]; CandVal[j] := CandVal[j - 1]; CandVal[j - 1] := TmpVal;
+      TmpIdx := CandIdx[j]; CandIdx[j] := CandIdx[j - 1]; CandIdx[j - 1] := TmpIdx;
+      Dec(j);
+    end;
+  end;
+
+  // 3. Greedily accept strongest-first, skipping anything too close to an
+  //    already-accepted peak, until MaxPeakLabels are accepted or
+  //    candidates run out.
+  MinSep := Max(Round(Slice.N * MinPeakSeparationFrac), MinPeakSeparationBins);
+  if Slice.N > 1 then denom := Slice.N - 1 else denom := 1;
+  SetLength(Accepted, 0);
+  SetLength(FPeakWX, MaxPeakLabels);
+  SetLength(FPeakWY, MaxPeakLabels);
+  SetLength(FPeakWZ, MaxPeakLabels);
+  SetLength(FPeakLabelTex, MaxPeakLabels);
+
+  for i := 0 to NCand - 1 do begin
+    if FPeakCount >= MaxPeakLabels then Break;
+
+    TooClose := False;
+    for k := 0 to High(Accepted) do
+      if Abs(CandIdx[i] - Accepted[k]) < MinSep then begin
+        TooClose := True;
+        Break;
+      end;
+    if TooClose then Continue;
+
+    SetLength(Accepted, Length(Accepted) + 1);
+    Accepted[High(Accepted)] := CandIdx[i];
+
+    FPeakWX[FPeakCount] := (CandIdx[i] / denom - 0.5) * WorldWidth;
+    FPeakWY[FPeakCount] := (CandVal[i] / FYScale) * HalfH;
+    FPeakWZ[FPeakCount] := (Slice.Age / FMaxSeries - 0.5) * StackDepth;
+
+    if FUseFreqAxis then
+      XValue := FXAxisMin + (CandIdx[i] / denom) * (FXAxisMax - FXAxisMin)
+    else
+      XValue := CandIdx[i];
+
+    FPeakLabelTex[FPeakCount] := CreateTextTexture(FormatTick(XValue) + '  ' + FormatTick(CandVal[i]),
+      10, True, PeakR, PeakG, PeakB);
+    Inc(FPeakCount);
+  end;
+end;
+
+// Small marker dot at each accepted peak's world position, drawn in the
+// same 3D camera pass as the ribbons themselves (called from Paint right
+// after the slice loop) - independent of FShowAxes, since peak marking is
+// its own feature, not part of the axis gizmo.
+procedure TVMPlotStack.DrawPeakMarker;
+var
+  i: Integer;
+begin
+  if FPeakCount = 0 then Exit;
+  glPointSize(8);
+  glColor3f(1, 1, 1);
+  glBegin(GL_POINTS);
+    for i := 0 to FPeakCount - 1 do
+      glVertex3d(FPeakWX[i], FPeakWY[i], FPeakWZ[i]);
+  glEnd;
 end;
 
 procedure TVMPlotStack.SetTitle(const AValue: string);
@@ -581,7 +849,9 @@ begin
   if FYScale < 1e-9 then FYScale := 1;
 
   FYTicks := ComputeTicks(FYMin, FYMax, 5);
-  if FFrontN > 1 then
+  if FUseFreqAxis then
+    FXTicks := ComputeTicks(FXAxisMin, FXAxisMax, 5)
+  else if FFrontN > 1 then
     FXTicks := ComputeTicks(0, FFrontN - 1, 5)
   else
     FXTicks := ComputeTicks(0, 1, 2);
@@ -816,7 +1086,7 @@ begin
     for i := 0 to High(FYTicks) do
       glVertex3d(-HalfW, (FYTicks[i] / FYScale) * HalfH, -HalfD);
     for i := 0 to High(FXTicks) do
-      glVertex3d((FXTicks[i] / Max(FFrontN - 1, 1) - 0.5) * WorldWidth, 0, -HalfD);
+      glVertex3d((XValueToFrac(FXTicks[i]) - 0.5) * WorldWidth, 0, -HalfD);
     for i := 0 to High(FZTicks) do
       glVertex3d(-HalfW, 0, (FZTicks[i] / FMaxSeries - 0.5) * StackDepth);
   glEnd;
@@ -888,6 +1158,7 @@ begin
   for i := 0 to High(FXTickTex) do FreeTextTexture(FXTickTex[i]);
   for i := 0 to High(FYTickTex) do FreeTextTexture(FYTickTex[i]);
   for i := 0 to High(FZTickTex) do FreeTextTexture(FZTickTex[i]);
+  for i := 0 to High(FPeakLabelTex) do FreeTextTexture(FPeakLabelTex[i]);
 end;
 
 // Renders S once via the LCL font engine into an RGBA GL texture, text
@@ -981,6 +1252,8 @@ begin
   SetLength(FZTickTex, Length(FZTicks));
   for i := 0 to High(FZTicks) do
     FZTickTex[i] := CreateTextTexture(FormatTick(FZTicks[i]), 9, False, LabelR, LabelG, LabelB);
+
+  UpdatePeakLabel;
 end;
 
 procedure TVMPlotStack.DrawTextTexture(const Tex: TVMPlotTextTexture;
@@ -1031,7 +1304,7 @@ begin
       if infront then DrawTextTexture(FYTickTex[i], sx - 8, sy, 0, 1, 0.5);
     end;
     for i := 0 to High(FXTicks) do begin
-      WorldToScreen((FXTicks[i] / Max(FFrontN - 1, 1) - 0.5) * WorldWidth, 0,
+      WorldToScreen((XValueToFrac(FXTicks[i]) - 0.5) * WorldWidth, 0,
         -HalfD, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FXTickTex[i], sx, sy - 8, 0, 0.5, 1);
     end;
@@ -1046,13 +1319,32 @@ begin
       if infront then DrawTextTexture(FXAxisTitleTex, sx, sy - 8, 0, 0.5, 1);
     end;
     if FYAxisTitle <> '' then begin
+      // Rotated 90 degrees (DrawTextTexture's AngleDeg, unused elsewhere
+      // in this unit - every other label stays horizontal) so the label
+      // runs parallel to the vertical Value axis, reading bottom-to-top -
+      // the conventional orientation for a side axis title (read by
+      // tilting your head to the left), rather than sideways-on
+      // horizontal text competing for width with the tick labels next to
+      // it. HAlign/VAlign stay centred (0.5,0.5): DrawTextTexture rotates
+      // the quad about the (already-centred) anchor point, so this
+      // remains centred on the axis either way.
       WorldToScreen(-HalfW * 1.25, 0, -HalfD, VW, VH, sx, sy, infront);
-      if infront then DrawTextTexture(FYAxisTitleTex, sx, sy, 0, 0.5, 0.5);
+      if infront then DrawTextTexture(FYAxisTitleTex, sx, sy, 90, 0.5, 0.5);
     end;
     if FZAxisTitle <> '' then begin
       WorldToScreen(-HalfW, 0, 0, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FZAxisTitleTex, sx - 24, sy, 0, 1, 0.5);
     end;
+  end;
+
+  // Independent of FShowAxes - peak markers/labels are their own
+  // feature, not part of the axis gizmo. Each anchored above its own
+  // marker (VAlign=0, so the label sits entirely above its Y) so the
+  // label text never overlaps DrawPeakMarker's dot at the exact peak
+  // position.
+  for i := 0 to FPeakCount - 1 do begin
+    WorldToScreen(FPeakWX[i], FPeakWY[i], FPeakWZ[i], VW, VH, sx, sy, infront);
+    if infront then DrawTextTexture(FPeakLabelTex[i], sx, sy + 10, 0, 0.5, 0);
   end;
 
   glDisable(GL_TEXTURE_2D);
@@ -1109,6 +1401,11 @@ begin
   // older one's overlapping features.
   for i := High(FSlices) downto 0 do
     DrawSlice(FSlices[i]);
+
+  // Drawn after every ribbon too, same reason as the axis lines below -
+  // with no depth test, an opaque frontmost ribbon would otherwise be
+  // able to paint over the marker.
+  DrawPeakMarker;
 
   // Axis lines/ticks are drawn AFTER every ribbon, not before - the
   // Index (X) axis sits at the same Z as the frontmost (Age=0) slice's
