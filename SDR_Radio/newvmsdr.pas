@@ -8,8 +8,8 @@ unit newVMSDR;
 interface
 
 uses
-  uSDRRFSource, uVMPlotSDRSpectrum, uDSPBlocks, uWaveOutPlayer, uFMReceiver, 
-  LazarusPackageIntf;
+  uSDRRFSource, uVMPlotSDRSpectrum, uDSPBlocks, uWaveOutPlayer, uFMReceiver,
+  uAMReceiver, LazarusPackageIntf;
 
 implementation
 
@@ -18,6 +18,7 @@ begin
   RegisterUnit('uSDRRFSource', @uSDRRFSource.Register);
   RegisterUnit('uVMPlotSDRSpectrum', @uVMPlotSDRSpectrum.Register);
   RegisterUnit('uFMReceiver', @uFMReceiver.Register);
+  RegisterUnit('uAMReceiver', @uAMReceiver.Register);
 end;
 
 initialization

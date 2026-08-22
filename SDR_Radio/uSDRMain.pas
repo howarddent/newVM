@@ -54,24 +54,43 @@ unit uSDRMain;
      YOffset/YGain - FAnalyser.WaterfallPlot's colour mapping is
      unaffected.
 
-     LISTEN (FReceiver, uFMReceiver.pas's TFMBroadcastReceiver): a third
-     component, pointed at the same FRFSource, demonstrating this
-     project's onward-CPU-signal-processing story - it runs a full
-     modular broadcast-FM receive chain (local oscillator/mixer,
-     rational resamplers, FM demodulator, stereo decoder - see
+     LISTEN (FReceiver/FAMReceiver, uFMReceiver.pas's
+     TFMBroadcastReceiver and uAMReceiver.pas's TAMBroadcastReceiver):
+     two mode-specific receiver components, both pointed at the same
+     FRFSource, demonstrating this project's onward-CPU-signal-processing
+     story - each runs a full modular receive chain (local oscillator/
+     mixer, rational resamplers, mode-specific demodulator - see
      uDSPBlocks.pas) on the wideband IQ stream and plays the result
-     through the sound card (uWaveOutPlayer.pas). ListenFreqEdit is
+     through the sound card (uWaveOutPlayer.pas). ModeCombo selects which
+     ONE of the two is ever actually Active at a time (StartSelectedReceiver);
+     TunedFrequencyHz/Volume are pushed to BOTH unconditionally regardless
+     of which is currently listening (harmless on the inactive one - see
+     e.g. TFMBroadcastReceiver.SetTunedFrequencyHz's own comment on why a
+     write with no live chain built is a no-op beyond caching the value),
+     which avoids needing to track "which receiver is current" separately
+     in every frequency/volume-change handler. ListenFreqEdit is
      deliberately a SEPARATE control from FreqEdit: FreqEdit retunes the
      RF front end's own centre frequency (moving what's captured at
-     all), while ListenFreqEdit only moves FReceiver's internal mixer
-     within whatever's already captured - the two can legitimately
+     all), while ListenFreqEdit only moves the active receiver's internal
+     mixer within whatever's already captured - the two can legitimately
      differ (e.g. capture centred at 100.000MHz, 2Msps, listening to a
      station actually sitting at 99.500MHz within that capture), which is
      the whole point of doing the tuning in software rather than by
-     retuning hardware. Like the rest of this form's controls,
-     ListenCheckBox/ListenFreqEdit/VolumeTrackBar are created in code in
-     FormCreate rather than hand-placed in the .lfm, same reasoning as
-     FRFSource/FAnalyser's own header comment above.
+     retuning hardware. BandwidthTrackBar/SynchronousCheckBox are AM-only
+     (uAMReceiver.pas's own TAMBroadcastReceiver.BandwidthHz/Synchronous)
+     and hidden whenever FM is selected (ApplyListenModeVisibility); FM
+     has no equivalent controls, since its own channel bandwidth is fixed
+     by the broadcast-FM standard itself (see TFMBroadcastReceiver's own
+     header comment). Like the rest of this form's controls, all of these
+     are created in code in FormCreate rather than hand-placed in the
+     .lfm, same reasoning as FRFSource/FAnalyser's own header comment
+     above. All of them are Parented to ReceiverGroupBox (a plain
+     TGroupBox, itself Parented to ControlPanel), not ControlPanel
+     directly - keeps every receiver-related control visually grouped
+     under one titled box instead of scattered loose among the spectrum-
+     display controls that fill the rest of the panel; their own
+     SetBounds coordinates are relative to the group box's own client
+     area, not the panel's.
 
 *******************************************************************************}
 
@@ -82,7 +101,8 @@ interface
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Spin,
-  uSDRDevice, uSDRRFSource, uVMPlotSDRSpectrum, uFreqKeypad, uFMReceiver;
+  uSDRDevice, uSDRRFSource, uVMPlotSDRSpectrum, uFreqKeypad, uFMReceiver,
+  uAMReceiver;
 
 type
 
@@ -140,9 +160,16 @@ type
     FRFSource: TSDRRFSource;
     FAnalyser: TSDRSpectrumAnalyser;
     FReceiver: TFMBroadcastReceiver;
+    FAMReceiver: TAMBroadcastReceiver;
     ListenCheckBox: TCheckBox;
+    ModeCombo: TComboBox;
+    ReceiverGroupBox: TGroupBox;
     ListenFreqLabel: TLabel;
     ListenFreqEdit: TFloatSpinEdit;
+    ListenKeypadButton: TButton;
+    BandwidthLabel: TLabel;
+    BandwidthTrackBar: TTrackBar;
+    SynchronousCheckBox: TCheckBox;
     VolumeLabel: TLabel;
     VolumeTrackBar: TTrackBar;
     FFreqRetryTimer: TTimer;
@@ -157,10 +184,18 @@ type
     procedure RFSourceFrequencyChanged(Sender: TObject);
     procedure ApplyFrequencyChangedUI;
     procedure FreqRetryTimerTick(Sender: TObject);
+    function RunFrequencyKeypad(MinHz, MaxHz: Double; out ResultHz: Double): Boolean;
     procedure UpdatePeakThreshold;
     procedure ReportError(const Where: string);
+    procedure ApplyListenModeVisibility;
+    procedure UpdateCursorBandwidth;
+    procedure StartSelectedReceiver;
     procedure ListenCheckBoxChange(Sender: TObject);
+    procedure ModeComboChange(Sender: TObject);
     procedure ListenFreqEditEditingDone(Sender: TObject);
+    procedure ListenKeypadButtonClick(Sender: TObject);
+    procedure BandwidthTrackBarChange(Sender: TObject);
+    procedure SynchronousCheckBoxChange(Sender: TObject);
     procedure VolumeTrackBarChange(Sender: TObject);
   end;
 
@@ -194,10 +229,6 @@ begin
   FAnalyser.EpochSize := StrToIntDef(EpochCombo.Text, DefaultSDREpochSize);
   FAnalyser.OnGPUStatusKnown := @AnalyserGPUStatusKnown;
   FAnalyser.OnCursorChange := @AnalyserCursorChanged;
-  // 0.2 MHz = broadcast FM's own 200kHz channel bandwidth (see
-  // uFMReceiver.pas's DefaultBasebandRateHz) - shows what the tuned
-  // channel actually occupies around the cursor, not just its centre.
-  FAnalyser.SpectrumCursorBandwidth := 0.2;
 
   FAnalyser.WaterfallScrollRate := ScrollRateTrackBar.Position;
   ScrollRateLabel.Caption := Format('Scroll Rate: %d/s', [ScrollRateTrackBar.Position]);
@@ -210,20 +241,51 @@ begin
   FReceiver := TFMBroadcastReceiver.Create(Self);
   FReceiver.Source := FRFSource;
 
+  FAMReceiver := TAMBroadcastReceiver.Create(Self);
+  FAMReceiver.Source := FRFSource;
+
+  // All receiver controls (Listen/Mode/Frequency/Bandwidth/Synchronous/
+  // Volume) live inside their own titled group box rather than loose in
+  // ControlPanel - visually separates "how to receive" from the
+  // spectrum-display controls that fill the rest of the panel. Every
+  // child below is Parented to ReceiverGroupBox, not ControlPanel
+  // directly, so their own SetBounds coordinates are relative to the
+  // group box's client area, not the panel's.
+  // Occupies the full right-hand column of ControlPanel, top to
+  // (nearly) bottom - StatusLabel moved to its own full-width row under
+  // the front-end controls (see the .lfm) specifically to clear this
+  // whole column for the receiver panel, and ShowAxesCheckBox..
+  // ShowAverageCheckBox were compacted to end by x=840 for the same
+  // reason (see the .lfm) - so nothing on the left competes with this
+  // box for space at any height.
+  ReceiverGroupBox := TGroupBox.Create(Self);
+  ReceiverGroupBox.Parent := ControlPanel;
+  ReceiverGroupBox.SetBounds(860, 10, 420, 315);
+  ReceiverGroupBox.Caption := 'Receiver';
+
   ListenCheckBox := TCheckBox.Create(Self);
-  ListenCheckBox.Parent := ControlPanel;
-  ListenCheckBox.SetBounds(880, 168, 100, 19);
-  ListenCheckBox.Caption := 'Listen (FM)';
+  ListenCheckBox.Parent := ReceiverGroupBox;
+  ListenCheckBox.SetBounds(10, 20, 90, 19);
+  ListenCheckBox.Caption := 'Listen';
   ListenCheckBox.OnChange := @ListenCheckBoxChange;
 
+  ModeCombo := TComboBox.Create(Self);
+  ModeCombo.Parent := ReceiverGroupBox;
+  ModeCombo.SetBounds(110, 18, 80, 23);
+  ModeCombo.Style := csDropDownList;
+  ModeCombo.Items.Add('FM');
+  ModeCombo.Items.Add('AM');
+  ModeCombo.ItemIndex := 0;
+  ModeCombo.OnChange := @ModeComboChange;
+
   ListenFreqLabel := TLabel.Create(Self);
-  ListenFreqLabel.Parent := ControlPanel;
-  ListenFreqLabel.SetBounds(880, 194, 110, 15);
-  ListenFreqLabel.Caption := 'Listen Freq (MHz):';
+  ListenFreqLabel.Parent := ReceiverGroupBox;
+  ListenFreqLabel.SetBounds(10, 62, 95, 15);
+  ListenFreqLabel.Caption := 'Freq (MHz):';
 
   ListenFreqEdit := TFloatSpinEdit.Create(Self);
-  ListenFreqEdit.Parent := ControlPanel;
-  ListenFreqEdit.SetBounds(1000, 190, 100, 23);
+  ListenFreqEdit.Parent := ReceiverGroupBox;
+  ListenFreqEdit.SetBounds(110, 58, 100, 23);
   ListenFreqEdit.DecimalPlaces := 3;
   ListenFreqEdit.Increment := 0.1;
   ListenFreqEdit.MinValue := 0;
@@ -231,20 +293,53 @@ begin
   ListenFreqEdit.Value := FreqEdit.Value;
   ListenFreqEdit.OnEditingDone := @ListenFreqEditEditingDone;
 
+  ListenKeypadButton := TButton.Create(Self);
+  ListenKeypadButton.Parent := ReceiverGroupBox;
+  ListenKeypadButton.SetBounds(220, 57, 100, 25);
+  ListenKeypadButton.Caption := 'Keypad...';
+  ListenKeypadButton.OnClick := @ListenKeypadButtonClick;
+
+  // AM-only (ApplyListenModeVisibility hides these whenever FM is
+  // selected) - see this unit's own header comment (LISTEN).
+  BandwidthLabel := TLabel.Create(Self);
+  BandwidthLabel.Parent := ReceiverGroupBox;
+  BandwidthLabel.SetBounds(10, 100, 220, 15);
+
+  BandwidthTrackBar := TTrackBar.Create(Self);
+  BandwidthTrackBar.Parent := ReceiverGroupBox;
+  BandwidthTrackBar.SetBounds(10, 118, 220, 30);
+  // Position/10 = kHz, 0.1kHz steps - same "Position/10.0" convention
+  // YGainTrackBar already uses for its own fractional control.
+  BandwidthTrackBar.Min := Round(MinAMBandwidthHz / 100);
+  BandwidthTrackBar.Max := Round(MaxAMBandwidthHz / 100);
+  BandwidthTrackBar.Position := Round(DefaultAMBandwidthHz / 100);
+  BandwidthTrackBar.Frequency := 10;
+  BandwidthTrackBar.OnChange := @BandwidthTrackBarChange;
+
+  SynchronousCheckBox := TCheckBox.Create(Self);
+  SynchronousCheckBox.Parent := ReceiverGroupBox;
+  SynchronousCheckBox.SetBounds(240, 122, 140, 19);
+  SynchronousCheckBox.Caption := 'Synchronous';
+  SynchronousCheckBox.OnChange := @SynchronousCheckBoxChange;
+
   VolumeLabel := TLabel.Create(Self);
-  VolumeLabel.Parent := ControlPanel;
-  VolumeLabel.SetBounds(880, 224, 150, 15);
+  VolumeLabel.Parent := ReceiverGroupBox;
+  VolumeLabel.SetBounds(10, 160, 150, 15);
   VolumeLabel.Caption := 'Volume: 70%';
 
   VolumeTrackBar := TTrackBar.Create(Self);
-  VolumeTrackBar.Parent := ControlPanel;
-  VolumeTrackBar.SetBounds(880, 240, 200, 30);
+  VolumeTrackBar.Parent := ReceiverGroupBox;
+  VolumeTrackBar.SetBounds(10, 178, 220, 30);
   VolumeTrackBar.Min := 0;
   VolumeTrackBar.Max := 100;
   VolumeTrackBar.Position := 70;
   VolumeTrackBar.Frequency := 10;
   VolumeTrackBar.OnChange := @VolumeTrackBarChange;
   FReceiver.Volume := 0.7;
+  FAMReceiver.Volume := 0.7;
+
+  BandwidthTrackBarChange(Self);   // sets BandwidthLabel's initial text
+  ApplyListenModeVisibility;
 
   StatusLabel.Caption := 'Not connected';
 end;
@@ -253,6 +348,7 @@ procedure TForm1.FormDestroy(Sender: TObject);
 begin
   if Assigned(FAnalyser) then FAnalyser.Active := False;
   if Assigned(FReceiver) then FReceiver.Active := False;
+  if Assigned(FAMReceiver) then FAMReceiver.Active := False;
   FRFSource.Free;   // stops RX and closes the device itself, if still open
 end;
 
@@ -542,6 +638,7 @@ begin
   if FRFSource.IsStreaming then begin
     FAnalyser.Active := False;
     FReceiver.Active := False;
+    FAMReceiver.Active := False;
     ListenCheckBox.Checked := False;
     FRFSource.StopStreaming;
     StartStopButton.Caption := 'Start';
@@ -599,6 +696,7 @@ procedure TForm1.AnalyserCursorChanged(Sender: TObject);
 begin
   ListenFreqEdit.Value := FAnalyser.SpectrumCursorValue;
   FReceiver.TunedFrequencyHz := FAnalyser.SpectrumCursorValue * 1e6;
+  FAMReceiver.TunedFrequencyHz := FAnalyser.SpectrumCursorValue * 1e6;
 end;
 
 // Shared by FreqEditEditingDone and KeypadButtonClick - live retune,
@@ -658,16 +756,9 @@ begin
   CommitFrequencyHz(Round(FreqEdit.Value * 1e6));
 end;
 
-// Opens the popup numeric keypad (uFreqKeypad.pas), clamped to whatever
-// frequency range the connected device actually supports (or
-// unclamped - 0/0 - if none is connected yet, since FreqEdit.MinValue/
-// MaxValue still hold their generic .lfm defaults at that point rather
-// than a real device's range). On a committed entry, keeps FreqEdit's
-// own displayed value in sync before retuning, so the two controls never
-// disagree with each other.
-//
-// FAnalyser.Active is paused for the dialog's duration - confirmed, via
-// direct Win32 message injection into the keypad's own controls
+// Runs the popup numeric keypad (uFreqKeypad.pas) with FAnalyser's own
+// GPU/OpenCL repaint timer paused for the dialog's duration - confirmed,
+// via direct Win32 message injection into the keypad's own controls
 // (bypassing mouse/focus entirely), that its modal loop genuinely stops
 // processing input while streaming - every button, including Cancel and
 // the window's own Close button, silently did nothing - but ONLY while
@@ -686,12 +777,34 @@ end;
 // for the dialog's duration costs nothing and sidesteps whatever the
 // exact mechanism is - confirmed via the same direct-message-injection
 // technique that this actually restores normal, responsive click
-// handling inside the keypad.
+// handling inside the keypad. Shared by both KeypadButtonClick (retunes
+// the RF front end) and ListenKeypadButtonClick (retunes FReceiver's own
+// software local oscillator) - identical dialog, different only in what
+// each caller does with a committed ResultHz.
+function TForm1.RunFrequencyKeypad(MinHz, MaxHz: Double; out ResultHz: Double): Boolean;
+var
+  WasAnalyserActive: Boolean;
+begin
+  WasAnalyserActive := FAnalyser.Active;
+  FAnalyser.Active := False;
+  try
+    Result := ShowFrequencyKeypad(MinHz, MaxHz, ResultHz);
+  finally
+    FAnalyser.Active := WasAnalyserActive;
+  end;
+end;
+
+// Opens the popup numeric keypad, clamped to whatever frequency range the
+// connected device actually supports (or unclamped - 0/0 - if none is
+// connected yet, since FreqEdit.MinValue/MaxValue still hold their
+// generic .lfm defaults at that point rather than a real device's
+// range). On a committed entry, keeps FreqEdit's own displayed value in
+// sync before retuning, so the two controls never disagree with each
+// other.
 procedure TForm1.KeypadButtonClick(Sender: TObject);
 var
   ResultHz: Double;
   MinHz, MaxHz: Double;
-  WasAnalyserActive: Boolean;
 begin
   if FRFSource.IsOpen then begin
     MinHz := FRFSource.Capabilities.MinFreqHz;
@@ -701,15 +814,39 @@ begin
     MaxHz := 0;
   end;
 
-  WasAnalyserActive := FAnalyser.Active;
-  FAnalyser.Active := False;
-  try
-    if ShowFrequencyKeypad(MinHz, MaxHz, ResultHz) then begin
-      FreqEdit.Value := ResultHz / 1e6;
-      CommitFrequencyHz(Round(ResultHz));
-    end;
-  finally
-    FAnalyser.Active := WasAnalyserActive;
+  if RunFrequencyKeypad(MinHz, MaxHz, ResultHz) then begin
+    FreqEdit.Value := ResultHz / 1e6;
+    CommitFrequencyHz(Round(ResultHz));
+  end;
+end;
+
+// Same popup keypad, but for FReceiver's own software local oscillator
+// (ListenFreqEdit) instead of the RF front end's centre frequency - the
+// keypad-entry analogue of ListenFreqEditEditingDone, the same
+// relationship KeypadButtonClick has to FreqEditEditingDone. Clamped to
+// the same device-capability range as the centre-frequency keypad; in
+// principle ListenFreqEdit should stay within the currently-captured
+// bandwidth (CenterFreqHz +- SampleRateHz/2), but as with ListenFreqEdit
+// itself (see this unit's own header comment), enforcing that precisely
+// is left as a soft user responsibility.
+procedure TForm1.ListenKeypadButtonClick(Sender: TObject);
+var
+  ResultHz: Double;
+  MinHz, MaxHz: Double;
+begin
+  if FRFSource.IsOpen then begin
+    MinHz := FRFSource.Capabilities.MinFreqHz;
+    MaxHz := FRFSource.Capabilities.MaxFreqHz;
+  end else begin
+    MinHz := 0;
+    MaxHz := 0;
+  end;
+
+  if RunFrequencyKeypad(MinHz, MaxHz, ResultHz) then begin
+    ListenFreqEdit.Value := ResultHz / 1e6;
+    FReceiver.TunedFrequencyHz := ResultHz;
+    FAMReceiver.TunedFrequencyHz := ResultHz;
+    FAnalyser.SpectrumCursorValue := ResultHz / 1e6;
   end;
 end;
 
@@ -772,34 +909,124 @@ begin
   YGainLabel.Caption := Format('Y Gain: %.1fx', [Gain]);
 end;
 
-// Starts/stops the onward-CPU FM receive chain (see uFMReceiver.pas) -
-// only meaningful once FRFSource is actually streaming, same requirement
-// TFMBroadcastReceiver.SetActive itself enforces (Active silently stays
+// Shows/hides the AM-only controls (BandwidthLabel/BandwidthTrackBar/
+// SynchronousCheckBox) per ModeCombo - see this unit's own header
+// comment (LISTEN) for why FM has no equivalent controls of its own.
+procedure TForm1.ApplyListenModeVisibility;
+var
+  IsAM: Boolean;
+begin
+  IsAM := ModeCombo.Text = 'AM';
+  BandwidthLabel.Visible := IsAM;
+  BandwidthTrackBar.Visible := IsAM;
+  SynchronousCheckBox.Visible := IsAM;
+end;
+
+// Reflects whichever receiver's own channel bandwidth is currently
+// selected as the shaded band drawn around the spectrum cursor (see
+// uVMPlotSpectrum.pas's own CursorBandwidth property comment) - FM's is
+// fixed (broadcast FM's own 200kHz channel spec, uFMReceiver.pas's
+// DefaultBasebandRateHz), AM's tracks BandwidthTrackBar live, doubled -
+// uAMReceiver.pas's own BasebandRateHz = BandwidthHz*2 is the full
+// occupied RF span (both sidebands), not just the audio bandwidth the
+// slider itself is labelled in.
+procedure TForm1.UpdateCursorBandwidth;
+begin
+  if ModeCombo.Text = 'AM' then
+    FAnalyser.SpectrumCursorBandwidth := (BandwidthTrackBar.Position * 100 * 2) / 1e6
+  else
+    FAnalyser.SpectrumCursorBandwidth := 0.2;
+end;
+
+// Activates whichever ONE of FReceiver/FAMReceiver ModeCombo currently
+// selects - called from both ListenCheckBoxChange (turning Listen on)
+// and ModeComboChange (switching mode while already listening). Only
+// ever one of the two is Active at a time; the caller is responsible for
+// having already stopped the other one first (both call sites do).
+procedure TForm1.StartSelectedReceiver;
+begin
+  if ModeCombo.Text = 'AM' then begin
+    // BandwidthTrackBarChange already keeps FAMReceiver.BandwidthHz in
+    // sync live (see that handler's own comment) regardless of when it
+    // was last touched, so no need to push it again here.
+    FAMReceiver.Synchronous := SynchronousCheckBox.Checked;
+    FAMReceiver.Active := True;
+  end else
+    FReceiver.Active := True;
+end;
+
+// Starts/stops the onward-CPU receive chain (uFMReceiver.pas/
+// uAMReceiver.pas, per ModeCombo) - only meaningful once FRFSource is
+// actually streaming, same requirement TFMBroadcastReceiver/
+// TAMBroadcastReceiver's own SetActive enforces (Active silently stays
 // False if Source isn't open yet).
 procedure TForm1.ListenCheckBoxChange(Sender: TObject);
 begin
   FReceiver.TunedFrequencyHz := ListenFreqEdit.Value * 1e6;
+  FAMReceiver.TunedFrequencyHz := ListenFreqEdit.Value * 1e6;
   FAnalyser.SpectrumCursorValue := ListenFreqEdit.Value;
-  FReceiver.Active := ListenCheckBox.Checked;
+  if ListenCheckBox.Checked then
+    StartSelectedReceiver
+  else begin
+    FReceiver.Active := False;
+    FAMReceiver.Active := False;
+  end;
+end;
+
+// Switches which receiver is actually running, live, if Listen is
+// already checked - stop whichever was active, start the newly selected
+// one at the same frequency (both receivers already have the right
+// TunedFrequencyHz cached regardless of which was previously active -
+// see this unit's own header comment, LISTEN).
+procedure TForm1.ModeComboChange(Sender: TObject);
+begin
+  ApplyListenModeVisibility;
+  UpdateCursorBandwidth;
+  if ListenCheckBox.Checked then begin
+    FReceiver.Active := False;
+    FAMReceiver.Active := False;
+    StartSelectedReceiver;
+  end;
 end;
 
 // Live retune - only touches the receive chain's own mixer (see
 // TFMBroadcastReceiver.SetTunedFrequencyHz's own comment for why this is
 // safe to do without interrupting playback), works whether or not
-// FReceiver is currently Active. Also moves the spectrum cursor to match
-// (which harmlessly re-fires AnalyserCursorChanged with the same values -
-// see that handler's own comment), so the two ways of choosing a
-// frequency - typing here, or dragging the cursor - always agree on
+// either receiver is currently Active. Also moves the spectrum cursor to
+// match (which harmlessly re-fires AnalyserCursorChanged with the same
+// values - see that handler's own comment), so the two ways of choosing
+// a frequency - typing here, or dragging the cursor - always agree on
 // where the cursor is drawn.
 procedure TForm1.ListenFreqEditEditingDone(Sender: TObject);
 begin
   FReceiver.TunedFrequencyHz := ListenFreqEdit.Value * 1e6;
+  FAMReceiver.TunedFrequencyHz := ListenFreqEdit.Value * 1e6;
   FAnalyser.SpectrumCursorValue := ListenFreqEdit.Value;
+end;
+
+// AM Bandwidth slider (Position*100 = Hz, 0.1kHz steps) - pushed to
+// FAMReceiver live, whether or not it's currently Active (harmless
+// no-op there beyond caching the value - see
+// TAMBroadcastReceiver.SetBandwidthHz's own comment for why applying it
+// while Active is also safe, just not glitch-free).
+procedure TForm1.BandwidthTrackBarChange(Sender: TObject);
+begin
+  BandwidthLabel.Caption := Format('AM Bandwidth: %.1f kHz', [BandwidthTrackBar.Position / 10.0]);
+  FAMReceiver.BandwidthHz := BandwidthTrackBar.Position * 100;
+  UpdateCursorBandwidth;
+end;
+
+// Safe to change live - see uDSPBlocks.pas's own TAMDemodulator header
+// comment for why toggling this doesn't glitch the audio.
+procedure TForm1.SynchronousCheckBoxChange(Sender: TObject);
+begin
+  FAMReceiver.Synchronous := SynchronousCheckBox.Checked;
 end;
 
 procedure TForm1.VolumeTrackBarChange(Sender: TObject);
 begin
   FReceiver.Volume := VolumeTrackBar.Position / 100.0;
+  FAMReceiver.Volume := VolumeTrackBar.Position / 100.0;
   VolumeLabel.Caption := Format('Volume: %d%%', [VolumeTrackBar.Position]);
 end;
 

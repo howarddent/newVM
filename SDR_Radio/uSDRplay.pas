@@ -101,20 +101,49 @@ unit uSDRplay;
      probe (AGC was explicitly disabled there before Init).
 
      SAMPLE RATE / BANDWIDTH: RSP1A's ADC natively covers roughly 2-10.66
-     Msps with no decimation (decimation, for genuinely lower output
-     rates, isn't implemented here - a known scope limitation, not
-     attempted since it needs its own analog-bandwidth bookkeeping).
-     Capabilities.SampleRates offers a short preset list across that
-     range, matching uRTLSDR.pas's own "short preset list of common
-     values" convention rather than an arbitrary continuous edit.
-     BandwidthForSampleRate below picks the widest sdrplay_api_Bw_MHzT
-     analog filter not exceeding the chosen sample rate (same "round down,
+     Msps with no decimation. Capabilities.SampleRates offers a short
+     preset list across that range, matching uRTLSDR.pas's own "short
+     preset list of common values" convention rather than an arbitrary
+     continuous edit. CurrentBwType picks the widest sdrplay_api_Bw_MHzT
+     analog filter not exceeding the chosen ADC rate (same "round down,
      never exceed" idiom as HackRF's own
      hackrf_compute_baseband_filter_bw_round_down_lt) - RSP1A's available
      filter steps (200/300/600kHz, 1.536/5/6/7/8MHz) are sparser than
      HackRF's, so this sometimes leaves a real gap (e.g. 3Msps rounds down
      to a 1.536MHz filter) - conservative/narrower rather than wrong, and
      documented here rather than silently accepted.
+
+     BELOW 2Msps (DECIMATION): one additional preset, 1.0Msps, is offered
+     below the ADC's own native floor via the API's own decimation stage
+     (sdrplay_api_DecimationT, ctrlParams.decimation - confirmed present
+     and documented in the real, linked sdrplay_api.h/_control.h, v3.15,
+     read directly from "C:\Program Files\SDRplay\API\inc\" on this
+     machine) rather than anything implemented here in software: the ADC
+     itself still runs at 2.0Msps (fsFreq.fsHz unchanged), and
+     decimationFactor=2 has the API's own DSP pipeline halve the rate
+     before any of it ever reaches OnRawData - entirely transparent to
+     the rest of this app (TryReadEpoch/SampleRateHz already report
+     whatever FSampleRateHz says, and nothing downstream cares whether a
+     given rate came from the raw ADC or the API's decimator). Only this
+     one specific case (2.0Msps ADC / factor 2 -> 1.0Msps effective) is
+     implemented - a single, deliberately narrow, tested mapping rather
+     than a general "pick any effective rate, derive ADC rate + factor"
+     function; extend SetSampleRateHz's own decimation branch if a future
+     caller needs a different decimated rate. wideBandSignal is set True:
+     this app's own wideband-capture-plus-software-tune design (see
+     uSDRRFSource.pas's own header comment) means the pre-decimation
+     capture still spans multiple stations across the band, not a single
+     already-narrowband signal, so the decimation filter should use the
+     less aggressive/wider setting the API reserves for that case, not
+     the tighter one meant for an already-narrow input.
+     CurrentBwType's own analog-filter choice, when decimating, is
+     STILL based on the ADC's real 2.0Msps rate, not the 1.0Msps
+     effective one - the analog front-end filter runs before the ADC/
+     decimation entirely, so narrowing it to match the post-decimation
+     rate would needlessly clip the outer part of the very passband the
+     decimation filter is about to correctly downsample; only the
+     digital decimation filter's own passband should track the EFFECTIVE
+     rate, and the API handles that internally.
 
 *******************************************************************************}
 
@@ -453,6 +482,7 @@ const
   sdrplay_api_Update_Tuner_Gr                = LongWord($00008000);
   sdrplay_api_Update_Tuner_Frf               = LongWord($00020000);
   sdrplay_api_Update_Tuner_BwType            = LongWord($00040000);
+  sdrplay_api_Update_Ctrl_Decimation         = LongWord($00800000);
   sdrplay_api_Update_Ctrl_Agc                = LongWord($01000000);
   sdrplay_api_Update_Ext1_None                = LongWord(0);
 
@@ -496,7 +526,7 @@ type
 
     function CallFailed(Err: sdrplay_api_ErrT; const Routine: string): Boolean;
     procedure BuildCapabilities;
-    function CurrentBwType: sdrplay_api_Bw_MHzT;
+    function CurrentBwType(RateHz: Double): sdrplay_api_Bw_MHzT;
   public
     constructor Create;
     destructor Destroy; override;
@@ -594,15 +624,20 @@ begin
   FCapabilities.DeviceName := 'SDRplay RSP1A';
   FCapabilities.MinFreqHz := 1.0e3;
   FCapabilities.MaxFreqHz := 2000.0e6;
-  SetLength(FCapabilities.SampleRates, 8);
-  FCapabilities.SampleRates[0] := 2.0e6;
-  FCapabilities.SampleRates[1] := 3.0e6;
-  FCapabilities.SampleRates[2] := 4.0e6;
-  FCapabilities.SampleRates[3] := 5.0e6;
-  FCapabilities.SampleRates[4] := 6.0e6;
-  FCapabilities.SampleRates[5] := 8.0e6;
-  FCapabilities.SampleRates[6] := 9.0e6;
-  FCapabilities.SampleRates[7] := 10.0e6;
+  // [0] (1.0Msps) is below the ADC's own native floor - reached via the
+  // API's own decimation stage, not a real ADC rate; see this unit's own
+  // header comment (BELOW 2Msps (DECIMATION)) for how SetSampleRateHz
+  // gets there.
+  SetLength(FCapabilities.SampleRates, 9);
+  FCapabilities.SampleRates[0] := 1.0e6;
+  FCapabilities.SampleRates[1] := 2.0e6;
+  FCapabilities.SampleRates[2] := 3.0e6;
+  FCapabilities.SampleRates[3] := 4.0e6;
+  FCapabilities.SampleRates[4] := 5.0e6;
+  FCapabilities.SampleRates[5] := 6.0e6;
+  FCapabilities.SampleRates[6] := 8.0e6;
+  FCapabilities.SampleRates[7] := 9.0e6;
+  FCapabilities.SampleRates[8] := 10.0e6;
   FCapabilities.DefaultSampleRateHz := 2.0e6;
   FCapabilities.DefaultFreqHz := 100000000;
 
@@ -655,14 +690,19 @@ begin
   FCapabilities.GainStages[2].Kind := gkBoolean;
 end;
 
-// Widest analog filter not exceeding the current sample rate - see this
-// unit's header comment (SAMPLE RATE / BANDWIDTH) for the "round down,
-// sometimes leaves a gap" trade-off.
-function TSDRplayDevice.CurrentBwType: sdrplay_api_Bw_MHzT;
+// Widest analog filter not exceeding RateHz - see this unit's header
+// comment (SAMPLE RATE / BANDWIDTH) for the "round down, sometimes
+// leaves a gap" trade-off. RateHz is passed explicitly, not read from
+// FSampleRateHz directly, because the two calling contexts genuinely
+// need different rates: SetSampleRateHz's decimated-rate branch must
+// pass the real ADC rate (2.0Msps) here, not the lower EFFECTIVE rate
+// FSampleRateHz itself ends up holding - see this unit's own header
+// comment (BELOW 2Msps (DECIMATION)) for why.
+function TSDRplayDevice.CurrentBwType(RateHz: Double): sdrplay_api_Bw_MHzT;
 var
   RateKHz: Double;
 begin
-  RateKHz := FSampleRateHz / 1000.0;
+  RateKHz := RateHz / 1000.0;
   if RateKHz >= 8000 then Result := sdrplay_api_BW_8_000
   else if RateKHz >= 7000 then Result := sdrplay_api_BW_7_000
   else if RateKHz >= 6000 then Result := sdrplay_api_BW_6_000
@@ -732,7 +772,7 @@ begin
   // works before calling Init.
   FDevParams^.devParams^.fsFreq.fsHz := FSampleRateHz;
   FDevParams^.rxChannelA^.tunerParams.rfFreq.rfHz := FCenterFreqHz;
-  FDevParams^.rxChannelA^.tunerParams.bwType := CurrentBwType;
+  FDevParams^.rxChannelA^.tunerParams.bwType := CurrentBwType(FSampleRateHz);
   FDevParams^.rxChannelA^.tunerParams.ifType := sdrplay_api_IF_Zero;
   FDevParams^.rxChannelA^.tunerParams.gain.gRdB := 50;
   FDevParams^.rxChannelA^.tunerParams.gain.LNAstate := 0;
@@ -776,20 +816,50 @@ begin
   Result := True;
 end;
 
-// Also updates the matching analog filter (CurrentBwType) in the same
-// Update call when streaming - both reasons are OR-able bitmask flags
-// (see sdrplay_api_ReasonForUpdateT's own comment above).
+// Also updates the matching analog filter (CurrentBwType) and, when the
+// requested rate needs decimation, the decimation control block, in the
+// same Update call when streaming - all three reasons are OR-able
+// bitmask flags (see sdrplay_api_ReasonForUpdateT's own comment above).
+// See this unit's own header comment (BELOW 2Msps (DECIMATION)) for the
+// full rationale on the Hz<2.0e6 branch.
 function TSDRplayDevice.SetSampleRateHz(Hz: Double): Boolean;
+const
+  s = 'TSDRplayDevice.SetSampleRateHz : ';
+var
+  AdcHz: Double;
+  UpdateReason: sdrplay_api_ReasonForUpdateT;
 begin
   Result := False;
   if not FIsOpen then begin FLastError := 'device not open'; Exit; end;
-  FDevParams^.devParams^.fsFreq.fsHz := Hz;
-  FSampleRateHz := Hz;
-  FDevParams^.rxChannelA^.tunerParams.bwType := CurrentBwType;
+
+  UpdateReason := sdrplay_api_Update_Dev_Fs or sdrplay_api_Update_Tuner_BwType;
+  if Hz < 2.0e6 then begin
+    assert(Abs(Hz - 1.0e6) < 1.0, s + 'only the 1.0Msps decimated rate is currently supported below 2.0Msps');
+    AdcHz := 2.0e6;
+    FDevParams^.rxChannelA^.ctrlParams.decimation.enable := 1;
+    FDevParams^.rxChannelA^.ctrlParams.decimation.decimationFactor := Round(AdcHz / Hz);
+    FDevParams^.rxChannelA^.ctrlParams.decimation.wideBandSignal := 1;
+    UpdateReason := UpdateReason or sdrplay_api_Update_Ctrl_Decimation;
+  end else begin
+    AdcHz := Hz;
+    if FDevParams^.rxChannelA^.ctrlParams.decimation.enable <> 0 then begin
+      // Coming back from a previously-decimated rate - explicitly turn
+      // decimation back off rather than leaving it enabled with a
+      // now-stale factor.
+      FDevParams^.rxChannelA^.ctrlParams.decimation.enable := 0;
+      FDevParams^.rxChannelA^.ctrlParams.decimation.decimationFactor := 1;
+      FDevParams^.rxChannelA^.ctrlParams.decimation.wideBandSignal := 0;
+      UpdateReason := UpdateReason or sdrplay_api_Update_Ctrl_Decimation;
+    end;
+  end;
+
+  FDevParams^.devParams^.fsFreq.fsHz := AdcHz;
+  FSampleRateHz := Hz;   // the EFFECTIVE (post-decimation) rate - what TryReadEpoch/SampleRateHz report
+  FDevParams^.rxChannelA^.tunerParams.bwType := CurrentBwType(AdcHz);
   if FStreaming then begin
     if CallFailed(sdrplay_api_Update(FDeviceRec.dev, sdrplay_api_Tuner_A,
-        sdrplay_api_Update_Dev_Fs or sdrplay_api_Update_Tuner_BwType, sdrplay_api_Update_Ext1_None),
-        'sdrplay_api_Update(Fs+BwType)') then Exit;
+        UpdateReason, sdrplay_api_Update_Ext1_None),
+        'sdrplay_api_Update(Fs+BwType+Decimation)') then Exit;
   end;
   Result := True;
 end;

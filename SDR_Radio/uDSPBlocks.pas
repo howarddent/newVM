@@ -34,6 +34,9 @@ unit uDSPBlocks;
        independent L/R audio streams out (still at the multiplex sample
        rate - resampling to a final audio rate is the caller's job, via
        TRationalResamplerS, same as any other stage).
+     - TAMDemodulator: envelope or synchronous (PLL-tracked, coherent) AM
+       detector - complex baseband in, real mono audio out. See that
+       class's own header comment for the two modes' own tradeoffs.
 
      Every stateful block here is a plain class (not a newVM record, and
      not an LCL TComponent) - these are internal processing-chain pieces
@@ -272,6 +275,62 @@ type
     constructor Create(SampleRateHz, TauSeconds: Double);
     destructor Destroy; override;
     procedure Process(const Multiplex: TVMobjS; out L, R: TVMobjS);
+  end;
+
+  // Envelope or synchronous (coherent) AM demodulator: complex baseband
+  // in (already mixed+resampled to the receiver's own channel bandwidth,
+  // same input contract as TFMDemodulator), real mono audio out.
+  //
+  // ENVELOPE mode (Synchronous=False, the classic diode-detector
+  // equivalent): audio[n] = |IQ[n]|, DC-blocked by subtracting a slow
+  // running average (FDCAvg) - |IQ| always carries a large positive DC
+  // offset (the average carrier amplitude) that has to be removed before
+  // it's usable as audio, the same role a capacitor plays after a real
+  // diode detector. Simple and unconditionally stable, but a null in the
+  // CARRIER specifically (selective fading, common on shortwave/MW at
+  // night) distorts the recovered envelope directly, and it gets none of
+  // synchronous detection's extra noise/fading rejection.
+  //
+  // SYNCHRONOUS mode (Synchronous=True): a small 2nd-order PLL
+  // (critically damped, proportional+integral loop filter - the same
+  // standard digital-PLL design used throughout SDR/comms DSP, e.g. GNU
+  // Radio's own control_loop, or Michael Rice's "Digital Communications"
+  // carrier-synchronisation chapter) tracks the carrier's own
+  // instantaneous phase (FPLLPhase/FPLLFreq) directly from the incoming
+  // signal - no separate pilot/reference needed, since full-carrier AM's
+  // own carrier IS the reference. Rotating IQ[n] by -FPLLPhase projects
+  // it onto the carrier's own real axis: the in-phase component is the
+  // coherently-demodulated (signed) envelope, and the (magnitude-
+  // normalised) quadrature component is exactly the phase-detector error
+  // signal a Costas-loop-style PLL needs to steer itself - the classic
+  // "rotate-and-correlate" AM-sync technique (the same family of
+  // technique TFMStereoDecoder's own DSB-SC downmix uses above, just
+  // with a TRACKED rather than regenerated-by-squaring reference, since
+  // AM's carrier - unlike FM's suppressed-carrier stereo subcarrier - is
+  // already present in the signal to lock onto directly). Locking onto
+  // the carrier's true phase/frequency this way - rather than assuming
+  // it sits at exactly 0Hz after mixing, which real-world tuning error
+  // and carrier drift never quite guarantee - keeps the demodulated
+  // audio correct even with a small residual offset, and rejects noise/
+  // fading on the quadrature axis a plain envelope detector can't.
+  //
+  // PLLBandwidthHz (loop bandwidth) is a fixed internal constant, not a
+  // published/caller-facing setting - unlike the receiver's own channel
+  // BandwidthHz (see uAMReceiver.pas), this is purely an implementation
+  // detail of how fast the carrier tracker itself can respond: wide
+  // enough to acquire lock quickly and follow ordinary drift, narrow
+  // enough to average out modulation-induced phase wobble rather than
+  // chasing it (which would distort the recovered audio).
+  { TAMDemodulator }
+  TAMDemodulator = class
+  private
+    FDCAvg: Single;
+    FDCAlpha: Single;
+    FPLLPhase, FPLLFreq: Double;
+    FPLLAlpha, FPLLBeta: Double;
+  public
+    constructor Create(SampleRateHz: Double);
+    function Process(const IQ: TVMobjC; Synchronous: Boolean): TVMobjS;
   end;
 
 implementation
@@ -727,6 +786,74 @@ begin
     FDeEmphasisR := FDeEmphasisR + FDeEmphasisAlpha * ((M - S) - FDeEmphasisR);
     L[0, i] := FDeEmphasisL;
     R[0, i] := FDeEmphasisR;
+  end;
+end;
+
+{ TAMDemodulator }
+
+constructor TAMDemodulator.Create(SampleRateHz: Double);
+const
+  // DC/carrier-average time constant for envelope-mode DC removal - fast
+  // enough to track slow fading, slow enough not to eat into the lowest
+  // audio frequencies (a shorter time constant would start removing
+  // genuine low-frequency modulation, not just the DC carrier term).
+  DCTauSeconds = 0.05;
+  // Synchronous-mode carrier-tracking PLL loop bandwidth/damping - see
+  // this unit's own TAMDemodulator header comment for why these are
+  // fixed internal constants rather than exposed settings. Zeta=0.707
+  // (critically damped) is the standard choice absent a specific reason
+  // to under/over-damp - no overshoot/ringing on a sudden carrier step.
+  PLLBandwidthHz = 30;
+  Zeta = 0.707;
+var
+  Theta, Denom: Double;
+begin
+  inherited Create;
+  FDCAvg := 0;
+  FDCAlpha := 1 - Exp(-1 / (DCTauSeconds * SampleRateHz));
+  FPLLPhase := 0;
+  FPLLFreq := 0;
+  // Standard digital 2nd-order PI loop-filter gain derivation (natural
+  // frequency from the requested loop bandwidth, damping factor Zeta) -
+  // the same closed-form used throughout digital PLL/Costas-loop design.
+  Theta := PLLBandwidthHz / (SampleRateHz * (Zeta + 1 / (4 * Zeta)));
+  Denom := 1 + 2 * Zeta * Theta + Theta * Theta;
+  FPLLAlpha := (4 * Zeta * Theta) / Denom;
+  FPLLBeta := (4 * Theta * Theta) / Denom;
+end;
+
+function TAMDemodulator.Process(const IQ: TVMobjC; Synchronous: Boolean): TVMobjS;
+var
+  N, i: Integer;
+  re, im, rotI, rotQ, mag, phaseError, audio, c, s: Double;
+begin
+  N := IQ.Rows * IQ.Cols;
+  Result := TVMobjS.Create(1, N);
+  for i := 0 to N - 1 do begin
+    re := IQ[0, i].re;
+    im := IQ[0, i].im;
+    if Synchronous then begin
+      // Rotate by -FPLLPhase (multiply by the tracked carrier's own unit
+      // phasor, conjugated) - see this unit's own header comment
+      // ("rotate-and-correlate").
+      c := Cos(FPLLPhase);
+      s := Sin(FPLLPhase);
+      rotI := re * c + im * s;
+      rotQ := im * c - re * s;
+      mag := Sqrt(rotI * rotI + rotQ * rotQ);
+      if mag > 1e-9 then phaseError := rotQ / mag else phaseError := 0;
+      FPLLFreq := FPLLFreq + FPLLBeta * phaseError;
+      FPLLPhase := FPLLPhase + FPLLFreq + FPLLAlpha * phaseError;
+      // Keep phase wrapped - same reason TNCO.Generate wraps its own
+      // FPhase (avoids float precision loss in Cos/Sin over long runs).
+      if FPLLPhase > Pi then FPLLPhase := FPLLPhase - 2 * Pi
+      else if FPLLPhase < -Pi then FPLLPhase := FPLLPhase + 2 * Pi;
+      audio := rotI;   // in-phase component = the coherently-demodulated (signed) envelope
+    end else
+      audio := Sqrt(re * re + im * im);   // envelope detection
+
+    FDCAvg := FDCAvg + FDCAlpha * (audio - FDCAvg);
+    Result[0, i] := audio - FDCAvg;
   end;
 end;
 
