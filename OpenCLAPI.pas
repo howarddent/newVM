@@ -119,6 +119,7 @@ const
   CL_DEVICE_TYPE_ALL = LongWord($FFFFFFFF);
 
   CL_DEVICE_NAME = $102B;
+  CL_DEVICE_MAX_COMPUTE_UNITS = $1002;
   CL_PROGRAM_BUILD_LOG = $1183;
 
   CL_MEM_READ_WRITE   = LongWord(1 shl 0);
@@ -348,8 +349,13 @@ end;
 function InitializeOpenCLContext(out Ctx: cl_context; out Queue: cl_command_queue;
   out Device: cl_device_id; out ErrMsg: string): Boolean;
 var
-  Platform_: cl_platform_id;
-  NumPlatforms, NumDevices: cl_uint;
+  Platforms: array of cl_platform_id;
+  PlatDevices: array of cl_device_id;
+  NumPlatforms, NumDevices, CU: cl_uint;
+  BestCU: cl_uint;
+  BestDevice: cl_device_id;
+  Sz: NativeUInt;
+  p, d : Integer;
   Err: cl_int;
   Status: clfftStatus;
 begin
@@ -368,27 +374,60 @@ begin
     ErrMsg := 'no OpenCL platform found';
     Exit;
   end;
-  if clGetPlatformIDs(1, @Platform_, nil) <> CL_SUCCESS then begin
+  SetLength(Platforms, NumPlatforms);
+  if clGetPlatformIDs(NumPlatforms, @Platforms[0], nil) <> CL_SUCCESS then begin
     ErrMsg := 'clGetPlatformIDs failed';
     Exit;
   end;
 
-  // Prefer a GPU device (the whole point of this unit); fall back to
-  // whatever else the platform offers (e.g. a CPU OpenCL implementation)
-  // rather than failing outright - still correct, just not accelerated.
-  NumDevices := 0;
-  if (clGetDeviceIDs(Platform_, CL_DEVICE_TYPE_GPU, 0, nil, @NumDevices) <> CL_SUCCESS) or (NumDevices = 0) then
-    if clGetDeviceIDs(Platform_, CL_DEVICE_TYPE_ALL, 0, nil, @NumDevices) <> CL_SUCCESS then begin
-      ErrMsg := 'no OpenCL device found on platform';
+  // A machine can expose more than one OpenCL platform at once (e.g. an
+  // Intel iGPU platform alongside a discrete NVIDIA/AMD one) - taking
+  // simply the FIRST platform clGetPlatformIDs happens to report (this
+  // function's original behaviour) silently picked whichever the ICD
+  // loader lists first, which on this project's own dev machine turned
+  // out to be the much weaker integrated Intel UHD Graphics (16 compute
+  // units) instead of the discrete NVIDIA GPU sitting right next to it
+  // (36 compute units) - confirmed via a standalone clGetDeviceInfo probe
+  // before this fix. So: scan every platform's GPU device(s) and keep the
+  // one reporting the highest CL_DEVICE_MAX_COMPUTE_UNITS - a simple,
+  // portable proxy for "biggest/most powerful GPU available" that needs no
+  // vendor-name special-casing and naturally favours a discrete GPU over
+  // an integrated one in the common case. Falls back to CL_DEVICE_TYPE_ALL
+  // on the first platform (this function's original fallback) only if NO
+  // platform exposes a GPU device at all.
+  BestDevice := nil;
+  BestCU := 0;
+  for p := 0 to NumPlatforms-1 do begin
+    NumDevices := 0;
+    if (clGetDeviceIDs(Platforms[p], CL_DEVICE_TYPE_GPU, 0, nil, @NumDevices) <> CL_SUCCESS)
+      or (NumDevices = 0) then Continue;
+    SetLength(PlatDevices, NumDevices);
+    if clGetDeviceIDs(Platforms[p], CL_DEVICE_TYPE_GPU, NumDevices, @PlatDevices[0], nil) <> CL_SUCCESS then Continue;
+    for d := 0 to NumDevices-1 do begin
+      CU := 0;
+      if (clGetDeviceInfo(PlatDevices[d], CL_DEVICE_MAX_COMPUTE_UNITS, SizeOf(CU), @CU, @Sz) = CL_SUCCESS)
+        and ((BestDevice = nil) or (CU > BestCU)) then begin
+        BestDevice := PlatDevices[d];
+        BestCU := CU;
+      end;
+    end;
+  end;
+
+  if BestDevice <> nil then
+    Device := BestDevice
+  else begin
+    // No GPU device found on any platform - fall back to whatever the
+    // first platform offers (e.g. a CPU OpenCL implementation) rather
+    // than failing outright - still correct, just not accelerated.
+    NumDevices := 0;
+    if (clGetDeviceIDs(Platforms[0], CL_DEVICE_TYPE_ALL, 0, nil, @NumDevices) <> CL_SUCCESS) or (NumDevices = 0) then begin
+      ErrMsg := 'no OpenCL device found on any platform';
       Exit;
     end;
-  if NumDevices = 0 then begin
-    ErrMsg := 'no OpenCL device found on platform';
-    Exit;
-  end;
-  if clGetDeviceIDs(Platform_, CL_DEVICE_TYPE_ALL, 1, @Device, nil) <> CL_SUCCESS then begin
-    ErrMsg := 'clGetDeviceIDs failed';
-    Exit;
+    if clGetDeviceIDs(Platforms[0], CL_DEVICE_TYPE_ALL, 1, @Device, nil) <> CL_SUCCESS then begin
+      ErrMsg := 'clGetDeviceIDs failed';
+      Exit;
+    end;
   end;
 
   Err := 0;

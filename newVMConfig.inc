@@ -4,15 +4,17 @@
 // machine you are about to build newVM* on - this is a snapshot of THIS
 // machine's installed libraries, not a portability guarantee for any
 // other machine.)
-// Generated: 21-8-26 21:40:28
+// Generated: 22-8-26 09:48:56
 
-{$DEFINE PLATFORM_DARWIN}
-{$DEFINE PLATFORM_AARCH64}
+{$DEFINE PLATFORM_LINUX}
+{$DEFINE PLATFORM_X86_64}
 
-{$DEFINE HAVE_ACCELERATE} // Apple Accelerate/vecLib found (Darwin only)
+{$DEFINE HAVE_OPENBLAS}   // libopenblas found
 {$DEFINE HAVE_BLAS}       // derived: HAVE_OPENBLAS or HAVE_ACCELERATE or HAVE_ARMPL
+{$DEFINE HAVE_MKL}        // libmkl_rt found
+{$DEFINE HAVE_IPP}        // libippcore+libippvm+libipps all found
 {$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found
-{$DEFINE HAVE_METAL}      // Metal+MetalPerformanceShadersGraph found on Apple Silicon - gates newVMMetal.pas/TVMobjMTL and its test registration
+{$DEFINE HAVE_OPENCL}     // OpenCL.dll+clFFT.dll both found - gates newVMCL.pas/TVMobjCL and its test registration
 
 // Derived: true when a LAPACKE_* implementation is available from EITHER
 // MKL or Arm Performance Libraries (ArmPL exports a standard LAPACKE_* ABI
@@ -24,7 +26,7 @@
 // dependent routines (Sin/Cos/etc, fillRandom, linspace/AddScalar/FlipLR/etc)
 // stay on their PUREPASCAL fallback, since ArmPL provides no equivalent for
 // those under matching names.
-// {$DEFINE HAVE_LAPACKE} left undefined: no LAPACKE_* implementation found
+{$DEFINE HAVE_LAPACKE}
 
 // Derived: set whenever any of the three libraries the "core" linear algebra
 // (MatMult/Invert/LinearSolve/Det/operators/elementwise math/EigDecompose/etc)
@@ -35,7 +37,7 @@
 // fallback for DCT/DST/FFT (r2rTransform and friends, and FFT_R2C/FFT_C2R/
 // FFT/IFFT in the complex units) instead, independent of this define - see
 // HAVE_FFTW's own line above.
-{$DEFINE PUREPASCAL}
+// {$DEFINE PUREPASCAL} left undefined: all three backends found
 
 // Finer-grained sibling of PUREPASCAL above, for the subset of newVM.pas's
 // routines (MatMult/Kron/Diag/Norm/FlipUD/MergeUD/MergeLR/Reshape/Repmat, the

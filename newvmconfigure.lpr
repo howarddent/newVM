@@ -141,10 +141,16 @@ const
   // linker search path, same as every other candidate in this file, and
   // ArmPL's own installer does not add such an entry itself).
   ArmPLCandidates: array of string = ('libarmpl_lp64.so');
-  // Not verified on a Linux machine - left empty rather than guessing,
-  // same rationale as ArmPLCandidates on Windows above.
-  OpenCLCandidates: array of string = ();
-  clFFTCandidates: array of string = ();
+  // Confirmed present on this Linux machine (real OpenCL ICD loader plus
+  // an NVIDIA GPU and an Intel iGPU both exposing OpenCL 3.0, verified via
+  // clinfo) and a manually-built clFFT (libclFFT.so.2, no unversioned
+  // libclFFT.so.0 compatibility symlink) - same bare-name-plus-versioned-
+  // fallback candidates OpenCLAPI.pas's own Unix branch already probes at
+  // runtime (OpenCLLibName/clFFTLibName/clFFTLibFallbackPath), just
+  // mirrored here so newvmconfigure's static probe agrees with what the
+  // unit itself actually finds.
+  OpenCLCandidates: array of string = ('libOpenCL.so.1', 'libOpenCL.so');
+  clFFTCandidates: array of string = ('libclFFT.so.0', 'libclFFT.so.2', 'libclFFT.so');
   MetalCandidates: array of string = (); // Darwin-only framework
   MPSGraphCandidates: array of string = (); // Darwin-only framework
   {$ENDIF}

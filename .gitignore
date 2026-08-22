@@ -13,6 +13,10 @@ newVMbench
 newVMbench.exe
 newVMbench_purepascal
 newVMbench_purepascal.exe
+newVMCLbench
+newVMCLbench.exe
+newVMCLfft8192bench
+newVMCLfft8192bench.exe
 
 # Third-party runtime DLLs that are sometimes copied next to the exe for
 # local testing (see CLAUDE.md's Windows build notes) - not project sources

@@ -1,0 +1,55 @@
+{\rtf1\ansi\ansicpg1252\deff0\nouicompat
+{\fonttbl{\f0\fswiss\fcharset0 Calibri;}{\f1\fmodern\fcharset0 Courier New;}}
+{\colortbl;\red0\green0\red0;}
+\viewkind4\uc1\margl720\margr720\margt1440\margb1440
+\pard\sa200\sl276\slmult1\f0\fs32\b newVM FFT First-Call vs Steady-State Benchmark (N=8192)\b0\fs22\par
+\fs24\b Follow-up to perf/newVMCLperformance.rtf: isolating first-call setup cost from steady-state transform cost\b0\par
+\b Host: newVMComplexSingle.pas (FFTW3)  vs  GPU: newVMCL.pas (clFFT), single complex FFT/IFFT, N=8192, Linux / x86_64\b0\par
+\fs22\par
+
+\b Machine:\b0  Intel(R) Core(TM) i7-14650HX (hybrid: 8 P-cores/16 threads + 8 E-cores/8 threads = 24 logical CPUs), 31 GiB RAM\par
+\b OS:\b0  Ubuntu 24.04.4 LTS, kernel 7.0.0-30-generic\par
+\b GPU:\b0  NVIDIA GeForce RTX 5070 Laptop GPU, 8151 MiB VRAM, driver 595.84, OpenCL 3.0 (CUDA 13.2.87), 36 compute units - same device perf/newVMCLperformance.rtf's platform-selection fix directed {\f1 newVMCL.pas}\f0  to use\par
+\b Compiler flags:\b0  fpc -Fu. -Fi. newVMCLfft8192bench.lpr (plain fpc build, default optimisation, assertions off)\par
+\fs22\par
+
+\pard\sa200\sl276\slmult1\f0\fs24\b Motivation:\b0  perf/newVMCLperformance.rtf's FFT/IFFT table showed GPU forward-FFT flat at roughly 190-380ms across every N from 1024 to 16384 - not scaling with size the way a real transform should - and attributed this to newVMCL.pas creating and destroying a fresh clFFT plan on every call, with the actual JIT kernel-compile cost suspected (but not confirmed) to dominate. That report only ever called FFT/IFFT ONCE per N, so it could not separate a one-time setup cost from a genuine per-call cost. This follow-up narrows to a single size (N=8192, the middle of that report's range) and measures each side's very FIRST FFT/IFFT call separately from the average (plus min/max) of 100 REPEAT calls that follow, via a new standalone program, newVMCLfft8192bench.lpr - see that file's own header comment for the full protocol. No newVM library code changed for this follow-up (only the new benchmark program was added); perf/newVMCLperformance.rtf's 292-test suite verification still applies unchanged.\par
+\fs22\par
+
+\pard\page
+
+\pard\sa200\sl276\slmult1\f0\fs26\b Results\b0\fs22\par
+\pard\sa0\sl240\slmult1\f1\fs20
+Metric                   First(ms)    Avg100(ms)   Min(ms)   Max(ms)\par
+Host FFT                     0.954        0.0734    0.0700    0.1660\par
+Host IFFT                    0.286        0.0723    0.0710    0.0900\par
+GPU FFT (warm cache)         5.766        1.3731    1.0000    4.7210\par
+GPU IFFT (warm cache)        1.285        1.0413    0.9960    1.3340\par
+GPU FFT (cold cache)       271.869        1.3350    1.0050    4.5600\par
+GPU IFFT (cold cache)        4.500        1.3762    1.0000    4.5590\par
+\pard\sa100\sl240\slmult1\f0\fs16 (RoundTripResidual, all four runs: Host 1.563E-005, GPU 1.694E-005 - both correct; see Notes)\par
+\pard\sa200\sl276\slmult1\f0\fs22
+\b "warm cache" vs "cold cache":\b0  NVIDIA's OpenCL/CUDA driver persists JIT-compiled kernel binaries to an on-disk cache ({\f1 ~/.nv/ComputeCache}\f0 , keyed by kernel source + device, independent of and outliving any single process) - so a program's own "first" GPU call is only genuinely cold if nothing has compiled that exact kernel on this machine before. This machine's cache already held N=8192's clFFT kernels from perf/newVMCLperformance.rtf's earlier run today, so a plain first-run measurement ("warm cache" row above) understates true cold-start cost. To measure the real thing, the cold-cache row was produced by rerunning {\f1 newVMCLfft8192bench}\f0  with {\f1 CUDA_CACHE_PATH}\f0  pointed at a freshly-created empty directory (an environment-variable override, not a deletion of the real cache) - forcing a genuine from-scratch compile.\par
+\fs22\par
+
+\pard\page
+
+\pard\sa200\sl276\slmult1\f0\fs26\b What this confirms\b0\fs22\par
+\pard\sa200\sl276\slmult1\f0\fs22
+1) \b The first-call cost is real, one-time, and almost entirely forward-transform JIT compilation - not a per-call cost, and not evenly split between directions.\b0  Cold GPU-FFT first call: 271.9ms. Cold GPU-IFFT first call (immediately after, same process, same N): only 4.5ms - a ~60x difference between directions on a machine where NEITHER has ever compiled this N before. So the earlier report's "IFFT is fast right after a slow FFT" observation was NOT primarily a caching artifact of calling FFT first, as that report's own hedged explanation guessed - clFFT's backward-transform kernel for this configuration is intrinsically far cheaper to JIT-compile than the forward one on this GPU/driver. That asymmetry is now a confirmed, direct finding rather than a guess from an indirect pattern.\par
+2) \b The 271.9ms cold-compile figure lines up almost exactly with perf/newVMCLperformance.rtf's own N=8192 GPU-FFT number (271.11ms)\b0  - strong corroborating evidence that every per-N row in that report's table was, in effect, a cold first-ever-compile measurement for that N (that report only ever called each N once), not a stable "steady-state GPU FFT cost" as a casual reading might have suggested.\par
+3) \b Once compiled - whether within the same process (the repeat-100 loop) or from an earlier process via the disk cache (the "warm cache" first-call row) - GPU FFT/IFFT settle to a stable, fast steady state:\b0  roughly 1.0-1.4ms per call at N=8192 (with an occasional ~4.5-4.7ms outlier in both min/max columns, itself consistent with an occasional background driver/scheduling hiccup rather than a repeat compile - it appears once per 100 calls, not on a fixed subset). {\f1 newVMCL.pas}\f0  creating and destroying a plan OBJECT on every call (as newVMCL.pas's source genuinely does) does not, in practice, force a recompile every time - the underlying compiled binary is reused by the driver across plan objects, processes, and even (via the disk cache) across separate runs of the whole program.\par
+4) \b Host (FFTW3) is faster at every stage, and the gap does not close even at steady state.\b0  Host repeat-average FFT (0.0734ms) is roughly 18x faster than GPU repeat-average FFT (1.335-1.373ms) at this single size; IFFT similarly ~14x. This is an expected, not a bug: a single 8192-point complex FFT is a small amount of work (kernel-launch/queue-dispatch overhead alone plausibly explains most of the GPU's ~1ms floor), and GPUs win on this kind of operation through either much larger transforms or batching many transforms together, neither of which this benchmark (or perf/newVMCLperformance.rtf's) exercises - {\f1 newVMCL.pas}\f0  has no batched-transform entry point today.\par
+\fs22\par
+
+\pard\sa200\sl276\slmult1\f0\fs22\b Notes:\b0\par
+RoundTripResidual = {\f1 ||IFFT(FFT(x))-x||}\f0  (Frobenius/L2 norm), computed once from each side's first call; both sides land at ~1.6-1.7E-005, consistent with single-precision summation error at N=8192 and matching perf/newVMCLperformance.rtf's own N=8192 round-trip figures almost exactly (1.6E-005 host / 1.7E-005 GPU there too) - both builds compute the correct answer throughout this follow-up as well. Avg100/Min/Max are over 100 repeat calls following the first (i.e. 101 total calls per direction per condition); First(ms) is the timing of call number 1, reported separately rather than folded into the average, per this report's own purpose.\par
+Cold-cache methodology: {\f1 CUDA_CACHE_PATH}\f0  is an NVIDIA driver environment variable redirecting where compiled-kernel binaries are cached on disk; pointing it at an empty, newly-created directory for one run - rather than clearing the user's real {\f1 ~/.nv/ComputeCache}\f0  - gives a genuinely cold compile without disturbing this machine's normal cache state for any other program. The directory was freshly created immediately before that run and not reused afterwards.\par
+\fs22\par
+
+\pard\page
+
+\pard\sa200\sl276\slmult1\f0\fs26\b Summary\b0\fs22\par
+\pard\sa200\sl276\slmult1\f0\fs22
+This follow-up confirms the hypothesis behind it: perf/newVMCLperformance.rtf's flat, non-scaling ~190-380ms GPU-FFT figures were indeed first-call setup cost, not per-call plan-creation overhead or per-call data-copy cost as such - specifically, clFFT's own forward-transform JIT compilation for that (N, device) pair, which the NVIDIA driver then caches to disk and reuses across every later call and every later process, this benchmark included. Backward-transform (IFFT) JIT compilation is far cheaper (~4.5ms even cold, vs forward's ~272ms) - a genuine, confirmed asymmetry in clFFT/the driver for this configuration, not a benchmark artifact. Once past that one-time cost, GPU FFT/IFFT at N=8192 run at a stable ~1.0-1.4ms per call - but that steady-state number is still roughly 14-18x slower than host FFTW3 at this single size, since a lone 8192-point transform is too small an amount of work to amortise GPU dispatch overhead against; the earlier report's broader conclusion (that {\f1 newVMCL.pas}\f0 's FFT path needs plan caching, and more generally batching, to be worth using for this codebase's real SDR use case, per {\f1 newVMCL.pas}\f0 's own header comment) stands and is now on firmer, directly-measured ground rather than an untested guess.\par
+}
