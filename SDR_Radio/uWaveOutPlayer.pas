@@ -353,6 +353,9 @@ const
   s = 'TWaveOutPlayer.Open : ';
 var
   Handle: Pointer;
+  Silence: array of SmallInt;
+  SilenceFrames, Sent: Integer;
+  Written: clong;
 begin
   assert(not FOpen, s + 'already open');
 
@@ -399,6 +402,39 @@ begin
   // underrun (queue drains to empty) and overflow (queue fills, forcing
   // the NONBLOCK-drop path below) - see QueueStereo's own comment.
   FLatencyTargetFrames := Round(SampleRateHz * 0.5);
+
+  // Pre-fill the ring with FLatencyTargetFrames of silence right away,
+  // rather than leaving QueueStereo's drift compensation to climb there
+  // organically over many calls - that climb is capped at MaxAdjustFrames
+  // per call (QueueStereo's own comment), so starting from a genuinely
+  // empty ring took several real seconds at the epoch rates this project
+  // runs at, audible as a several-second "warbles, then settles" startup
+  // transient even once uFMReceiver.pas's real-time deficit that
+  // motivated drift compensation in the first place was otherwise fully
+  // closed (see that unit's own header comment, "WHY TWO THREADS") - the
+  // compensation mechanism was still doing real, necessary work every
+  // single call for the first several seconds of every session, just to
+  // reach the target level it should have started at. A single upfront
+  // silent write reaches FLatencyTargetFrames instantly, so the very
+  // first real QueueStereo call already starts near-target with nothing
+  // left to compensate. Best-effort: if the ring can't accept the full
+  // amount in one NONBLOCK pass (unlikely - it's completely empty at this
+  // point), whatever didn't get written just means QueueStereo's own
+  // compensation has a smaller, harmless gap left to close instead of the
+  // original multi-second one.
+  SilenceFrames := FLatencyTargetFrames;
+  SetLength(Silence, SilenceFrames * 2);   // interleaved L/R, zero-filled by SetLength
+  Sent := 0;
+  while Sent < SilenceFrames do begin
+    Written := snd_pcm_writei(FPCMHandle, @Silence[Sent * 2], culong(SilenceFrames - Sent));
+    if Written <= 0 then begin
+      if (Written < 0) and (Written <> -ALSA_EAGAIN) then
+        snd_pcm_recover(FPCMHandle, cint(Written), 1);
+      Break;
+    end;
+    Inc(Sent, Written);
+  end;
+
   FOpen := True;
 end;
 
