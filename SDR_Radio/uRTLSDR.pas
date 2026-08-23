@@ -8,23 +8,37 @@ unit uRTLSDR;
      with a Rafael Micro R820T tuner).
 
      WHY DLOPEN INSTEAD OF LINK-TIME EXTERNAL:
-     Same rationale as uHackRF.pas/fftw3.pas - librtlsdr2 is installed as
-     a plain runtime package (librtlsdr.so.2), no -dev package, no
-     unversioned symlink. LoadLibrary/GetProcedureAddress against the
-     exact versioned name, resolved once in this unit's initialization
+     Same rationale as uHackRF.pas/fftw3.pas - on Linux, librtlsdr2 is
+     installed as a plain runtime package (librtlsdr.so.2), no -dev
+     package, no unversioned symlink. LoadLibrary/GetProcedureAddress
+     against a per-platform candidate name list (RTLSDRLibCandidates,
+     same "bare name first, then known absolute locations" pattern
+     uHackRF.pas uses), resolved once in this unit's initialization
      section, tolerant of the library being absent.
+
+     macOS: confirmed via a standalone probe against the physically
+     attached dongle, after installing MacPorts' rtl-sdr port (`sudo port
+     install rtl-sdr`) - that port puts librtlsdr.dylib under
+     /opt/local/lib, which is NOT on dyld's default search path (a bare
+     'librtlsdr.dylib' LoadLibrary call fails even with the file right
+     there), same gotcha and fix as uHackRF.pas/libhackrf.dylib.
+     Homebrew's own default prefixes are included too as a reasonable
+     fallback, not verified on this machine (MacPorts, not Homebrew, is
+     what's actually installed here).
 
      Every bound function signature, the callback ABI, and the
      unsigned-8-bit sample format below were confirmed against the real,
-     linked librtlsdr.so.2 and the physically attached dongle with a
+     linked librtlsdr and the physically attached dongle with a
      standalone throwaway probe program (opened the device, printed its
-     name/tuner type/gain list, streamed ~4MB via rtlsdr_read_async,
+     name/tuner type/gain list, streamed 2MB via rtlsdr_read_async,
      confirmed rtlsdr_cancel_async unblocks it cleanly) BEFORE being
-     wired in here - same discipline uHackRF.pas's own probe used. The
-     probe found: "Generic RTL2832U OEM", tuner type 5 (R820T), a
-     29-entry gain list from 0 to 496 (tenths of dB, i.e. 0-49.6dB), and
-     confirmed samples arrive as interleaved unsigned bytes centred
-     around ~127 (not signed, unlike HackRF).
+     wired in here - same discipline uHackRF.pas's own probe used, run
+     once on Linux originally and again standalone on macOS to confirm
+     the dylib-loading fix above. The probe found: "Generic RTL2832U
+     OEM", tuner type 5 (R820T), a 29-entry gain list from 0 to 496
+     (tenths of dB, i.e. 0-49.6dB), and confirmed samples arrive as
+     interleaved unsigned bytes centred around ~127 (not signed, unlike
+     HackRF).
 
      THREADING - THE KEY DIFFERENCE FROM uHackRF.pas:
      hackrf_start_rx spawns its own libusb thread internally and returns
@@ -59,11 +73,30 @@ uses
 
 const
   {$IFDEF WINDOWS}
-  RTLSDRLib = 'rtlsdr.dll';   // by convention, matching this repo's other
+  RTLSDRLibCandidates: array[0..0] of string = ('rtlsdr.dll');
+                               // by convention, matching this repo's other
                                // runtime-bound libraries - not tested on
                                // Windows, no RTL-SDR hardware available there
   {$ELSE}
-  RTLSDRLib = 'librtlsdr.so.2';
+    {$IFDEF DARWIN}
+  // MacPorts' rtl-sdr port (confirmed via this exact install, a real
+  // RTL2838 dongle) puts librtlsdr.dylib under /opt/local/lib, which is
+  // NOT on dyld's default search path - a bare 'librtlsdr.dylib'
+  // LoadLibrary call fails even with the file right there, same gotcha
+  // uHackRF.pas already hit and worked around for libhackrf.dylib - see
+  // that unit's own comment. Homebrew's own default prefixes are
+  // included too as a reasonable fallback, not verified on this machine
+  // (MacPorts, not Homebrew, is what's actually installed here).
+  RTLSDRLibCandidates: array[0..4] of string = (
+    'librtlsdr.dylib',
+    '/opt/local/lib/librtlsdr.dylib',
+    '/opt/local/lib/librtlsdr.0.dylib',
+    '/opt/homebrew/lib/librtlsdr.dylib',
+    '/usr/local/lib/librtlsdr.dylib'
+  );
+    {$ELSE}
+  RTLSDRLibCandidates: array[0..0] of string = ('librtlsdr.so.2');
+    {$ENDIF}
   {$ENDIF}
 
   // Ring buffer capacity - RTL-SDR's max practical sample rate (~3.2Msps,
@@ -190,10 +223,26 @@ begin
   Pointer(rtlsdr_set_bias_tee)     := Load('rtlsdr_set_bias_tee');
 end;
 
+function RTLSDRLibCandidateList: string;
+var
+  i: Integer;
+begin
+  Result := '';
+  for i := Low(RTLSDRLibCandidates) to High(RTLSDRLibCandidates) do begin
+    if i > Low(RTLSDRLibCandidates) then Result := Result + ', ';
+    Result := Result + RTLSDRLibCandidates[i];
+  end;
+end;
+
 function InitializeRTLSDRLib: Boolean;
+var
+  i: Integer;
 begin
   if RTLSDRHandle = NilHandle then begin
-    RTLSDRHandle := LoadLibrary(RTLSDRLib);
+    for i := Low(RTLSDRLibCandidates) to High(RTLSDRLibCandidates) do begin
+      RTLSDRHandle := LoadLibrary(RTLSDRLibCandidates[i]);
+      if RTLSDRHandle <> NilHandle then Break;
+    end;
     if RTLSDRHandle <> NilHandle then LoadRTLSDRAddresses;
   end;
   Result := RTLSDRHandle <> NilHandle;
@@ -356,7 +405,7 @@ begin
   if FIsOpen then begin Result := True; Exit; end;
 
   if not RTLSDRLibLoaded then begin
-    FLastError := 'librtlsdr runtime library (' + RTLSDRLib + ') not found';
+    FLastError := 'librtlsdr runtime library (' + RTLSDRLibCandidateList + ') not found';
     Exit;
   end;
 

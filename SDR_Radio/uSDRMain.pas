@@ -511,6 +511,25 @@ begin
   ListenFreqEdit.MaxValue := Caps.MaxFreqHz / 1e6;
   ListenFreqEdit.Value := Caps.DefaultFreqHz / 1e6;
 
+  // RateCombo's real items are only ever known here, post-Connect - but
+  // on macOS (Cocoa widgetset, NSPopUpButton), a csDropDownList TComboBox
+  // auto-fits its native control's width to content ONLY at first Show;
+  // Items.Clear/.Add calls made afterward (i.e. always, for this combo)
+  // never re-trigger that fit, leaving it stuck at its empty-at-creation
+  // width forever - confirmed with an isolated throwaway LCL test: a
+  // combo populated before first Show renders '10.667' in full, while an
+  // identical one left empty until after Show and populated "late" (this
+  // combo's own lifecycle) renders it clipped to '1' - reproducing the
+  // exact symptom reported ("only shows one digit" above ~10Msps). Fixed
+  // by giving RateCombo.Items.Strings a same-length placeholder in
+  // uSDRMain.lfm ('10.667' - the widest realistic value across every
+  // backend's SampleRates, e.g. RSP1A's 2-10.667Msps range) so the
+  // native control auto-fits to a wide-enough size at that first Show,
+  // which then persists through this Clear/Add regardless of platform -
+  // same "pre-seed before first Show" idiom EpochCombo already gets for
+  // free by having its own Items.Strings fully populated in the .lfm from
+  // the start. Windows/GTK weren't observed to have this bug, but the
+  // placeholder is harmless there either way.
   RateCombo.Items.Clear;
   for i := 0 to High(Caps.SampleRates) do
     RateCombo.Items.Add(FormatFloat('0.###', Caps.SampleRates[i] / 1e6));

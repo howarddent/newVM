@@ -157,14 +157,39 @@ uses
 
 const
   {$IFDEF WINDOWS}
-  SDRplayLib = 'sdrplay_api.dll';
+  SDRplayLibCandidates: array[0..0] of string = ('sdrplay_api.dll');
   // Confirmed present at this exact path by the official SDRplay API
   // installer on this machine - see this unit's header comment for why
   // the bare name above (tried first) doesn't resolve on its own.
   SDRplayLibFallbackPath = 'C:\Program Files\SDRplay\API\x64\sdrplay_api.dll';
   {$ELSE}
-  SDRplayLib = 'libsdrplay_api.so.3';
+    {$IFDEF DARWIN}
+  // The OFFICIAL SDRplay API installer (from sdrplay.com/api - NOT the
+  // SDRconnect end-user app, which statically links its own private
+  // client code and exposes no shared library at all) puts a genuine fat
+  // x86_64+arm64 libsdrplay_api.so.3.15 under
+  // /Library/SDRplayAPI/<version>/lib, and symlinks a versionless
+  // libsdrplay_api.dylib into /usr/local/lib - confirmed via `lipo -info`
+  // on this machine (Apple Silicon). /usr/local/lib IS on dyld's default
+  // fallback search path (unlike uHackRF.pas/uRTLSDR.pas's /opt/local/lib
+  // MacPorts installs), so the bare name alone is expected to resolve,
+  // but the full path is included as a fallback in case a future install
+  // changes that. A stale MacPorts `SDRplay3` port (x86_64-only, v3.07.1)
+  // may also be present on a machine that tried that route first - its
+  // library lives under /opt/local/lib and is NOT arm64-compatible, so it
+  // is deliberately NOT in this candidate list; its conflicting
+  // sdrplay_apiService LaunchDaemon must also be unloaded/disabled
+  // (`sudo launchctl bootout system/org.macports.sdrplay_service`) so it
+  // doesn't fight the official service over the USB device.
+  SDRplayLibCandidates: array[0..1] of string = (
+    'libsdrplay_api.dylib',
+    '/usr/local/lib/libsdrplay_api.dylib'
+  );
+  SDRplayLibFallbackPath = '';
+    {$ELSE}
+  SDRplayLibCandidates: array[0..0] of string = ('libsdrplay_api.so.3');
   SDRplayLibFallbackPath = '';   // no Linux machine available to confirm an install path
+    {$ENDIF}
   {$ENDIF}
 
   SDRPLAY_MAX_DEVICES = 16;
@@ -574,14 +599,28 @@ begin
   Pointer(sdrplay_api_Update)          := Load('sdrplay_api_Update');
 end;
 
+function SDRplayLibCandidateList: string;
+var
+  i: Integer;
+begin
+  Result := '';
+  for i := Low(SDRplayLibCandidates) to High(SDRplayLibCandidates) do begin
+    if i > Low(SDRplayLibCandidates) then Result := Result + ', ';
+    Result := Result + SDRplayLibCandidates[i];
+  end;
+end;
+
 function InitializeSDRplayLib: Boolean;
+var
+  i: Integer;
 begin
   if SDRplayHandle = NilHandle then begin
-    SDRplayHandle := LoadLibrary(SDRplayLib);
-    {$IFDEF WINDOWS}
+    for i := Low(SDRplayLibCandidates) to High(SDRplayLibCandidates) do begin
+      SDRplayHandle := LoadLibrary(SDRplayLibCandidates[i]);
+      if SDRplayHandle <> NilHandle then Break;
+    end;
     if (SDRplayHandle = NilHandle) and (SDRplayLibFallbackPath <> '') then
       SDRplayHandle := LoadLibrary(SDRplayLibFallbackPath);
-    {$ENDIF}
     if SDRplayHandle <> NilHandle then LoadSDRplayAddresses;
   end;
   Result := SDRplayHandle <> NilHandle;
@@ -723,7 +762,7 @@ begin
   if FIsOpen then begin Result := True; Exit; end;
 
   if not SDRplayLibLoaded then begin
-    FLastError := 'SDRplay API runtime library (' + SDRplayLib + ') not found';
+    FLastError := 'SDRplay API runtime library (' + SDRplayLibCandidateList + ') not found';
     Exit;
   end;
 
