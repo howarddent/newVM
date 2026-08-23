@@ -9,13 +9,28 @@ program SDR_Radio;
      uSDRMain.pas for the full per-epoch pipeline and uHackRF.pas for the
      libhackrf binding/ring-buffer this reads IQ data from.
 
+     cthreads IS NEEDED ON DARWIN TOO, not just "the rest of Unix" - this
+     app creates real TThread instances the moment streaming starts
+     (TSDRRFSource's own TSDRPollThread/TSDRControlThread, plus
+     uFMReceiver.pas/uAMReceiver.pas's DSP threads once Listen is enabled),
+     and without a thread driver linked in, the FIRST TThread.Create on any
+     platform aborts immediately with "Runtime error 232: no thread
+     support compiled in." Confirmed by reproducing exactly the crash
+     pressing Start caused ("crashes as soon as I press start, exit code
+     232") with a standalone harness that mirrored the previous
+     {$IFDEF UNIX AND NOT DARWIN} guard - the guard's implicit assumption
+     (Darwin's Cocoa widgetset already provides thread support, so cthreads
+     would be redundant there) does not hold for this app's own direct
+     TThread usage; removing the DARWIN exclusion fixed it immediately,
+     confirmed with the exact same harness re-run clean for 10s.
+
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
 {$I ../newVMConfig.inc}
 
 uses
-  {$IF defined(UNIX) and not defined(DARWIN)}
+  {$IFDEF UNIX}
   cthreads,
   {$ENDIF}
   Interfaces, // this includes the LCL widgetset

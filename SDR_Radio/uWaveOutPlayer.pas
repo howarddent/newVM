@@ -375,7 +375,38 @@ function AudioQueueStart(inAQ: AudioQueueRef; inStartTime: Pointer): OSStatus; c
 function AudioQueueStop(inAQ: AudioQueueRef; inImmediate: Boolean): OSStatus; cdecl; external name 'AudioQueueStop';
 
 {$linkframework AudioToolbox}
-{$linkframework CoreFoundation}
+// Deliberately NOT {$linkframework CoreFoundation} - this unit never
+// actually calls a CoreFoundation API directly (AudioQueueNewOutput's
+// inCallbackRunLoop/inCallbackRunLoopMode below are always passed nil,
+// asking AudioQueue to manage its own internal thread rather than using a
+// caller-supplied CFRunLoop/CFStringRef, so the real CFRunLoopRef/
+// CFStringRef types were never actually needed - Pointer suffices). It
+// was originally linked anyway, copied defensively from AudioQueue sample
+// code; removed here as dead weight since nothing in this unit needs it -
+// but see the WARNING below before assuming that explains any symptom
+// involving a silent/dead spectrum display.
+//
+// WARNING - AudioToolbox itself, loaded ANY way (this static
+// {$linkframework}, or a plain runtime LoadLibrary/dlopen of the same
+// framework binary), conflicts with libhackrf's native USB transfer
+// callback delivery in the same process, at the OS level - confirmed with
+// a bare console reproduction (no LCL/Cocoa/GUI/TTimer involved at all):
+// a TSDRRFSource streaming from a real HackRF got 196/200 successful
+// TryReadEpoch reads before AudioToolbox was loaded, and 0/200 after -
+// independent of whether AudioToolbox was linked statically or loaded
+// dynamically, and independent of whether it was loaded before or after
+// streaming started (i.e. not a load-order race). This is what actually
+// causes "no spectra displayed and no audio" once uSDRMain.pas links this
+// unit (via uFMReceiver.pas/uAMReceiver.pas) into the same binary as a
+// live HackRF source - not the CoreFoundation double-link theorised
+// above, which was ruled out by testing (removing it alone did not fix
+// the symptom; AudioToolbox alone, with CoreFoundation already absent,
+// was sufficient to reproduce it). Root cause is presumed to be somewhere
+// in AudioToolbox's own IOKit/CFRunLoop-based HAL machinery contending
+// with libusb's event-handling thread, not anything under this project's
+// control - no mitigation has been found yet. Until one is, CoreAudio
+// output and live HackRF streaming cannot coexist in one process on this
+// platform.
 
 // AudioQueue-owned internal thread, not the GUI thread (inCallbackRunLoop
 // is nil, see Open below) - does nothing but flip the finished buffer's
