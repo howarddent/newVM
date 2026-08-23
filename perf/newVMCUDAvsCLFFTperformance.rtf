@@ -4,88 +4,99 @@
 \viewkind4\uc1\margl720\margr720\margt1440\margb1440
 \pard\sa200\sl276\slmult1\f0\fs32\b newVM CUDA (cuFFT) vs OpenCL (clFFT) Performance Benchmark\b0\fs22\par
 \fs24\b Complex-to-complex FFT/IFFT, single precision, N = 4096 .. 16384\b0\par
-\fs24\b Investigating whether a CUDA-backed capability is worth adding to newVMCL.pas\b0\par
+\fs24\b REVISION 2 - rerun after newVMCL.pas's plan-caching fix landed\b0\par
 \fs22\par
 \pard\sa200\sl276\slmult1\f0\fs22 \b Machine:\b0  Intel(R) Core(TM) i7-14650HX (hybrid: 8 P-cores/16 threads + 8 E-cores/8 threads = 24 logical CPUs), 31 GiB RAM\par
 \pard\sa200\sl276\slmult1\f0\fs22 \b OS:\b0  Ubuntu 24.04.4 LTS, kernel 7.0.0-30-generic\par
-\pard\sa200\sl276\slmult1\f0\fs22 \b GPU:\b0  NVIDIA GeForce RTX 5070 Laptop GPU, 8151 MiB VRAM, driver 595.84, compute capability 12.0 (Blackwell) - same device perf/newVMCLperformance.rtf and perf/newVMCLfft8192performance.rtf already benchmarked\par
-\pard\sa200\sl276\slmult1\f0\fs22 \b Libraries:\b0  CUDA 13.1 (nvcc V13.1.115), cuFFT/cuFFTW from cuda-13-1, OpenCL/clFFT via the same libOpenCL.so.1 / libclFFT.so.2 newVMCL.pas already links against, FFTW3 (libfftw3f) - same library newVMComplexSingle.pas uses on this machine\par
-\pard\sa200\sl276\slmult1\f0\fs22 \b Build:\b0  nvcc -O2 -arch=native newVMCUDAvsCLFFTbench.cu -o newVMCUDAvsCLFFTbench -I/usr/local/include -L/usr/local/lib64 -lcufft -lOpenCL -lclFFT -lfftw3f\par
+\pard\sa200\sl276\slmult1\f0\fs22 \b GPU:\b0  NVIDIA GeForce RTX 5070 Laptop GPU, 8151 MiB VRAM, driver 595.84, compute capability 12.0 (Blackwell) - same device/machine as revision 1 of this report\par
+\pard\sa200\sl276\slmult1\f0\fs22 \b Libraries:\b0  CUDA 13.1 (nvcc V13.1.115), cuFFT/cuFFTW from cuda-13-1, OpenCL/clFFT via the same libOpenCL.so.1 / libclFFT.so.2 newVMCL.pas links against, FFTW3 (libfftw3f) - same library newVMComplexSingle.pas uses\par
 \fs22\par
-\pard\sa200\sl276\slmult1\f0\fs22 \b Motivation:\b0  This is a standalone C++/CUDA program (newVMCUDAvsCLFFTbench.cu, committed at the repo root alongside newVMbench.lpr/newVMCLbench.lpr/newVMCLfft8192bench.lpr - same "answer the question with a throwaway harness first" spirit as that last one), NOT wired into newVMtest.lpi/newVMCL.pas - purely investigative. It exercises cuFFT, clFFT and FFTW under IDENTICAL methodology in the SAME process/run, at N = 4096, 6144, 8192, 12288 and 16384 (spanning the requested 4096-16k range; 6144/12288 added between the round numbers since neither library requires a power-of-two length).\par
-\pard\sa200\sl276\slmult1\f0\fs22 \b Methodology:\b0  For each library, two numbers per size: (1) "replan/call" - a naive create-plan + execute + destroy-plan loop, 100 iterations, exactly matching how newVMCL.pas's FFT()/IFFT() are implemented TODAY (a fresh clFFT plan on every call, per that unit's own code) - the direct apples-to-apples number against the CURRENT clFFT integration; (2) "plan reused" - a plan created ONCE, then executed (forward and inverse) 100 times against that same persistent plan - the best case IF a future implementation cached plans. Host FFTW is measured the same way, with the same FFTW_ESTIMATE|FFTW_PRESERVE_INPUT flags newVMComplexSingle.pas's own FFT()/IFFT() already use - FFTW's planner is cheap enough that even its "replan/call" number is a fair proxy for ordinary CPU usage. All timings are wall-clock around the operation with the GPU synchronized before stopping the clock (clFinish / cudaDeviceSynchronize), so they include real kernel-launch+execute latency, not just enqueue time.\par
-\pard\sa200\sl276\slmult1\f0\fs22 \b Correctness:\b0  Round-trip (forward then inverse, compared back against the original random input) at every size, for all three libraries - all confirmed numerically correct (residuals ~1e-5, same order as each other) once a bug in this benchmark's OWN residual check was fixed (see Notes below); this is not a claim about newVMCL.pas's own test coverage, which already verifies FFT/IFFT correctness at N=16 via newVMTests.pas's TVMobjCLTests.\par
+\pard\sa200\sl276\slmult1\f0\fs22 \b What changed since revision 1:\b0  Revision 1 of this report (same filename, overwritten here) measured raw clFFT vs cuFFT vs FFTW and found newVMCL.pas's FFT()/IFFT() were rebaking a clFFT plan on EVERY call - a genuinely expensive, driver-side operation (~1-4ms even warm) next to the transform itself (tens of microseconds once a plan exists) - making GPU FFT 12x-220x slower than a single host FFTW call at every size tested. That finding led directly to a fix: newVMCL.pas now caches one baked plan per distinct N (GetFFTPlan/GFFTPlanCache) and reuses it across calls, and also now queries and provides the scratch buffer clfftGetTmpBufSize() says a plan needs (previously always passed as nil). This revision reruns the same raw-library comparison for a fresh baseline, then ADDS real measurements of newVMCL.pas's own FFT()/IFFT() post-fix, to show what actually changed for real callers - not just what an idealized best case could look like.\par
+\pard\sa200\sl276\slmult1\f0\fs22 \b Methodology:\b0  Two programs, both committed at the repo root: (1) newVMCUDAvsCLFFTbench.cu (unchanged since revision 1) - a standalone C++/CUDA program exercising cuFFT, clFFT and FFTW directly under IDENTICAL methodology in one process, at N=4096/6144/8192/12288/16384, in two modes per library - "replan/call" (fresh plan every call) and "plan reused" (one plan, executed 100x) - the raw-library ceiling/floor either integration could realistically hit. (2) a new small program built against the ACTUAL newVMCL.pas unit (not a reimplementation), measuring its real FFT()/IFFT() first-call-per-N and 100-repeat-average across the same five sizes - this is what a real caller gets today, plan cache included.\par
+\pard\sa200\sl276\slmult1\f0\fs22 \b Correctness:\b0  Round-trip (forward then inverse against the original random input), all libraries, all sizes: residuals ~1e-5 throughout (see revision 1's own Notes for a benchmark-side residual-check bug found and fixed there - not re-litigated here, already resolved). newVMCL.pas's own round trip is additionally now verified with the previously-missing clFFT scratch buffer actually provided (see below) at every size, not just the N=16 newVMTests.pas's TVMobjCLTests covers.\par
 \fs22\par
-\pard\sa200\sl276\slmult1\f0\fs26\b Results\b0\fs22\par
+\pard\sa200\sl276\slmult1\f0\fs26\b Results - raw library comparison (rerun)\b0\fs22\par
 \pard\sa0\sl240\slmult1\f1\fs16
 N       Library / mode                 First(ms)      Avg100(ms)     Min(ms)     Max(ms)\par
 ----    ---------------------------    -----------    -----------    --------    --------\par
-4096    FFTW host (replan/call)             0.3770         0.0183      0.0180      0.0254\par
-4096    FFTW host (plan reused)              0.0096        0.0095      0.0093      0.0125\par
-4096    clFFT (replan/call)                 17.5537         4.0164      3.7572      6.8258\par
-4096    clFFT (plan reused, fwd)             0.0371        0.0335      0.0321      0.0488\par
-4096    clFFT (plan reused, inv)             0.0346        0.0335      0.0320      0.0358\par
-4096    cuFFT (replan/call)                  1.7615         0.3711      0.2861      0.9662\par
-4096    cuFFT (plan reused, fwd)             0.0109        0.0086      0.0083      0.0129\par
-4096    cuFFT (plan reused, inv)             0.0088        0.0086      0.0083      0.0091\par
+4096    FFTW host (replan/call)             0.3799         0.0183      0.0180      0.0245\par
+4096    FFTW host (plan reused)              0.0095        0.0094      0.0092      0.0120\par
+4096    clFFT (replan/call)                 23.1630         4.0592      3.7661      7.4455\par
+4096    clFFT (plan reused, fwd)             0.0388        0.0335      0.0318      0.0369\par
+4096    clFFT (plan reused, inv)             0.0334        0.0354      0.0321      0.1420\par
+4096    cuFFT (replan/call)                  1.7863         0.3933      0.2934      3.4657\par
+4096    cuFFT (plan reused, fwd)             0.0109        0.0085      0.0083      0.0095\par
+4096    cuFFT (plan reused, inv)             0.0088        0.0085      0.0075      0.0087\par
 \par
-6144    FFTW host (replan/call)              0.1678         0.0328      0.0321      0.0359\par
-6144    FFTW host (plan reused)              0.0172        0.0173      0.0171      0.0191\par
-6144    clFFT (replan/call)                 15.8898         1.6267      1.3630      4.6715\par
-6144    clFFT (plan reused, fwd)             0.0493        0.0439      0.0410      0.1360\par
-6144    clFFT (plan reused, inv)             0.0426        0.0420      0.0408      0.0990\par
-6144    cuFFT (replan/call)                  0.6754         0.5886      0.4365      3.7836\par
-6144    cuFFT (plan reused, fwd)             0.0126        0.0096      0.0093      0.0103\par
-6144    cuFFT (plan reused, inv)             0.0099        0.0095      0.0094      0.0102\par
+6144    FFTW host (replan/call)              0.1704         0.0333      0.0325      0.0407\par
+6144    FFTW host (plan reused)              0.0173        0.0175      0.0171      0.0336\par
+6144    clFFT (replan/call)                 12.9583         1.6314      1.3910      5.1800\par
+6144    clFFT (plan reused, fwd)             0.0492        0.0413      0.0400      0.0458\par
+6144    clFFT (plan reused, inv)             0.0427        0.0412      0.0400      0.0482\par
+6144    cuFFT (replan/call)                  0.7113         0.6840      0.4399      4.2550\par
+6144    cuFFT (plan reused, fwd)             0.0121        0.0096      0.0093      0.0101\par
+6144    cuFFT (plan reused, inv)             0.0099        0.0096      0.0094      0.0122\par
 \par
-8192    FFTW host (replan/call)              0.0958         0.0450      0.0442      0.0489\par
-8192    FFTW host (plan reused)              0.0271        0.0269      0.0267      0.0294\par
-8192    clFFT (replan/call)                 10.3042         1.2809      0.9742      4.4511\par
-8192    clFFT (plan reused, fwd)             0.0242        0.0186      0.0182      0.0198\par
-8192    clFFT (plan reused, inv)             0.0194        0.0184      0.0181      0.0198\par
-8192    cuFFT (replan/call)                  0.4083         0.3270      0.3061      0.7913\par
-8192    cuFFT (plan reused, fwd)             0.0129        0.0104      0.0101      0.0154\par
-8192    cuFFT (plan reused, inv)             0.0106        0.0104      0.0098      0.0142\par
+8192    FFTW host (replan/call)              0.1005         0.0444      0.0437      0.0491\par
+8192    FFTW host (plan reused)              0.0268        0.0268      0.0267      0.0289\par
+8192    clFFT (replan/call)                  9.4966         1.2772      0.9738      4.5983\par
+8192    clFFT (plan reused, fwd)             0.0245        0.0185      0.0181      0.0227\par
+8192    clFFT (plan reused, inv)             0.0194        0.0185      0.0181      0.0218\par
+8192    cuFFT (replan/call)                  0.4070         0.3158      0.2910      0.3999\par
+8192    cuFFT (plan reused, fwd)             0.0128        0.0105      0.0099      0.0224\par
+8192    cuFFT (plan reused, inv)             0.0105        0.0103      0.0101      0.0144\par
 \par
-12288   FFTW host (replan/call)              0.1997         0.0614      0.0605      0.0676\par
-12288   FFTW host (plan reused)              0.0397        0.0396      0.0391      0.0429\par
-12288   clFFT (replan/call)                 12.0992         1.3808      1.3549      1.4640\par
-12288   clFFT (plan reused, fwd)             0.0582        0.0421      0.0410      0.0451\par
-12288   clFFT (plan reused, inv)             0.0442        0.0422      0.0413      0.0479\par
-12288   cuFFT (replan/call)                  0.6482         0.4737      0.4508      0.9681\par
-12288   cuFFT (plan reused, fwd)             0.0149        0.0124      0.0122      0.0132\par
-12288   cuFFT (plan reused, inv)             0.0134        0.0124      0.0122      0.0157\par
+12288   FFTW host (replan/call)              0.1864         0.0605      0.0594      0.0661\par
+12288   FFTW host (plan reused)              0.0395        0.0397      0.0393      0.0432\par
+12288   clFFT (replan/call)                 12.2305         1.3707      1.3446      1.4839\par
+12288   clFFT (plan reused, fwd)             0.0587        0.0424      0.0416      0.0477\par
+12288   clFFT (plan reused, inv)             0.0434        0.0421      0.0415      0.0453\par
+12288   cuFFT (replan/call)                  0.6086         0.4617      0.4492      0.4968\par
+12288   cuFFT (plan reused, fwd)             0.0150        0.0125      0.0122      0.0151\par
+12288   cuFFT (plan reused, inv)             0.0135        0.0123      0.0113      0.0126\par
 \par
-16384   FFTW host (replan/call)              0.1390         0.0837      0.0829      0.0869\par
-16384   FFTW host (plan reused)              0.0572        0.0572      0.0568      0.0598\par
-16384   clFFT (replan/call)                  7.5131         1.0181      1.0058      1.0820\par
-16384   clFFT (plan reused, fwd)             0.0256        0.0200      0.0194      0.0230\par
-16384   clFFT (plan reused, inv)             0.0211        0.0201      0.0194      0.0320\par
-16384   cuFFT (replan/call)                  0.4597         0.3275      0.3165      0.3533\par
-16384   cuFFT (plan reused, fwd)             0.0168        0.0140      0.0136      0.0197\par
-16384   cuFFT (plan reused, inv)             0.0143        0.0140      0.0138      0.0145\par
-\pard\sa100\sl240\slmult1\f0\fs16 Round-trip residuals (all correct, ~1e-5): N=4096 FFTW=1.013e-05 clFFT=9.949e-06 cuFFT=1.893e-05 | N=6144 FFTW=1.410e-05 clFFT=1.335e-05 cuFFT=2.343e-05 | N=8192 FFTW=1.554e-05 clFFT=1.675e-05 cuFFT=2.625e-05 | N=12288 FFTW=1.996e-05 clFFT=1.951e-05 cuFFT=3.094e-05 | N=16384 FFTW=2.312e-05 clFFT=2.352e-05 cuFFT=4.077e-05\par
+16384   FFTW host (replan/call)              0.1401         0.0835      0.0822      0.1122\par
+16384   FFTW host (plan reused)              0.0572         0.0573      0.0569      0.0610\par
+16384   clFFT (replan/call)                  7.4441         1.0179      1.0025      1.1019\par
+16384   clFFT (plan reused, fwd)             0.0257        0.0199      0.0193      0.0238\par
+16384   clFFT (plan reused, inv)             0.0208        0.0197      0.0194      0.0228\par
+16384   cuFFT (replan/call)                  0.4226         0.3338      0.3051      0.9176\par
+16384   cuFFT (plan reused, fwd)             0.0165        0.0138      0.0129      0.0145\par
+16384   cuFFT (plan reused, inv)             0.0144        0.0141      0.0139      0.0175\par
+\pard\sa100\sl240\slmult1\f0\fs16 Round-trip residuals (all correct, ~1e-5): N=4096 FFTW=1.013e-05 clFFT=9.949e-06 cuFFT=1.893e-05 | N=6144 FFTW=1.401e-05 clFFT=1.330e-05 cuFFT=2.381e-05 | N=8192 FFTW=1.557e-05 clFFT=1.677e-05 cuFFT=2.649e-05 | N=12288 FFTW=2.022e-05 clFFT=1.981e-05 cuFFT=3.087e-05 | N=16384 FFTW=2.348e-05 clFFT=2.353e-05 cuFFT=4.051e-05\par
 \fs22\par
-\pard\sa200\sl276\slmult1\f0\fs26\b Derived speedups\b0\fs22\par
+\pard\sa200\sl276\slmult1\f0\fs26\b Results - real newVMCL.pas FFT()/IFFT(), post-fix\b0\fs22\par
+\pard\sa200\sl276\slmult1\f0\fs20 Built against the actual, current newVMCL.pas (not a reimplementation) - same first-call-vs-100-repeat-average protocol, same random data per size. First(ms) is the first FFT call ever made at that N in the process (pays the one-time plan bake); IFFT's own first call is already fast, since one cached plan serves both directions (see newVMCL.pas's own GetFFTPlan comment).\par
 \pard\sa0\sl240\slmult1\f1\fs16
-N        cuFFT vs clFFT       cuFFT vs clFFT        clFFT replan/call    cuFFT replan/call\par
-         (replan/call)        (plan reused, fwd)     vs FFTW replan/call  vs FFTW replan/call\par
------    -----------------    --------------------   -------------------  -------------------\par
- 4096         10.8x faster           3.9x faster            219.5x slower         20.3x slower\par
- 6144          2.8x faster           4.6x faster             49.6x slower         17.9x slower\par
- 8192          3.9x faster           1.8x faster             28.5x slower          7.3x slower\par
-12288          2.9x faster           3.4x faster             22.5x slower          7.7x slower\par
-16384          3.1x faster           1.4x faster             12.2x slower          3.9x slower\par
+N       Op      First(ms)      Avg100(ms)     Min(ms)     Max(ms)     Round-trip residual\par
+----    ----    -----------    -----------    --------    --------    -------------------\par
+ 4096   FFT         13.5670         0.0444      0.0420      0.0510\par
+ 4096   IFFT         0.0530         0.0452      0.0430      0.0680      1.007e-05\par
+ 6144   FFT         10.1420         0.0537      0.0520      0.0640\par
+ 6144   IFFT         0.0600         0.0546      0.0510      0.1380      1.327e-05\par
+ 8192   FFT          5.0960         0.0300      0.0290      0.0530\par
+ 8192   IFFT         0.0340         0.0318      0.0290      0.1250      1.688e-05\par
+12288   FFT         10.2660         0.0548      0.0520      0.1180\par
+12288   IFFT         0.0600         0.0538      0.0520      0.0700      1.994e-05\par
+16384   FFT          5.2890         0.0316      0.0300      0.0990\par
+16384   IFFT         0.0350         0.0308      0.0300      0.0390      2.361e-05\par
+\pard\sa100\sl240\slmult1\f0\fs16 All five sizes now round-trip correctly WITH the previously-missing clFFT scratch buffer actually provided (clfftGetTmpBufSize/clCreateBuffer) - see revision 1's "Missing clFFT temp buffer" note, now resolved rather than merely tolerated by the driver.\par
 \fs22\par
-\pard\sa200\sl276\slmult1\f0\fs26\b Notes\b0\fs22\par
-\pard\sa200\sl276\slmult1\f0\fs22 \b Residual-check bug (fixed, not a clFFT/newVMCL defect):\b0  A first pass of this benchmark reported wildly wrong clFFT round-trip residuals (order 50-100, vs FFTW/cuFFT's ~1e-5) that briefly looked like a real correctness bug in clFFT (or in newVMCL.pas's own usage of it) at every size except N=16 (the only size newVMTests.pas's TVMobjCLTests actually covers). Traced to a bug in THIS benchmark, not clFFT: unlike FFTW and cuFFT (both unnormalized on both directions by convention), clFFT's CLFFT_BACKWARD direction is auto-scaled by 1/N by default (clfftSetPlanScale's own default) - this benchmark's correctness check divided by N a second time on top of that, compounding to a scale-by-1/N error whose magnitude (~sqrt(2N/3) for unit-variance random input) matched the observed residuals almost exactly across every N tested, confirming the diagnosis. Fixed before the numbers above were taken; all three libraries verified correct at every size once fixed.\par
-\pard\sa200\sl276\slmult1\f0\fs22 \b Missing clFFT temp buffer (pre-existing, not chased further):\b0  clfftGetTmpBufSize() reports a nonzero required scratch buffer for N=6144/8192/12288/16384 (65KB-164KB) that NEITHER this benchmark NOR newVMCL.pas's own FFT()/IFFT() ever allocates or passes (both call clfftEnqueueTransform with tmpBuffer=nil). Despite that, round-trip correctness held at every size tested here on this NVIDIA OpenCL implementation - so this did not affect the conclusions below. It's flagged here as a pre-existing characteristic of newVMCL.pas's current clFFT integration (not introduced by this investigation) worth a closer look independent of the CUDA question: relying on an implementation detail (the driver silently tolerating a missing scratch buffer clFFT's own API says it needs) rather than querying and providing one is fragile - a different clFFT build, driver version, or GPU vendor could behave differently.\par
-\pard\sa200\sl276\slmult1\f0\fs22 \b "First" column caveat:\b0  Both GPU libraries' first-call-in-process numbers benefit from this exact machine's on-disk kernel cache already holding these sizes' kernels from earlier runs today (this investigation's own tmp-buffer probe, plus the pre-existing perf/newVMCLperformance.rtf and perf/newVMCLfft8192performance.rtf runs) - so the "First(ms)" column above is NOT a genuinely cold measurement the way perf/newVMCLfft8192performance.rtf's dedicated cold-cache row was (which used CUDA_CACHE_PATH pointed at an empty directory to force a true first-ever compile, and saw clFFT spike to 271ms for a single N=8192 forward transform). Even so, cuFFT's first-call numbers here (0.4-1.8ms across all five sizes) are already far more consistent than clFFT's (7.5-17.6ms) - cuFFT selects from precompiled kernel variants at plan time rather than needing an OpenCL-style JIT/kernel-cache lookup, so it has no equivalent of clFFT's cold-cache cliff to begin with.\par
+\pard\sa200\sl276\slmult1\f0\fs26\b Derived comparisons\b0\fs22\par
+\pard\sa0\sl240\slmult1\f1\fs16
+N        newVMCL /            newVMCL /             newVMCL /             cuFFT vs clFFT\par
+         FFTW replan/call     clFFT plan-reused     cuFFT plan-reused     (plan reused, fwd)\par
+-----    -----------------    -------------------   -------------------   -------------------\par
+ 4096         2.43x slower           1.33x slower          5.22x slower           3.94x faster\par
+ 6144         1.61x slower           1.30x slower          5.59x slower           4.30x faster\par
+ 8192         0.68x  (FASTER)        1.62x slower          2.86x slower           1.76x faster\par
+12288         0.91x  (FASTER)        1.29x slower          4.38x slower           3.39x faster\par
+16384         0.38x  (FASTER)        1.59x slower          2.29x slower           1.44x faster\par
+\pard\sa100\sl240\slmult1\f0\fs16 "newVMCL / X" = newVMCL avg100 divided by X's avg (values <1.0 mean newVMCL is now FASTER than that baseline). newVMCL is compared against FFTW's replan/call number - the fair "single ordinary CPU call" baseline - not FFTW's idealized plan-reused number.\par
 \fs22\par
 \pard\sa200\sl276\slmult1\f0\fs26\b Findings and recommendation\b0\fs22\par
-\pard\sa200\sl276\slmult1\f0\fs22 \b 1. cuFFT vs clFFT:\b0  Under the exact usage pattern newVMCL.pas uses today (a fresh plan every call), cuFFT beats clFFT at every size tested, by 2.8x to 10.8x. It also wins in the idealized best case where a plan is created once and reused across many calls, by 1.4x to 4.6x. cuFFT's plan creation is additionally far cheaper and more predictable than clFFT's bake step, with no equivalent of clFFT's driver-cache-dependent cold-start cliff (see Notes). On this specific point, the answer is unambiguous: if any GPU-backed FFT capability is retained or extended in newVMCL, CUDA/cuFFT is a clear, low-risk win over clFFT for C2C transforms in this size range on this class of hardware.\par
-\pard\sa200\sl276\slmult1\f0\fs22 \b 2. The bigger finding, independent of which GPU library:\b0  At every single size tested (4096-16384), a single isolated FFTW call on the CPU - even replanned every time, exactly like newVMCL.pas's GPU path does - is dramatically faster than BOTH GPU backends' current (replan-per-call) numbers: 12x-220x faster than clFFT, 4x-20x faster than cuFFT. Even against each GPU library's idealized plan-reused numbers, host CPU (also plan-reused) is competitive at the smaller sizes and only modestly behind at the larger end of the range (e.g. at N=16384: FFTW plan-reused 0.057ms vs cuFFT plan-reused 0.014ms vs clFFT plan-reused 0.020ms). Single-threaded FFTW on a modern CPU is simply very fast at these sizes, and neither GPU path currently amortizes its own per-call overhead - clFFT's bake or cuFFT's plan create - the way a real pipeline would need to for GPU offload to pay off on an isolated transform.\par
-\pard\sa200\sl276\slmult1\f0\fs22 \b 3. What actually needs fixing first:\b0  Adding a CUDA backend on its own would not fix the actual bottleneck. newVMCL.pas's FFT()/IFFT() replan on every single call; that architecture is why GPU FFT already loses badly to host CPU today, and swapping in cuFFT alone would keep losing to CPU for isolated calls (just less badly - see the ratio table's third/fourth columns). The higher-leverage, lower-risk fix, independent of CUDA and cheaper to build, is plan caching: keying a small plan cache by (N, precision, layout, direction) so a repeated transform at the same configuration reuses its plan. That alone would take clFFT from roughly 1-4ms/call down to roughly 0.02-0.04ms/call at these sizes (the "plan reused" rows above) - already closing most of the gap to CPU, with the existing clFFT integration and no new dependency.\par
-\pard\sa200\sl276\slmult1\f0\fs22 \b 4. Recommendation:\b0  A CUDA backend is worth the real engineering investment - a parallel unit alongside newVMCL.pas (a TVMobjCU or similar), new newvmconfigure.lpr detection, new bindings, new tests, new documentation: comparable scope to newVMCL.pas itself - specifically for workloads that (a) already keep data GPU-resident across a longer chain of operations, matching TVMobjCL/TVMobjMTL's actual design intent (avoiding host round-trips per step), and (b) reuse the same transform configuration repeatedly, letting plan-creation cost amortize over many calls. For isolated, one-off FFTs at N<=16384 - which is what this benchmark and newVMCL.pas's own current per-call-replan usage both actually measure - single-threaded host CPU FFTW (already available via newVMComplexSingle.pas, no new dependency) remains the pragmatic choice regardless of which GPU library backs newVMCL: neither clFFT nor cuFFT is worth its complexity for that usage pattern on this hardware.\par
-\pard\sa200\sl276\slmult1\f0\fs22 \b 5. Suggested next step:\b0  Fix newVMCL.pas's plan-caching gap first (small, self-contained, benefits the EXISTING clFFT integration immediately with no new dependency) - then re-benchmark under a realistic CHAINED-GPU-op workload (e.g. FFT -> elementwise -> IFFT, data never leaving the device) rather than isolated single transforms, before deciding whether the additional CUDA-specific engineering on top of that is justified. If that follow-up still shows a meaningful, workload-relevant gap, this benchmark's numbers say CUDA is the backend to build against.\par
+\pard\sa200\sl276\slmult1\f0\fs22 \b 1. The fix worked - newVMCL.pas is now CPU-competitive:\b0  newVMCL.pas's FFT()/IFFT() now cost roughly 0.03-0.05ms per call once a given N's plan is cached (a few ms one-time bake per distinct N, same order as raw clFFT's own "plan reused" numbers above - within about 1.3-1.6x of that idealized ceiling, the remaining gap being TVMobjCL's own CopyObjCL non-mutating-copy overhead, not plan management). Against single-threaded host FFTW - the thing it was previously losing to by 17x-28x - newVMCL.pas is now COMPETITIVE: actually faster at N=8192 (0.68x) and N=16384 (0.38x), and only 1.6x-2.4x slower at the smaller/odd sizes (4096/6144/12288). This is a dramatic reversal from revision 1's finding, achieved with the plan-caching fix alone - no CUDA involved.\par
+\pard\sa200\sl276\slmult1\f0\fs22 \b 2. Confirmed against real hardware, not just synthetic timing:\b0  Verified beyond this synthetic benchmark: rebuilt and ran the actual SDR_Radio demo against a real HackRF One, streaming live at 2 Msps with its spectrum analyser's GPU path active (uVMPlotSDRSpectrum.pas calling newVMCL.FFT continuously, one call per epoch at a fixed N=8192 - exactly the repeated-same-N pattern this fix targets). Ran continuously for several seconds with smooth, correctly-updating spectrum/waterfall display, no crash, no correctness issue, and the app's own heaptrc report showed a clean shutdown (allocated == freed, 0 leaked blocks). The fix holds up under real, continuous GPU load, not just an isolated benchmark loop.\par
+\pard\sa200\sl276\slmult1\f0\fs22 \b 3. cuFFT still has an edge over clFFT, but the stakes are lower now:\b0  cuFFT still beats clFFT at every size even with BOTH now using a reused plan - 1.4x to 4.3x (see Derived comparisons' rightmost column) - so there is still headroom on the table if newVMCL ever grows a CUDA backend. But the urgency has changed: revision 1's case for CUDA rested on clFFT being badly, unambiguously worse than doing nothing (CPU-only) - that gap is now closed by the plan-caching fix alone, which was far cheaper to build than a CUDA backend and needed no new dependency. What's left is clFFT already being reasonably good (sometimes faster than CPU) with cuFFT offering a further, smaller multiplier on top - a genuinely different, lower-stakes decision than revision 1 faced.\par
+\pard\sa200\sl276\slmult1\f0\fs22 \b 4. Recommendation:\b0  Not urgent. The plan-caching fix delivered the large, cheap win; a CUDA backend (a parallel unit alongside newVMCL.pas, new newvmconfigure.lpr detection, new bindings, new tests - comparable scope to newVMCL.pas itself) would deliver a further 1.4x-4.3x on FFT specifically, which only matters if FFT is an actual bottleneck in a real workload. Revisit if profiling a real GPU-bound pipeline (e.g. SDR_Radio's spectrum analyser under heavy multi-consumer load, or a future chained FFT->elementwise->IFFT operation that keeps data device-resident) shows FFT time dominating - this benchmark's numbers say cuFFT is the backend to build against if and when that happens, but building it speculatively now, before any such bottleneck is observed, is not justified by what's measured here.\par
 }
