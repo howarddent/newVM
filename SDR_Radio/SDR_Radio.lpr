@@ -18,7 +18,7 @@ program SDR_Radio;
      support compiled in." Confirmed by reproducing exactly the crash
      pressing Start caused ("crashes as soon as I press start, exit code
      232") with a standalone harness that mirrored the previous
-     {$IFDEF UNIX AND NOT DARWIN} guard - the guard's implicit assumption
+     "UNIX and not DARWIN" IFDEF guard - the guard's implicit assumption
      (Darwin's Cocoa widgetset already provides thread support, so cthreads
      would be redundant there) does not hold for this app's own direct
      TThread usage; removing the DARWIN exclusion fixed it immediately,

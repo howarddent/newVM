@@ -46,61 +46,45 @@ unit uWaveOutPlayer;
      remove the need to compensate with buffering depth at all, but is
      a much larger change.
 
-     macOS BACKEND (CoreAudio AudioQueue): plays back via AudioToolbox's
-     AudioQueue services (AudioQueueNewOutput/AllocateBuffer/EnqueueBuffer/
-     Start/Stop/Dispose), linked directly (a linkframework AudioToolbox
-     directive, right below this unit's Darwin type declarations - see
-     "Cross-platform library binding" in CLAUDE.md and MetalAPI.pas's
-     own header comment for why Apple frameworks are linked at compile
-     time, not dlopen'd the way OpenCL/ALSA are: they're always present, at
-     a fixed location, on every real Mac, unlike genuinely optional
-     third-party libraries). Chosen over the lower-level AudioUnit/AUHAL
-     API specifically because AudioQueue's own programming model - submit
-     a ring of pre-allocated buffers, get a completion callback back when
-     each has finished playing - is already exactly this unit's existing
-     shape (the same "ring of buffers, poll/callback for done, drop rather
-     than block if none are free" contract the Windows waveOut and Linux
-     ALSA backends above already established), where AudioUnit's pull-based
-     render callback would have required building a second, separate ring
-     buffer inside this unit just to bridge push-style QueueStereo calls
-     into it - no benefit for a receiver that doesn't need AudioUnit's
-     lower latency.
+     macOS BACKEND (CoreAudio AudioQueue, OUT OF PROCESS): plays back via
+     AudioToolbox's AudioQueue services, but NOT in this process - see
+     uSDRAudioIPC.pas's header comment for why: loading AudioToolbox by
+     any means at all (static link or dynamic dlopen, before or after
+     streaming starts) was confirmed, via a bare-console reproduction with
+     no LCL/GUI involved, to silently break libhackrf's native USB
+     transfer callback delivery in the same process (~98% read success
+     dropped to 0%). Since this app's whole purpose is to stream from a
+     live HackRF, AudioToolbox cannot be loaded here at all - so this
+     backend instead spawns sdraudiohelper.lpr (a tiny standalone console
+     program that owns the real AudioQueue and nothing else) as a child
+     process at Open, and streams already-converted 16-bit PCM to it over
+     its stdin pipe (uSDRAudioIPC.pas's protocol) via ordinary TProcess.
+     QueueStereo's own tanh-soft-limit-and-scale-to-int16 conversion is
+     unchanged and still runs in THIS process (it's plain float math, no
+     AudioToolbox involved) - only the actual AudioQueue calls moved out.
 
-     Buffers are pre-allocated once, at Open, sized to
-     MaxSamplesPerChannel*4 bytes each (2 channels * 2 bytes/sample) -
-     same "no allocation on the real-time path" contract as the Windows
-     ring. Each AudioQueueBuffer's own mUserData field is set once, at
-     allocation, to that buffer's index into FAQBuffers - the completion
-     callback (which only receives the AudioQueueBufferRef itself, not an
-     index) reads it straight back out rather than needing to search for
-     which buffer just finished. The callback fires on an AudioQueue-owned
-     internal thread (inCallbackRunLoop=nil to AudioQueueNewOutput asks
-     AudioQueue to manage that thread itself, rather than requiring this
-     component to pump a CFRunLoop) - it does nothing but flip that
-     buffer's own Free flag to True, the same single-writer/single-reader
-     boolean-flag-polling pattern the Windows path's own WHDR_DONE checking
-     already relies on being safe without a mutex. QueueStereo drops
-     (rather than blocks) exactly when the next buffer in the ring isn't
-     free yet, identical to both other backends' own documented behaviour.
-     UnderrunCount stays 0 on this backend, same as (and for the same
-     reason as) the Windows path: AudioQueue doesn't surface a simple
-     per-enqueue "this was a real hardware xrun" signal the way ALSA's
-     snd_pcm_writei return code does, so there's nothing genuine to count
-     here without a materially larger diagnostics integration.
+     Buffering/ring/drop-rather-than-block behaviour lives entirely on the
+     child side now (see sdraudiohelper.lpr) - this side has no visibility
+     into individual buffer completion, so UnderrunCount stays 0 here for
+     a different reason than the Windows/Linux backends' own documented
+     "nothing genuine to count" (there, it's that the API doesn't surface
+     it; here, it's that the API call happens in a different process).
+     A QueueStereo call itself never blocks the caller (the demod thread):
+     writing a few KB to a pipe whose reader is a tight read/play loop
+     essentially never fills the OS pipe buffer at real-time audio rates,
+     and any actual failure (helper crashed/exited) surfaces as a write
+     exception, caught and treated as "player no longer open" - the same
+     graceful-degradation contract as every other failure mode in this
+     unit.
 
-     GOTCHA, FOUND BY A STANDALONE PROBE BEFORE THIS WAS WRITTEN (mirroring
-     MetalAPI.pas's own "verified against the real API" discipline, and
-     hitting the exact same underlying bug that unit's header comment
-     documents): calling AudioQueueStart from a plain FPC binary crashes
-     deterministically on this machine's actual audio hardware, on
-     CoreAudio's own internal processing thread, for the identical reason
-     Metal's AGX driver did - FPC leaves FPU exception trapping armed in a
-     way clang-generated code doesn't, and CoreAudio's own internal DSP
-     code was never written expecting a caller with traps enabled. Fixed
-     the same way: Math.SetExceptionMask masks every FPU exception before
-     the first AudioQueue call (Open below) - confirmed by the same probe,
-     which played a 4-buffer test tone and observed all 4 completion
-     callbacks fire cleanly only once this mask was in place.
+     Historical note: this backend used to call AudioQueueNewOutput/
+     AllocateBuffer/EnqueueBuffer/Start/Stop/Dispose directly, in-process,
+     exactly the way the Windows/Linux backends below still do for their
+     own APIs - see this file's git history for that version, and
+     sdraudiohelper.lpr's own header comment, which is where that code
+     (buffer ring, completion callback, the SetExceptionMask GOTCHA - see
+     that program for the fix, still required, just now applied in the
+     child instead of here) now actually lives.
 
 *******************************************************************************}
 
@@ -109,7 +93,9 @@ unit uWaveOutPlayer;
 interface
 
 uses
-  {$IFDEF WINDOWS}Windows,{$ENDIF} SysUtils, Math, newVMSingle;
+  {$IFDEF WINDOWS}Windows,{$ENDIF}
+  {$IFDEF DARWIN}Process, uSDRAudioIPC,{$ENDIF}
+  SysUtils, Math, newVMSingle;
 
 {$IFDEF WINDOWS}
 const
@@ -143,48 +129,6 @@ type
   end;
 {$ENDIF}
 
-{$IFDEF DARWIN}
-type
-  // CoreAudio types, hand-declared here rather than pulled from a shared
-  // binding unit - only the subset this component actually needs (same
-  // "hand-curated, not a wholesale header translation" convention as
-  // MetalAPI.pas/OpenCLAPI.pas). Struct layouts taken from the real
-  // AudioQueue.h/CoreAudioBaseTypes.h headers and confirmed against a
-  // real running AudioQueue by a standalone probe before being used here -
-  // see this unit's own header comment (macOS BACKEND).
-  OSStatus = LongInt;
-  AudioQueueRef = Pointer;
-  AudioFormatID = LongWord;
-  AudioFormatFlags = LongWord;
-
-  AudioStreamBasicDescription = record
-    mSampleRate: Double;
-    mFormatID: AudioFormatID;
-    mFormatFlags: AudioFormatFlags;
-    mBytesPerPacket: LongWord;
-    mFramesPerPacket: LongWord;
-    mBytesPerFrame: LongWord;
-    mChannelsPerFrame: LongWord;
-    mBitsPerChannel: LongWord;
-    mReserved: LongWord;
-  end;
-  PAudioStreamBasicDescription = ^AudioStreamBasicDescription;
-
-  AudioQueueBuffer = record
-    mAudioDataBytesCapacity: LongWord;
-    mAudioData: Pointer;
-    mAudioDataByteSize: LongWord;
-    mUserData: Pointer;
-    mPacketDescriptionCapacity: LongWord;
-    mPacketDescriptions: Pointer;
-    mPacketDescriptionCount: LongWord;
-  end;
-  AudioQueueBufferRef = ^AudioQueueBuffer;
-
-  AudioQueueOutputCallback = procedure(inUserData: Pointer; inAQ: AudioQueueRef;
-    inBuffer: AudioQueueBufferRef); cdecl;
-{$ENDIF}
-
 type
   { TWaveOutPlayer }
   TWaveOutPlayer = class
@@ -199,12 +143,10 @@ type
     FNextBuffer: Integer;
     {$ELSE}
       {$IFDEF DARWIN}
-    FAQ: AudioQueueRef;
-    FAQBuffers: array of record
-      Buf: AudioQueueBufferRef;
-      Free: Boolean;
-    end;
-    FNextBuffer: Integer;
+    FHelperProcess: TProcess;   // owns the real AudioQueue - see this unit's own header comment
+    FMaxSamplesPerChannel: Integer;
+    FScratch: array of SmallInt;  // interleaved L/R, 16-bit PCM, reused across calls
+    FBufferCount: Integer;
       {$ELSE}
     FPCMHandle: Pointer;          // snd_pcm_t*, opaque handle from ALSA
     FScratch: array of SmallInt;  // interleaved L/R, 16-bit PCM, reused across calls
@@ -358,77 +300,22 @@ end;
 {$ELSE}
   {$IFDEF DARWIN}
 
-const
-  kAudioFormatLinearPCM = $6C70636D;             // 'lpcm', see this unit's own header comment
-  kAudioFormatFlagIsSignedInteger = 1 shl 2;
-  kAudioFormatFlagIsPacked = 1 shl 3;
-
-function AudioQueueNewOutput(inFormat: PAudioStreamBasicDescription; inCallbackProc: AudioQueueOutputCallback;
-  inUserData: Pointer; inCallbackRunLoop: Pointer; inCallbackRunLoopMode: Pointer; inFlags: LongWord;
-  out outAQ: AudioQueueRef): OSStatus; cdecl; external name 'AudioQueueNewOutput';
-function AudioQueueDispose(inAQ: AudioQueueRef; inImmediate: Boolean): OSStatus; cdecl; external name 'AudioQueueDispose';
-function AudioQueueAllocateBuffer(inAQ: AudioQueueRef; inBufferByteSize: LongWord;
-  out outBuffer: AudioQueueBufferRef): OSStatus; cdecl; external name 'AudioQueueAllocateBuffer';
-function AudioQueueEnqueueBuffer(inAQ: AudioQueueRef; inBuffer: AudioQueueBufferRef;
-  inNumPacketDescs: LongWord; inPacketDescs: Pointer): OSStatus; cdecl; external name 'AudioQueueEnqueueBuffer';
-function AudioQueueStart(inAQ: AudioQueueRef; inStartTime: Pointer): OSStatus; cdecl; external name 'AudioQueueStart';
-function AudioQueueStop(inAQ: AudioQueueRef; inImmediate: Boolean): OSStatus; cdecl; external name 'AudioQueueStop';
-
-{$linkframework AudioToolbox}
-// Deliberately NOT {$linkframework CoreFoundation} - this unit never
-// actually calls a CoreFoundation API directly (AudioQueueNewOutput's
-// inCallbackRunLoop/inCallbackRunLoopMode below are always passed nil,
-// asking AudioQueue to manage its own internal thread rather than using a
-// caller-supplied CFRunLoop/CFStringRef, so the real CFRunLoopRef/
-// CFStringRef types were never actually needed - Pointer suffices). It
-// was originally linked anyway, copied defensively from AudioQueue sample
-// code; removed here as dead weight since nothing in this unit needs it -
-// but see the WARNING below before assuming that explains any symptom
-// involving a silent/dead spectrum display.
-//
-// WARNING - AudioToolbox itself, loaded ANY way (this static
-// {$linkframework}, or a plain runtime LoadLibrary/dlopen of the same
-// framework binary), conflicts with libhackrf's native USB transfer
-// callback delivery in the same process, at the OS level - confirmed with
-// a bare console reproduction (no LCL/Cocoa/GUI/TTimer involved at all):
-// a TSDRRFSource streaming from a real HackRF got 196/200 successful
-// TryReadEpoch reads before AudioToolbox was loaded, and 0/200 after -
-// independent of whether AudioToolbox was linked statically or loaded
-// dynamically, and independent of whether it was loaded before or after
-// streaming started (i.e. not a load-order race). This is what actually
-// causes "no spectra displayed and no audio" once uSDRMain.pas links this
-// unit (via uFMReceiver.pas/uAMReceiver.pas) into the same binary as a
-// live HackRF source - not the CoreFoundation double-link theorised
-// above, which was ruled out by testing (removing it alone did not fix
-// the symptom; AudioToolbox alone, with CoreFoundation already absent,
-// was sufficient to reproduce it). Root cause is presumed to be somewhere
-// in AudioToolbox's own IOKit/CFRunLoop-based HAL machinery contending
-// with libusb's event-handling thread, not anything under this project's
-// control - no mitigation has been found yet. Until one is, CoreAudio
-// output and live HackRF streaming cannot coexist in one process on this
-// platform.
-
-// AudioQueue-owned internal thread, not the GUI thread (inCallbackRunLoop
-// is nil, see Open below) - does nothing but flip the finished buffer's
-// own Free flag, mirroring the Windows path's WHDR_DONE-polling safety
-// argument (single writer here, single reader in QueueStereo, one
-// Boolean - see this unit's own header comment).
-procedure AQOutputCallback(inUserData: Pointer; inAQ: AudioQueueRef; inBuffer: AudioQueueBufferRef); cdecl;
-var
-  Player: TWaveOutPlayer;
-  Idx: PtrInt;
+// Path to sdraudiohelper, the child process that actually owns
+// AudioToolbox - see this unit's own header comment and
+// uSDRAudioIPC.pas for why that has to live outside this process.
+// Expected to sit right next to the running SDR_Radio executable (they're
+// built from the same repo and shipped together); no PATH search, no
+// install-location guessing.
+function HelperExePath: string;
 begin
-  Player := TWaveOutPlayer(inUserData);
-  Idx := PtrInt(inBuffer^.mUserData);
-  Player.FAQBuffers[Idx].Free := True;
+  Result := ExtractFilePath(ParamStr(0)) + 'sdraudiohelper';
 end;
 
 constructor TWaveOutPlayer.Create(BufferCount: Integer);
 begin
   inherited Create;
-  SetLength(FAQBuffers, BufferCount);
-  FNextBuffer := 0;
-  FAQ := nil;
+  FBufferCount := BufferCount;
+  FHelperProcess := nil;
   FOpen := False;
 end;
 
@@ -442,89 +329,86 @@ procedure TWaveOutPlayer.Open(SampleRateHz, MaxSamplesPerChannel: Integer);
 const
   s = 'TWaveOutPlayer.Open : ';
 var
-  Fmt: AudioStreamBasicDescription;
-  i: Integer;
-  Status: OSStatus;
+  Header: TSDRAudioIPCHeader;
 begin
   assert(not FOpen, s + 'already open');
 
-  // See this unit's own header comment (GOTCHA) - must happen before the
-  // first AudioQueue call in the process.
-  SetExceptionMask([exInvalidOp, exOverflow, exUnderflow, exZeroDivide, exPrecision, exDenormalized]);
+  if not FileExists(HelperExePath) then begin
+    FOpen := False;   // build sdraudiohelper.lpr - see this unit's own header comment
+    Exit;
+  end;
 
-  FillChar(Fmt, SizeOf(Fmt), 0);
-  Fmt.mSampleRate := SampleRateHz;
-  Fmt.mFormatID := kAudioFormatLinearPCM;
-  Fmt.mFormatFlags := kAudioFormatFlagIsSignedInteger or kAudioFormatFlagIsPacked;
-  Fmt.mChannelsPerFrame := 2;
-  Fmt.mBitsPerChannel := 16;
-  Fmt.mBytesPerFrame := (Fmt.mChannelsPerFrame * Fmt.mBitsPerChannel) div 8;
-  Fmt.mFramesPerPacket := 1;
-  Fmt.mBytesPerPacket := Fmt.mBytesPerFrame * Fmt.mFramesPerPacket;
+  FMaxSamplesPerChannel := MaxSamplesPerChannel;
+  SetLength(FScratch, MaxSamplesPerChannel * 2);
 
-  Status := AudioQueueNewOutput(@Fmt, @AQOutputCallback, Self, nil, nil, 0, FAQ);
-  if Status <> 0 then begin
+  FHelperProcess := TProcess.Create(nil);
+  FHelperProcess.Executable := HelperExePath;
+  FHelperProcess.Options := [poUsePipes];
+  try
+    FHelperProcess.Execute;
+  except
+    FreeAndNil(FHelperProcess);
     FOpen := False;
     Exit;
   end;
 
-  for i := 0 to High(FAQBuffers) do begin
-    Status := AudioQueueAllocateBuffer(FAQ, MaxSamplesPerChannel * 4, FAQBuffers[i].Buf);
-    if Status <> 0 then begin
-      AudioQueueDispose(FAQ, True);
-      FAQ := nil;
-      FOpen := False;
-      Exit;
-    end;
-    FAQBuffers[i].Buf^.mUserData := Pointer(PtrInt(i));   // see AQOutputCallback above
-    FAQBuffers[i].Free := True;
+  Header.Magic := SDRAudioIPCMagic;
+  Header.SampleRateHz := SampleRateHz;
+  Header.MaxSamplesPerChannel := MaxSamplesPerChannel;
+  Header.BufferCount := FBufferCount;
+  try
+    FHelperProcess.Input.Write(Header, SizeOf(Header));
+  except
+    FHelperProcess.Terminate(0);
+    FreeAndNil(FHelperProcess);
+    FOpen := False;
+    Exit;
   end;
 
-  AudioQueueStart(FAQ, nil);
   FOpen := True;
 end;
 
 procedure TWaveOutPlayer.Close;
 begin
   if not FOpen then Exit;
-  AudioQueueStop(FAQ, True);
-  AudioQueueDispose(FAQ, True);   // also frees every buffer allocated against this queue
-  FAQ := nil;
   FOpen := False;
+  // Closing the child's stdin is its cue to stop and exit cleanly (see
+  // uSDRAudioIPC.pas's protocol) - a clean shutdown, not a kill.
+  FHelperProcess.CloseInput;
+  FHelperProcess.WaitOnExit;
+  FreeAndNil(FHelperProcess);
 end;
 
 procedure TWaveOutPlayer.QueueStereo(const L, R: TVMobjS);
 var
-  N, i, bufIdx: Integer;
+  N, i: Integer;
   v: Single;
-  Samples: PSmallInt;
+  FrameLen: LongWord;
 begin
   if not FOpen then Exit;
   N := L.Rows * L.Cols;
-  bufIdx := FNextBuffer;
-
-  // Buffer not yet finished playing - drop this call rather than block;
-  // see this unit's own header comment for why.
-  if not FAQBuffers[bufIdx].Free then Exit;
-
-  if N > FAQBuffers[bufIdx].Buf^.mAudioDataBytesCapacity div 4 then
-    N := FAQBuffers[bufIdx].Buf^.mAudioDataBytesCapacity div 4;   // clamp to the pre-sized buffer
+  if N > FMaxSamplesPerChannel then N := FMaxSamplesPerChannel;   // clamp to the pre-sized buffer
 
   // Same soft (tanh) saturation as the Windows/ALSA paths - see the
   // Windows path's own comment (above) for why a hard clamp isn't used.
-  Samples := PSmallInt(FAQBuffers[bufIdx].Buf^.mAudioData);
+  // This is plain float math, done here (not in the helper) so the
+  // helper stays a pure CoreAudio conduit with nothing else to get wrong.
   for i := 0 to N - 1 do begin
     v := Tanh(L[0, i]);
-    Samples[i * 2] := Round(v * 32767);
+    FScratch[i * 2] := Round(v * 32767);
     v := Tanh(R[0, i]);
-    Samples[i * 2 + 1] := Round(v * 32767);
+    FScratch[i * 2 + 1] := Round(v * 32767);
   end;
 
-  FAQBuffers[bufIdx].Buf^.mAudioDataByteSize := N * 4;
-  FAQBuffers[bufIdx].Free := False;
-  AudioQueueEnqueueBuffer(FAQ, FAQBuffers[bufIdx].Buf, 0, nil);
-
-  FNextBuffer := (FNextBuffer + 1) mod Length(FAQBuffers);
+  FrameLen := LongWord(N * 4);
+  try
+    FHelperProcess.Input.Write(FrameLen, SizeOf(FrameLen));
+    FHelperProcess.Input.Write(FScratch[0], FrameLen);
+  except
+    // Helper crashed/exited - drop out gracefully rather than raise into
+    // the demod thread, same contract as every other failure mode here.
+    FOpen := False;
+  end;
 end;
 
   {$ELSE}
