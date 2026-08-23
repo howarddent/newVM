@@ -173,6 +173,8 @@ type
     VolumeLabel: TLabel;
     VolumeTrackBar: TTrackBar;
     FFreqRetryTimer: TTimer;
+    FEdgePanTimer: TTimer;
+    FEdgePanDirection: Integer;
     procedure AnalyserGPUStatusKnown(Sender: TObject);
     procedure AnalyserCursorChanged(Sender: TObject);
     procedure ApplyDeviceCapabilities;
@@ -184,6 +186,7 @@ type
     procedure RFSourceFrequencyChanged(Sender: TObject);
     procedure ApplyFrequencyChangedUI;
     procedure FreqRetryTimerTick(Sender: TObject);
+    procedure EdgePanTimerTick(Sender: TObject);
     function RunFrequencyKeypad(MinHz, MaxHz: Double; out ResultHz: Double): Boolean;
     procedure UpdatePeakThreshold;
     procedure ReportError(const Where: string);
@@ -221,6 +224,24 @@ begin
   FFreqRetryTimer.Interval := 50;
   FFreqRetryTimer.Enabled := False;
   FFreqRetryTimer.OnTimer := @FreqRetryTimerTick;
+
+  // Drives EDGE PANNING - see AnalyserCursorChanged's own header comment
+  // for the full rationale. Deliberately shorter than a typical async
+  // retune's own round-trip (confirmed ~50-100ms in earlier testing -
+  // see uSDRRFSource.pas's own ASYNC RETUNE header comment): ticks can
+  // now fire faster than the hardware actually confirms each one, but
+  // that's fine - TSDRControlThread.RequestFrequencyHz just coalesces to
+  // "whatever was requested most recently", so extra ticks simply keep
+  // the target fresh rather than piling up requests. The real point of
+  // going shorter here is EdgePanFraction below shrinking to match, so
+  // each individual step (and so each visible jump once the hardware
+  // does catch up) is smaller - smoother-looking panning at roughly the
+  // same overall %/sec rate, rather than a longer wait for one big jump.
+  FEdgePanTimer := TTimer.Create(Self);
+  FEdgePanTimer.Interval := 20;
+  FEdgePanTimer.Enabled := False;
+  FEdgePanTimer.OnTimer := @EdgePanTimerTick;
+  FEdgePanDirection := 0;
 
   FAnalyser := TSDRSpectrumAnalyser.Create(Self);
   FAnalyser.Parent := Self;
@@ -640,6 +661,8 @@ begin
     FReceiver.Active := False;
     FAMReceiver.Active := False;
     ListenCheckBox.Checked := False;
+    FEdgePanTimer.Enabled := False;
+    FEdgePanDirection := 0;
     FRFSource.StopStreaming;
     StartStopButton.Caption := 'Start';
     RateCombo.Enabled := True;
@@ -692,11 +715,87 @@ end;
 // retune anything itself here (that would recurse into this handler via
 // EditingDone, which only fires on focus loss/Enter, so no infinite loop
 // either way).
+//
+// EDGE PANNING: dragging the cursor all the way to either edge of the
+// currently-captured spectrum continuously retunes the RF front end's
+// own centre frequency in that direction, for as long as the cursor
+// stays at the edge - EdgePanTimerTick does the actual, repeated
+// retuning (a fixed FRACTION of SampleRateHz per tick, not a one-shot
+// jump), so the spectrum trace appears to scroll smoothly (right, when
+// panning to lower frequencies at the left edge; left, at the right
+// edge) rather than jumping abruptly. This handler's only job is
+// updating FEdgePanDirection (-1/0/+1) and arming/disarming the timer to
+// match wherever the cursor currently is; EdgePanTimerTick also
+// explicitly re-pins SpectrumCursorValue to the current edge after each
+// tick (see that method's own comment for why that's needed for this to
+// stay self-sustaining) - which harmlessly re-enters this handler and
+// re-confirms the SAME direction, not additional retuning (that only
+// ever happens inside EdgePanTimerTick itself).
 procedure TForm1.AnalyserCursorChanged(Sender: TObject);
 begin
   ListenFreqEdit.Value := FAnalyser.SpectrumCursorValue;
   FReceiver.TunedFrequencyHz := FAnalyser.SpectrumCursorValue * 1e6;
   FAMReceiver.TunedFrequencyHz := FAnalyser.SpectrumCursorValue * 1e6;
+
+  if FRFSource.IsOpen and (FAnalyser.XAxisMax > FAnalyser.XAxisMin) then begin
+    if FAnalyser.SpectrumCursorValue <= FAnalyser.XAxisMin then
+      FEdgePanDirection := -1
+    else if FAnalyser.SpectrumCursorValue >= FAnalyser.XAxisMax then
+      FEdgePanDirection := 1
+    else
+      FEdgePanDirection := 0;
+  end else
+    FEdgePanDirection := 0;
+  FEdgePanTimer.Enabled := FEdgePanDirection <> 0;
+end;
+
+const
+  // Fraction of SampleRateHz the centre frequency shifts per
+  // FEdgePanTimer tick - proportional to sample rate (not a fixed Hz
+  // value) so the visible scroll SPEED, in screen pixels/second, stays
+  // roughly constant regardless of how wide the current capture is; a
+  // fixed Hz/sec rate would look painfully slow on a wide capture and
+  // dizzying on a narrow one. Scaled down to match FEdgePanTimer's own
+  // 20ms interval (was 0.03 at 100ms, then 0.012 at 40ms) so the overall
+  // rate - about 30% of SampleRateHz/second - stays roughly the same
+  // throughout, just delivered in smaller, more frequent steps each time
+  // the interval shortens, for smoother-looking motion; empirically
+  // reasonable, not derived from anything more principled, revisit if it
+  // still feels too fast/slow. 20ms sits right at Windows TTimer's own
+  // real-world granularity floor (~15.6ms - see uSDRRFSource.pas's own
+  // git history on TSDRPollThread for where this project first ran into
+  // that limit), so this is close to as fast as a plain TTimer can
+  // usefully go; a genuinely tighter tick would need a dedicated thread
+  // the way that DSP-side polling does, not warranted here for what's
+  // ultimately a cosmetic panning animation.
+  EdgePanFraction = 0.006;
+
+procedure TForm1.EdgePanTimerTick(Sender: TObject);
+var
+  NewCenterHz: Double;
+begin
+  if (FEdgePanDirection = 0) or not FRFSource.IsOpen then begin
+    FEdgePanTimer.Enabled := False;
+    Exit;
+  end;
+
+  NewCenterHz := FRFSource.CenterFreqHz + FEdgePanDirection * FRFSource.SampleRateHz * EdgePanFraction;
+  NewCenterHz := EnsureRange(NewCenterHz, FRFSource.Capabilities.MinFreqHz, FRFSource.Capabilities.MaxFreqHz);
+  CommitFrequencyHz(Round(NewCenterHz));
+
+  // Re-pin the cursor to the edge it's panning from - without this, the
+  // cursor's own absolute frequency (unchanged by the retune itself)
+  // would drift slightly INSIDE the newly-shifted window each tick
+  // (RecomputeBounds only re-clamps if a value falls OUTSIDE the new
+  // axis range, and a small per-tick shift generally doesn't push it
+  // that far), so continued genuine mouse movement would be needed to
+  // keep it pinned at the edge - this keeps panning self-sustaining even
+  // if the user's mouse is simply held stationary at the control's edge
+  // (no fresh MouseMove events to re-clamp it otherwise).
+  if FEdgePanDirection < 0 then
+    FAnalyser.SpectrumCursorValue := FAnalyser.XAxisMin
+  else
+    FAnalyser.SpectrumCursorValue := FAnalyser.XAxisMax;
 end;
 
 // Shared by FreqEditEditingDone and KeypadButtonClick - live retune,
@@ -745,6 +844,18 @@ begin
     ReportError('set_freq');
     Exit;
   end;
+  // Reads back the CONFIRMED centre frequency (this only runs once the
+  // async retune has actually completed - see uSDRRFSource.pas's own
+  // ASYNC RETUNE header comment), so FreqEdit stays correct regardless
+  // of which of the several ways a retune can be triggered
+  // (FreqEditEditingDone, KeypadButtonClick, or the spectrum cursor's
+  // own edge-panning in AnalyserCursorChanged) - KeypadButtonClick used
+  // to be the only one that separately, manually kept FreqEdit in sync
+  // before committing; AnalyserCursorChanged's edge-panning had no such
+  // step and left FreqEdit stale, which is what this fixes centrally
+  // rather than requiring every future retune call site to remember to
+  // do it themselves.
+  FreqEdit.Value := FRFSource.CenterFreqHz / 1e6;
   UpdateFrequencyAxis;
   if FRFSource.IsStreaming then
     StatusLabel.Caption := Format('Streaming (%s) @ %.3f MHz, %.3f Msps',
@@ -889,23 +1000,27 @@ begin
 end;
 
 // See TVMPlotSpectrum.YOffset's own property comment (uVMPlotSpectrum.pas)
-// - a display-only shift of the whole trace, independent of YGain.
+// - a display-only shift of the whole trace, independent of YGain. Uses
+// FAnalyser's own unified YOffset (uVMPlotSDRSpectrum.pas), not
+// SpectrumYOffset, so this recolours the waterfall's own colour gradient
+// in synchrony with the spectrum trace, not just the spectrum plot alone.
 procedure TForm1.YOffsetTrackBarChange(Sender: TObject);
 begin
-  FAnalyser.SpectrumYOffset := YOffsetTrackBar.Position;
+  FAnalyser.YOffset := YOffsetTrackBar.Position;
   YOffsetLabel.Caption := Format('Y Zero: %d dB', [YOffsetTrackBar.Position]);
 end;
 
 // TTrackBar positions are integers, so this maps Position 1..50 to a
 // 0.1x..5.0x gain in 0.1 steps (Position/10) rather than exposing
 // TVMPlotSpectrum.YGain's real-valued range directly on the slider - see
-// that property's own comment for what YGain does.
+// that property's own comment for what YGain does. Uses FAnalyser's own
+// unified YGain (see YOffsetTrackBarChange's own comment for why).
 procedure TForm1.YGainTrackBarChange(Sender: TObject);
 var
   Gain: Double;
 begin
   Gain := YGainTrackBar.Position / 10.0;
-  FAnalyser.SpectrumYGain := Gain;
+  FAnalyser.YGain := Gain;
   YGainLabel.Caption := Format('Y Gain: %.1fx', [Gain]);
 end;
 

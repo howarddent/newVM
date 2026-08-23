@@ -63,6 +63,22 @@ unit uVMPlotWaterfall;
      matching how real waterfall displays usually leave the time axis
      unlabelled.
 
+     YOFFSET/YGAIN ("zero point"/"colour contrast"): a direct port of
+     TVMPlotSpectrum's own YOffset/YGain (uVMPlotSpectrum.pas - see that
+     unit's own header comment for the full "zoom/pan the viewport
+     around the raw auto-fit range, not the data itself" rationale,
+     identical here) - the only difference is what the resulting
+     FYMin/FYMax range actually DRIVES: TVMPlotSpectrum uses it for both
+     a numeric Y axis AND the colour gradient, this control has no
+     numeric Y axis at all, so it only ever affects DrawRow's own colour
+     mapping. Existing purely so a host component (uVMPlotSDRSpectrum.pas's
+     TSDRSpectrumAnalyser) can drive both this control's colours and
+     TVMPlotSpectrum's own Y-axis/colours from the SAME pair of values,
+     keeping the two displays' colour-to-power mapping in sync rather
+     than each auto-fitting independently off its own held data (which
+     could otherwise legitimately disagree, e.g. right after ClearStack
+     when one control has more history than the other).
+
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
@@ -106,9 +122,10 @@ type
     FMidR, FMidG, FMidB: Double;
     FHighR, FHighG, FHighB: Double;
 
-    FYMin, FYMax: Double;      // auto-fit across all held rows (colour range)
+    FYMin, FYMax: Double;      // zoomed/panned colour range - see this unit's own YOFFSET/YGAIN header comment
     FFrontN: Integer;
     FPlotXMin, FPlotXMax: Double;
+    FYOffset, FYGain: Double;  // colour-range zoom/pan - see this unit's own YOFFSET/YGAIN header comment
 
     FShowAxes: Boolean;
     FUseFreqAxis: Boolean;
@@ -121,6 +138,8 @@ type
 
     procedure SetScrollRate(AValue: Double);
     procedure SetVisibleRows(AValue: Integer);
+    procedure SetYOffset(AValue: Double);
+    procedure SetYGain(AValue: Double);
     procedure SetLowColor(AValue: TColor);
     procedure SetMidColor(AValue: TColor);
     procedure SetHighColor(AValue: TColor);
@@ -160,6 +179,12 @@ type
     // together with ScrollRate this sets the display's effective time
     // span (VisibleRows/ScrollRate seconds).
     property VisibleRows: Integer read FVisibleRows write SetVisibleRows;
+    // Zooms/pans the colour-mapping range around the (always raw,
+    // untransformed) held data - see this unit's own YOFFSET/YGAIN
+    // header comment; identical semantics to TVMPlotSpectrum's own
+    // YOffset/YGain, just driving colour only here (no numeric Y axis).
+    property YOffset: Double read FYOffset write SetYOffset;
+    property YGain: Double read FYGain write SetYGain;
     property LowColor: TColor read FLowColor write SetLowColor;
     property MidColor: TColor read FMidColor write SetMidColor;
     property HighColor: TColor read FHighColor write SetHighColor;
@@ -236,6 +261,8 @@ begin
 
   FScrollRate := DefaultScrollRate;
   FVisibleRows := DefaultVisibleRows;
+  FYOffset := 0;
+  FYGain := 1;
   SetLowColor(RGBToColor(0, 0, 139));
   SetMidColor(RGBToColor(224, 176, 255));
   SetHighColor(RGBToColor(255, 0, 0));
@@ -290,6 +317,22 @@ begin
   if FVisibleRows = AValue then Exit;
   FVisibleRows := AValue;
   TrimStack;
+  Invalidate;
+end;
+
+procedure TVMPlotWaterfall.SetYOffset(AValue: Double);
+begin
+  if FYOffset = AValue then Exit;
+  FYOffset := AValue;
+  RecomputeBounds;
+  Invalidate;
+end;
+
+procedure TVMPlotWaterfall.SetYGain(AValue: Double);
+begin
+  if FYGain = AValue then Exit;
+  FYGain := AValue;
+  RecomputeBounds;
   Invalidate;
 end;
 
@@ -418,25 +461,38 @@ end;
 procedure TVMPlotWaterfall.RecomputeBounds;
 var
   i, j: Integer;
+  RawMin, RawMax, Center, HalfSpan, Gain: Double;
 begin
   if Length(FRows) = 0 then begin
-    FYMin := -1;
-    FYMax := 1;
+    RawMin := -1;
+    RawMax := 1;
     FFrontN := 0;
   end else begin
-    FYMin := FRows[0].Y[0];
-    FYMax := FRows[0].Y[0];
+    RawMin := FRows[0].Y[0];
+    RawMax := FRows[0].Y[0];
     for i := 0 to High(FRows) do
       for j := 0 to FRows[i].N - 1 do begin
-        if FRows[i].Y[j] < FYMin then FYMin := FRows[i].Y[j];
-        if FRows[i].Y[j] > FYMax then FYMax := FRows[i].Y[j];
+        if FRows[i].Y[j] < RawMin then RawMin := FRows[i].Y[j];
+        if FRows[i].Y[j] > RawMax then RawMax := FRows[i].Y[j];
       end;
     FFrontN := FRows[0].N;
   end;
-  if FYMax - FYMin < 1e-9 then begin
-    FYMin := FYMin - 1;
-    FYMax := FYMax + 1;
+  if RawMax - RawMin < 1e-9 then begin
+    RawMin := RawMin - 1;
+    RawMax := RawMax + 1;
   end;
+  // Zoom/pan the colour-mapping range around the raw auto-fit range -
+  // identical formula to TVMPlotSpectrum's own YOffset/YGain (see this
+  // unit's own YOFFSET/YGAIN header comment). Gain guarded away from
+  // 0/negative since it divides the span, same defensive floor
+  // TVMPlotSpectrum's own RecomputeBounds uses.
+  Center := (RawMin + RawMax) / 2;
+  HalfSpan := (RawMax - RawMin) / 2;
+  Gain := FYGain;
+  if Gain < 0.01 then Gain := 0.01;
+  HalfSpan := HalfSpan / Gain;
+  FYMin := Center - HalfSpan - FYOffset;
+  FYMax := Center + HalfSpan - FYOffset;
 
   if FUseFreqAxis then begin
     FPlotXMin := FXAxisMin;
