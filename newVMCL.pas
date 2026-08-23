@@ -101,6 +101,17 @@ unit newVMCL;
      Worth remembering if this unit ever grows a DCT/DST built on FFTW
      instead - that scaling convention does NOT carry over from clFFT.)
 
+     PLAN CACHING: FFT/IFFT bake a clFFT plan once per distinct N and
+     reuse it (via GFFTPlanCache/GetFFTPlan, near the FFT/IFFT
+     implementations below) rather than baking and destroying one on
+     every call - baking is a genuinely expensive, driver-side operation
+     (roughly 1-4ms even warm on this codebase's own test hardware, vs
+     tens of microseconds for the transform itself once a plan exists),
+     so replanning every call made a single GPU FFT here dozens to
+     hundreds of times slower than the equivalent host FFTW call - see
+     GetFFTPlan's own comment, and perf/newVMCUDAvsCLFFTperformance.rtf,
+     for the measurements that motivated this.
+
      Every OpenCL/clFFT call sequence below (context/queue creation,
      kernel compile and dispatch, and the clFFT plan/bake/transform
      sequence) was verified against the real API and a physically attached
@@ -223,6 +234,26 @@ var
   GKernAdd, GKernSub, GKernNeg, GKernMul, GKernScale, GKernDivScalar,
   GKernTranspose, GKernSin, GKernCos, GKernTan, GKernSinh, GKernSqr,
   GKernSqrt, GKernExp, GKernLn, GKernLinspace, GKernIdentity, GKernMatMul: cl_kernel;
+
+type
+  // See GetFFTPlan's own comment for the full rationale (PLAN CACHING).
+  TCLFFTPlanCacheEntry = record
+    N: NativeUInt;
+    Plan: clfftPlanHandle;
+    TmpBuffer: cl_mem;   // nil if clfftGetTmpBufSize said this plan needs none
+  end;
+
+var
+  // Every entry here lives for the rest of the process, same as
+  // GKernAdd/etc above - no explicit teardown, same established
+  // "create once, let the OS reclaim at exit" convention this unit
+  // already uses for its compute kernels (this unit has no
+  // finalization section at all). Linear-scanned rather than hashed:
+  // real callers only ever exercise a handful of distinct N values
+  // (e.g. one fixed SDR epoch size), so a linear scan of a
+  // single-digit-length array costs nothing next to an actual GPU
+  // round trip.
+  GFFTPlanCache: array of TCLFFTPlanCacheEntry;
 
 const
   KernelSource: PAnsiChar =
@@ -695,18 +726,60 @@ begin
   clEnqueueNDRangeKernel(GQueue, GKernMatMul, 2, nil, @GlobalSize[0], nil, 0, nil, nil);
 end;
 
-function FFT(const A: TVMobjCL): TVMobjCL;
+// PLAN CACHING: clfftCreateDefaultPlan/clfftBakePlan is NOT a cheap call -
+// baking involves the OpenCL driver compiling (or loading a cached binary
+// for) the actual FFT kernel for this exact N, on this exact device - a
+// standalone benchmark (perf/newVMCUDAvsCLFFTperformance.rtf) measured
+// this at roughly 1-4ms per bake on this machine's RTX 5070 even with a
+// WARM on-disk kernel cache (tens to hundreds of ms cold), against a
+// transform itself costing tens of MICROSECONDS once a plan already
+// exists - so FFT()/IFFT()'s original create-plan-then-destroy-it-every-
+// single-call behaviour paid that cost on every call, making a single
+// GPU FFT roughly 12x-220x SLOWER than the equivalent single-threaded
+// host FFTW call at every size that benchmark tested (N=4096..16384) -
+// GPU offload never had a chance to pay for itself under that pattern.
+// GetFFTPlan instead bakes a plan once per distinct N and reuses it for
+// every subsequent FFT/IFFT call at that N, the same "create once, reuse
+// for the life of the process" convention this unit already applies to
+// its own compute kernels (GKernAdd/etc, built once in
+// EnsureOpenCLReady) - closing most of that gap with the existing clFFT
+// integration, no new dependency.
+//
+// ONE PLAN SERVES BOTH DIRECTIONS: clFFT's plan is direction-agnostic -
+// only clfftEnqueueTransform's own Dir argument (CLFFT_FORWARD vs
+// CLFFT_BACKWARD), not anything baked into the plan, distinguishes
+// forward from backward - confirmed against the real API (and exercised
+// exactly this way, one baked plan driving both a forward and a backward
+// steady-state loop) by the same benchmark before relying on it here. So
+// FFT and IFFT at the same N share one cache entry, not two.
+//
+// TMP BUFFER: also queries clfftGetTmpBufSize once per newly-baked plan
+// and allocates+provides the scratch buffer clFFT's own API says the
+// plan needs (nil if none) - the original FFT()/IFFT() always passed nil
+// unconditionally, regardless of what clfftGetTmpBufSize would have
+// reported. That same benchmark found clFFT reports a nonzero
+// requirement (65KB-164KB) for several sizes in the 4096-16384 range and
+// round-tripped correctly anyway on this machine's driver - so this
+// wasn't a live correctness bug here, but it was relying on undocumented
+// driver tolerance rather than the documented API contract; now fixed
+// properly while touching this code for the caching change anyway.
+// Guarded by Assigned(clfftGetTmpBufSize) since OpenCLAPI.pas doesn't
+// require it to resolve (older clFFT builds lacking it still work,
+// simply never get a tmp buffer, exactly like before this change).
+function GetFFTPlan(N: NativeUInt): Integer;
 const
-  s = 'Function FFT (TVMobjCL) : ';
+  s = 'newVMCL GetFFTPlan : ';
 var
-  N: NativeUInt;
+  i: Integer;
   Plan: clfftPlanHandle;
+  TmpBuffer: cl_mem;
+  TmpSize: NativeUInt;
   Status: clfftStatus;
+  Err: cl_int;
 begin
-  assert((A.frows = 1) or (A.fcols = 1), s + 'A must be a vector (Rows=1 or Cols=1)');
-  assert((NativeUInt(A.frows) * A.fcols) mod 2 = 0, s + 'A must hold an even number of floats (interleaved re/im pairs)');
-  N := (NativeUInt(A.frows) * A.fcols) div 2;
-  Result := CopyObjCL(A);   // clFFT transforms CLFFT_INPLACE - copy first so A itself is left untouched, matching this codebase's non-mutating convention
+  for i := 0 to High(GFFTPlanCache) do
+    if GFFTPlanCache[i].N = N then Exit(i);
+
   Plan := 0;
   Status := clfftCreateDefaultPlan(@Plan, GCtx, CLFFT_1D, @N);
   assert(Status = CL_SUCCESS, s + 'clfftCreateDefaultPlan failed with code ' + IntToStr(Status));
@@ -715,10 +788,42 @@ begin
   clfftSetResultLocation(Plan, CLFFT_INPLACE);
   Status := clfftBakePlan(Plan, 1, @GQueue, nil, nil);
   assert(Status = CL_SUCCESS, s + 'clfftBakePlan failed with code ' + IntToStr(Status));
-  Status := clfftEnqueueTransform(Plan, CLFFT_FORWARD, 1, @GQueue, 0, nil, nil, @Result.FBuffer, nil, nil);
+
+  TmpBuffer := nil;
+  if Assigned(clfftGetTmpBufSize) then begin
+    TmpSize := 0;
+    Status := clfftGetTmpBufSize(Plan, @TmpSize);
+    if (Status = CL_SUCCESS) and (TmpSize > 0) then begin
+      Err := 0;
+      TmpBuffer := clCreateBuffer(GCtx, CL_MEM_READ_WRITE, TmpSize, nil, @Err);
+      assert(Err = CL_SUCCESS, s + 'clCreateBuffer (tmp) failed with code ' + IntToStr(Err));
+    end;
+  end;
+
+  SetLength(GFFTPlanCache, Length(GFFTPlanCache) + 1);
+  Result := High(GFFTPlanCache);
+  GFFTPlanCache[Result].N := N;
+  GFFTPlanCache[Result].Plan := Plan;
+  GFFTPlanCache[Result].TmpBuffer := TmpBuffer;
+end;
+
+function FFT(const A: TVMobjCL): TVMobjCL;
+const
+  s = 'Function FFT (TVMobjCL) : ';
+var
+  N: NativeUInt;
+  Idx: Integer;
+  Status: clfftStatus;
+begin
+  assert((A.frows = 1) or (A.fcols = 1), s + 'A must be a vector (Rows=1 or Cols=1)');
+  assert((NativeUInt(A.frows) * A.fcols) mod 2 = 0, s + 'A must hold an even number of floats (interleaved re/im pairs)');
+  N := (NativeUInt(A.frows) * A.fcols) div 2;
+  Result := CopyObjCL(A);   // clFFT transforms CLFFT_INPLACE - copy first so A itself is left untouched, matching this codebase's non-mutating convention
+  Idx := GetFFTPlan(N);
+  Status := clfftEnqueueTransform(GFFTPlanCache[Idx].Plan, CLFFT_FORWARD, 1, @GQueue, 0, nil, nil,
+    @Result.FBuffer, nil, GFFTPlanCache[Idx].TmpBuffer);
   assert(Status = CL_SUCCESS, s + 'clfftEnqueueTransform failed with code ' + IntToStr(Status));
   clFinish(GQueue);
-  clfftDestroyPlan(@Plan);
 end;
 
 function IFFT(const A: TVMobjCL): TVMobjCL;
@@ -726,25 +831,18 @@ const
   s = 'Function IFFT (TVMobjCL) : ';
 var
   N: NativeUInt;
-  Plan: clfftPlanHandle;
+  Idx: Integer;
   Status: clfftStatus;
 begin
   assert((A.frows = 1) or (A.fcols = 1), s + 'A must be a vector (Rows=1 or Cols=1)');
   assert((NativeUInt(A.frows) * A.fcols) mod 2 = 0, s + 'A must hold an even number of floats (interleaved re/im pairs)');
   N := (NativeUInt(A.frows) * A.fcols) div 2;
   Result := CopyObjCL(A);
-  Plan := 0;
-  Status := clfftCreateDefaultPlan(@Plan, GCtx, CLFFT_1D, @N);
-  assert(Status = CL_SUCCESS, s + 'clfftCreateDefaultPlan failed with code ' + IntToStr(Status));
-  clfftSetPlanPrecision(Plan, CLFFT_SINGLE);
-  clfftSetLayout(Plan, CLFFT_COMPLEX_INTERLEAVED, CLFFT_COMPLEX_INTERLEAVED);
-  clfftSetResultLocation(Plan, CLFFT_INPLACE);
-  Status := clfftBakePlan(Plan, 1, @GQueue, nil, nil);
-  assert(Status = CL_SUCCESS, s + 'clfftBakePlan failed with code ' + IntToStr(Status));
-  Status := clfftEnqueueTransform(Plan, CLFFT_BACKWARD, 1, @GQueue, 0, nil, nil, @Result.FBuffer, nil, nil);
+  Idx := GetFFTPlan(N);
+  Status := clfftEnqueueTransform(GFFTPlanCache[Idx].Plan, CLFFT_BACKWARD, 1, @GQueue, 0, nil, nil,
+    @Result.FBuffer, nil, GFFTPlanCache[Idx].TmpBuffer);
   assert(Status = CL_SUCCESS, s + 'clfftEnqueueTransform failed with code ' + IntToStr(Status));
   clFinish(GQueue);
-  clfftDestroyPlan(@Plan);
   // No extra /N scaling here: unlike FFTW (which never auto-normalises
   // either direction) or the naive assumption this function started with
   // (documented as a mistake, not corrected in place, so this note stays

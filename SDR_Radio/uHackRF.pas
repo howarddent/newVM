@@ -8,16 +8,29 @@ unit uHackRF;
      GUI timer can pull from safely.
 
      WHY DLOPEN INSTEAD OF LINK-TIME EXTERNAL:
-     Same rationale as fftw3.pas - on this development machine
-     libhackrf0 is installed as a plain runtime package (libhackrf.so.0),
-     with no libhackrf-dev, so there is neither a hackrf.h nor an
-     unversioned libhackrf.so symlink for a link-time "external
-     'hackrf';" declaration to resolve against. This unit instead
-     LoadLibrary/GetProcedureAddress's the exact versioned .so name,
-     resolved once in this unit's own initialization section, tolerant
-     of the library being entirely absent (HackRFLibLoaded stays False;
-     THackRFDevice.Open then fails cleanly with a descriptive
+     Same rationale as fftw3.pas - on the original Linux development
+     machine libhackrf0 is installed as a plain runtime package
+     (libhackrf.so.0), with no libhackrf-dev, so there is neither a
+     hackrf.h nor an unversioned libhackrf.so symlink for a link-time
+     "external 'hackrf';" declaration to resolve against. This unit
+     instead LoadLibrary/GetProcedureAddress's the library, tried against
+     a per-platform candidate name list (HackRFLibCandidates) rather than
+     one fixed name, resolved once in this unit's own initialization
+     section, tolerant of the library being entirely absent (HackRFLibLoaded
+     stays False; THackRFDevice.Open then fails cleanly with a descriptive
      LastError rather than crashing).
+
+     macOS: confirmed via a standalone probe against a real HackRF One,
+     after installing MacPorts' hackrf port (`sudo port install hackrf`) -
+     that port puts libhackrf.dylib/.0.dylib under /opt/local/lib, which is
+     NOT on dyld's default search path (a bare 'libhackrf.dylib'
+     LoadLibrary call fails even with the file right there), so
+     HackRFLibCandidates includes that full path explicitly - same "bare
+     name first, then a known absolute location" pattern uSDRplay.pas/
+     OpenCLAPI.pas already use for their own non-standard-location
+     libraries. Homebrew's own default prefixes are included too as a
+     reasonable fallback, though not verified on this machine (MacPorts,
+     not Homebrew, is what's actually installed here).
 
      The hackrf_transfer record layout, the callback ABI, and every
      bound function signature below were confirmed against the real,
@@ -64,11 +77,35 @@ uses
 
 const
   {$IFDEF WINDOWS}
-  HackRFLib = 'hackrf.dll';   // by convention, matching this repo's other
+  HackRFLibCandidates: array[0..0] of string = ('hackrf.dll');
+                               // by convention, matching this repo's other
                                // runtime-bound libraries - not tested on
                                // Windows, no HackRF hardware available there
   {$ELSE}
-  HackRFLib = 'libhackrf.so.0';
+    {$IFDEF DARWIN}
+  // MacPorts' hackrf port (confirmed via a standalone probe on a real
+  // HackRF One + this exact install) puts libhackrf.dylib at
+  // /opt/local/lib, which is NOT on dyld's default search path - a bare
+  // 'libhackrf.dylib' LoadLibrary fails even with the file right there,
+  // while the full path resolves - same "bare name first (for a possible
+  // future PATH/DYLD_LIBRARY_PATH setup), then a known absolute location"
+  // pattern uSDRplay.pas/OpenCLAPI.pas already use for their own
+  // non-standard-location libraries. Homebrew's own hackrf formula
+  // installs to /opt/homebrew/lib (Apple Silicon) or /usr/local/lib
+  // (Intel) instead - not verified on this machine (MacPorts, not
+  // Homebrew, is what's installed here), included as a reasonable
+  // best-guess fallback rather than left out entirely, following the
+  // installer's own documented default prefixes.
+  HackRFLibCandidates: array[0..4] of string = (
+    'libhackrf.dylib',
+    '/opt/local/lib/libhackrf.dylib',
+    '/opt/local/lib/libhackrf.0.dylib',
+    '/opt/homebrew/lib/libhackrf.dylib',
+    '/usr/local/lib/libhackrf.dylib'
+  );
+    {$ELSE}
+  HackRFLibCandidates: array[0..0] of string = ('libhackrf.so.0');
+    {$ENDIF}
   {$ENDIF}
 
   // Ring buffer capacity - comfortably more than one GUI timer tick's
@@ -190,10 +227,26 @@ begin
   Pointer(hackrf_error_name)                              := Load('hackrf_error_name');
 end;
 
+function HackRFLibCandidateList: string;
+var
+  i: Integer;
+begin
+  Result := '';
+  for i := Low(HackRFLibCandidates) to High(HackRFLibCandidates) do begin
+    if i > Low(HackRFLibCandidates) then Result := Result + ', ';
+    Result := Result + HackRFLibCandidates[i];
+  end;
+end;
+
 function InitializeHackRFLib: Boolean;
+var
+  i: Integer;
 begin
   if HackRFHandle = NilHandle then begin
-    HackRFHandle := LoadLibrary(HackRFLib);
+    for i := Low(HackRFLibCandidates) to High(HackRFLibCandidates) do begin
+      HackRFHandle := LoadLibrary(HackRFLibCandidates[i]);
+      if HackRFHandle <> NilHandle then Break;
+    end;
     if HackRFHandle <> NilHandle then LoadHackRFAddresses;
   end;
   Result := HackRFHandle <> NilHandle;
@@ -298,7 +351,7 @@ begin
   if FIsOpen then begin Result := True; Exit; end;
 
   if not HackRFLibLoaded then begin
-    FLastError := 'libhackrf runtime library (' + HackRFLib + ') not found';
+    FLastError := 'libhackrf runtime library not found (tried: ' + HackRFLibCandidateList + ')';
     Exit;
   end;
 

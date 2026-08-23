@@ -46,27 +46,45 @@ unit uWaveOutPlayer;
      remove the need to compensate with buffering depth at all, but is
      a much larger change.
 
-     LINUX BACKEND (ALSA): non-Windows platforms play back via a runtime
-     (dlopen) binding to libasound.so.2's "simple" PCM API
-     (snd_pcm_open/set_params/writei/recover/close) - same
-     LoadLibrary/GetProcedureAddress-once, tolerant-of-absence pattern
-     this repo already uses for other optional runtime libraries
-     (cblas.pas/OpenBLAS, fftw3.pas/FFTW, uRTLSDR.pas/uHackRF.pas), kept
-     local to this unit since nothing else needs ALSA. The PCM device is
-     opened with SND_PCM_NONBLOCK, and snd_pcm_set_params (channels=2,
-     format=S16_LE, access=RW_INTERLEAVED, a ~100ms requested latency) is
-     used instead of the individual hw_params calls - it's ALSA's own
-     one-call convenience wrapper that picks sane defaults and leaves the
-     stream prepared, so no separate snd_pcm_prepare call is needed. A
-     single reused scratch buffer stands in for the Windows path's ring
-     of WAVEHDRs, since ALSA already provides its own internal ring
-     (sized via that latency parameter) - queueing here is just one
-     snd_pcm_writei call per QueueStereo. Non-blocking mode means a full
-     ALSA ring reports back as -EAGAIN rather than blocking the GUI
-     thread, which this treats as "drop this epoch", exactly the
-     Windows path's own documented behaviour above; any other negative
-     return (e.g. -EPIPE, an underrun) is handed to snd_pcm_recover so
-     playback resumes instead of staying wedged after the first glitch.
+     macOS BACKEND (CoreAudio AudioQueue, OUT OF PROCESS): plays back via
+     AudioToolbox's AudioQueue services, but NOT in this process - see
+     uSDRAudioIPC.pas's header comment for why: loading AudioToolbox by
+     any means at all (static link or dynamic dlopen, before or after
+     streaming starts) was confirmed, via a bare-console reproduction with
+     no LCL/GUI involved, to silently break libhackrf's native USB
+     transfer callback delivery in the same process (~98% read success
+     dropped to 0%). Since this app's whole purpose is to stream from a
+     live HackRF, AudioToolbox cannot be loaded here at all - so this
+     backend instead spawns sdraudiohelper.lpr (a tiny standalone console
+     program that owns the real AudioQueue and nothing else) as a child
+     process at Open, and streams already-converted 16-bit PCM to it over
+     its stdin pipe (uSDRAudioIPC.pas's protocol) via ordinary TProcess.
+     QueueStereo's own tanh-soft-limit-and-scale-to-int16 conversion is
+     unchanged and still runs in THIS process (it's plain float math, no
+     AudioToolbox involved) - only the actual AudioQueue calls moved out.
+
+     Buffering/ring/drop-rather-than-block behaviour lives entirely on the
+     child side now (see sdraudiohelper.lpr) - this side has no visibility
+     into individual buffer completion, so UnderrunCount stays 0 here for
+     a different reason than the Windows/Linux backends' own documented
+     "nothing genuine to count" (there, it's that the API doesn't surface
+     it; here, it's that the API call happens in a different process).
+     A QueueStereo call itself never blocks the caller (the demod thread):
+     writing a few KB to a pipe whose reader is a tight read/play loop
+     essentially never fills the OS pipe buffer at real-time audio rates,
+     and any actual failure (helper crashed/exited) surfaces as a write
+     exception, caught and treated as "player no longer open" - the same
+     graceful-degradation contract as every other failure mode in this
+     unit.
+
+     Historical note: this backend used to call AudioQueueNewOutput/
+     AllocateBuffer/EnqueueBuffer/Start/Stop/Dispose directly, in-process,
+     exactly the way the Windows/Linux backends below still do for their
+     own APIs - see this file's git history for that version, and
+     sdraudiohelper.lpr's own header comment, which is where that code
+     (buffer ring, completion callback, the SetExceptionMask GOTCHA - see
+     that program for the fix, still required, just now applied in the
+     child instead of here) now actually lives.
 
 *******************************************************************************}
 
@@ -75,7 +93,9 @@ unit uWaveOutPlayer;
 interface
 
 uses
-  {$IFDEF WINDOWS}Windows,{$ENDIF} SysUtils, Math, newVMSingle;
+  {$IFDEF WINDOWS}Windows,{$ENDIF}
+  {$IFDEF DARWIN}Process, uSDRAudioIPC,{$ENDIF}
+  SysUtils, Math, newVMSingle;
 
 {$IFDEF WINDOWS}
 const
@@ -122,11 +142,18 @@ type
     end;
     FNextBuffer: Integer;
     {$ELSE}
+      {$IFDEF DARWIN}
+    FHelperProcess: TProcess;   // owns the real AudioQueue - see this unit's own header comment
+    FMaxSamplesPerChannel: Integer;
+    FScratch: array of SmallInt;  // interleaved L/R, 16-bit PCM, reused across calls
+    FBufferCount: Integer;
+      {$ELSE}
     FPCMHandle: Pointer;          // snd_pcm_t*, opaque handle from ALSA
     FScratch: array of SmallInt;  // interleaved L/R, 16-bit PCM, reused across calls
     // Target queued-frame level for the drift-compensation nudge in
     // QueueStereo - see that method's own comment.
     FLatencyTargetFrames: Integer;
+      {$ENDIF}
     {$ENDIF}
     FUnderrunCount: Integer;
   public
@@ -139,12 +166,15 @@ type
     procedure Close;
     procedure QueueStereo(const L, R: TVMobjS);
     property IsOpen: Boolean read FOpen;
-    // Diagnostic only. On the ALSA (non-Windows) backend, counts real
-    // xrun recoveries (snd_pcm_writei returning a negative error other
-    // than -EAGAIN) - added while chasing an intermittently distorted
-    // tone reported on real FM audio; see QueueStereo's own comment on
-    // this branch. Always 0 on Windows (waveOut's ring-buffer design
-    // doesn't have an equivalent recoverable-error notion).
+    // Diagnostic only. On the ALSA backend, counts real xrun recoveries
+    // (snd_pcm_writei returning a negative error other than -EAGAIN) -
+    // added while chasing an intermittently distorted tone reported on
+    // real FM audio; see QueueStereo's own comment on that branch. Always
+    // 0 on Windows and on the macOS/CoreAudio backend - neither waveOut's
+    // ring-buffer design nor AudioQueue's own completion-callback model
+    // surfaces an equivalent recoverable-hardware-xrun notion this
+    // property could meaningfully count (see this unit's own header
+    // comment, macOS BACKEND, for why).
     property UnderrunCount: Integer read FUnderrunCount;
   end;
 
@@ -268,6 +298,120 @@ begin
 end;
 
 {$ELSE}
+  {$IFDEF DARWIN}
+
+// Path to sdraudiohelper, the child process that actually owns
+// AudioToolbox - see this unit's own header comment and
+// uSDRAudioIPC.pas for why that has to live outside this process.
+// Expected to sit right next to the running SDR_Radio executable (they're
+// built from the same repo and shipped together); no PATH search, no
+// install-location guessing.
+function HelperExePath: string;
+begin
+  Result := ExtractFilePath(ParamStr(0)) + 'sdraudiohelper';
+end;
+
+constructor TWaveOutPlayer.Create(BufferCount: Integer);
+begin
+  inherited Create;
+  FBufferCount := BufferCount;
+  FHelperProcess := nil;
+  FOpen := False;
+end;
+
+destructor TWaveOutPlayer.Destroy;
+begin
+  Close;
+  inherited Destroy;
+end;
+
+procedure TWaveOutPlayer.Open(SampleRateHz, MaxSamplesPerChannel: Integer);
+const
+  s = 'TWaveOutPlayer.Open : ';
+var
+  Header: TSDRAudioIPCHeader;
+begin
+  assert(not FOpen, s + 'already open');
+
+  if not FileExists(HelperExePath) then begin
+    FOpen := False;   // build sdraudiohelper.lpr - see this unit's own header comment
+    Exit;
+  end;
+
+  FMaxSamplesPerChannel := MaxSamplesPerChannel;
+  SetLength(FScratch, MaxSamplesPerChannel * 2);
+
+  FHelperProcess := TProcess.Create(nil);
+  FHelperProcess.Executable := HelperExePath;
+  FHelperProcess.Options := [poUsePipes];
+  try
+    FHelperProcess.Execute;
+  except
+    FreeAndNil(FHelperProcess);
+    FOpen := False;
+    Exit;
+  end;
+
+  Header.Magic := SDRAudioIPCMagic;
+  Header.SampleRateHz := SampleRateHz;
+  Header.MaxSamplesPerChannel := MaxSamplesPerChannel;
+  Header.BufferCount := FBufferCount;
+  try
+    FHelperProcess.Input.Write(Header, SizeOf(Header));
+  except
+    FHelperProcess.Terminate(0);
+    FreeAndNil(FHelperProcess);
+    FOpen := False;
+    Exit;
+  end;
+
+  FOpen := True;
+end;
+
+procedure TWaveOutPlayer.Close;
+begin
+  if not FOpen then Exit;
+  FOpen := False;
+  // Closing the child's stdin is its cue to stop and exit cleanly (see
+  // uSDRAudioIPC.pas's protocol) - a clean shutdown, not a kill.
+  FHelperProcess.CloseInput;
+  FHelperProcess.WaitOnExit;
+  FreeAndNil(FHelperProcess);
+end;
+
+procedure TWaveOutPlayer.QueueStereo(const L, R: TVMobjS);
+var
+  N, i: Integer;
+  v: Single;
+  FrameLen: LongWord;
+begin
+  if not FOpen then Exit;
+  N := L.Rows * L.Cols;
+  if N > FMaxSamplesPerChannel then N := FMaxSamplesPerChannel;   // clamp to the pre-sized buffer
+
+  // Same soft (tanh) saturation as the Windows/ALSA paths - see the
+  // Windows path's own comment (above) for why a hard clamp isn't used.
+  // This is plain float math, done here (not in the helper) so the
+  // helper stays a pure CoreAudio conduit with nothing else to get wrong.
+  for i := 0 to N - 1 do begin
+    v := Tanh(L[0, i]);
+    FScratch[i * 2] := Round(v * 32767);
+    v := Tanh(R[0, i]);
+    FScratch[i * 2 + 1] := Round(v * 32767);
+  end;
+
+  FrameLen := LongWord(N * 4);
+  try
+    FHelperProcess.Input.Write(FrameLen, SizeOf(FrameLen));
+    FHelperProcess.Input.Write(FScratch[0], FrameLen);
+  except
+    // Helper crashed/exited - drop out gracefully rather than raise into
+    // the demod thread, same contract as every other failure mode here.
+    FOpen := False;
+  end;
+end;
+
+  {$ELSE}
 
 uses
   DynLibs, ctypes;
@@ -576,6 +720,7 @@ begin
   end;
 end;
 
+  {$ENDIF}
 {$ENDIF}
 
 end.

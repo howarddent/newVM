@@ -62,6 +62,10 @@ object Form1: TForm1
       Top = 14
       Width = 80
       ItemHeight = 15
+      Items.Strings = (
+        '10.667'
+      )
+      ItemIndex = 0
       Style = csDropDownList
       TabOrder = 2
     end
