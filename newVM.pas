@@ -90,7 +90,19 @@ uses
   Classes, SysUtils,cblas,math,TestRegistry,OneAPI,Types,fftw3,newVMI;
 
 Const
-  MaxDim = 65536;    //maximum dimensions of any array
+  // Was 65536 - an arbitrary development-time value (confirmed with the
+  // user, not a real structural limit of anything downstream: TDim's own
+  // storage just grows from a Word- to a LongWord-range subrange as
+  // MaxDim crosses 65536, a few harmless bytes per matrix header, and
+  // calcoffset's r*cols+c indexing arithmetic has no issue with it
+  // either - the FFT/spectrum-display epoch-size cap this had been
+  // silently imposing (see SDR_Radio's own uFMReceiver.pas/
+  // uSDRRFSource.pas comments on the "65535-per-dimension cap" it forced
+  // those units to work around) wasn't a deliberate design choice worth
+  // preserving. Raised to give an SDR_Radio spectrum FFT epoch a full
+  // extra octave of headroom above the largest requested resolution
+  // (2^20 = 1,048,576 samples).
+  MaxDim = 2097152;    //maximum dimensions of any array
 
 Type
   TDim = 0..MaxDim-1;

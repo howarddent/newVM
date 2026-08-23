@@ -68,7 +68,10 @@ uses
   Classes, SysUtils, cblas, math, TestRegistry, OneAPI, Types, fftw3, newVMI;
 
 Const
-  MaxDimS = 65536;    //maximum dimensions of any array
+  // See newVM.pas's own MaxDim comment - an arbitrary development-time
+  // value, not a real limit, raised in step with it across every
+  // parallel real/complex x double/single unit.
+  MaxDimS = 2097152;    //maximum dimensions of any array
 
 Type
   TDimS = 0..MaxDimS-1;

@@ -132,7 +132,13 @@ uses
   Classes, SysUtils, OpenCLAPI, newVMSingle;
 
 const
-  MaxDimCL = 65536;
+  // See newVM.pas's own MaxDim comment - an arbitrary development-time
+  // value, not a real limit, raised in step with it across every
+  // parallel real/complex x double/single unit. This is the one that
+  // matters for SDR_Radio's GPU spectrum FFT path (TVMobjCL) - clFFT
+  // itself has no comparable size restriction, so nothing else needs to
+  // change for GPU epochs up to this cap.
+  MaxDimCL = 2097152;
 
 type
   TDimCL = 0..MaxDimCL-1;

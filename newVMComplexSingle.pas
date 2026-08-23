@@ -14,7 +14,7 @@ unit newVMComplexSingle;
      between matrix and vector objects. Vectors are column dimension (*,1)
      or row dimension (1,*).
 
-     TComplex8 ({re,im: Single}) and the lapacke_cgesv / lapacke_claset /
+     TComplex8 (re/im: Single) and the lapacke_cgesv / lapacke_claset /
      lapacke_clacpy bindings live in OneAPI.pas, alongside their TComplex16
      / "z" counterparts - added there for exactly this unit.
 
@@ -95,7 +95,13 @@ uses
   Classes, SysUtils, cblas, math, TestRegistry, OneAPI, Types, newVMSingle, fftw3;
 
 Const
-  MaxDimC = 65536;    //maximum dimensions of any array
+  // See newVM.pas's own MaxDim comment - an arbitrary development-time
+  // value, not a real limit, raised in step with it across every
+  // parallel real/complex x double/single unit. This is the one that
+  // most directly matters for SDR_Radio's FFT epoch size, since TVMobjC
+  // is what its spectrum pipeline's raw IQ epoch (and the CPU-fallback
+  // FFT path) is built from.
+  MaxDimC = 2097152;    //maximum dimensions of any array
 
 Type
   TDimC = 0..MaxDimC-1;

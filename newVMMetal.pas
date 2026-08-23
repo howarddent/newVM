@@ -100,7 +100,10 @@ uses
   Classes, SysUtils, MetalAPI, newVMSingle;
 
 const
-  MaxDimMTL = 65536;
+  // See newVM.pas's own MaxDim comment - an arbitrary development-time
+  // value, not a real limit, raised in step with it across every
+  // parallel real/complex x double/single unit.
+  MaxDimMTL = 2097152;
 
 type
   TDimMTL = 0..MaxDimMTL-1;
