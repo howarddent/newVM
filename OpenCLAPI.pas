@@ -252,6 +252,16 @@ type
     const commQueues: Pointer; numWaitEvents: cl_uint; const waitEvents: Pointer; outEvents: Pointer;
     const inputBuffers: Pointer; const outputBuffers: Pointer; tmpBuffer: cl_mem): clfftStatus; cdecl;
   TclfftDestroyPlan = function(plHandle: PclfftPlanHandle): clfftStatus; cdecl;
+  // Queries the scratch buffer a baked plan needs for its transform (0 if
+  // none) - see newVMCL.pas's own plan-cache comment for why this is
+  // queried once per cached plan and the result handed to
+  // clfftEnqueueTransform's own tmpBuffer argument, rather than always
+  // passing nil the way this unit's FFT()/IFFT() did originally.
+  // Deliberately NOT added to LoadOpenCLAPI's required-symbols check
+  // (Result :=...and Assigned(...) below): older clFFT builds that lack
+  // it should still work exactly as before (tmp buffer simply never
+  // provided, same as prior behaviour), not fail to load altogether.
+  TclfftGetTmpBufSize = function(plHandle: clfftPlanHandle; buffersize: PNativeUInt): clfftStatus; cdecl;
 
 var
   clfftSetup: TclfftSetup;
@@ -263,6 +273,7 @@ var
   clfftBakePlan: TclfftBakePlan;
   clfftEnqueueTransform: TclfftEnqueueTransform;
   clfftDestroyPlan: TclfftDestroyPlan;
+  clfftGetTmpBufSize: TclfftGetTmpBufSize;
 
   OpenCLAPILoaded: Boolean = False;   // True iff both OpenCL.dll and clFFT.dll loaded and every symbol resolved
 
@@ -341,6 +352,7 @@ begin
   Pointer(clfftBakePlan)            := LoadCLProc(clFFTHandle, 'clfftBakePlan');
   Pointer(clfftEnqueueTransform)    := LoadCLProc(clFFTHandle, 'clfftEnqueueTransform');
   Pointer(clfftDestroyPlan)         := LoadCLProc(clFFTHandle, 'clfftDestroyPlan');
+  Pointer(clfftGetTmpBufSize)       := LoadCLProc(clFFTHandle, 'clfftGetTmpBufSize');
 
   Result := Assigned(clGetPlatformIDs) and Assigned(clCreateContext) and Assigned(clfftSetup)
     and Assigned(clfftEnqueueTransform);
