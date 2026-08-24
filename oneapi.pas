@@ -422,6 +422,10 @@ procedure vdLn(const n: Integer; a: PDouble; r: PDouble); cdecl; external;
 //comment on that block: vmdMul silently reads a missing 5th "mode" stack
 //argument as garbage under the Win64 calling convention).
 procedure vdMul(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl; external;
+//plain (mode-less) elementwise divide, for newVM's divObj - deliberately
+//vdDiv, not the vmdDiv declared above, for the same reason vdMul is used
+//instead of vmdMul (see the comment on that block).
+procedure vdDiv(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl; external;
 
 procedure vsSin(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
 procedure vsCos(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
@@ -711,6 +715,7 @@ var
   vdExp  : Tvd2;
   vdLn   : Tvd2;
   vdMul  : Tvd3;
+  vdDiv  : Tvd3;
 
   vsSin  : Tvs2;
   vsCos  : Tvs2;
@@ -995,6 +1000,7 @@ begin
   pointer(vdExp)  := MKLProc('vdExp');
   pointer(vdLn)   := MKLProc('vdLn');
   pointer(vdMul)  := MKLProc('vdMul');
+  pointer(vdDiv)  := MKLProc('vdDiv');
 
   pointer(vsSin)  := MKLProc('vsSin');
   pointer(vsCos)  := MKLProc('vsCos');
