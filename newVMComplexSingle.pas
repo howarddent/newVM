@@ -157,6 +157,8 @@ type
       class operator -(const A: TVMobjS; const B: TVMobjC): TVMobjC;
       class operator *(const A: TVMobjC; const B: TVMobjS): TVMobjC;
       class operator *(const A: TVMobjS; const B: TVMobjC): TVMobjC;
+      class operator /(const A: TVMobjC; const B: TVMobjS): TVMobjC;
+      class operator /(const A: TVMobjS; const B: TVMobjC): TVMobjC;
       class operator =(const A, B: TVMobjC): Boolean;
   end;
 
@@ -2029,6 +2031,20 @@ end;
 class operator TVMobjC.*(const A: TVMobjS; const B: TVMobjC): TVMobjC;
 begin
   result := MatMultC(RealToComplexS(A), B);
+end;
+
+{ Mixed real/complex '/' - see newVMComplex.pas's matching comment: no
+  same-type TVMobjC/TVMobjC matrix '/' operator exists to delegate to
+  (only the TVMobjC/scalar overloads above), so these follow the '+'/'-'
+  promote-then-delegate pattern via DivObjC (element-wise). }
+class operator TVMobjC./(const A: TVMobjC; const B: TVMobjS): TVMobjC;
+begin
+  result := DivObjC(A, RealToComplexS(B));
+end;
+
+class operator TVMobjC./(const A: TVMobjS; const B: TVMobjC): TVMobjC;
+begin
+  result := DivObjC(RealToComplexS(A), B);
 end;
 
 class operator TVMobjC.=(const A, B: TVMobjC): Boolean;

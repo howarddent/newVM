@@ -177,6 +177,8 @@ type
       class operator -(const A: TVMobj; const B: TVMobjZ): TVMobjZ;
       class operator *(const A: TVMobjZ; const B: TVMobj): TVMobjZ;
       class operator *(const A: TVMobj; const B: TVMobjZ): TVMobjZ;
+      class operator /(const A: TVMobjZ; const B: TVMobj): TVMobjZ;
+      class operator /(const A: TVMobj; const B: TVMobjZ): TVMobjZ;
       class operator =(const A, B: TVMobjZ): Boolean;
   end;
 
@@ -2140,6 +2142,22 @@ end;
 class operator TVMobjZ.*(const A: TVMobj; const B: TVMobjZ): TVMobjZ;
 begin
   result := MatMultZ(RealToComplex(A), B);
+end;
+
+{ Mixed real/complex '/' - unlike mixed '*' above (a genuine matrix
+  product via MatMultZ), there is no same-type TVMobjZ/TVMobjZ matrix '/'
+  operator to either mirror or delegate to (only the TVMobjZ/scalar
+  overloads above exist) - so these follow the '+'/'-' promote-then-
+  delegate pattern instead, delegating to DivObjZ (element-wise, the same
+  Hadamard-quotient convention same-type '*'/DivObjZ use elsewhere). }
+class operator TVMobjZ./(const A: TVMobjZ; const B: TVMobj): TVMobjZ;
+begin
+  result := DivObjZ(A, RealToComplex(B));
+end;
+
+class operator TVMobjZ./(const A: TVMobj; const B: TVMobjZ): TVMobjZ;
+begin
+  result := DivObjZ(RealToComplex(A), B);
 end;
 
 class operator TVMobjZ.=(const A, B: TVMobjZ): Boolean;

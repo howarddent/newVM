@@ -308,6 +308,7 @@ type
     procedure TestEigDecomposeSatisfiesEigenEquation;
     procedure TestMixedOperatorsAddSub;
     procedure TestMixedOperatorMatMultKnownValue;
+    procedure TestMixedOperatorDivKnownValue;
     procedure TestFFTR2CC2RRoundTrip;
     procedure TestFFTC2CRoundTrip;
     procedure TestFFTR2CKnownDCValue;
@@ -398,6 +399,7 @@ type
     procedure TestEigDecomposeSatisfiesEigenEquation;
     procedure TestMixedOperatorsAddSub;
     procedure TestMixedOperatorMatMultKnownValue;
+    procedure TestMixedOperatorDivKnownValue;
     procedure TestFFTR2CC2RRoundTrip;
     procedure TestFFTC2CRoundTrip;
     procedure TestFFTR2CKnownDCValue;
@@ -2552,6 +2554,17 @@ begin
   AssertTrue(P1 = P2);
 end;
 
+procedure TVMobjZTests.TestMixedOperatorDivKnownValue;
+var R: TVMobj; Z, Q1, Q2: TVMobjZ;
+begin
+  R := TVMobj.Create(1, 1, [8]);
+  Z := TVMobjZ.Create(1, 1, [Cplx(0,2)]);
+  Q1 := R / Z;   //TVMobj / TVMobjZ: 8 / 2i = -4i
+  Q2 := Z / R;   //TVMobjZ / TVMobj: 2i / 8 = 0.25i
+  AssertTrue(Q1 = TVMobjZ.Create(1, 1, [Cplx(0,-4)]));
+  AssertTrue(Q2 = TVMobjZ.Create(1, 1, [Cplx(0,0.25)]));
+end;
+
 procedure TVMobjZTests.TestFFTR2CC2RRoundTrip;
 const N = 7;  //odd, exercises the length-parity case FFT_C2R's explicit N handles
 var A, R: TVMobj; Z: TVMobjZ; i: Integer;
@@ -3414,6 +3427,17 @@ begin
   AssertEquals(0.0, P1[0, 0].re, SngTol);
   AssertEquals(6.0, P1[0, 0].im, SngTol);
   AssertTrue(P1 = P2);
+end;
+
+procedure TVMobjCTests.TestMixedOperatorDivKnownValue;
+var R: TVMobjS; Z, Q1, Q2: TVMobjC;
+begin
+  R := TVMobjS.Create(1, 1, [8]);
+  Z := TVMobjC.Create(1, 1, [Cplx8(0,2)]);
+  Q1 := R / Z;   //TVMobjS / TVMobjC: 8 / 2i = -4i
+  Q2 := Z / R;   //TVMobjC / TVMobjS: 2i / 8 = 0.25i
+  AssertTrue(Q1 = TVMobjC.Create(1, 1, [Cplx8(0,-4)]));
+  AssertTrue(Q2 = TVMobjC.Create(1, 1, [Cplx8(0,0.25)]));
 end;
 
 procedure TVMobjCTests.TestFFTR2CC2RRoundTrip;
