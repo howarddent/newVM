@@ -16,6 +16,13 @@ parallel real/complex × double/single "flavours" plus an integer
 companion type for index work. See `CLAUDE.md` for the full architecture
 writeup.
 
+## Caveat
+
+This is not a commercial package — I have included only those features I
+needed for my own applications, and no guarantees are given as to its
+performance. If you want a robust, commercial-level package I recommend
+MtxVec or the SDL library.
+
 ## Platform support
 
 `newVM` is developed to be multi-platform, and has so far been built and
