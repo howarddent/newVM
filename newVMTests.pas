@@ -295,6 +295,7 @@ type
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
+    procedure TestDivObjZKnownValues;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -384,6 +385,7 @@ type
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
+    procedure TestDivObjCKnownValues;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -2393,6 +2395,14 @@ begin
   AssertTrue(A * B = TVMobjZ.Create(2, 2, [Cplx(5,5), Cplx(12,2), Cplx(21,0), Cplx(32,-8)]));
 end;
 
+procedure TVMobjZTests.TestDivObjZKnownValues;
+var A, B: TVMobjZ;
+begin
+  A := TVMobjZ.Create(2, 2, [Cplx(5,5), Cplx(12,2), Cplx(21,0), Cplx(32,-8)]);
+  B := TVMobjZ.Create(2, 2, [Cplx(5,0), Cplx(6,1), Cplx(7,0), Cplx(8,0)]);
+  AssertTrue(DivObjZ(A, B) = TVMobjZ.Create(2, 2, [Cplx(1,1), Cplx(2,0), Cplx(3,0), Cplx(4,-1)]));
+end;
+
 procedure TVMobjZTests.TestOperatorScalarMulDiv;
 var A, P: TVMobjZ;
 begin
@@ -3253,6 +3263,14 @@ begin
   B := TVMobjC.Create(2, 2, [Cplx8(5,0), Cplx8(6,1), Cplx8(7,0), Cplx8(8,0)]);
   AssertTrue(A * B = MulObjC(A, B));
   AssertTrue(A * B = TVMobjC.Create(2, 2, [Cplx8(5,5), Cplx8(12,2), Cplx8(21,0), Cplx8(32,-8)]));
+end;
+
+procedure TVMobjCTests.TestDivObjCKnownValues;
+var A, B: TVMobjC;
+begin
+  A := TVMobjC.Create(2, 2, [Cplx8(5,5), Cplx8(12,2), Cplx8(21,0), Cplx8(32,-8)]);
+  B := TVMobjC.Create(2, 2, [Cplx8(5,0), Cplx8(6,1), Cplx8(7,0), Cplx8(8,0)]);
+  AssertTrue(DivObjC(A, B) = TVMobjC.Create(2, 2, [Cplx8(1,1), Cplx8(2,0), Cplx8(3,0), Cplx8(4,-1)]));
 end;
 
 procedure TVMobjCTests.TestOperatorScalarMulDiv;

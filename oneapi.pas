@@ -451,6 +451,8 @@ procedure vzLn(const n: Integer; a: PComplex16; r: PComplex16); cdecl; external;
 //MKL VM has no dedicated complex "Sqr" (unlike vdSqr/vsSqr for real data) -
 //complex Sqr(A) is implemented as A .* A via elementwise vzMul instead.
 procedure vzMul(const n: Integer; a: PComplex16; b: PComplex16; r: PComplex16); cdecl; external;
+//double-precision complex analogue of vdDiv, for newVMComplex's divObjZ.
+procedure vzDiv(const n: Integer; a: PComplex16; b: PComplex16; r: PComplex16); cdecl; external;
 
 procedure vcSin(const n: Integer; a: PComplex8; r: PComplex8); cdecl; external;
 procedure vcCos(const n: Integer; a: PComplex8; r: PComplex8); cdecl; external;
@@ -461,6 +463,8 @@ procedure vcExp(const n: Integer; a: PComplex8; r: PComplex8); cdecl; external;
 procedure vcLn(const n: Integer; a: PComplex8; r: PComplex8); cdecl; external;
 //see vzMul note above - same reason, single-precision complex.
 procedure vcMul(const n: Integer; a: PComplex8; b: PComplex8; r: PComplex8); cdecl; external;
+//single-precision complex analogue of vzDiv, for newVMComplexSingle's divObjC.
+procedure vcDiv(const n: Integer; a: PComplex8; b: PComplex8; r: PComplex8); cdecl; external;
 
 //ipp routines
 
@@ -738,6 +742,7 @@ var
   vzExp  : Tvz2;
   vzLn   : Tvz2;
   vzMul  : Tvz3;
+  vzDiv  : Tvz3;
 
   vcSin  : Tvc2;
   vcCos  : Tvc2;
@@ -747,6 +752,7 @@ var
   vcExp  : Tvc2;
   vcLn   : Tvc2;
   vcMul  : Tvc3;
+  vcDiv  : Tvc3;
 
   ippsCos_64f_A50     : Tippscos_64f_a50;
   ippsVectorSlope_64f : Tippsvectorslope_64f;
@@ -1024,6 +1030,7 @@ begin
   pointer(vzExp)  := MKLProc('vzExp');
   pointer(vzLn)   := MKLProc('vzLn');
   pointer(vzMul)  := MKLProc('vzMul');
+  pointer(vzDiv)  := MKLProc('vzDiv');
 
   pointer(vcSin)  := MKLProc('vcSin');
   pointer(vcCos)  := MKLProc('vcCos');
@@ -1033,6 +1040,7 @@ begin
   pointer(vcExp)  := MKLProc('vcExp');
   pointer(vcLn)   := MKLProc('vcLn');
   pointer(vcMul)  := MKLProc('vcMul');
+  pointer(vcDiv)  := MKLProc('vcDiv');
 
   pointer(MKL_malloc)  := MKLProc('MKL_malloc');
   pointer(MKL_calloc)  := MKLProc('MKL_calloc');

@@ -205,6 +205,7 @@ function Sqrt(const A: TVMobjC): TVMobjC; overload;
 function Exp(const A: TVMobjC): TVMobjC; overload;
 function Ln(const A: TVMobjC): TVMobjC; overload;
 function MulObjC(const A, B: TVMObjC): TVMobjC;
+function DivObjC(const A, B: TVMObjC): TVMobjC;
 
 { Real<->complex and complex<->complex 1D FFTs, via FFTW3 (fftw3.pas) on
   the single-precision library - see the matching FFT_R2C..IFFT comment in
@@ -2175,6 +2176,32 @@ begin
   assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
   result := CopyObjC(A);
   vcMul(A.rows*A.cols, @A.FData[0], @B.FData[0], @result.FData[0]);
+end;
+{$ENDIF}
+
+function DivObjC(const A, B: TVMObjC): TVMobjC;
+const
+  s: string ='Routine DivObjC : ';
+{ Element-wise complex division, the divObj/DivObjS/DivObjZ counterpart
+  for single-precision complex data. PUREPASCAL branch uses CDivC (the
+  same complex-divide helper PurePascalLUC/PurePascalLUSolveC already
+  use), library-backed branch calls MKL VML's vcDiv - see DivObjZ's
+  comment for why this is the plain "vc*" entry point, not a vmc*-mode
+  one. }
+{$IFDEF PUREPASCAL}
+var
+  i : Integer;
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObjC(A);
+  for i := 0 to A.rows*A.cols-1 do
+    result.fdata[i] := CDivC(result.fdata[i], B.fdata[i]);
+end;
+{$ELSE}
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObjC(A);
+  vcDiv(A.rows*A.cols, @A.FData[0], @B.FData[0], @result.FData[0]);
 end;
 {$ENDIF}
 

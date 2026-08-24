@@ -226,6 +226,7 @@ function Sqrt(const A: TVMobjZ): TVMobjZ; overload;
 function Exp(const A: TVMobjZ): TVMobjZ; overload;
 function Ln(const A: TVMobjZ): TVMobjZ; overload;
 function MulObjZ(const A, B: TVMObjZ): TVMobjZ;
+function DivObjZ(const A, B: TVMObjZ): TVMobjZ;
 
 { Real<->complex and complex<->complex 1D FFTs, via FFTW3 (fftw3.pas) on
   the double-precision library. All vector-only (Rows=1 or Cols=1, result
@@ -2287,6 +2288,31 @@ begin
   assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
   result := CopyObjZ(A);
   vzMul(A.rows*A.cols, @A.FData[0], @B.FData[0], @result.FData[0]);
+end;
+{$ENDIF}
+
+function DivObjZ(const A, B: TVMObjZ): TVMobjZ;
+const
+  s: string ='Routine DivObjZ : ';
+{ Element-wise complex division, the divObj/DivObjS counterpart for
+  complex data. PUREPASCAL branch uses CDivZ (the same complex-divide
+  helper PurePascalLUZ/PurePascalLUSolveZ already use), library-backed
+  branch calls MKL VML's vzDiv - a genuine "vz*" plain entry point (see
+  vzMul's own comment on that family), not a vmz*-mode one. }
+{$IFDEF PUREPASCAL}
+var
+  i : Integer;
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObjZ(A);
+  for i := 0 to A.rows*A.cols-1 do
+    result.fdata[i] := CDivZ(result.fdata[i], B.fdata[i]);
+end;
+{$ELSE}
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObjZ(A);
+  vzDiv(A.rows*A.cols, @A.FData[0], @B.FData[0], @result.FData[0]);
 end;
 {$ENDIF}
 
