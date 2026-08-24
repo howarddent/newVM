@@ -210,6 +210,7 @@ type
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
+    procedure TestDivObjSKnownValues;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -1666,6 +1667,14 @@ begin
   B := TVMobjS.Create(2, 2, [5, 6, 7, 8]);
   AssertTrue(A * B = MulObjS(A, B));
   AssertTrue(A * B = TVMobjS.Create(2, 2, [5, 12, 21, 32]));
+end;
+
+procedure TVMobjSTests.TestDivObjSKnownValues;
+var A, B: TVMobjS;
+begin
+  A := TVMobjS.Create(2, 2, [5, 12, 21, 32]);
+  B := TVMobjS.Create(2, 2, [5, 6, 7, 8]);
+  AssertTrue(DivObjS(A, B) = TVMobjS.Create(2, 2, [1, 2, 3, 4]));
 end;
 
 procedure TVMobjSTests.TestOperatorScalarMulDiv;

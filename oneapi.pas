@@ -438,6 +438,8 @@ procedure vsLn(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
 //single-precision real analogue of vdMul above, for newVMSingle's
 //elementwise '*' operator (MulObjS).
 procedure vsMul(const n: Integer; a: PSingle; b: PSingle; r: PSingle); cdecl; external;
+//single-precision real analogue of vdDiv above, for newVMSingle's divObjS.
+procedure vsDiv(const n: Integer; a: PSingle; b: PSingle; r: PSingle); cdecl; external;
 
 procedure vzSin(const n: Integer; a: PComplex16; r: PComplex16); cdecl; external;
 procedure vzCos(const n: Integer; a: PComplex16; r: PComplex16); cdecl; external;
@@ -726,6 +728,7 @@ var
   vsExp  : Tvs2;
   vsLn   : Tvs2;
   vsMul  : Tvs3;
+  vsDiv  : Tvs3;
 
   vzSin  : Tvz2;
   vzCos  : Tvz2;
@@ -1011,6 +1014,7 @@ begin
   pointer(vsExp)  := MKLProc('vsExp');
   pointer(vsLn)   := MKLProc('vsLn');
   pointer(vsMul)  := MKLProc('vsMul');
+  pointer(vsDiv)  := MKLProc('vsDiv');
 
   pointer(vzSin)  := MKLProc('vzSin');
   pointer(vzCos)  := MKLProc('vzCos');
