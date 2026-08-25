@@ -117,6 +117,16 @@ type
     // fresh (1,N) TVMobjZ) iff a full N-sample epoch was available.
     function TryReadEpoch(N: Integer; out IQ: TVMobjZ): Boolean; virtual; abstract;
 
+    // Diagnostic only - forwards the concrete backend's own FRing.
+    // OverflowBytes (see TSDRRingBuffer.Write's own comment on what this
+    // counts: bytes silently dropped because the USB read callback
+    // produced data faster than TSDRRFSource.FPollThread drained it).
+    // Every current backend (uHackRF.pas/uRTLSDR.pas/uSDRplay.pas) has
+    // exactly this ring and overrides this to forward it; the default
+    // here is just a safe fallback for the abstract type itself, never
+    // actually returned by a real backend.
+    function RingOverflowBytes: Int64; virtual;
+
     property IsOpen: Boolean read FIsOpen;
     property IsStreaming: Boolean read FStreaming;
     property CenterFreqHz: QWord read FCenterFreqHz;
@@ -160,6 +170,16 @@ type
     FRing: TSDRByteArray;
     FWriteIdx, FReadIdx, FFill: Integer;
     FLock: TCriticalSection;
+    // Diagnostic only - total bytes ever silently dropped by Write's own
+    // overwrite-when-full behaviour (both the "whole call bigger than the
+    // ring" branch and the ordinary "ring filled up" branch). A real IQ
+    // discontinuity at the point this fires, invisible to every counter
+    // downstream of it (TSDRRFSource's own stream, TBasebandQueue,
+    // TWaveOutPlayer) since none of them can tell corrupted-but-present
+    // data from genuine signal - see TSDRRFSource.pas's own header
+    // comment section for how this and StreamSkipCount there together
+    // narrow down an audible click to a specific stage.
+    FOverflowBytes: Int64;
   public
     constructor Create(SizeBytes: Integer);
     destructor Destroy; override;
@@ -168,6 +188,7 @@ type
     procedure Write(Buf: PByte; Len: Integer);
     // Called from the (single) consumer only.
     function TryReadNewest(NeedBytes: Integer; out Buf: TSDRByteArray): Boolean;
+    property OverflowBytes: Int64 read FOverflowBytes;
   end;
 
 // DC-offset removal + I/Q gain/phase balance correction for one epoch's
@@ -178,7 +199,24 @@ type
 // automatically. Mutates IQ in place.
 procedure CorrectIQEpoch(var IQ: TVMobjZ);
 
+// Diagnostic only - see CorrectIQEpoch's own implementation comment
+// (DC JUMP DIAGNOSTIC) for what this counts: how many times the blind,
+// independently-recomputed-every-epoch DC-offset estimate (MeanRe/MeanIm)
+// has jumped by more than DCJumpThreshold between one epoch and the next.
+// A plain unit-level counter, not per-device, because exactly one
+// TSDRDevice ever streams at a time in this app (TSDRRFSource wraps a
+// single FDevice) - same "one shared instance in practice" reasoning
+// cblas.pas/OneAPI.pas's own module-level state already relies on.
+function DCCorrectionJumpCount: Integer;
+
 implementation
+
+{ TSDRDevice }
+
+function TSDRDevice.RingOverflowBytes: Int64;
+begin
+  Result := 0;
+end;
 
 { TSDRRingBuffer }
 
@@ -224,6 +262,7 @@ begin
       FWriteIdx := 0;
       FReadIdx := 0;
       FFill := RingLen;
+      Inc(FOverflowBytes, Len - RingLen);
       Exit;
     end;
 
@@ -241,6 +280,7 @@ begin
       Overflow := FFill - RingLen;
       FReadIdx := (FReadIdx + Overflow) mod RingLen;
       FFill := RingLen;
+      Inc(FOverflowBytes, Overflow);
     end;
   finally
     FLock.Leave;
@@ -275,6 +315,27 @@ begin
   Result := True;
 end;
 
+const
+  // How big a jump in the raw-epoch normalised ([-1,1)) DC-offset
+  // estimate counts as "big enough to plausibly click" - see the DC JUMP
+  // DIAGNOSTIC comment below. Not derived from a measured audibility
+  // threshold, just a coarse "clearly more than ordinary estimator noise
+  // for a many-thousand-sample epoch" cutoff, since this is a diagnostic
+  // counter to look at trends with, not a hard pass/fail spec.
+  DCJumpThreshold = 0.02;
+var
+  // DC JUMP DIAGNOSTIC state - see DCCorrectionJumpCount's own interface
+  // comment. FHaveLastMean is False only before the very first epoch
+  // this session (or after a session boundary this unit has no way to
+  // detect, since CorrectIQEpoch is a free function with no Reset hook -
+  // harmless: at worst one spurious comparison against stale data from a
+  // previous connect/retune, indistinguishable in the aggregate count
+  // from a real jump, but not something a continuously-incrementing
+  // count during one ongoing click problem would be confused by).
+  FLastMeanRe, FLastMeanIm: Double;
+  FHaveLastMean: Boolean;
+  FJumpCount: Integer;
+
 procedure CorrectIQEpoch(var IQ: TVMobjZ);
 var
   N, i: Integer;
@@ -302,6 +363,21 @@ begin
   end;
   MeanRe := SumRe / N;
   MeanIm := SumIm / N;
+
+  // DC JUMP DIAGNOSTIC - see DCCorrectionJumpCount's own interface
+  // comment. Deliberately compares the RAW per-epoch estimate against the
+  // PREVIOUS epoch's raw estimate, both computed identically/independently -
+  // exactly the discontinuity that would land in IQ's own corrected output
+  // below if two consecutive epochs' estimates disagree by more than
+  // ordinary estimator noise for an N-sample mean.
+  if FHaveLastMean then begin
+    if (Abs(MeanRe - FLastMeanRe) > DCJumpThreshold) or
+       (Abs(MeanIm - FLastMeanIm) > DCJumpThreshold) then
+      Inc(FJumpCount);
+  end;
+  FLastMeanRe := MeanRe;
+  FLastMeanIm := MeanIm;
+  FHaveLastMean := True;
 
   Pii := 0; Piq := 0;
   for i := 0 to N - 1 do begin
@@ -340,6 +416,11 @@ begin
         IQ[0, i] := Cplx(IQ[0, i].re, IQ[0, i].im * k);
     end;
   end;
+end;
+
+function DCCorrectionJumpCount: Integer;
+begin
+  Result := FJumpCount;
 end;
 
 end.

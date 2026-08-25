@@ -572,6 +572,7 @@ type
     procedure OnRawData(xi, xq: PSmallInt; NumSamples: Integer);
 
     function TryReadEpoch(N: Integer; out IQ: TVMobjZ): Boolean; override;
+    function RingOverflowBytes: Int64; override;
   end;
 
 implementation
@@ -1032,6 +1033,11 @@ begin
 
   CorrectIQEpoch(IQ);
   Result := True;
+end;
+
+function TSDRplayDevice.RingOverflowBytes: Int64;
+begin
+  Result := FRing.OverflowBytes;
 end;
 
 initialization

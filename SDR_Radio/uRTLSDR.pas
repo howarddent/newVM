@@ -95,7 +95,13 @@ const
     '/usr/local/lib/librtlsdr.dylib'
   );
     {$ELSE}
-  RTLSDRLibCandidates: array[0..0] of string = ('librtlsdr.so.2');
+  // librtlsdr's soname has been observed as both .so.2 (this repo's
+  // original dev machine) and .so.0 (Debian/Raspberry Pi OS's rtl-sdr
+  // package, confirmed via dpkg -l/ldconfig -p on a Raspberry Pi) - same
+  // "try a short list of known sonames" pattern as oneapi.pas's
+  // MKLCandidateLibs, for the same reason: the packaged soname isn't
+  // something this codebase can pin at compile time.
+  RTLSDRLibCandidates: array[0..1] of string = ('librtlsdr.so.2', 'librtlsdr.so.0');
     {$ENDIF}
   {$ENDIF}
 
@@ -192,6 +198,7 @@ type
     procedure OnRawData(Buf: PByte; Len: Integer);
 
     function TryReadEpoch(N: Integer; out IQ: TVMobjZ): Boolean; override;
+    function RingOverflowBytes: Int64; override;
   end;
 
 implementation
@@ -548,6 +555,11 @@ begin
 
   CorrectIQEpoch(IQ);
   Result := True;
+end;
+
+function TRTLSDRDevice.RingOverflowBytes: Int64;
+begin
+  Result := FRing.OverflowBytes;
 end;
 
 initialization

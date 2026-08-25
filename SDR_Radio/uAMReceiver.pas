@@ -124,6 +124,12 @@ type
     FDSPThread: TAMDSPThread;
     FChainBuilt: Boolean;
     FLastError: string;
+    // Diagnostic only - see TFMBroadcastReceiver's identical FAcquireSkipCount
+    // for the rationale (counts only this receiver's own FSourceCursor skips).
+    FAcquireSkipCount: Integer;
+    // Diagnostic only - see TFMBroadcastReceiver's identical FErrorCount
+    // for the rationale (total exceptions caught in TAMDSPThread.Execute).
+    FErrorCount: Integer;
 
     procedure SetSource(AValue: TSDRRFSource);
     procedure SetTunedFrequencyHz(AValue: Double);
@@ -148,6 +154,10 @@ type
     // Forwards TWaveOutPlayer.UnderrunCount - see that property's own
     // comment. 0 before Active is ever set True (FPlayer isn't open yet).
     function AudioUnderrunCount: Integer;
+    // Forwards FAcquireSkipCount - see that field's own comment.
+    function AudioAcquireSkipCount: Integer;
+    // Forwards FErrorCount - see that field's own comment.
+    function AudioErrorCount: Integer;
   published
     property Source: TSDRRFSource read FSource write SetSource;
     // Absolute RF frequency to listen to, in Hz - see
@@ -215,6 +225,7 @@ begin
     except
       on E: Exception do begin
         FOwner.FLastError := E.ClassName + ': ' + E.Message;
+        Inc(FOwner.FErrorCount);
         Sleep(1);
       end;
     end;
@@ -280,6 +291,16 @@ end;
 function TAMBroadcastReceiver.AudioUnderrunCount: Integer;
 begin
   Result := FPlayer.UnderrunCount;
+end;
+
+function TAMBroadcastReceiver.AudioAcquireSkipCount: Integer;
+begin
+  Result := FAcquireSkipCount;
+end;
+
+function TAMBroadcastReceiver.AudioErrorCount: Integer;
+begin
+  Result := FErrorCount;
 end;
 
 procedure TAMBroadcastReceiver.SetActive(AValue: Boolean);
@@ -362,6 +383,7 @@ var
   N: Integer;
   IQ, Baseband: TVMobjC;
   Audio: TVMobjS;
+  Skipped: Boolean;
 begin
   Result := False;
   if not (FChainBuilt and Assigned(FSource)) then Exit;
@@ -371,7 +393,8 @@ begin
   // here for the same reason.
   N := Round(FSource.SampleRateHz * FEpochDurationMs / 1000);
   if N > MaxEpochSamples then N := MaxEpochSamples;
-  if not FSource.TryReadEpoch(N, FSourceCursor, IQ) then Exit;
+  if not FSource.TryReadEpoch(N, FSourceCursor, IQ, Skipped) then Exit;
+  if Skipped then Inc(FAcquireSkipCount);
 
   Baseband := FResamplerToBaseband.Process(FMixer.Process(IQ));
   Audio := FResamplerAudio.Process(FDemod.Process(Baseband, FSynchronous));

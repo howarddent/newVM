@@ -170,10 +170,13 @@ type
     BandwidthLabel: TLabel;
     BandwidthTrackBar: TTrackBar;
     SynchronousCheckBox: TCheckBox;
+    ClickBlankerCheckBox: TCheckBox;
     VolumeLabel: TLabel;
     VolumeTrackBar: TTrackBar;
+    AudioStatsLabel: TLabel;
     FFreqRetryTimer: TTimer;
     FEdgePanTimer: TTimer;
+    FAudioStatsTimer: TTimer;
     FEdgePanDirection: Integer;
     procedure AnalyserGPUStatusKnown(Sender: TObject);
     procedure AnalyserCursorChanged(Sender: TObject);
@@ -187,6 +190,7 @@ type
     procedure ApplyFrequencyChangedUI;
     procedure FreqRetryTimerTick(Sender: TObject);
     procedure EdgePanTimerTick(Sender: TObject);
+    procedure AudioStatsTimerTick(Sender: TObject);
     function RunFrequencyKeypad(MinHz, MaxHz: Double; out ResultHz: Double): Boolean;
     procedure UpdatePeakThreshold;
     procedure ReportError(const Where: string);
@@ -199,6 +203,7 @@ type
     procedure ListenKeypadButtonClick(Sender: TObject);
     procedure BandwidthTrackBarChange(Sender: TObject);
     procedure SynchronousCheckBoxChange(Sender: TObject);
+    procedure ClickBlankerCheckBoxChange(Sender: TObject);
     procedure VolumeTrackBarChange(Sender: TObject);
   end;
 
@@ -242,6 +247,19 @@ begin
   FEdgePanTimer.Enabled := False;
   FEdgePanTimer.OnTimer := @EdgePanTimerTick;
   FEdgePanDirection := 0;
+
+  // Periodic readout of the audio pipeline's own diagnostic counters
+  // (TWaveOutPlayer.UnderrunCount via AudioUnderrunCount, and - FM only -
+  // TBasebandQueue.DropCount via AudioDropCount) - added specifically so
+  // an audible click can be attributed to a real ALSA xrun versus a
+  // dropped baseband epoch (FAcquireThread/FDemodThread falling behind)
+  // versus neither (some other cause entirely), rather than guessing.
+  // 1s is coarse enough not to matter for a slowly-incrementing counter
+  // but frequent enough to correlate with what was just heard.
+  FAudioStatsTimer := TTimer.Create(Self);
+  FAudioStatsTimer.Interval := 1000;
+  FAudioStatsTimer.Enabled := True;
+  FAudioStatsTimer.OnTimer := @AudioStatsTimerTick;
 
   FAnalyser := TSDRSpectrumAnalyser.Create(Self);
   FAnalyser.Parent := Self;
@@ -343,6 +361,22 @@ begin
   SynchronousCheckBox.Caption := 'Synchronous';
   SynchronousCheckBox.OnChange := @SynchronousCheckBoxChange;
 
+  // FM-only (ApplyListenModeVisibility hides this whenever AM is selected,
+  // the opposite of BandwidthLabel/BandwidthTrackBar/SynchronousCheckBox
+  // above - same row, since the two control sets are never shown
+  // together) - toggles TFMBroadcastReceiver.ClickBlankerEnabled, i.e.
+  // TFMDemodulator's own impulse blanker (see uDSPBlocks.pas's
+  // TFMDemodulator.BlankerEnabled and uFMReceiver.pas's own
+  // FClickBlankerEnabled for why this needs to be a live toggle rather
+  // than always-on: tuned against one reception scenario, and a plausible
+  // source of new artifacts in another).
+  ClickBlankerCheckBox := TCheckBox.Create(Self);
+  ClickBlankerCheckBox.Parent := ReceiverGroupBox;
+  ClickBlankerCheckBox.SetBounds(10, 100, 220, 19);
+  ClickBlankerCheckBox.Caption := 'Click Blanker';
+  ClickBlankerCheckBox.Checked := True;
+  ClickBlankerCheckBox.OnChange := @ClickBlankerCheckBoxChange;
+
   VolumeLabel := TLabel.Create(Self);
   VolumeLabel.Parent := ReceiverGroupBox;
   VolumeLabel.SetBounds(10, 160, 150, 15);
@@ -358,6 +392,14 @@ begin
   VolumeTrackBar.OnChange := @VolumeTrackBarChange;
   FReceiver.Volume := 0.7;
   FAMReceiver.Volume := 0.7;
+
+  // See FAudioStatsTimer's own comment (above) for what this reports.
+  AudioStatsLabel := TLabel.Create(Self);
+  AudioStatsLabel.Parent := ReceiverGroupBox;
+  AudioStatsLabel.AutoSize := True;   // 5 growing counters - don't clip
+  AudioStatsLabel.ShowHint := True;   // hint carries the latest exception message, if any - see AudioStatsTimerTick
+  AudioStatsLabel.SetBounds(10, 214, 400, 15);
+  AudioStatsLabel.Caption := 'Audio: ring 0, acq-skip 0, drops 0, underruns 0, errors 0, dc-jump 0, clicks 0';
 
   BandwidthTrackBarChange(Self);   // sets BandwidthLabel's initial text
   ApplyListenModeVisibility;
@@ -857,6 +899,87 @@ begin
   RFSourceFrequencyChanged(Self);   // re-checks ModalLevel; re-arms itself if still modal
 end;
 
+// See FAudioStatsTimer's own comment (FormCreate) for why this exists.
+// Four counters, ordered upstream-to-downstream along the signal path, so
+// whichever one is actually incrementing pinpoints the stage at fault:
+//   ring      - TSDRRFSource.DeviceOverflowBytes (uSDRDevice.pas's
+//               TSDRRingBuffer, the device-level USB-callback buffer)
+//               overwriting itself because FPollThread isn't draining it
+//               fast enough - a real IQ discontinuity before ANY of this
+//               app's own DSP ever sees the data. Independent of which
+//               receiver (if any) is active.
+//   acq-skip  - TFMBroadcastReceiver/TAMBroadcastReceiver's own
+//               AudioAcquireSkipCount: THIS receiver's own FSourceCursor
+//               fell behind FStreamRing's capacity and had to jump
+//               forward - a real IQ discontinuity one stage later than
+//               "ring". Deliberately NOT TSDRRFSource.StreamSkipCount
+//               (the aggregate across every consumer, spectrum analyser
+//               included) - confirmed by testing that the spectrum
+//               analyser's own cursor skips constantly by design (it
+//               only ever wants the newest snapshot, not a continuous
+//               stream) even with Listen off and no receiver acquiring
+//               anything at all, which made the aggregate number
+//               useless for attributing an audio click specifically -
+//               see TSDRRFSource.pas's own TryReadEpoch 4-arg overload.
+//   drops     - FM only (uAMReceiver.pas has no equivalent hand-off queue -
+//               see its own header comment for why AM needs only one
+//               thread) - TFMBroadcastReceiver.AudioDropCount,
+//               FDemodThread falling behind FAcquireThread.
+//   underruns - TWaveOutPlayer.UnderrunCount, the ALSA output ring itself
+//               genuinely starving.
+//   errors    - TFMBroadcastReceiver/TAMBroadcastReceiver.AudioErrorCount:
+//               total exceptions caught and swallowed inside per-epoch DSP
+//               processing (TFMAcquireThread/TFMDemodThread/TAMDSPThread's
+//               own Execute methods) - each one is a silently dropped or
+//               corrupted epoch that none of the four counters above can
+//               see, since it happens INSIDE processing, not at an I/O
+//               boundary. The most recent exception's own message is set
+//               as this label's Hint (hover to read it) rather than
+//               crammed into the caption itself.
+//   dc-jump   - uSDRDevice.pas's DCCorrectionJumpCount: how many times
+//               CorrectIQEpoch's blind, independently-recomputed-every-
+//               epoch DC-offset estimate has jumped by more than
+//               DCJumpThreshold from the previous epoch's own estimate.
+//               Unlike every counter above, this ISN'T a dropped/skipped/
+//               corrupted epoch - every sample is present and accounted
+//               for - it's a genuine discontinuity CorrectIQEpoch itself
+//               introduces into otherwise-intact data, the one candidate
+//               left once ring/acq-skip/drops/underruns/errors are all
+//               confirmed clean. Global (not per-receiver), since
+//               CorrectIQEpoch runs once per TryReadEpoch regardless of
+//               which receiver is listening.
+//   clicks    - FM only (envelope/synchronous AM detection isn't a polar
+//               discriminator and has no equivalent phase-wrap failure
+//               mode) - TFMBroadcastReceiver.AudioClickCount, confirmed
+//               FM click-noise events TFMDemodulator's own impulse
+//               blanker has suppressed (see that class's own Process
+//               comment, uDSPBlocks.pas) - a climbing count here IS the
+//               originally-reported audible clicking, now caught and
+//               silenced rather than heard.
+// "ring"/"dc-jump" always come straight from FRFSource/uSDRDevice, active
+// receiver or not; "acq-skip"/"drops"/"underruns"/"errors"/"clicks" only
+// exist once a receiver is Active (StartSelectedReceiver guarantees at
+// most one of FReceiver/FAMReceiver ever is), so they read 0 otherwise.
+procedure TForm1.AudioStatsTimerTick(Sender: TObject);
+begin
+  if FReceiver.Active then begin
+    AudioStatsLabel.Caption := Format('Audio: ring %d, acq-skip %d, drops %d, underruns %d, errors %d, dc-jump %d, clicks %d',
+      [FRFSource.DeviceOverflowBytes, FReceiver.AudioAcquireSkipCount,
+       FReceiver.AudioDropCount, FReceiver.AudioUnderrunCount, FReceiver.AudioErrorCount,
+       DCCorrectionJumpCount, FReceiver.AudioClickCount]);
+    AudioStatsLabel.Hint := FReceiver.LastError;
+  end else if FAMReceiver.Active then begin
+    AudioStatsLabel.Caption := Format('Audio: ring %d, acq-skip %d, drops -, underruns %d, errors %d, dc-jump %d, clicks -',
+      [FRFSource.DeviceOverflowBytes, FAMReceiver.AudioAcquireSkipCount,
+       FAMReceiver.AudioUnderrunCount, FAMReceiver.AudioErrorCount, DCCorrectionJumpCount]);
+    AudioStatsLabel.Hint := FAMReceiver.LastError;
+  end else begin
+    AudioStatsLabel.Caption := Format('Audio: ring %d, acq-skip 0, drops 0, underruns 0, errors 0, dc-jump %d, clicks 0',
+      [FRFSource.DeviceOverflowBytes, DCCorrectionJumpCount]);
+    AudioStatsLabel.Hint := '';
+  end;
+end;
+
 procedure TForm1.ApplyFrequencyChangedUI;
 begin
   if not FRFSource.LastFrequencyChangeOk then begin
@@ -1054,6 +1177,7 @@ begin
   BandwidthLabel.Visible := IsAM;
   BandwidthTrackBar.Visible := IsAM;
   SynchronousCheckBox.Visible := IsAM;
+  ClickBlankerCheckBox.Visible := not IsAM;
 end;
 
 // Reflects whichever receiver's own channel bandwidth is currently
@@ -1155,6 +1279,15 @@ end;
 procedure TForm1.SynchronousCheckBoxChange(Sender: TObject);
 begin
   FAMReceiver.Synchronous := SynchronousCheckBox.Checked;
+end;
+
+// See ClickBlankerCheckBox's own comment (FormCreate) for what this
+// toggles. Safe to change live, whether or not FReceiver is currently
+// Active - FClickBlankerEnabled is a plain field TFMBroadcastReceiver
+// pushes into FDemod fresh every epoch, same as Volume.
+procedure TForm1.ClickBlankerCheckBoxChange(Sender: TObject);
+begin
+  FReceiver.ClickBlankerEnabled := ClickBlankerCheckBox.Checked;
 end;
 
 procedure TForm1.VolumeTrackBarChange(Sender: TObject);
