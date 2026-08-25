@@ -1,0 +1,51 @@
+object Form30: TForm30
+  Left = 0
+  Height = 496
+  Top = 0
+  Width = 750
+  BorderStyle = bsDialog
+  Caption = 'Form30'
+  ClientHeight = 496
+  ClientWidth = 750
+  Position = poScreenCenter
+  LCLVersion = '4.8.0.0'
+  object Chart1: TChart
+    Left = 8
+    Height = 441
+    Top = 16
+    Width = 734
+    AxisList = <
+      item
+        Grid.Color = clSilver
+        Minors = <>
+      end
+      item
+        Alignment = calBottom
+        Grid.Color = clSilver
+        Minors = <>
+      end>
+    Title.Text.Strings = (
+      'TChart'
+    )
+    Title.Visible = True
+    Legend.Visible = True
+    object Series1: TLineSeries
+      LinePen.Color = clRed
+    end
+    object Series2: TLineSeries
+      LinePen.Color = clGreen
+    end
+    object Series3: TLineSeries
+      LinePen.Color = clBlue
+    end
+  end
+  object Button1: TButton
+    Left = 667
+    Height = 25
+    Top = 463
+    Width = 75
+    Caption = 'Button1'
+    TabOrder = 0
+    OnClick = Button1Click
+  end
+end

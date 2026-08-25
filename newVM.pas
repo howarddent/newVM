@@ -238,6 +238,13 @@ function Repmat(const A: TVMobj; RowReps, ColReps: Integer): TVMobj;
   (only '*'/'/' accept a plain scalar; see the OPERATOR OVERLOADS note at
   the top of this file), so this is the named-function equivalent. }
 function AddScalar(const A: TVMobj; K: Double): TVMobj;
+{ Fill(A,K) - a new same-shape object with every element set to K (not
+  added to, unlike AddScalar). Added for Delphi_OOFEM/FEM4's port off
+  MtxVec's TVec/TMtx.SetVal - see the implementation's own comment. }
+function Fill(const A: TVMobj; K: Double): TVMobj;
+{ MaxMinValues(A, AMax, AMin) - A's largest and smallest element values, in
+  one pass. Added for Delphi_OOFEM/FEM4's port off MtxVec's TVec.MaxMin. }
+procedure MaxMinValues(const A: TVMobj; out AMax, AMin: Double);
 { SubMatrix - extracts the (RCount x CCount) submatrix of A starting at
   (R0,C0) (asserts the requested block stays within A's bounds; RCount/
   CCount > 0 is enforced by TVMobj.Create itself). Via LAPACKE_dlacpy,
@@ -1092,6 +1099,39 @@ begin
 {$ELSE}
   ippsAddC_64f_I(K, result.DataPtr, A.Rows*A.Cols);
 {$ENDIF}
+end;
+
+{ Fill(A,K) - every element set to K (not added to, unlike AddScalar). No
+  BLAS/LAPACK/IPP primitive for "set every element to a constant" beyond
+  what a plain loop already gives, so - like Trace - this is just a loop
+  regardless of PUREPASCAL. Added for Delphi_OOFEM/FEM4's port off MtxVec's
+  TVec.SetVal/TMtx.SetVal. }
+function Fill(const A: TVMobj; K: Double): TVMobj;
+var
+  i : Integer;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  for i := 0 to A.Rows*A.Cols-1 do
+    result.fdata[i] := K;
+end;
+
+{ MaxMinValues(A, AMax, AMin) - the largest and smallest element values in
+  A, in one pass. Plain loop, same rationale as Fill/Trace above. Added
+  for Delphi_OOFEM/FEM4's port off MtxVec's TVec.MaxMin. }
+procedure MaxMinValues(const A: TVMobj; out AMax, AMin: Double);
+const
+  s : String = 'Procedure MaxMinValues : ';
+var
+  i : Integer;
+begin
+  assert(A.Rows*A.Cols > 0, s+'A must have at least 1 element');
+  AMax := A.fdata[0];
+  AMin := A.fdata[0];
+  for i := 1 to A.Rows*A.Cols-1 do
+  begin
+    if A.fdata[i] > AMax then AMax := A.fdata[i];
+    if A.fdata[i] < AMin then AMin := A.fdata[i];
+  end;
 end;
 
 function SubMatrix(const A: TVMobj; R0, C0, RCount, CCount: TDim): TVMobj;
