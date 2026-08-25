@@ -194,6 +194,7 @@ type
     procedure OnRawData(Buf: PByte; Len: Integer);
 
     function TryReadEpoch(N: Integer; out IQ: TVMobjZ): Boolean; override;
+    function RingOverflowBytes: Int64; override;
   end;
 
 implementation
@@ -477,6 +478,11 @@ begin
 
   CorrectIQEpoch(IQ);
   Result := True;
+end;
+
+function THackRFDevice.RingOverflowBytes: Int64;
+begin
+  Result := FRing.OverflowBytes;
 end;
 
 initialization

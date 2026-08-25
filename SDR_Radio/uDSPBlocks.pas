@@ -218,9 +218,35 @@ type
     FGain: Single;
     FPrevSample: TComplex8;
     FHavePrev: Boolean;
+    // IMPULSE BLANKER (click suppression) - see Process's own comment for
+    // the full rationale. FClickThreshold is a fixed fraction of the
+    // discriminator's own theoretical ceiling (ArcTan2's |result| <= Pi,
+    // scaled by FGain - a real phase wrap can never produce a value
+    // beyond this, unlike a naive "big spike" assumption); FLastGoodOutput
+    // holds the most recent NON-suppressed sample, so a run of consecutive
+    // clicks all hold at the same level rather than drifting; FClickCount
+    // is diagnostic only (see AudioClickCount's own comment, uFMReceiver.pas).
+    FClickThreshold: Single;
+    FLastGoodOutput: Single;
+    FClickCount: Integer;
+    FClickBlankerEnabled: Boolean;
   public
     constructor Create(SampleRateHz, PeakDeviationHz: Double);
     function Process(const IQ: TVMobjC): TVMobjS;
+    // Diagnostic only - total samples the impulse blanker has suppressed
+    // since this instance was created.
+    property ClickCount: Integer read FClickCount;
+    // On by default (see Create). Exposed as a live toggle - unlike
+    // FClickThreshold (a tuning constant that needed real testing to get
+    // right, not something to expose broadly) - specifically because the
+    // blanker's own zero-order-hold approach is a plausible source of new
+    // artifacts in some OTHER reception scenario this app is used in
+    // (e.g. a intentionally-noisy/weak-signal DX session where every
+    // sample matters and holding through a real, large but legitimate
+    // deviation would itself be the wrong behaviour) - see
+    // TFMBroadcastReceiver.ClickBlankerEnabled (uFMReceiver.pas) for the
+    // forwarding property and uSDRMain.pas for the UI checkbox.
+    property BlankerEnabled: Boolean read FClickBlankerEnabled write FClickBlankerEnabled;
   end;
 
   // Broadcast-FM (pilot-tone, 38kHz-subcarrier) stereo multiplex decoder.
@@ -686,6 +712,29 @@ begin
   inherited Create;
   FGain := SampleRateHz / (2 * Pi * PeakDeviationHz);
   FHavePrev := False;
+  // Threshold as a fraction of the discriminator's own theoretical
+  // ceiling (Pi * FGain - see Process's own comment). Nominal 100%
+  // modulation normalises to exactly 1.0 here by construction (see
+  // FGain's own derivation), i.e. Pi*FGain = SampleRateHz/(2*PeakDeviationHz)
+  // - for this app's own BasebandRateHz=200000/PeakDeviationHz=75000 that's
+  // ~1.333, so this fraction directly trades off against how far above
+  // nominal 100% the cutoff sits. Tried lowering from 0.85 (~1.13, i.e.
+  // 13% over nominal) to 0.7 (~0.93, just under nominal) to catch more
+  // borderline clicks, but real-world testing found that made things
+  // WORSE, not better (consistent with a below-nominal threshold catching
+  // genuinely loud legitimate peaks often enough to itself become
+  // audible, rather than only ever catching rare actual clicks) - reverted
+  // to 0.85. Left here as a documented dead end: don't re-try going below
+  // nominal (1.0) without a different suppression strategy (e.g.
+  // interpolating across a run of held samples instead of flat-holding)
+  // to offset the false-positive cost. See FClickBlankerEnabled (this
+  // class's own field, forwarded as TFMBroadcastReceiver.ClickBlankerEnabled)
+  // for a way to compare "blanker on" vs "raw discriminator" directly
+  // instead of re-tuning this in place.
+  FClickThreshold := 0.85 * Pi * FGain;
+  FLastGoodOutput := 0;
+  FClickCount := 0;
+  FClickBlankerEnabled := True;
 end;
 
 function TFMDemodulator.Process(const IQ: TVMobjC): TVMobjS;
@@ -693,6 +742,7 @@ var
   N, i: Integer;
   cur: TComplex8;
   d: TComplex8;
+  v: Single;
 begin
   N := IQ.Rows * IQ.Cols;
   Result := TVMobjS.Create(1, N);
@@ -704,7 +754,29 @@ begin
       // d := cur * conj(prev)
       d.re := cur.re * FPrevSample.re + cur.im * FPrevSample.im;
       d.im := cur.im * FPrevSample.re - cur.re * FPrevSample.im;
-      Result[0, i] := ArcTan2(d.im, d.re) * FGain;
+      v := ArcTan2(d.im, d.re) * FGain;
+
+      // IMPULSE BLANKER: at low carrier-to-noise ratio, noise occasionally
+      // makes the signal+noise phasor loop around the origin between
+      // consecutive samples - a near-full-circle phase change this polar
+      // discriminator reads as a huge, spurious instantaneous-frequency
+      // spike (classic "FM click noise"/threshold-effect - confirmed as
+      // the actual cause of a reported audible-clicking complaint that
+      // persisted with every buffering/threading counter elsewhere in
+      // this app's pipeline reading exactly zero, but which reduced with
+      // higher RF gain - the textbook signature of this exact
+      // phenomenon). Zero-order-hold (repeat the last known-good sample)
+      // rather than dropping or zeroing it - a single held sample is a
+      // far smaller, less audible artifact than either a step to silence
+      // or the original spike, and a short run of consecutive clicks all
+      // holds at the same level rather than drifting toward zero.
+      if FClickBlankerEnabled and (Abs(v) > FClickThreshold) then begin
+        v := FLastGoodOutput;
+        Inc(FClickCount);
+      end else
+        FLastGoodOutput := v;
+
+      Result[0, i] := v;
     end;
     FPrevSample := cur;
     FHavePrev := True;
