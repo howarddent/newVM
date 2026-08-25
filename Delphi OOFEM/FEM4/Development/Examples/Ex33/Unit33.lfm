@@ -1,0 +1,44 @@
+object Form33: TForm33
+  Left = 0
+  Height = 488
+  Top = 0
+  Width = 747
+  Caption = 'Form33'
+  ClientHeight = 488
+  ClientWidth = 747
+  Position = poScreenCenter
+  LCLVersion = '4.8.0.0'
+  object Button1: TButton
+    Left = 667
+    Height = 25
+    Top = 455
+    Width = 75
+    Caption = 'Calculate'
+    TabOrder = 0
+    OnClick = Button1Click
+  end
+  object Chart1: TChart
+    Left = 8
+    Height = 441
+    Top = 8
+    Width = 734
+    AxisList = <
+      item
+        Grid.Color = clSilver
+        Minors = <>
+      end
+      item
+        Alignment = calBottom
+        Grid.Color = clSilver
+        Minors = <>
+      end>
+    Title.Text.Strings = (
+      'TChart'
+    )
+    Title.Visible = True
+    object Series1: TLineSeries
+      Marks.Style = smsValue
+      LinePen.Color = clRed
+    end
+  end
+end

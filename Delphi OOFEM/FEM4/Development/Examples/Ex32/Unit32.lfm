@@ -1,0 +1,56 @@
+object Form32: TForm32
+  Left = 0
+  Height = 433
+  Top = 0
+  Width = 684
+  BorderStyle = bsDialog
+  Caption = 'Form32'
+  ClientHeight = 433
+  ClientWidth = 684
+  OnCreate = FormCreate
+  Position = poScreenCenter
+  LCLVersion = '4.8.0.0'
+  object Button1: TButton
+    Left = 601
+    Height = 25
+    Top = 400
+    Width = 75
+    Caption = 'Calculate'
+    TabOrder = 0
+    OnClick = Button1Click
+  end
+  object Chart1: TChart
+    Left = 8
+    Height = 386
+    Top = 8
+    Width = 668
+    AxisList = <
+      item
+        Grid.Color = clSilver
+        Minors = <>
+      end
+      item
+        Alignment = calBottom
+        Grid.Color = clSilver
+        Range.Min = 1
+        Range.UseMin = True
+        Minors = <>
+      end>
+    Title.Text.Strings = (
+      'TChart'
+    )
+    Title.Visible = True
+    object Series1: TLineSeries
+      LinePen.Color = clRed
+      LinePen.Width = 2
+    end
+  end
+  object CheckBox1: TCheckBox
+    Left = 56
+    Height = 17
+    Top = 408
+    Width = 97
+    Caption = 'Plot residual'
+    TabOrder = 2
+  end
+end

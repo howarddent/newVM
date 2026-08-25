@@ -1,0 +1,11 @@
+For nStep In {0:179}
+    
+    View[0].TimeStep = nStep;
+
+    Draw; // draw the scene
+
+    //Sleep 0.1; // sleep for 0.1 second
+        
+    Print Sprintf("eurocode-%03g.gif", nStep);
+        
+EndFor

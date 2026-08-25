@@ -1,0 +1,19 @@
+
+Include "structuralengine.pos";
+
+View[0].VectorType = 5;
+
+DispFactor = 0;
+
+For i In {1:50}	
+  DispFactor = DispFactor + 1 / 200;
+  View[0].DisplacementFactor = DispFactor;
+  Draw;  
+EndFor
+
+For i In {1:50}	
+  DispFactor = DispFactor - 1 / 200;
+  View[0].DisplacementFactor = DispFactor;
+  Draw;  
+EndFor
+
