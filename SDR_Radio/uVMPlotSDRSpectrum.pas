@@ -76,12 +76,21 @@ unit uVMPlotSDRSpectrum;
      not forwarded here). Properties whose name and meaning are identical
      on both controls AND which uSDRMain.pas already always sets to the
      same value on both (ShowAxes, UseFrequencyAxis, XAxisMin, XAxisMax,
-     XAxisTitle) are forwarded unprefixed, writing both controls together;
-     everything else is prefixed Spectrum*/Waterfall* to stay unambiguous,
-     since the two controls' values can otherwise differ (e.g. each has
-     its own Title, and only TVMPlotSpectrum has YOffset/YGain/peak
-     detection/averaging, only TVMPlotWaterfall has ScrollRate/
-     VisibleRows).
+     XAxisTitle, YOffset, YGain) are forwarded unprefixed, writing both
+     controls together; everything else is prefixed Spectrum*/Waterfall*
+     to stay unambiguous, since the two controls' values can otherwise
+     differ (e.g. each has its own Title, and only TVMPlotSpectrum has
+     peak detection/averaging, only TVMPlotWaterfall has ScrollRate/
+     VisibleRows). YOffset/YGain moved into the unprefixed group once
+     TVMPlotWaterfall gained its own colour-only YOffset/YGain (see that
+     unit's own header comment) specifically so the two displays' colour-
+     to-power mapping stays linked - dragging Y Zero/Y Gain in
+     uSDRMain.pas now recolours both the spectrum trace's Y axis AND the
+     waterfall's colour gradient in synchrony, rather than only the
+     spectrum plot the way it did before; SpectrumYOffset/SpectrumYGain
+     remain published too, unchanged, as an escape hatch for anyone who
+     genuinely wants to adjust the spectrum plot's own range independently
+     of the waterfall's.
 
 *******************************************************************************}
 
@@ -153,6 +162,10 @@ type
     procedure SetXAxisMax(AValue: Double);
     function GetXAxisTitle: string;
     procedure SetXAxisTitle(const AValue: string);
+    function GetYOffset: Double;
+    procedure SetYOffset(AValue: Double);
+    function GetYGain: Double;
+    procedure SetYGain(AValue: Double);
     function GetSpectrumTitle: string;
     procedure SetSpectrumTitle(const AValue: string);
     function GetSpectrumYAxisTitle: string;
@@ -244,6 +257,10 @@ type
     property XAxisMin: Double read GetXAxisMin write SetXAxisMin;
     property XAxisMax: Double read GetXAxisMax write SetXAxisMax;
     property XAxisTitle: string read GetXAxisTitle write SetXAxisTitle;
+    // Linked colour-to-power mapping for both plots - see this unit's own
+    // PASS-THROUGH PROPERTIES header comment.
+    property YOffset: Double read GetYOffset write SetYOffset;
+    property YGain: Double read GetYGain write SetYGain;
 
     // SpectrumPlot-only.
     property SpectrumTitle: string read GetSpectrumTitle write SetSpectrumTitle;
@@ -426,6 +443,28 @@ procedure TSDRSpectrumAnalyser.SetXAxisTitle(const AValue: string);
 begin
   FSpectrumPlot.XAxisTitle := AValue;
   FWaterfallPlot.XAxisTitle := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetYOffset: Double;
+begin
+  Result := FSpectrumPlot.YOffset;
+end;
+
+procedure TSDRSpectrumAnalyser.SetYOffset(AValue: Double);
+begin
+  FSpectrumPlot.YOffset := AValue;
+  FWaterfallPlot.YOffset := AValue;
+end;
+
+function TSDRSpectrumAnalyser.GetYGain: Double;
+begin
+  Result := FSpectrumPlot.YGain;
+end;
+
+procedure TSDRSpectrumAnalyser.SetYGain(AValue: Double);
+begin
+  FSpectrumPlot.YGain := AValue;
+  FWaterfallPlot.YGain := AValue;
 end;
 
 function TSDRSpectrumAnalyser.GetSpectrumTitle: string;

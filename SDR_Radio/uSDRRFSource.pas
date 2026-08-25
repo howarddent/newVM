@@ -193,6 +193,16 @@ type
     FStreamLock: TCriticalSection;
     FPollThread: TSDRPollThread;
     FPollChunkSamples: Integer;
+    // Diagnostic only - counts every TryReadEpoch call (from ANY
+    // consumer sharing this component) that had to skip its Cursor
+    // forward because it had fallen behind FStreamRing's own capacity -
+    // see TryReadEpoch's own "fell behind" comment. A real IQ
+    // discontinuity at the point this fires, same rationale as
+    // TSDRRingBuffer.OverflowBytes (uSDRDevice.pas) one stage further
+    // upstream - together the two narrow an audible click down to
+    // "before FStreamRing" (DeviceOverflowBytes) vs. "a consumer reading
+    // FStreamRing too slowly" (this).
+    FStreamSkipCount: Int64;
 
     FControlThread: TSDRControlThread;
     FLastFrequencyChangeOk: Boolean;
@@ -249,7 +259,19 @@ type
     // same variable back in on every call. Returns True and fills IQ (a
     // fresh (1,N) TVMobjC) iff N new samples were available for this
     // caller; advances Cursor by exactly N on success.
-    function TryReadEpoch(N: Integer; var Cursor: TSDRStreamCursor; out IQ: TVMobjC): Boolean;
+    function TryReadEpoch(N: Integer; var Cursor: TSDRStreamCursor; out IQ: TVMobjC): Boolean; overload;
+    // Same as the 3-arg overload, plus Skipped: True iff THIS call had to
+    // jump Cursor forward because it had fallen behind FStreamRing's own
+    // capacity (see the "fell behind" comment in the implementation) -
+    // i.e. a real IQ discontinuity for THIS caller specifically, not the
+    // aggregate StreamSkipCount below (which fires just as often for the
+    // spectrum analyser's own, normally-lagging cursor - see
+    // uSDRMain.pas's audio-stats comment for why that made StreamSkipCount
+    // alone useless as an audio diagnostic). Meaningless (left False) if
+    // Result is False. FM/AM's own ProcessAcquireOnce/ProcessOnce use
+    // this overload to count only skips THEY experience.
+    function TryReadEpoch(N: Integer; var Cursor: TSDRStreamCursor; out IQ: TVMobjC;
+      out Skipped: Boolean): Boolean; overload;
 
     property Capabilities: TSDRCapabilities read GetCapabilities;
     property IsOpen: Boolean read GetIsOpen;
@@ -263,6 +285,11 @@ type
     // holds the reason on False, same as every other method here).
     property LastFrequencyChangeOk: Boolean read FLastFrequencyChangeOk;
     property OnFrequencyChanged: TNotifyEvent read FOnFrequencyChanged write FOnFrequencyChanged;
+    // Diagnostic only - see FStreamSkipCount's own comment.
+    property StreamSkipCount: Int64 read FStreamSkipCount;
+    // Diagnostic only - forwards the concrete backend's own
+    // TSDRDevice.RingOverflowBytes (0 before a device is ever connected).
+    function DeviceOverflowBytes: Int64;
   end;
 
 procedure Register;
@@ -409,6 +436,11 @@ end;
 function TSDRRFSource.GetSampleRateHz: Double;
 begin
   if Assigned(FDevice) then Result := FDevice.SampleRateHz else Result := 0;
+end;
+
+function TSDRRFSource.DeviceOverflowBytes: Int64;
+begin
+  if Assigned(FDevice) then Result := FDevice.RingOverflowBytes else Result := 0;
 end;
 
 function TSDRRFSource.GetDeviceName: string;
@@ -610,9 +642,18 @@ end;
 // for exactly this kind of cross-thread access.
 function TSDRRFSource.TryReadEpoch(N: Integer; var Cursor: TSDRStreamCursor; out IQ: TVMobjC): Boolean;
 var
+  Skipped: Boolean;
+begin
+  Result := TryReadEpoch(N, Cursor, IQ, Skipped);
+end;
+
+function TSDRRFSource.TryReadEpoch(N: Integer; var Cursor: TSDRStreamCursor; out IQ: TVMobjC;
+  out Skipped: Boolean): Boolean;
+var
   i, StartPos, RingPos: Integer;
 begin
   Result := False;
+  Skipped := False;
   if FStreamCapacity = 0 then Exit;   // not streaming yet
 
   FStreamLock.Enter;
@@ -624,8 +665,11 @@ begin
     // the newest available N-sample window, same "don't fall behind"
     // philosophy TSDRRingBuffer.TryReadNewest already uses for the
     // single device-level buffer.
-    if FStreamTotalWritten - Cursor > FStreamCapacity then
+    if FStreamTotalWritten - Cursor > FStreamCapacity then begin
       Cursor := FStreamTotalWritten - FStreamCapacity;
+      Inc(FStreamSkipCount);
+      Skipped := True;
+    end;
 
     IQ := TVMobjC.Create(1, N);
     StartPos := Integer(Cursor mod FStreamCapacity);

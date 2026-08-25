@@ -226,6 +226,35 @@ type
   end;
   PComplex8 = ^TComplex8;
 
+  { Inspector-Executor Sparse BLAS's "struct matrix_descr" - three packed
+    32-bit C enums (sparse_matrix_type_t/sparse_fill_mode_t/
+    sparse_diag_type_t), passed BY VALUE to mkl_sparse_d_mv/
+    mkl_sparse_d_trsv below - same by-value-record convention
+    lapacke_zlaset/claset already use for their alpha/beta parameters (see
+    "External bindings" in this repo's CLAUDE.md for why that's safe under
+    cdecl on Windows x64). Used by newVMsparse.pas's FGMRESSolve. }
+  TMKLMatrixDescr = record
+    mtype, mode, diag: Integer;
+  end;
+
+const
+  { sparse_status_t (mkl_sparse_d_* return codes) - only SUCCESS is checked
+    for by name; anything else is reported by its raw integer value. }
+  SPARSE_STATUS_SUCCESS = 0;
+  { sparse_index_base_t }
+  SPARSE_INDEX_BASE_ZERO = 0;
+  { sparse_operation_t }
+  SPARSE_OPERATION_NON_TRANSPOSE = 10;
+  { sparse_matrix_type_t }
+  SPARSE_MATRIX_TYPE_GENERAL = 20;
+  SPARSE_MATRIX_TYPE_TRIANGULAR = 23;
+  { sparse_fill_mode_t }
+  SPARSE_FILL_MODE_LOWER = 40;
+  SPARSE_FILL_MODE_UPPER = 41;
+  { sparse_diag_type_t }
+  SPARSE_DIAG_NON_UNIT = 50;
+  SPARSE_DIAG_UNIT = 51;
+
 //On Unix, every routine below (MKL and IPP alike) is declared as a plain
 //"cdecl;external;" function/procedure, resolved at link time via the
 //{$Linklib} block above - unchanged from how this unit always worked on
@@ -317,6 +346,64 @@ function lapacke_dgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : I
 
 function lapacke_sgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
                         wr ,wi : PSingle; vl : PSingle; ldvl :integer; vr : PSingle; ldvr : Integer):Integer;cdecl;external;
+
+{ Sparse direct solver (PARDISO) and RCI iterative sparse solver (FGMRES) -
+  MKL-exclusive, no ArmPL/OpenBLAS/Accelerate equivalent, so these are only
+  ever declared in the HAVE_MKL branch - newVMsparse.pas (the one caller)
+  requires MKL unconditionally. All MKL_INT parameters are plain 32-bit
+  Integer, matching the LP64 interface every other binding in this file
+  already assumes (see lapacke_* above). pt (PARDISO's internal solver
+  memory handle) is a caller-owned array[0..63] of Pointer, zeroed before
+  the first call - passed here as a raw Pointer to that array's first
+  element, the same "caller owns the buffer, we just take its address"
+  convention DataPtr/FData access uses throughout newVM*.pas. }
+procedure pardisoinit(pt: Pointer; const mtype: PInteger; iparm: PInteger); cdecl; external;
+procedure pardiso(pt: Pointer; const maxfct, mnum, mtype, phase, n: PInteger;
+  const a: PDouble; const ia, ja: PInteger; perm: PInteger; const nrhs: PInteger;
+  iparm: PInteger; const msglvl: PInteger; b, x: PDouble; error: PInteger); cdecl; external;
+
+{ RCI ISS FGMRES - reverse-communication-interface flexible GMRES. ipar is
+  array[0..127] of Integer, dpar is array[0..127] of Double, tmp is a
+  caller-sized Double scratch buffer (see newVMsparse.pas's FGMRESSolve for
+  the required size formula). }
+procedure dfgmres_init(const n: PInteger; const x, b: PDouble; RCI_request: PInteger;
+  ipar: PInteger; dpar: PDouble; tmp: PDouble); cdecl; external;
+procedure dfgmres_check(const n: PInteger; const x, b: PDouble; RCI_request: PInteger;
+  const ipar: PInteger; const dpar: PDouble; const tmp: PDouble); cdecl; external;
+procedure dfgmres(const n: PInteger; x, b: PDouble; RCI_request: PInteger;
+  ipar: PInteger; dpar: PDouble; tmp: PDouble); cdecl; external;
+procedure dfgmres_get(const n: PInteger; const x: PDouble; b: PDouble; RCI_request: PInteger;
+  const ipar: PInteger; const dpar: PDouble; const tmp: PDouble; itercount: PInteger); cdecl; external;
+
+{ ILU0 preconditioner factorisation - legacy interface, still exported
+  under its plain name (confirmed via dumpbin against the real mkl_rt.3.dll
+  on this machine), 1-based ia/ja per its own convention - newVMsparse.pas
+  converts its 0-based CSR to 1-based at this call's boundary. }
+procedure dcsrilu0(const n: PInteger; const a: PDouble; const ia, ja: PInteger;
+  bilu0: PDouble; const ipar: PInteger; const dpar: PDouble; ierr: PInteger); cdecl; external;
+
+{ FGMRES's reverse-communication loop also needs a matrix-vector product
+  (RCI_request=1) and, when ILU0-preconditioned, two triangular solves
+  against the ILU0 factors (RCI_request=3). The legacy 3-array-CSR
+  "mkl_?csrgemv"/"mkl_?csrtrsv" routines newVMsparse.pas originally tried
+  are NOT exported under their plain names by this MKL version (confirmed
+  via dumpbin - only "mkl_internal_dcsrgemv"/"mkl_cspblas_internal_..."
+  survive, both explicitly internal) - Intel has moved this functionality
+  to the Inspector-Executor Sparse BLAS API, which IS still exported
+  (mkl_sparse_d_create_csr/mkl_sparse_d_mv/mkl_sparse_d_trsv/
+  mkl_sparse_destroy, all confirmed present). sparse_matrix_t (an opaque
+  MKL-owned handle) is just Pointer here; the three status/operation/
+  descriptor enums (sparse_status_t, sparse_operation_t, the 3-field
+  matrix_descr struct of sparse_matrix_type_t/sparse_fill_mode_t/
+  sparse_diag_type_t) are plain 32-bit C enums, represented as Integer -
+  see newVMsparse.pas for the actual enum value constants used. }
+function mkl_sparse_d_create_csr(A: PPointer; indexing: Integer; rows, cols: Integer;
+  rows_start, rows_end, col_indx: PInteger; values: PDouble): Integer; cdecl; external;
+function mkl_sparse_d_mv(operation: Integer; alpha: Double; const A: Pointer;
+  const descr: TMKLMatrixDescr; const x: PDouble; beta: Double; y: PDouble): Integer; cdecl; external;
+function mkl_sparse_d_trsv(operation: Integer; alpha: Double; const A: Pointer;
+  const descr: TMKLMatrixDescr; const x: PDouble; y: PDouble): Integer; cdecl; external;
+function mkl_sparse_destroy(A: Pointer): Integer; cdecl; external;
   {$ELSE}
   { No MKL on this Unix machine - these 22 LAPACKE_* entry points (exactly
     the set newVM.pas/newVMSingle.pas/newVMComplex.pas/newVMComplexSingle.pas
@@ -422,6 +509,10 @@ procedure vdLn(const n: Integer; a: PDouble; r: PDouble); cdecl; external;
 //comment on that block: vmdMul silently reads a missing 5th "mode" stack
 //argument as garbage under the Win64 calling convention).
 procedure vdMul(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl; external;
+//plain (mode-less) elementwise divide, for newVM's divObj - deliberately
+//vdDiv, not the vmdDiv declared above, for the same reason vdMul is used
+//instead of vmdMul (see the comment on that block).
+procedure vdDiv(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl; external;
 
 procedure vsSin(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
 procedure vsCos(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
@@ -434,6 +525,8 @@ procedure vsLn(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
 //single-precision real analogue of vdMul above, for newVMSingle's
 //elementwise '*' operator (MulObjS).
 procedure vsMul(const n: Integer; a: PSingle; b: PSingle; r: PSingle); cdecl; external;
+//single-precision real analogue of vdDiv above, for newVMSingle's divObjS.
+procedure vsDiv(const n: Integer; a: PSingle; b: PSingle; r: PSingle); cdecl; external;
 
 procedure vzSin(const n: Integer; a: PComplex16; r: PComplex16); cdecl; external;
 procedure vzCos(const n: Integer; a: PComplex16; r: PComplex16); cdecl; external;
@@ -445,6 +538,8 @@ procedure vzLn(const n: Integer; a: PComplex16; r: PComplex16); cdecl; external;
 //MKL VM has no dedicated complex "Sqr" (unlike vdSqr/vsSqr for real data) -
 //complex Sqr(A) is implemented as A .* A via elementwise vzMul instead.
 procedure vzMul(const n: Integer; a: PComplex16; b: PComplex16; r: PComplex16); cdecl; external;
+//double-precision complex analogue of vdDiv, for newVMComplex's divObjZ.
+procedure vzDiv(const n: Integer; a: PComplex16; b: PComplex16; r: PComplex16); cdecl; external;
 
 procedure vcSin(const n: Integer; a: PComplex8; r: PComplex8); cdecl; external;
 procedure vcCos(const n: Integer; a: PComplex8; r: PComplex8); cdecl; external;
@@ -455,6 +550,8 @@ procedure vcExp(const n: Integer; a: PComplex8; r: PComplex8); cdecl; external;
 procedure vcLn(const n: Integer; a: PComplex8; r: PComplex8); cdecl; external;
 //see vzMul note above - same reason, single-precision complex.
 procedure vcMul(const n: Integer; a: PComplex8; b: PComplex8; r: PComplex8); cdecl; external;
+//single-precision complex analogue of vzDiv, for newVMComplexSingle's divObjC.
+procedure vcDiv(const n: Integer; a: PComplex8; b: PComplex8; r: PComplex8); cdecl; external;
 
 //ipp routines
 
@@ -612,6 +709,32 @@ type
   Tlapacke_sgeev  = function(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
                         wr ,wi : PSingle; vl : PSingle; ldvl :integer; vr : PSingle; ldvr : Integer):Integer; cdecl;
 
+  { PARDISO / RCI FGMRES - see the matching Unix external declarations above
+    for the full rationale (MKL-exclusive, LP64 Integer, caller-owned
+    scratch buffers). Same signatures, just procedural-var shaped per this
+    branch's usual convention. }
+  Tpardisoinit = procedure(pt: Pointer; const mtype: PInteger; iparm: PInteger); cdecl;
+  Tpardiso = procedure(pt: Pointer; const maxfct, mnum, mtype, phase, n: PInteger;
+    const a: PDouble; const ia, ja: PInteger; perm: PInteger; const nrhs: PInteger;
+    iparm: PInteger; const msglvl: PInteger; b, x: PDouble; error: PInteger); cdecl;
+  Tdfgmres_init = procedure(const n: PInteger; const x, b: PDouble; RCI_request: PInteger;
+    ipar: PInteger; dpar: PDouble; tmp: PDouble); cdecl;
+  Tdfgmres_check = procedure(const n: PInteger; const x, b: PDouble; RCI_request: PInteger;
+    const ipar: PInteger; const dpar: PDouble; const tmp: PDouble); cdecl;
+  Tdfgmres = procedure(const n: PInteger; x, b: PDouble; RCI_request: PInteger;
+    ipar: PInteger; dpar: PDouble; tmp: PDouble); cdecl;
+  Tdfgmres_get = procedure(const n: PInteger; const x: PDouble; b: PDouble; RCI_request: PInteger;
+    const ipar: PInteger; const dpar: PDouble; const tmp: PDouble; itercount: PInteger); cdecl;
+  Tdcsrilu0 = procedure(const n: PInteger; const a: PDouble; const ia, ja: PInteger;
+    bilu0: PDouble; const ipar: PInteger; const dpar: PDouble; ierr: PInteger); cdecl;
+  Tmkl_sparse_d_create_csr = function(A: PPointer; indexing: Integer; rows, cols: Integer;
+    rows_start, rows_end, col_indx: PInteger; values: PDouble): Integer; cdecl;
+  Tmkl_sparse_d_mv = function(operation: Integer; alpha: Double; const A: Pointer;
+    const descr: TMKLMatrixDescr; const x: PDouble; beta: Double; y: PDouble): Integer; cdecl;
+  Tmkl_sparse_d_trsv = function(operation: Integer; alpha: Double; const A: Pointer;
+    const descr: TMKLMatrixDescr; const x: PDouble; y: PDouble): Integer; cdecl;
+  Tmkl_sparse_destroy = function(A: Pointer): Integer; cdecl;
+
   Tvmd3 = procedure(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl; //vmdAdd/Sub/Div shape
   Tvmd2 = procedure(const n: Integer; a: PDouble; r: PDouble); cdecl; //vmdSqr/Sin/Cos/Exp shape
   Tvmdpowx = procedure(const n: Integer; a: PDouble; b: Double; r: PDouble); cdecl;
@@ -693,6 +816,18 @@ var
   lapacke_dgeev  : Tlapacke_dgeev;
   lapacke_sgeev  : Tlapacke_sgeev;
 
+  pardisoinit    : Tpardisoinit;
+  pardiso        : Tpardiso;
+  dfgmres_init   : Tdfgmres_init;
+  dfgmres_check  : Tdfgmres_check;
+  dfgmres        : Tdfgmres;
+  dfgmres_get    : Tdfgmres_get;
+  dcsrilu0       : Tdcsrilu0;
+  mkl_sparse_d_create_csr : Tmkl_sparse_d_create_csr;
+  mkl_sparse_d_mv         : Tmkl_sparse_d_mv;
+  mkl_sparse_d_trsv       : Tmkl_sparse_d_trsv;
+  mkl_sparse_destroy      : Tmkl_sparse_destroy;
+
   vmdSqr  : Tvmd2;
   vmdAdd  : Tvmd3;
   vmdSub  : Tvmd3;
@@ -711,6 +846,7 @@ var
   vdExp  : Tvd2;
   vdLn   : Tvd2;
   vdMul  : Tvd3;
+  vdDiv  : Tvd3;
 
   vsSin  : Tvs2;
   vsCos  : Tvs2;
@@ -721,6 +857,7 @@ var
   vsExp  : Tvs2;
   vsLn   : Tvs2;
   vsMul  : Tvs3;
+  vsDiv  : Tvs3;
 
   vzSin  : Tvz2;
   vzCos  : Tvz2;
@@ -730,6 +867,7 @@ var
   vzExp  : Tvz2;
   vzLn   : Tvz2;
   vzMul  : Tvz3;
+  vzDiv  : Tvz3;
 
   vcSin  : Tvc2;
   vcCos  : Tvc2;
@@ -739,6 +877,7 @@ var
   vcExp  : Tvc2;
   vcLn   : Tvc2;
   vcMul  : Tvc3;
+  vcDiv  : Tvc3;
 
   ippsCos_64f_A50     : Tippscos_64f_a50;
   ippsVectorSlope_64f : Tippsvectorslope_64f;
@@ -977,6 +1116,18 @@ begin
   pointer(lapacke_dgeev)  := MKLProc('LAPACKE_dgeev');
   pointer(lapacke_sgeev)  := MKLProc('LAPACKE_sgeev');
 
+  pointer(pardisoinit)   := MKLProc('pardisoinit');
+  pointer(pardiso)       := MKLProc('pardiso');
+  pointer(dfgmres_init)  := MKLProc('dfgmres_init');
+  pointer(dfgmres_check) := MKLProc('dfgmres_check');
+  pointer(dfgmres)       := MKLProc('dfgmres');
+  pointer(dfgmres_get)   := MKLProc('dfgmres_get');
+  pointer(dcsrilu0)      := MKLProc('dcsrilu0');
+  pointer(mkl_sparse_d_create_csr) := MKLProc('mkl_sparse_d_create_csr');
+  pointer(mkl_sparse_d_mv)         := MKLProc('mkl_sparse_d_mv');
+  pointer(mkl_sparse_d_trsv)       := MKLProc('mkl_sparse_d_trsv');
+  pointer(mkl_sparse_destroy)      := MKLProc('mkl_sparse_destroy');
+
   pointer(vmdSqr)  := MKLProc('vmdSqr');
   pointer(vmdAdd)  := MKLProc('vmdAdd');
   pointer(vmdSub)  := MKLProc('vmdSub');
@@ -995,6 +1146,7 @@ begin
   pointer(vdExp)  := MKLProc('vdExp');
   pointer(vdLn)   := MKLProc('vdLn');
   pointer(vdMul)  := MKLProc('vdMul');
+  pointer(vdDiv)  := MKLProc('vdDiv');
 
   pointer(vsSin)  := MKLProc('vsSin');
   pointer(vsCos)  := MKLProc('vsCos');
@@ -1005,6 +1157,7 @@ begin
   pointer(vsExp)  := MKLProc('vsExp');
   pointer(vsLn)   := MKLProc('vsLn');
   pointer(vsMul)  := MKLProc('vsMul');
+  pointer(vsDiv)  := MKLProc('vsDiv');
 
   pointer(vzSin)  := MKLProc('vzSin');
   pointer(vzCos)  := MKLProc('vzCos');
@@ -1014,6 +1167,7 @@ begin
   pointer(vzExp)  := MKLProc('vzExp');
   pointer(vzLn)   := MKLProc('vzLn');
   pointer(vzMul)  := MKLProc('vzMul');
+  pointer(vzDiv)  := MKLProc('vzDiv');
 
   pointer(vcSin)  := MKLProc('vcSin');
   pointer(vcCos)  := MKLProc('vcCos');
@@ -1023,6 +1177,7 @@ begin
   pointer(vcExp)  := MKLProc('vcExp');
   pointer(vcLn)   := MKLProc('vcLn');
   pointer(vcMul)  := MKLProc('vcMul');
+  pointer(vcDiv)  := MKLProc('vcDiv');
 
   pointer(MKL_malloc)  := MKLProc('MKL_malloc');
   pointer(MKL_calloc)  := MKLProc('MKL_calloc');

@@ -73,7 +73,8 @@ uses
   Classes, SysUtils, fpcunit, testregistry,
   OneAPI, newVM, newVMSingle, newVMComplex, newVMComplexSingle, newVMI
   {$IFDEF HAVE_OPENCL}, OpenCLAPI, newVMCL{$ENDIF}
-  {$IFDEF HAVE_METAL}, MetalAPI, newVMMetal{$ENDIF};
+  {$IFDEF HAVE_METAL}, MetalAPI, newVMMetal{$ENDIF}
+  {$IFDEF HAVE_MKL}, newVMsparse{$ENDIF};
 
 type
 
@@ -124,6 +125,7 @@ type
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
+    procedure TestDivObjKnownValues;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -209,6 +211,7 @@ type
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
+    procedure TestDivObjSKnownValues;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -293,6 +296,7 @@ type
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
+    procedure TestDivObjZKnownValues;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -305,6 +309,7 @@ type
     procedure TestEigDecomposeSatisfiesEigenEquation;
     procedure TestMixedOperatorsAddSub;
     procedure TestMixedOperatorMatMultKnownValue;
+    procedure TestMixedOperatorDivKnownValue;
     procedure TestFFTR2CC2RRoundTrip;
     procedure TestFFTC2CRoundTrip;
     procedure TestFFTR2CKnownDCValue;
@@ -382,6 +387,7 @@ type
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
+    procedure TestDivObjCKnownValues;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -394,6 +400,7 @@ type
     procedure TestEigDecomposeSatisfiesEigenEquation;
     procedure TestMixedOperatorsAddSub;
     procedure TestMixedOperatorMatMultKnownValue;
+    procedure TestMixedOperatorDivKnownValue;
     procedure TestFFTR2CC2RRoundTrip;
     procedure TestFFTC2CRoundTrip;
     procedure TestFFTR2CKnownDCValue;
@@ -555,6 +562,26 @@ type
     procedure TestFFTKnownValues;
     procedure TestFFTNonVectorAsserts;
     procedure TestIFFTRoundTrip;
+  end;
+  {$ENDIF}
+
+  { TVMSparseTests (newVMsparse.pas) - MKL-exclusive (PARDISO/RCI FGMRES
+    have no PUREPASCAL/ArmPL/Accelerate fallback, unlike the rest of
+    newVM.pas), so gated on {$IFDEF HAVE_MKL} end to end (uses clause
+    above, this class, its implementation, and its RegisterTest call) -
+    same "probe once at config time, degrade gracefully" contract
+    TVMobjCLTests/TVMobjMTLTests use for their own optional backends. }
+  {$IFDEF HAVE_MKL}
+  TVMSparseTests = class(TTestCase)
+  published
+    procedure TestTripletsToSparseMergesDuplicates;
+    procedure TestSparseDiagKnownValues;
+    procedure TestSetDiagonalOverwrites;
+    procedure TestSparseAddKnownValues;
+    procedure TestPardisoSolveSPDKnownValues;
+    procedure TestPardisoSolveGeneralKnownValues;
+    procedure TestFGMRESSolveMatchesPardiso;
+    procedure TestFGMRESSolveNoPreconditionerMatchesPardiso;
   end;
   {$ENDIF}
 
@@ -948,6 +975,14 @@ begin
   B := TVMobj.Create(2, 2, [5, 6, 7, 8]);
   AssertTrue(A * B = mulObj(A, B));
   AssertTrue(A * B = TVMobj.Create(2, 2, [5, 12, 21, 32]));
+end;
+
+procedure TVMobjTests.TestDivObjKnownValues;
+var A, B: TVMobj;
+begin
+  A := TVMobj.Create(2, 2, [5, 12, 21, 32]);
+  B := TVMobj.Create(2, 2, [5, 6, 7, 8]);
+  AssertTrue(divObj(A, B) = TVMobj.Create(2, 2, [1, 2, 3, 4]));
 end;
 
 procedure TVMobjTests.TestOperatorScalarMulDiv;
@@ -1657,6 +1692,14 @@ begin
   B := TVMobjS.Create(2, 2, [5, 6, 7, 8]);
   AssertTrue(A * B = MulObjS(A, B));
   AssertTrue(A * B = TVMobjS.Create(2, 2, [5, 12, 21, 32]));
+end;
+
+procedure TVMobjSTests.TestDivObjSKnownValues;
+var A, B: TVMobjS;
+begin
+  A := TVMobjS.Create(2, 2, [5, 12, 21, 32]);
+  B := TVMobjS.Create(2, 2, [5, 6, 7, 8]);
+  AssertTrue(DivObjS(A, B) = TVMobjS.Create(2, 2, [1, 2, 3, 4]));
 end;
 
 procedure TVMobjSTests.TestOperatorScalarMulDiv;
@@ -2375,6 +2418,14 @@ begin
   AssertTrue(A * B = TVMobjZ.Create(2, 2, [Cplx(5,5), Cplx(12,2), Cplx(21,0), Cplx(32,-8)]));
 end;
 
+procedure TVMobjZTests.TestDivObjZKnownValues;
+var A, B: TVMobjZ;
+begin
+  A := TVMobjZ.Create(2, 2, [Cplx(5,5), Cplx(12,2), Cplx(21,0), Cplx(32,-8)]);
+  B := TVMobjZ.Create(2, 2, [Cplx(5,0), Cplx(6,1), Cplx(7,0), Cplx(8,0)]);
+  AssertTrue(DivObjZ(A, B) = TVMobjZ.Create(2, 2, [Cplx(1,1), Cplx(2,0), Cplx(3,0), Cplx(4,-1)]));
+end;
+
 procedure TVMobjZTests.TestOperatorScalarMulDiv;
 var A, P: TVMobjZ;
 begin
@@ -2522,6 +2573,17 @@ begin
   AssertEquals(0.0, P1[0, 0].re, DblTol);
   AssertEquals(6.0, P1[0, 0].im, DblTol);
   AssertTrue(P1 = P2);
+end;
+
+procedure TVMobjZTests.TestMixedOperatorDivKnownValue;
+var R: TVMobj; Z, Q1, Q2: TVMobjZ;
+begin
+  R := TVMobj.Create(1, 1, [8]);
+  Z := TVMobjZ.Create(1, 1, [Cplx(0,2)]);
+  Q1 := R / Z;   //TVMobj / TVMobjZ: 8 / 2i = -4i
+  Q2 := Z / R;   //TVMobjZ / TVMobj: 2i / 8 = 0.25i
+  AssertTrue(Q1 = TVMobjZ.Create(1, 1, [Cplx(0,-4)]));
+  AssertTrue(Q2 = TVMobjZ.Create(1, 1, [Cplx(0,0.25)]));
 end;
 
 procedure TVMobjZTests.TestFFTR2CC2RRoundTrip;
@@ -3237,6 +3299,14 @@ begin
   AssertTrue(A * B = TVMobjC.Create(2, 2, [Cplx8(5,5), Cplx8(12,2), Cplx8(21,0), Cplx8(32,-8)]));
 end;
 
+procedure TVMobjCTests.TestDivObjCKnownValues;
+var A, B: TVMobjC;
+begin
+  A := TVMobjC.Create(2, 2, [Cplx8(5,5), Cplx8(12,2), Cplx8(21,0), Cplx8(32,-8)]);
+  B := TVMobjC.Create(2, 2, [Cplx8(5,0), Cplx8(6,1), Cplx8(7,0), Cplx8(8,0)]);
+  AssertTrue(DivObjC(A, B) = TVMobjC.Create(2, 2, [Cplx8(1,1), Cplx8(2,0), Cplx8(3,0), Cplx8(4,-1)]));
+end;
+
 procedure TVMobjCTests.TestOperatorScalarMulDiv;
 var A, P: TVMobjC;
 begin
@@ -3378,6 +3448,17 @@ begin
   AssertEquals(0.0, P1[0, 0].re, SngTol);
   AssertEquals(6.0, P1[0, 0].im, SngTol);
   AssertTrue(P1 = P2);
+end;
+
+procedure TVMobjCTests.TestMixedOperatorDivKnownValue;
+var R: TVMobjS; Z, Q1, Q2: TVMobjC;
+begin
+  R := TVMobjS.Create(1, 1, [8]);
+  Z := TVMobjC.Create(1, 1, [Cplx8(0,2)]);
+  Q1 := R / Z;   //TVMobjS / TVMobjC: 8 / 2i = -4i
+  Q2 := Z / R;   //TVMobjC / TVMobjS: 2i / 8 = 0.25i
+  AssertTrue(Q1 = TVMobjC.Create(1, 1, [Cplx8(0,-4)]));
+  AssertTrue(Q2 = TVMobjC.Create(1, 1, [Cplx8(0,0.25)]));
 end;
 
 procedure TVMobjCTests.TestFFTR2CC2RRoundTrip;
@@ -4671,6 +4752,175 @@ begin
 end;
 {$ENDIF}
 
+{$IFDEF HAVE_MKL}
+// Same 4x4 SPD tridiagonal / 3x3 general-unsymmetric known-value systems
+// used to validate newVMsparse.pas empirically against real MKL during
+// development - see newVMsparse.pas's own header comment.
+procedure TVMSparseTests.TestTripletsToSparseMergesDuplicates;
+var
+  RowIdx, ColIdx: TIntegerArray;
+  Val: TDoubleArray;
+  A: TVMSparseMtx;
+begin
+  SetLength(RowIdx, 3); SetLength(ColIdx, 3); SetLength(Val, 3);
+  RowIdx[0] := 0; ColIdx[0] := 0; Val[0] := 1;
+  RowIdx[1] := 0; ColIdx[1] := 0; Val[1] := 2; // duplicate -> should sum to 3
+  RowIdx[2] := 1; ColIdx[2] := 1; Val[2] := 5;
+  A := TripletsToSparse(2, 2, RowIdx, ColIdx, Val);
+  AssertEquals(2, A.NonZeros);
+end;
+
+procedure TVMSparseTests.TestSparseDiagKnownValues;
+var
+  RowIdx, ColIdx: TIntegerArray;
+  Val: TDoubleArray;
+  A: TVMSparseMtx;
+  D: TVMobj;
+begin
+  SetLength(RowIdx, 2); SetLength(ColIdx, 2); SetLength(Val, 2);
+  RowIdx[0] := 0; ColIdx[0] := 0; Val[0] := 3;
+  RowIdx[1] := 1; ColIdx[1] := 1; Val[1] := 5;
+  A := TripletsToSparse(2, 2, RowIdx, ColIdx, Val);
+  D := SparseDiag(A);
+  AssertEquals(3.0, D[0,0], DblTol);
+  AssertEquals(5.0, D[1,0], DblTol);
+end;
+
+procedure TVMSparseTests.TestSetDiagonalOverwrites;
+var
+  RowIdx, ColIdx: TIntegerArray;
+  Val: TDoubleArray;
+  A: TVMSparseMtx;
+  D: TVMobj;
+begin
+  SetLength(RowIdx, 2); SetLength(ColIdx, 2); SetLength(Val, 2);
+  RowIdx[0] := 0; ColIdx[0] := 0; Val[0] := 3;
+  RowIdx[1] := 1; ColIdx[1] := 1; Val[1] := 5;
+  A := TripletsToSparse(2, 2, RowIdx, ColIdx, Val);
+  D := TVMobj.Create(2,1);
+  D[0,0] := 100; D[1,0] := 200;
+  SetDiagonal(A, D);
+  D := SparseDiag(A);
+  AssertEquals(100.0, D[0,0], DblTol);
+  AssertEquals(200.0, D[1,0], DblTol);
+end;
+
+procedure TVMSparseTests.TestSparseAddKnownValues;
+var
+  RowIdxA, ColIdxA, RowIdxB, ColIdxB: TIntegerArray;
+  ValA, ValB: TDoubleArray;
+  A, B, C: TVMSparseMtx;
+  D: TVMobj;
+begin
+  SetLength(RowIdxA,2); SetLength(ColIdxA,2); SetLength(ValA,2);
+  RowIdxA[0]:=0; ColIdxA[0]:=0; ValA[0]:=3;
+  RowIdxA[1]:=1; ColIdxA[1]:=1; ValA[1]:=5;
+  A := TripletsToSparse(2,2,RowIdxA,ColIdxA,ValA);
+
+  SetLength(RowIdxB,2); SetLength(ColIdxB,2); SetLength(ValB,2);
+  RowIdxB[0]:=0; ColIdxB[0]:=1; ValB[0]:=10;
+  RowIdxB[1]:=1; ColIdxB[1]:=0; ValB[1]:=20;
+  B := TripletsToSparse(2,2,RowIdxB,ColIdxB,ValB);
+
+  C := SparseAdd(A,B);
+  AssertEquals(4, C.NonZeros);
+  D := SparseDiag(C);
+  AssertEquals(3.0, D[0,0], DblTol);
+  AssertEquals(5.0, D[1,0], DblTol);
+end;
+
+// [4 -1 0 0; -1 4 -1 0; 0 -1 4 -1; 0 0 -1 4] * x = [1;2;3;4]
+procedure BuildSPD4(out A: TVMSparseMtx; out B: TVMobj);
+var
+  RowIdx, ColIdx: TIntegerArray;
+  Val: TDoubleArray;
+begin
+  SetLength(RowIdx,10); SetLength(ColIdx,10); SetLength(Val,10);
+  RowIdx[0]:=0; ColIdx[0]:=0; Val[0]:=4;
+  RowIdx[1]:=0; ColIdx[1]:=1; Val[1]:=-1;
+  RowIdx[2]:=1; ColIdx[2]:=0; Val[2]:=-1;
+  RowIdx[3]:=1; ColIdx[3]:=1; Val[3]:=4;
+  RowIdx[4]:=1; ColIdx[4]:=2; Val[4]:=-1;
+  RowIdx[5]:=2; ColIdx[5]:=1; Val[5]:=-1;
+  RowIdx[6]:=2; ColIdx[6]:=2; Val[6]:=4;
+  RowIdx[7]:=2; ColIdx[7]:=3; Val[7]:=-1;
+  RowIdx[8]:=3; ColIdx[8]:=2; Val[8]:=-1;
+  RowIdx[9]:=3; ColIdx[9]:=3; Val[9]:=4;
+  A := TripletsToSparse(4,4,RowIdx,ColIdx,Val);
+  B := TVMobj.Create(4,1);
+  B[0,0]:=1; B[1,0]:=2; B[2,0]:=3; B[3,0]:=4;
+end;
+
+procedure TVMSparseTests.TestPardisoSolveSPDKnownValues;
+var
+  A: TVMSparseMtx;
+  B, X: TVMobj;
+begin
+  BuildSPD4(A, B);
+  X := PardisoSolve(A, B, True);
+  // Residual check A*X-B ~= 0, row by row (known-value would be fragile to
+  // round to a fixed number of digits; the residual is the real contract).
+  AssertEquals(0.0, 4*X[0,0]-X[1,0]-B[0,0], DblTol);
+  AssertEquals(0.0, -X[0,0]+4*X[1,0]-X[2,0]-B[1,0], DblTol);
+  AssertEquals(0.0, -X[1,0]+4*X[2,0]-X[3,0]-B[2,0], DblTol);
+  AssertEquals(0.0, -X[2,0]+4*X[3,0]-B[3,0], DblTol);
+end;
+
+procedure TVMSparseTests.TestPardisoSolveGeneralKnownValues;
+var
+  RowIdx, ColIdx: TIntegerArray;
+  Val: TDoubleArray;
+  A: TVMSparseMtx;
+  B, X: TVMobj;
+begin
+  // [4 1 0; 2 5 1; 0 3 6] * x = [6;11;22]
+  SetLength(RowIdx,7); SetLength(ColIdx,7); SetLength(Val,7);
+  RowIdx[0]:=0; ColIdx[0]:=0; Val[0]:=4;
+  RowIdx[1]:=0; ColIdx[1]:=1; Val[1]:=1;
+  RowIdx[2]:=1; ColIdx[2]:=0; Val[2]:=2;
+  RowIdx[3]:=1; ColIdx[3]:=1; Val[3]:=5;
+  RowIdx[4]:=1; ColIdx[4]:=2; Val[4]:=1;
+  RowIdx[5]:=2; ColIdx[5]:=1; Val[5]:=3;
+  RowIdx[6]:=2; ColIdx[6]:=2; Val[6]:=6;
+  A := TripletsToSparse(3,3,RowIdx,ColIdx,Val);
+  B := TVMobj.Create(3,1);
+  B[0,0]:=6; B[1,0]:=11; B[2,0]:=22;
+
+  X := PardisoSolve(A, B, False);
+  AssertEquals(0.0, 4*X[0,0]+X[1,0]-B[0,0], DblTol);
+  AssertEquals(0.0, 2*X[0,0]+5*X[1,0]+X[2,0]-B[1,0], DblTol);
+  AssertEquals(0.0, 3*X[1,0]+6*X[2,0]-B[2,0], DblTol);
+end;
+
+procedure TVMSparseTests.TestFGMRESSolveMatchesPardiso;
+var
+  A: TVMSparseMtx;
+  B, Xd, Xi: TVMobj;
+begin
+  BuildSPD4(A, B);
+  Xd := PardisoSolve(A, B, True);
+  Xi := FGMRESSolve(A, B, True);
+  AssertEquals(Xd[0,0], Xi[0,0], DblTol);
+  AssertEquals(Xd[1,0], Xi[1,0], DblTol);
+  AssertEquals(Xd[2,0], Xi[2,0], DblTol);
+  AssertEquals(Xd[3,0], Xi[3,0], DblTol);
+end;
+
+procedure TVMSparseTests.TestFGMRESSolveNoPreconditionerMatchesPardiso;
+var
+  A: TVMSparseMtx;
+  B, Xd, Xi: TVMobj;
+begin
+  BuildSPD4(A, B);
+  Xd := PardisoSolve(A, B, True);
+  Xi := FGMRESSolve(A, B, False);
+  AssertEquals(Xd[0,0], Xi[0,0], DblTol);
+  AssertEquals(Xd[1,0], Xi[1,0], DblTol);
+  AssertEquals(Xd[2,0], Xi[2,0], DblTol);
+  AssertEquals(Xd[3,0], Xi[3,0], DblTol);
+end;
+{$ENDIF}
+
 initialization
   RegisterTest(TVMobjTests);
   RegisterTest(TVMobjSTests);
@@ -4682,6 +4932,9 @@ initialization
   {$ENDIF}
   {$IFDEF HAVE_METAL}
   RegisterTest(TVMobjMTLTests);
+  {$ENDIF}
+  {$IFDEF HAVE_MKL}
+  RegisterTest(TVMSparseTests);
   {$ENDIF}
 
 end.

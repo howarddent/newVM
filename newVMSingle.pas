@@ -68,7 +68,10 @@ uses
   Classes, SysUtils, cblas, math, TestRegistry, OneAPI, Types, fftw3, newVMI;
 
 Const
-  MaxDimS = 65536;    //maximum dimensions of any array
+  // See newVM.pas's own MaxDim comment - an arbitrary development-time
+  // value, not a real limit, raised in step with it across every
+  // parallel real/complex x double/single unit.
+  MaxDimS = 2097152;    //maximum dimensions of any array
 
 Type
   TDimS = 0..MaxDimS-1;
@@ -152,6 +155,7 @@ function Sqrt(const A: TVMobjS): TVMobjS; overload;
 function Exp(const A: TVMobjS): TVMobjS; overload;
 function Ln(const A: TVMobjS): TVMobjS; overload;
 function MulObjS(const A, B: TVMObjS): TVMObjS;
+function DivObjS(const A, B: TVMObjS): TVMObjS;
 
 { Real-to-real DCT/DST types I-IV, via FFTW3 (fftw3.pas) r2r transforms on
   the single-precision library - see the matching DCT1..DST4 comment in
@@ -1257,6 +1261,32 @@ begin
   assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
   result := CopyObjS(A);
   vsMul(A.rows*A.cols,A.Dataptr,B.DataPtr,Result.DataPtr);
+end;
+{$ENDIF}
+
+function DivObjS(const A, B: TVMObjS): TVMObjS;
+const
+  s: string ='Routine DivObjS : ';
+{ Element-wise division (Hadamard quotient), the '/' counterpart to
+  MulObjS above - deliberately NOT bound to vDSP under HAVE_ACCELERATE:
+  cblas.pas only binds Accelerate's vector/SCALAR divide (accel_vDSP_vsdiv,
+  already used by the '/' scalar operator below), not a vector/vector one,
+  so this stays on the plain-loop PUREPASCAL body regardless of
+  HAVE_ACCELERATE - see newVM.pas's divObj for the same rationale. }
+{$IFDEF PUREPASCAL}
+var
+  i : Integer;
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObjS(A);
+  for i := 0 to A.rows*A.cols-1 do
+    result.fdata[i] := result.fdata[i] / B.fdata[i];
+end;
+{$ELSE}
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObjS(A);
+  vsDiv(A.rows*A.cols,A.Dataptr,B.DataPtr,Result.DataPtr);
 end;
 {$ENDIF}
 

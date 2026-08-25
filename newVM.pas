@@ -90,7 +90,19 @@ uses
   Classes, SysUtils,cblas,math,TestRegistry,OneAPI,Types,fftw3,newVMI;
 
 Const
-  MaxDim = 65536;    //maximum dimensions of any array
+  // Was 65536 - an arbitrary development-time value (confirmed with the
+  // user, not a real structural limit of anything downstream: TDim's own
+  // storage just grows from a Word- to a LongWord-range subrange as
+  // MaxDim crosses 65536, a few harmless bytes per matrix header, and
+  // calcoffset's r*cols+c indexing arithmetic has no issue with it
+  // either - the FFT/spectrum-display epoch-size cap this had been
+  // silently imposing (see SDR_Radio's own uFMReceiver.pas/
+  // uSDRRFSource.pas comments on the "65535-per-dimension cap" it forced
+  // those units to work around) wasn't a deliberate design choice worth
+  // preserving. Raised to give an SDR_Radio spectrum FFT epoch a full
+  // extra octave of headroom above the largest requested resolution
+  // (2^20 = 1,048,576 samples).
+  MaxDim = 2097152;    //maximum dimensions of any array
 
 Type
   TDim = 0..MaxDim-1;
@@ -226,6 +238,13 @@ function Repmat(const A: TVMobj; RowReps, ColReps: Integer): TVMobj;
   (only '*'/'/' accept a plain scalar; see the OPERATOR OVERLOADS note at
   the top of this file), so this is the named-function equivalent. }
 function AddScalar(const A: TVMobj; K: Double): TVMobj;
+{ Fill(A,K) - a new same-shape object with every element set to K (not
+  added to, unlike AddScalar). Added for Delphi_OOFEM/FEM4's port off
+  MtxVec's TVec/TMtx.SetVal - see the implementation's own comment. }
+function Fill(const A: TVMobj; K: Double): TVMobj;
+{ MaxMinValues(A, AMax, AMin) - A's largest and smallest element values, in
+  one pass. Added for Delphi_OOFEM/FEM4's port off MtxVec's TVec.MaxMin. }
+procedure MaxMinValues(const A: TVMobj; out AMax, AMin: Double);
 { SubMatrix - extracts the (RCount x CCount) submatrix of A starting at
   (R0,C0) (asserts the requested block stays within A's bounds; RCount/
   CCount > 0 is enforced by TVMobj.Create itself). Via LAPACKE_dlacpy,
@@ -252,6 +271,7 @@ function Sqrt(const A: TVMobj): TVMobj; overload;
 function Exp(const A: TVMobj): TVMobj; overload;
 function Ln(const A: TVMobj): TVMobj; overload;
 function mulObj(const A, B: TVMObj): TVMObj;
+function divObj(const A, B: TVMObj): TVMObj;
 
 { Real-to-real DCT/DST types I-IV, via FFTW3 (fftw3.pas) r2r transforms on
   the double-precision library. A must be a vector (Rows=1 or Cols=1); the
@@ -1082,6 +1102,39 @@ begin
 {$ENDIF}
 end;
 
+{ Fill(A,K) - every element set to K (not added to, unlike AddScalar). No
+  BLAS/LAPACK/IPP primitive for "set every element to a constant" beyond
+  what a plain loop already gives, so - like Trace - this is just a loop
+  regardless of PUREPASCAL. Added for Delphi_OOFEM/FEM4's port off MtxVec's
+  TVec.SetVal/TMtx.SetVal. }
+function Fill(const A: TVMobj; K: Double): TVMobj;
+var
+  i : Integer;
+begin
+  result := TVMobj.Create(A.Rows, A.Cols);
+  for i := 0 to A.Rows*A.Cols-1 do
+    result.fdata[i] := K;
+end;
+
+{ MaxMinValues(A, AMax, AMin) - the largest and smallest element values in
+  A, in one pass. Plain loop, same rationale as Fill/Trace above. Added
+  for Delphi_OOFEM/FEM4's port off MtxVec's TVec.MaxMin. }
+procedure MaxMinValues(const A: TVMobj; out AMax, AMin: Double);
+const
+  s : String = 'Procedure MaxMinValues : ';
+var
+  i : Integer;
+begin
+  assert(A.Rows*A.Cols > 0, s+'A must have at least 1 element');
+  AMax := A.fdata[0];
+  AMin := A.fdata[0];
+  for i := 1 to A.Rows*A.Cols-1 do
+  begin
+    if A.fdata[i] > AMax then AMax := A.fdata[i];
+    if A.fdata[i] < AMin then AMin := A.fdata[i];
+  end;
+end;
+
 function SubMatrix(const A: TVMobj; R0, C0, RCount, CCount: TDim): TVMobj;
 const
   s : String = 'Function SubMatrix : ';
@@ -1434,6 +1487,34 @@ begin
   assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
   result := CopyObj(A);
   vdMul(A.rows*A.cols,A.Dataptr,B.DataPtr,Result.DataPtr);
+
+end;
+{$ENDIF}
+
+function divObj(const A, B: TVMObj): TVMObj;
+const
+  s: string ='Routine divObj : ';
+{ Element-wise division (Hadamard quotient), the '/' counterpart to
+  mulObj above - deliberately NOT bound to vDSP under HAVE_ACCELERATE:
+  cblas.pas only binds Accelerate's vector/SCALAR divide
+  (accel_vDSP_vsdivD, already used by the '/' scalar operator below),
+  not a vector/vector one, so this stays on the plain-loop PUREPASCAL
+  body regardless of HAVE_ACCELERATE - same as LinearSolveZ deliberately
+  staying off Accelerate elsewhere in this codebase. }
+{$IFDEF PUREPASCAL}
+var
+  i : Integer;
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObj(A);
+  for i := 0 to A.rows*A.cols-1 do
+    result.fdata[i] := result.fdata[i] / B.fdata[i];
+end;
+{$ELSE}
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObj(A);
+  vdDiv(A.rows*A.cols,A.Dataptr,B.DataPtr,Result.DataPtr);
 
 end;
 {$ENDIF}

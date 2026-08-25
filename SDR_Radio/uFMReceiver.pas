@@ -224,6 +224,15 @@ type
     FItems: array of TVMobjC;
     FHead, FCount: Integer;
     FLock: TCriticalSection;
+    // Counts every Push that landed on an already-full queue and so
+    // dropped the oldest entry instead of merely queuing - i.e. an epoch
+    // that FDemodThread never got to see at all. Diagnostic only, same
+    // role as TWaveOutPlayer.UnderrunCount: distinguishes "audio clicks
+    // because FDemodThread is falling behind and epochs are being
+    // dropped here" from "audio clicks because the ALSA ring itself is
+    // underrunning" (TFMBroadcastReceiver.AudioUnderrunCount) - see
+    // uSDRMain.pas's periodic audio-stats readout.
+    FDropCount: Integer;
   public
     constructor Create(Capacity: Integer);
     destructor Destroy; override;
@@ -235,6 +244,7 @@ type
     // unassigned) if the queue is currently empty, same "nothing ready
     // yet, don't block" contract as TSDRRFSource.TryReadEpoch.
     function TryPop(out Item: TVMobjC): Boolean;
+    property DropCount: Integer read FDropCount;
   end;
 
   // Stage A: TryReadEpoch through the wideband resample, pushing each
@@ -272,6 +282,11 @@ type
     FTunedFrequencyHz: Double;
     FVolume: Single;
     FEpochDurationMs: Integer;
+    // Diagnostic only - counts only the skips THIS receiver's own
+    // FSourceCursor experienced (see TSDRRFSource.TryReadEpoch's 4-arg
+    // overload) - unlike TSDRRFSource.StreamSkipCount, not polluted by
+    // the spectrum analyser's own, separately-lagging cursor.
+    FAcquireSkipCount: Integer;
 
     FMixer: TComplexMixer;
     FResamplerToBaseband: TRationalResamplerC;
@@ -284,6 +299,28 @@ type
     FDemodThread: TFMDemodThread;
     FChainBuilt: Boolean;
     FLastError: string;
+    // Live on/off switch for FDemod's own impulse blanker (uDSPBlocks.pas's
+    // TFMDemodulator.BlankerEnabled) - see that property's own comment for
+    // why this needs to be a real toggle rather than a fixed default: the
+    // blanker's zero-order-hold approach, tuned/tested against one
+    // reception scenario (a marginal broadcast-FM signal producing classic
+    // click noise), is a plausible source of new artifacts in some OTHER
+    // scenario this app gets used in - pushed into FDemod fresh every
+    // ProcessDemodOnce call (see that method) rather than only on write,
+    // the same "plain field, read every call" pattern FVolume already
+    // uses, so toggling it live (chain built or not) always takes effect
+    // on the very next epoch with no extra plumbing.
+    FClickBlankerEnabled: Boolean;
+    // Diagnostic only - FLastError only ever holds the MOST RECENT
+    // exception message, so on its own it can't distinguish "this
+    // happened once, ages ago" from "this is firing on every other
+    // epoch right now" - this counts total exceptions caught across both
+    // threads since Active last went True, so a climbing count alongside
+    // a live LastError string means processing itself is intermittently
+    // failing (a dropped/corrupted epoch each time - see
+    // TFMAcquireThread.Execute/TFMDemodThread.Execute's own comment),
+    // the one failure mode none of the buffering counters above can see.
+    FErrorCount: Integer;
 
     procedure SetSource(AValue: TSDRRFSource);
     procedure SetTunedFrequencyHz(AValue: Double);
@@ -311,6 +348,18 @@ type
     // Forwards TWaveOutPlayer.UnderrunCount - see that property's own
     // comment. 0 before Active is ever set True (FPlayer isn't open yet).
     function AudioUnderrunCount: Integer;
+    // Forwards FQueue.DropCount - see that property's own comment. 0
+    // before Active is ever set True (FQueue doesn't exist yet).
+    function AudioDropCount: Integer;
+    // Forwards FAcquireSkipCount - see that field's own comment.
+    function AudioAcquireSkipCount: Integer;
+    // Forwards FErrorCount - see that field's own comment.
+    function AudioErrorCount: Integer;
+    // Forwards FDemod.ClickCount (uDSPBlocks.pas's TFMDemodulator) - total
+    // samples the impulse blanker has suppressed, i.e. confirmed FM click-
+    // noise events (see TFMDemodulator.Process's own comment). 0 before
+    // Active is ever set True (FDemod doesn't exist yet).
+    function AudioClickCount: Integer;
   published
     property Source: TSDRRFSource read FSource write SetSource;
     // Absolute RF frequency to listen to, in Hz - independent of
@@ -322,6 +371,10 @@ type
     property Volume: Single read FVolume write FVolume;
     property EpochDurationMs: Integer read FEpochDurationMs write FEpochDurationMs
       default DefaultEpochDurationMs;
+    // See FClickBlankerEnabled's own comment. On by default, matching
+    // TFMDemodulator.Create's own default.
+    property ClickBlankerEnabled: Boolean read FClickBlankerEnabled write FClickBlankerEnabled
+      default True;
     property Active: Boolean read GetActive write SetActive default False;
   end;
 
@@ -334,6 +387,7 @@ begin
   inherited Create(AOwner);
   FVolume := 1.0;
   FEpochDurationMs := DefaultEpochDurationMs;
+  FClickBlankerEnabled := True;
   FPlayer := TWaveOutPlayer.Create;
 end;
 
@@ -371,6 +425,7 @@ begin
     if FCount = Cap then begin
       FHead := (FHead + 1) mod Cap;
       Dec(FCount);
+      Inc(FDropCount);
     end;
     TailIdx := (FHead + FCount) mod Cap;
     FItems[TailIdx] := Item;
@@ -418,6 +473,7 @@ begin
     except
       on E: Exception do begin
         FOwner.FLastError := E.ClassName + ': ' + E.Message;
+        Inc(FOwner.FErrorCount);
         Sleep(1);
       end;
     end;
@@ -441,6 +497,7 @@ begin
     except
       on E: Exception do begin
         FOwner.FLastError := E.ClassName + ': ' + E.Message;
+        Inc(FOwner.FErrorCount);
         Sleep(1);
       end;
     end;
@@ -491,6 +548,26 @@ end;
 function TFMBroadcastReceiver.AudioUnderrunCount: Integer;
 begin
   Result := FPlayer.UnderrunCount;
+end;
+
+function TFMBroadcastReceiver.AudioDropCount: Integer;
+begin
+  if Assigned(FQueue) then Result := FQueue.DropCount else Result := 0;
+end;
+
+function TFMBroadcastReceiver.AudioAcquireSkipCount: Integer;
+begin
+  Result := FAcquireSkipCount;
+end;
+
+function TFMBroadcastReceiver.AudioErrorCount: Integer;
+begin
+  Result := FErrorCount;
+end;
+
+function TFMBroadcastReceiver.AudioClickCount: Integer;
+begin
+  if Assigned(FDemod) then Result := FDemod.ClickCount else Result := 0;
 end;
 
 procedure TFMBroadcastReceiver.SetActive(AValue: Boolean);
@@ -626,6 +703,7 @@ function TFMBroadcastReceiver.ProcessAcquireOnce: Boolean;
 var
   N: Integer;
   IQ, Baseband: TVMobjC;
+  Skipped: Boolean;
 begin
   Result := False;
   if not (FChainBuilt and Assigned(FSource)) then Exit;
@@ -647,7 +725,8 @@ begin
   // epochs at high sample rates, not a functional loss.
   N := Round(FSource.SampleRateHz * FEpochDurationMs / 1000);
   if N > MaxEpochSamples then N := MaxEpochSamples;
-  if not FSource.TryReadEpoch(N, FSourceCursor, IQ) then Exit;
+  if not FSource.TryReadEpoch(N, FSourceCursor, IQ, Skipped) then Exit;
+  if Skipped then Inc(FAcquireSkipCount);
 
   Baseband := FResamplerToBaseband.Process(FMixer.Process(IQ));
   FQueue.Push(Baseband);
@@ -664,6 +743,7 @@ begin
   if not FChainBuilt then Exit;
   if not FQueue.TryPop(Baseband) then Exit;
 
+  FDemod.BlankerEnabled := FClickBlankerEnabled;
   Multiplex := FDemod.Process(Baseband);
   FStereoDecoder.Process(Multiplex, StereoL, StereoR);
   AudioL := FResamplerL.Process(StereoL);
