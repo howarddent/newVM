@@ -125,6 +125,7 @@ type
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
+    procedure TestDivObjKnownValues;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -210,6 +211,7 @@ type
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
+    procedure TestDivObjSKnownValues;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -294,6 +296,7 @@ type
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
+    procedure TestDivObjZKnownValues;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -306,6 +309,7 @@ type
     procedure TestEigDecomposeSatisfiesEigenEquation;
     procedure TestMixedOperatorsAddSub;
     procedure TestMixedOperatorMatMultKnownValue;
+    procedure TestMixedOperatorDivKnownValue;
     procedure TestFFTR2CC2RRoundTrip;
     procedure TestFFTC2CRoundTrip;
     procedure TestFFTR2CKnownDCValue;
@@ -383,6 +387,7 @@ type
     procedure TestOperatorAddSub;
     procedure TestOperatorUnaryNeg;
     procedure TestOperatorMulIsElementwise;
+    procedure TestDivObjCKnownValues;
     procedure TestOperatorScalarMulDiv;
     procedure TestOperatorScalarDivByZeroAsserts;
     procedure TestOperatorDimMismatchAsserts;
@@ -395,6 +400,7 @@ type
     procedure TestEigDecomposeSatisfiesEigenEquation;
     procedure TestMixedOperatorsAddSub;
     procedure TestMixedOperatorMatMultKnownValue;
+    procedure TestMixedOperatorDivKnownValue;
     procedure TestFFTR2CC2RRoundTrip;
     procedure TestFFTC2CRoundTrip;
     procedure TestFFTR2CKnownDCValue;
@@ -969,6 +975,14 @@ begin
   B := TVMobj.Create(2, 2, [5, 6, 7, 8]);
   AssertTrue(A * B = mulObj(A, B));
   AssertTrue(A * B = TVMobj.Create(2, 2, [5, 12, 21, 32]));
+end;
+
+procedure TVMobjTests.TestDivObjKnownValues;
+var A, B: TVMobj;
+begin
+  A := TVMobj.Create(2, 2, [5, 12, 21, 32]);
+  B := TVMobj.Create(2, 2, [5, 6, 7, 8]);
+  AssertTrue(divObj(A, B) = TVMobj.Create(2, 2, [1, 2, 3, 4]));
 end;
 
 procedure TVMobjTests.TestOperatorScalarMulDiv;
@@ -1678,6 +1692,14 @@ begin
   B := TVMobjS.Create(2, 2, [5, 6, 7, 8]);
   AssertTrue(A * B = MulObjS(A, B));
   AssertTrue(A * B = TVMobjS.Create(2, 2, [5, 12, 21, 32]));
+end;
+
+procedure TVMobjSTests.TestDivObjSKnownValues;
+var A, B: TVMobjS;
+begin
+  A := TVMobjS.Create(2, 2, [5, 12, 21, 32]);
+  B := TVMobjS.Create(2, 2, [5, 6, 7, 8]);
+  AssertTrue(DivObjS(A, B) = TVMobjS.Create(2, 2, [1, 2, 3, 4]));
 end;
 
 procedure TVMobjSTests.TestOperatorScalarMulDiv;
@@ -2396,6 +2418,14 @@ begin
   AssertTrue(A * B = TVMobjZ.Create(2, 2, [Cplx(5,5), Cplx(12,2), Cplx(21,0), Cplx(32,-8)]));
 end;
 
+procedure TVMobjZTests.TestDivObjZKnownValues;
+var A, B: TVMobjZ;
+begin
+  A := TVMobjZ.Create(2, 2, [Cplx(5,5), Cplx(12,2), Cplx(21,0), Cplx(32,-8)]);
+  B := TVMobjZ.Create(2, 2, [Cplx(5,0), Cplx(6,1), Cplx(7,0), Cplx(8,0)]);
+  AssertTrue(DivObjZ(A, B) = TVMobjZ.Create(2, 2, [Cplx(1,1), Cplx(2,0), Cplx(3,0), Cplx(4,-1)]));
+end;
+
 procedure TVMobjZTests.TestOperatorScalarMulDiv;
 var A, P: TVMobjZ;
 begin
@@ -2543,6 +2573,17 @@ begin
   AssertEquals(0.0, P1[0, 0].re, DblTol);
   AssertEquals(6.0, P1[0, 0].im, DblTol);
   AssertTrue(P1 = P2);
+end;
+
+procedure TVMobjZTests.TestMixedOperatorDivKnownValue;
+var R: TVMobj; Z, Q1, Q2: TVMobjZ;
+begin
+  R := TVMobj.Create(1, 1, [8]);
+  Z := TVMobjZ.Create(1, 1, [Cplx(0,2)]);
+  Q1 := R / Z;   //TVMobj / TVMobjZ: 8 / 2i = -4i
+  Q2 := Z / R;   //TVMobjZ / TVMobj: 2i / 8 = 0.25i
+  AssertTrue(Q1 = TVMobjZ.Create(1, 1, [Cplx(0,-4)]));
+  AssertTrue(Q2 = TVMobjZ.Create(1, 1, [Cplx(0,0.25)]));
 end;
 
 procedure TVMobjZTests.TestFFTR2CC2RRoundTrip;
@@ -3258,6 +3299,14 @@ begin
   AssertTrue(A * B = TVMobjC.Create(2, 2, [Cplx8(5,5), Cplx8(12,2), Cplx8(21,0), Cplx8(32,-8)]));
 end;
 
+procedure TVMobjCTests.TestDivObjCKnownValues;
+var A, B: TVMobjC;
+begin
+  A := TVMobjC.Create(2, 2, [Cplx8(5,5), Cplx8(12,2), Cplx8(21,0), Cplx8(32,-8)]);
+  B := TVMobjC.Create(2, 2, [Cplx8(5,0), Cplx8(6,1), Cplx8(7,0), Cplx8(8,0)]);
+  AssertTrue(DivObjC(A, B) = TVMobjC.Create(2, 2, [Cplx8(1,1), Cplx8(2,0), Cplx8(3,0), Cplx8(4,-1)]));
+end;
+
 procedure TVMobjCTests.TestOperatorScalarMulDiv;
 var A, P: TVMobjC;
 begin
@@ -3399,6 +3448,17 @@ begin
   AssertEquals(0.0, P1[0, 0].re, SngTol);
   AssertEquals(6.0, P1[0, 0].im, SngTol);
   AssertTrue(P1 = P2);
+end;
+
+procedure TVMobjCTests.TestMixedOperatorDivKnownValue;
+var R: TVMobjS; Z, Q1, Q2: TVMobjC;
+begin
+  R := TVMobjS.Create(1, 1, [8]);
+  Z := TVMobjC.Create(1, 1, [Cplx8(0,2)]);
+  Q1 := R / Z;   //TVMobjS / TVMobjC: 8 / 2i = -4i
+  Q2 := Z / R;   //TVMobjC / TVMobjS: 2i / 8 = 0.25i
+  AssertTrue(Q1 = TVMobjC.Create(1, 1, [Cplx8(0,-4)]));
+  AssertTrue(Q2 = TVMobjC.Create(1, 1, [Cplx8(0,0.25)]));
 end;
 
 procedure TVMobjCTests.TestFFTR2CC2RRoundTrip;

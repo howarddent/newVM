@@ -509,6 +509,10 @@ procedure vdLn(const n: Integer; a: PDouble; r: PDouble); cdecl; external;
 //comment on that block: vmdMul silently reads a missing 5th "mode" stack
 //argument as garbage under the Win64 calling convention).
 procedure vdMul(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl; external;
+//plain (mode-less) elementwise divide, for newVM's divObj - deliberately
+//vdDiv, not the vmdDiv declared above, for the same reason vdMul is used
+//instead of vmdMul (see the comment on that block).
+procedure vdDiv(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl; external;
 
 procedure vsSin(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
 procedure vsCos(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
@@ -521,6 +525,8 @@ procedure vsLn(const n: Integer; a: PSingle; r: PSingle); cdecl; external;
 //single-precision real analogue of vdMul above, for newVMSingle's
 //elementwise '*' operator (MulObjS).
 procedure vsMul(const n: Integer; a: PSingle; b: PSingle; r: PSingle); cdecl; external;
+//single-precision real analogue of vdDiv above, for newVMSingle's divObjS.
+procedure vsDiv(const n: Integer; a: PSingle; b: PSingle; r: PSingle); cdecl; external;
 
 procedure vzSin(const n: Integer; a: PComplex16; r: PComplex16); cdecl; external;
 procedure vzCos(const n: Integer; a: PComplex16; r: PComplex16); cdecl; external;
@@ -532,6 +538,8 @@ procedure vzLn(const n: Integer; a: PComplex16; r: PComplex16); cdecl; external;
 //MKL VM has no dedicated complex "Sqr" (unlike vdSqr/vsSqr for real data) -
 //complex Sqr(A) is implemented as A .* A via elementwise vzMul instead.
 procedure vzMul(const n: Integer; a: PComplex16; b: PComplex16; r: PComplex16); cdecl; external;
+//double-precision complex analogue of vdDiv, for newVMComplex's divObjZ.
+procedure vzDiv(const n: Integer; a: PComplex16; b: PComplex16; r: PComplex16); cdecl; external;
 
 procedure vcSin(const n: Integer; a: PComplex8; r: PComplex8); cdecl; external;
 procedure vcCos(const n: Integer; a: PComplex8; r: PComplex8); cdecl; external;
@@ -542,6 +550,8 @@ procedure vcExp(const n: Integer; a: PComplex8; r: PComplex8); cdecl; external;
 procedure vcLn(const n: Integer; a: PComplex8; r: PComplex8); cdecl; external;
 //see vzMul note above - same reason, single-precision complex.
 procedure vcMul(const n: Integer; a: PComplex8; b: PComplex8; r: PComplex8); cdecl; external;
+//single-precision complex analogue of vzDiv, for newVMComplexSingle's divObjC.
+procedure vcDiv(const n: Integer; a: PComplex8; b: PComplex8; r: PComplex8); cdecl; external;
 
 //ipp routines
 
@@ -836,6 +846,7 @@ var
   vdExp  : Tvd2;
   vdLn   : Tvd2;
   vdMul  : Tvd3;
+  vdDiv  : Tvd3;
 
   vsSin  : Tvs2;
   vsCos  : Tvs2;
@@ -846,6 +857,7 @@ var
   vsExp  : Tvs2;
   vsLn   : Tvs2;
   vsMul  : Tvs3;
+  vsDiv  : Tvs3;
 
   vzSin  : Tvz2;
   vzCos  : Tvz2;
@@ -855,6 +867,7 @@ var
   vzExp  : Tvz2;
   vzLn   : Tvz2;
   vzMul  : Tvz3;
+  vzDiv  : Tvz3;
 
   vcSin  : Tvc2;
   vcCos  : Tvc2;
@@ -864,6 +877,7 @@ var
   vcExp  : Tvc2;
   vcLn   : Tvc2;
   vcMul  : Tvc3;
+  vcDiv  : Tvc3;
 
   ippsCos_64f_A50     : Tippscos_64f_a50;
   ippsVectorSlope_64f : Tippsvectorslope_64f;
@@ -1132,6 +1146,7 @@ begin
   pointer(vdExp)  := MKLProc('vdExp');
   pointer(vdLn)   := MKLProc('vdLn');
   pointer(vdMul)  := MKLProc('vdMul');
+  pointer(vdDiv)  := MKLProc('vdDiv');
 
   pointer(vsSin)  := MKLProc('vsSin');
   pointer(vsCos)  := MKLProc('vsCos');
@@ -1142,6 +1157,7 @@ begin
   pointer(vsExp)  := MKLProc('vsExp');
   pointer(vsLn)   := MKLProc('vsLn');
   pointer(vsMul)  := MKLProc('vsMul');
+  pointer(vsDiv)  := MKLProc('vsDiv');
 
   pointer(vzSin)  := MKLProc('vzSin');
   pointer(vzCos)  := MKLProc('vzCos');
@@ -1151,6 +1167,7 @@ begin
   pointer(vzExp)  := MKLProc('vzExp');
   pointer(vzLn)   := MKLProc('vzLn');
   pointer(vzMul)  := MKLProc('vzMul');
+  pointer(vzDiv)  := MKLProc('vzDiv');
 
   pointer(vcSin)  := MKLProc('vcSin');
   pointer(vcCos)  := MKLProc('vcCos');
@@ -1160,6 +1177,7 @@ begin
   pointer(vcExp)  := MKLProc('vcExp');
   pointer(vcLn)   := MKLProc('vcLn');
   pointer(vcMul)  := MKLProc('vcMul');
+  pointer(vcDiv)  := MKLProc('vcDiv');
 
   pointer(MKL_malloc)  := MKLProc('MKL_malloc');
   pointer(MKL_calloc)  := MKLProc('MKL_calloc');

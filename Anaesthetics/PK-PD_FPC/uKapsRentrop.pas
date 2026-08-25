@@ -20,10 +20,13 @@ unit uKapsRentrop;
      Everything else is a direct syntactic port: MtxVec's Vector and Matrix
      both become TVMobj (a vector is just an (n,1) column here, same
      convention newVM already uses throughout). newVM has no elementwise
-     TVMobj/TVMobj divide, Abs, or a max-of-elements reduction (this file's
-     error-norm line is the only place any of the three are needed), so
-     three small local helpers cover it rather than growing newVM.pas for a
-     single caller's use.
+     Abs or a max-of-elements reduction (this file's error-norm line is
+     the only place either is needed), so two small local helpers cover
+     them rather than growing newVM.pas for a single caller's use.
+     Elementwise divide, previously a third local helper here for the same
+     reason, is now just newVM's own divObj function - see that error-norm
+     line below. (newVM's '/' operator itself stays scalar-only - TVMobj
+     has no same-type TVMobj/TVMobj '/' operator, only divObj.)
 
      Ported for the Anaesthetics/PK-PD_FPC newVM demo. Original: Dr Howard
      Dent, 15/1/94 (Numerical Recipes port), vectorized with Dew MtxVec
@@ -74,17 +77,6 @@ begin
   for r := 0 to A.Rows-1 do
     for c := 0 to A.Cols-1 do
       result[r,c] := Abs(A[r,c]);
-end;
-
-function ElementwiseDivide(const A, B: TVMobj): TVMobj;
-var
-  r, c : Integer;
-begin
-  assert((A.Rows = B.Rows) and (A.Cols = B.Cols), 'ElementwiseDivide : A and B must be the same shape');
-  result := TVMobj.Create(A.Rows, A.Cols);
-  for r := 0 to A.Rows-1 do
-    for c := 0 to A.Cols-1 do
-      result[r,c] := A[r,c] / B[r,c];
 end;
 
 function MaxElement(const A: TVMobj): Double;
@@ -163,7 +155,7 @@ begin
     y := ysav+B1*g1+B2*g2+B3*g3+B4*g4;
     err := E1*g1+E2*g2+E3*g3+E4*g4;
     x := xsav + h;
-    errMax := MaxElement(ElementwiseAbs(ElementwiseDivide(err,yscal))) / eps;
+    errMax := MaxElement(ElementwiseAbs(divObj(err,yscal))) / eps;
     if errmax <= 1 then
     begin
       hdid := h;

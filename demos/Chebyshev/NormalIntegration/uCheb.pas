@@ -423,10 +423,7 @@ begin
   RowSumHy := MatMult(Hy, OnesN);                  // (Nf,1)
   Denom := MatMult(RowSumHx, RowSumHy.Transpose);  // (Mf,Nf) outer product
 
-  Result := TVMobj.Create(Mf, Nf);
-  for a := 0 to Mf - 1 do
-    for b := 0 to Nf - 1 do
-      Result.Element[a, b] := Numer.Element[a, b] / Denom.Element[a, b];
+  Result := divObj(Numer, Denom);  // Numer, Denom are both (Mf,Nf) - genuine Hadamard divide
 
   // 5. exact patch: overwrite every output cell whose row and/or column
   //    landed exactly on a source node with the true value, per the header

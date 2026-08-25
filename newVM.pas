@@ -271,6 +271,7 @@ function Sqrt(const A: TVMobj): TVMobj; overload;
 function Exp(const A: TVMobj): TVMobj; overload;
 function Ln(const A: TVMobj): TVMobj; overload;
 function mulObj(const A, B: TVMObj): TVMObj;
+function divObj(const A, B: TVMObj): TVMObj;
 
 { Real-to-real DCT/DST types I-IV, via FFTW3 (fftw3.pas) r2r transforms on
   the double-precision library. A must be a vector (Rows=1 or Cols=1); the
@@ -1486,6 +1487,34 @@ begin
   assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
   result := CopyObj(A);
   vdMul(A.rows*A.cols,A.Dataptr,B.DataPtr,Result.DataPtr);
+
+end;
+{$ENDIF}
+
+function divObj(const A, B: TVMObj): TVMObj;
+const
+  s: string ='Routine divObj : ';
+{ Element-wise division (Hadamard quotient), the '/' counterpart to
+  mulObj above - deliberately NOT bound to vDSP under HAVE_ACCELERATE:
+  cblas.pas only binds Accelerate's vector/SCALAR divide
+  (accel_vDSP_vsdivD, already used by the '/' scalar operator below),
+  not a vector/vector one, so this stays on the plain-loop PUREPASCAL
+  body regardless of HAVE_ACCELERATE - same as LinearSolveZ deliberately
+  staying off Accelerate elsewhere in this codebase. }
+{$IFDEF PUREPASCAL}
+var
+  i : Integer;
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObj(A);
+  for i := 0 to A.rows*A.cols-1 do
+    result.fdata[i] := result.fdata[i] / B.fdata[i];
+end;
+{$ELSE}
+begin
+  assert((a.rows=b.rows)and(a.cols=b.cols),s+'Dimensions of A and B must be the same');
+  result := CopyObj(A);
+  vdDiv(A.rows*A.cols,A.Dataptr,B.DataPtr,Result.DataPtr);
 
 end;
 {$ENDIF}
