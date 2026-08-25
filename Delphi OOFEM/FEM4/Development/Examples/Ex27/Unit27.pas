@@ -77,10 +77,48 @@ implementation
 
 {$R *.lfm}
 
+// Windows' ShellExecute (unlike a Unix shell) never expands wildcards in
+// its Parameters string - a literal 'eurocode_*.pos' argument reaches
+// gmsh.exe unexpanded, matches no real file, and gmsh opens with an
+// empty session (confirmed: its title bar shows the raw, un-globbed
+// pattern verbatim, and the 3D view/Modules tree are both empty). Build
+// the actual file list ourselves instead, sorted so the zero-padded
+// eurocode_NNN.pos sequence combines in the correct time order.
 procedure TForm27.Button1Click(Sender: TObject);
+var
+  SR: TSearchRec;
+  Files: TStringList;
+  FileList: String;
+  i: Integer;
 begin
 
-  ShellExecute(Handle, 'open', 'c:\gmsh\gmsh.exe', '..\Data\eurocode_*.pos -combine -noview', nil, SW_SHOWNORMAL) ;
+  Files := TStringList.Create;
+  try
+    Files.Sorted := True;
+
+    if FindFirst('..\Data\eurocode_*.pos', faAnyFile, SR) = 0 then
+    begin
+      repeat
+        Files.Add(SR.Name);
+      until FindNext(SR) <> 0;
+      FindClose(SR);
+    end;
+
+    if Files.Count = 0 then
+    begin
+      ShowMessage('No eurocode_*.pos result files found in ..\Data - run Calculate first.');
+      Exit;
+    end;
+
+    FileList := '';
+    for i := 0 to Files.Count - 1 do
+      FileList := FileList + '..\Data\' + Files[i] + ' ';
+
+    ShellExecute(Handle, 'open', 'c:\gmsh\gmsh.exe', PChar(FileList + '-combine -noview'), nil, SW_SHOWNORMAL) ;
+
+  finally
+    Files.Free;
+  end;
 
 end;
 
