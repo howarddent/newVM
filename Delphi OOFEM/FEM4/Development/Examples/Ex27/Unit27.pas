@@ -80,7 +80,7 @@ implementation
 procedure TForm27.Button1Click(Sender: TObject);
 begin
 
-  ShellExecute(Handle, 'open', 'c:\gmsh', '..\Data\eurocode_*.pos -combine -noview', nil, SW_SHOWNORMAL) ;
+  ShellExecute(Handle, 'open', 'c:\gmsh\gmsh.exe', '..\Data\eurocode_*.pos -combine -noview', nil, SW_SHOWNORMAL) ;
 
 end;
 
@@ -158,7 +158,7 @@ begin
 
   Caption := 'Meshing...';
 
-  Sto_ShellExecute('c:\gmsh', '..\Data\eurocode.geo -3', ExitCode, 60000, True);
+  Sto_ShellExecute('c:\gmsh\gmsh.exe', '..\Data\eurocode.geo -3', ExitCode, 60000, True);
 
   Caption := 'Loading mesh...';
 
