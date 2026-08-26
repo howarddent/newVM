@@ -29,6 +29,8 @@ unit CXS.FEMLAP.FormulaEval;
        unary      := ('-' | '+')? power
        power      := primary ('^' unary)?
        primary    := NUMBER | IDENT | IDENT '(' expression ')' | '(' expression ')'
+     NUMBER admits an optional trailing exponent ('E'/'e', optional sign,
+     digits - e.g. '30E+6'), like Pascal/C floating-point literals.
      Recognised functions (the set the real formulas in this codebase
      actually use): ln, exp, sqrt, abs, sin, cos.
 
@@ -176,12 +178,17 @@ end;
 
 function TMtxExpression.ParseNumber: Double;
 var
-  startPos: Integer;
-  intPart, fracPart, fracScale: Double;
+  startPos, expSign, expDigitsStart: Integer;
+  intPart, fracPart, fracScale, expPart: Double;
 begin
   //Hand-rolled rather than StrToFloat, to sidestep locale/decimal-separator
-  //concerns entirely - the grammar only ever admits digits and '.', never
-  //a locale-dependent thousands separator or exponent notation.
+  //concerns entirely - the grammar only ever admits digits, '.', and an
+  //optional trailing exponent ('E'/'e' possibly followed by '+'/'-' then
+  //digits, e.g. '30E+6') - never a locale-dependent thousands separator.
+  //Exponent support was added after a real formula in this codebase
+  //('30E+6', an elastic modulus in Ex40) turned out to need it, despite
+  //this unit's original header comment claiming no formula here used it -
+  //that claim was wrong, not aspirational; don't re-narrow this.
   startPos := FParsePos;
   intPart := 0;
   while (not AtEnd) and (PeekChar in ['0'..'9']) do
@@ -205,6 +212,27 @@ begin
     raise EFormulaEvalError.Create(s + 'expected a number at position ' +
       IntToStr(FParsePos) + ' in "' + FSourceText + '"');
   result := intPart + fracPart;
+
+  if (PeekChar = 'E') or (PeekChar = 'e') then
+  begin
+    expDigitsStart := FParsePos; //rewind point if this isn't really an exponent (e.g. a function/var name starting with 'e' right after a number - not valid syntax anyway, but fail cleanly rather than consuming the 'E')
+    Inc(FParsePos);
+    expSign := 1;
+    if PeekChar = '+' then Inc(FParsePos)
+    else if PeekChar = '-' then begin expSign := -1; Inc(FParsePos); end;
+    if (not AtEnd) and (PeekChar in ['0'..'9']) then
+    begin
+      expPart := 0;
+      while (not AtEnd) and (PeekChar in ['0'..'9']) do
+      begin
+        expPart := expPart*10 + (Ord(PeekChar) - Ord('0'));
+        Inc(FParsePos);
+      end;
+      result := result * IntPower(10, expSign * Round(expPart));
+    end
+    else
+      FParsePos := expDigitsStart; //no digits followed 'E' - not an exponent after all, leave it for the caller to fail on
+  end;
 end;
 
 function TMtxExpression.ParseIdentifier: String;
@@ -380,14 +408,32 @@ begin
 end;
 
 function TMtxExpression.DefineDouble(const VarName: String): TDoubleValue;
+var
+  idx: Integer;
 begin
-  result := FVarValues[FindOrAddVar(VarName)];
+  //Split into two statements deliberately: FindOrAddVar can grow FVarValues
+  //via SetLength (reallocating it) as a side effect when VarName wasn't
+  //seen during parsing (e.g. a constant-only formula like '2300' that
+  //never references its own nominal variable name) - indexing FVarValues
+  //in the same expression as the call risks reading through a stale array
+  //reference from before the reallocation. Evaluating FindOrAddVar first,
+  //into a separate local, guarantees the reallocation is visible before
+  //the index read.
+  idx := FindOrAddVar(VarName);
+  result := FVarValues[idx];
 end;
 
 function TMtxExpression.EvalNode(NodeIndex: Integer): Double;
+const
+  //Stand-in for -Infinity/+Infinity in nkDiv/fnLn's zero-argument guards
+  //below - large enough that any real formula's legitimate values are
+  //never mistaken for it, finite so downstream arithmetic (e.g. a
+  //root-finder's sign comparisons) keeps working instead of propagating
+  //an actual Infinity/NaN or raising.
+  HugeVal = 1E300;
 var
   n: TExprNode;
-  a: Double;
+  a, b: Double;
 begin
   n := FNodes[NodeIndex];
   case n.Kind of
@@ -396,14 +442,33 @@ begin
     nkAdd:   result := EvalNode(n.Left) + EvalNode(n.Right);
     nkSub:   result := EvalNode(n.Left) - EvalNode(n.Right);
     nkMul:   result := EvalNode(n.Left) * EvalNode(n.Right);
-    nkDiv:   result := EvalNode(n.Left) / EvalNode(n.Right);
+    nkDiv:
+      begin
+        a := EvalNode(n.Left);
+        b := EvalNode(n.Right);
+        //Guard against a literal zero divisor - real formulas evaluated
+        //across many different input ranges (e.g. a root-finder probing
+        //near a singularity) can genuinely hit this, and FPC's unmasked
+        //FPU exceptions turn it into an uncatchable-feeling EZeroDivide
+        //("Floating point division by zero") otherwise.
+        if b <> 0 then result := a / b
+        else if a >= 0 then result := HugeVal
+        else result := -HugeVal;
+      end;
     nkPow:   result := Power(EvalNode(n.Left), EvalNode(n.Right));
     nkNeg:   result := -EvalNode(n.Left);
     nkFunc:
       begin
         a := EvalNode(n.Left);
         case n.Func of
-          fnLn:   result := Ln(a);
+          //Guard against a non-positive argument the same way nkDiv
+          //guards a zero divisor above - ln(0) (and ln of a negative,
+          //which never arises here but is equally invalid) hits the same
+          //class of FPU exception rather than yielding a sensible finite
+          //stand-in for -Infinity, e.g. when the formula's own numerator
+          //cancels to exactly 0 at a boundary a root-finder probes (see
+          //CXS.FEMLAP.Analytical.pas's SteadyStateHeatConvectionRadiation1D).
+          fnLn:   if a > 0 then result := Ln(a) else result := -HugeVal;
           fnExp:  result := Exp(a);
           fnSqrt: result := Sqrt(a);
           fnAbs:  result := Abs(a);

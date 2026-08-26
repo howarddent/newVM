@@ -114,12 +114,67 @@ implementation
 
 uses CXS.FEMLAP.Extrapolation;
 
+{ Reading or (re)creating a .msh/.pos file right after another part of the
+  same pipeline just wrote it - the exact pattern every FEM4 example
+  follows, calling OpenFile/Reset or OpenFile/ReWrite repeatedly across a
+  multi-step solve - occasionally hits a transient "Invalid filename"
+  I/O error with no code-level cause: nothing about the path or the
+  Pascal side changes between a failing attempt and an immediately
+  following successful retry. The working theory (confirmed operationally
+  across several examples: Windows Defender or another background handle
+  briefly opens/scans a just-written file, and Reset/ReWrite's own
+  underlying CreateFile call collides with that window) can't be fixed
+  from this side of the API - only ridden out. A short retry loop is the
+  standard way to absorb exactly this class of transient sharing
+  violation, so both Reset (open a file for reading) and ReWrite (create/
+  truncate one for writing) route through here now instead of being
+  called directly. }
+procedure SafeReset(var F: TextFile);
+const
+  MaxAttempts = 8;
+  RetryDelayMs = 50;
+var
+  Attempt: Integer;
+begin
+  for Attempt := 1 to MaxAttempts do
+  begin
+    try
+      Reset(F);
+      Exit;
+    except
+      if Attempt = MaxAttempts then
+        raise;
+      Sleep(RetryDelayMs);
+    end;
+  end;
+end;
+
+procedure SafeReWrite(var F: TextFile);
+const
+  MaxAttempts = 8;
+  RetryDelayMs = 50;
+var
+  Attempt: Integer;
+begin
+  for Attempt := 1 to MaxAttempts do
+  begin
+    try
+      ReWrite(F);
+      Exit;
+    except
+      if Attempt = MaxAttempts then
+        raise;
+      Sleep(RetryDelayMs);
+    end;
+  end;
+end;
+
 { TGmsh }
 
 procedure TGmsh.GenerateLine(dx: Double; meshsize : Double; EleType: Integer);
 begin
 
-    ReWrite(FGmshFile);
+    SafeReWrite(FGmshFile);
 
     WriteLn(FGmshFile, 'Mesh.MshFileVersion=1;');
 
@@ -190,7 +245,7 @@ end;
 procedure TGmsh.GenerateBox(dx, dy, dz: Double; meshsize : Double; EleType: Integer);
 begin
 
-    ReWrite(FGmshFile);
+    SafeReWrite(FGmshFile);
 
     WriteLn(FGmshFile, 'Mesh.MshFileVersion=1;');
 
@@ -216,8 +271,8 @@ begin
     if (EleType = GMSH_TETRA) then
     begin
 
-      WriteLn(FGmshFile, 'Extrude Surface {6, {0,0,dz}};');
-      WriteLn(FGmshFile, 'Physical Volume(7) = {1};');
+      WriteLn(FGmshFile, 'ext() = Extrude {0,0,dz} { Surface{6}; };');
+      WriteLn(FGmshFile, 'Physical Volume(7) = {ext(1)};');
 
     end;
 
@@ -229,9 +284,9 @@ begin
 
       WriteLn(FGmshFile, 'Transfinite Surface {6} = {1,2,3,4};');
 
-      WriteLn(FGmshFile, 'Extrude Surface {6, {0,0,dz}} {Layers { {' + IntToStr(Trunc(dz / meshsize + 1)) + '}, {1}}; Recombine;};');
+      WriteLn(FGmshFile, 'ext() = Extrude {0,0,dz} { Surface{6}; Layers { {' + IntToStr(Trunc(dz / meshsize + 1)) + '}, {1}}; Recombine; };');
 
-      WriteLn(FGmshFile, 'Physical Volume(7) = {1};');
+      WriteLn(FGmshFile, 'Physical Volume(7) = {ext(1)};');
 
     end;
 
@@ -240,7 +295,7 @@ end;
 procedure TGmsh.GenerateRectangle(dx, dy: Double; meshsize : Double; EleType: Integer);
 begin
 
-    ReWrite(FGmshFile);
+    SafeReWrite(FGmshFile);
 
     WriteLn(FGmshFile, 'Mesh.MshFileVersion=1;');
 
@@ -386,7 +441,7 @@ var
 
 begin
 
-    Reset(FGmshFile);
+    SafeReset(FGmshFile);
 
     ReadLn(FGmshFile, Tag); //$NOD
 
@@ -450,7 +505,7 @@ end;
 procedure TGmsh.ReWriteFile;
 begin
 
-  ReWrite(FGmshFile);
+  SafeReWrite(FGmshFile);
 
 end;
 
@@ -479,7 +534,7 @@ var
 begin
 
     if ReWriteFile then
-      ReWrite(FGmshFile);
+      SafeReWrite(FGmshFile);
 
     WriteLn(FGmshFile, 'View "'+ ViewName + '" {');
 
@@ -563,7 +618,7 @@ var
 begin
 
     if ReWriteFile then
-      ReWrite(FGmshFile);
+      SafeReWrite(FGmshFile);
 
     WriteLn(FGmshFile, 'View "'+ ViewName + '" {');
 
@@ -653,7 +708,7 @@ begin
     Extrapolation := TExtrapolation.Create;
 
     if ReWriteFile then
-      ReWrite(FGmshFile);
+      SafeReWrite(FGmshFile);
 
     WriteLn(FGmshFile, 'View "'+ ViewName + '" {');
 
@@ -771,7 +826,7 @@ var
 begin
 
     if ReWriteFile then
-      ReWrite(FGmshFile);
+      SafeReWrite(FGmshFile);
 
     WriteLn(FGmshFile, 'View "'+ ViewName + '" {');
 
@@ -876,7 +931,7 @@ var
 begin
 
     if ReWriteFile then
-      ReWrite(FGmshFile);
+      SafeReWrite(FGmshFile);
 
     WriteLn(FGmshFile, 'View "'+ ViewName + '" {');
 

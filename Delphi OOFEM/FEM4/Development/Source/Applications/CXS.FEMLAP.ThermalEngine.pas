@@ -662,6 +662,18 @@ procedure TThermalEngine.AddNodeSource(NodeId: Integer;
   DependantVarFunc: TDependantVarFunc; Q: TExpressionList);
 begin
 
+  // A hardcoded NodeId that doesn't match the mesh actually loaded (e.g.
+  // left over from an earlier/larger version of the same mesh file - see
+  // Ex38's own AddNodeSource(1748, ...) call against building.msh, which
+  // only has 264 nodes) indexes FNodes out of bounds with no range
+  // checking, and crashes with an opaque access violation deep inside
+  // AddSource rather than reporting anything useful. Checking here turns
+  // that into a specific, actionable message.
+  if (NodeId < 0) or (NodeId >= FNbNodes) then
+    raise Exception.Create('Procedure TThermalEngine.AddNodeSource : NodeId ' +
+      IntToStr(NodeId) + ' is out of range - this mesh has ' + IntToStr(FNbNodes) +
+      ' nodes (valid range 0..' + IntToStr(FNbNodes-1) + ').');
+
   FNodes[NodeId].AddSource(DependantVarFunc, Q, diX);
 
 end;
@@ -1333,10 +1345,33 @@ begin
   Brick_H8V1.Free;
   Brick_W6V1.Free;
 
-  SetLength(R1, n);
-  SetLength(C1, n);
-  SetLength(V1, n);
-  SetLength(V2, n);
+  // A node not touched by any element (a genuinely orphaned point in the
+  // mesh - real meshes from external tools can and do contain these, e.g.
+  // tamega.msh, which has 46 such nodes) gets no triplet contribution at
+  // all above, leaving its row structurally absent from the CSR matrix -
+  // not merely zero-valued. PARDISO has no graceful way to report that:
+  // it segfaults deep inside its own closed-source reordering step
+  // instead of erroring (see newVMsparse.pas's PardisoSolve, which now
+  // catches this earlier with a clear message - this loop is the actual
+  // fix, guaranteeing every node index has a diagonal entry before that
+  // check ever runs). A tiny epsilon diagonal is negligible next to any
+  // real element's stiffness/mass contribution (duplicate (row,col)
+  // triplets are summed by TripletsToSparse), so already-connected nodes
+  // are unaffected; an orphaned node instead gets its own trivial,
+  // decoupled 1x1 equation - numerically harmless, physically
+  // meaningless for a point with no element, but solvable.
+  SetLength(R1, n+FNewSize);
+  SetLength(C1, n+FNewSize);
+  SetLength(V1, n+FNewSize);
+  SetLength(V2, n+FNewSize);
+  for i := 0 to FNewSize - 1 do
+  begin
+    R1[n] := i;
+    C1[n] := i;
+    V1[n] := 1E-12;
+    V2[n] := 1E-12;
+    Inc(n);
+  end;
 
   if n > 0 then
   begin

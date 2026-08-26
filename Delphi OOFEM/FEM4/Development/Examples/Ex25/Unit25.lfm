@@ -1,0 +1,116 @@
+object Form25: TForm25
+  Left = 0
+  Height = 461
+  Top = 0
+  Width = 727
+  BorderStyle = bsDialog
+  Caption = 'Form25'
+  ClientHeight = 461
+  ClientWidth = 727
+  OnCreate = FormCreate
+  Position = poScreenCenter
+  LCLVersion = '4.8.0.0'
+  object Label1: TLabel
+    Left = 8
+    Height = 15
+    Top = 21
+    Width = 67
+    Caption = 'Element type:'
+  end
+  object Label2: TLabel
+    Left = 8
+    Height = 15
+    Top = 48
+    Width = 50
+    Caption = 'Mesh size:'
+  end
+  object Label3: TLabel
+    Left = 224
+    Height = 15
+    Top = 21
+    Width = 65
+    Caption = 'Time interval:'
+  end
+  object Label4: TLabel
+    Left = 224
+    Height = 15
+    Top = 45
+    Width = 55
+    Caption = 'Time steps:'
+  end
+  object Chart1: TChart
+    Left = 8
+    Height = 377
+    Top = 72
+    Width = 627
+    AxisList = <
+      item
+        Grid.Color = clSilver
+        Minors = <>
+      end
+      item
+        Alignment = calBottom
+        Grid.Color = clSilver
+        Minors = <>
+      end>
+    Title.Text.Strings = (
+      'TChart'
+    )
+    Title.Visible = True
+    Legend.Visible = True
+    object Series1: TLineSeries
+      LinePen.Color = clRed
+    end
+    object Series2: TLineSeries
+      LinePen.Color = clGreen
+    end
+  end
+  object Button1: TButton
+    Left = 642
+    Height = 25
+    Top = 72
+    Width = 75
+    Caption = 'Calculate'
+    TabOrder = 1
+    OnClick = Button1Click
+  end
+  object ComboBox1: TComboBox
+    Left = 88
+    Height = 23
+    Top = 18
+    Width = 113
+    ItemHeight = 15
+    Style = csDropDownList
+    TabOrder = 2
+  end
+  object Edit1: TEdit
+    Left = 88
+    Height = 23
+    Top = 45
+    Width = 113
+    Alignment = taRightJustify
+    NumbersOnly = True
+    TabOrder = 3
+    Text = '0.05'
+  end
+  object Edit2: TEdit
+    Left = 295
+    Height = 23
+    Top = 18
+    Width = 113
+    Alignment = taRightJustify
+    NumbersOnly = True
+    TabOrder = 4
+    Text = '0.002'
+  end
+  object Edit3: TEdit
+    Left = 295
+    Height = 23
+    Top = 45
+    Width = 113
+    Alignment = taRightJustify
+    NumbersOnly = True
+    TabOrder = 5
+    Text = '100'
+  end
+end

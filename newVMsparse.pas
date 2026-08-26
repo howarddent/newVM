@@ -356,6 +356,42 @@ begin
   for i := 0 to n-1 do result.DataPtr[i] := yvec[i];
 end;
 
+{ Both PARDISO's own mtype=2/11 factorisation and the RCI FGMRES/dcsrilu0
+  path (see FGMRESSolve below) require every row to carry an explicitly
+  stored diagonal entry - a row that's structurally missing one (not
+  merely a zero-valued one; genuinely absent from the CSR pattern) isn't
+  a case either routine reports cleanly. dcsrilu0 raises a clear "no
+  diagonal in CSR format" error for it (see newVMsparse.pas's own git
+  history for the Ex16 bug this caught); PARDISO instead segfaults deep
+  inside its own closed-source METIS reordering step with no useful
+  diagnostic at all (the Ex35/ThermalEngine crash this check was added
+  for - a 24822-row transient thermal matrix with at least one row never
+  touched by any element's diagonal contribution). Checking up front is
+  O(NonZeros) - negligible next to the O(N^1.5) or worse factorisation
+  cost - and turns an opaque access violation into a specific row index. }
+function FindMissingDiagonalRow(const A: TVMSparseMtx): Integer;
+var
+  r, k: Integer;
+  found: Boolean;
+begin
+  result := -1;
+  for r := 0 to A.Rows-1 do
+  begin
+    found := False;
+    for k := A.FRowPtr[r] to A.FRowPtr[r+1]-1 do
+      if A.FColInd[k] = r then
+      begin
+        found := True;
+        Break;
+      end;
+    if not found then
+    begin
+      result := r;
+      Exit;
+    end;
+  end;
+end;
+
 function PardisoSolve(const A: TVMSparseMtx; const B: TVMobj; SymmetricPosDef: Boolean): TVMobj;
 const
   s = 'Function PardisoSolve : ';
@@ -366,9 +402,20 @@ var
   mtype, maxfct, mnum, phase, n, nrhs, msglvl, error: Integer;
   perm: array of Integer;
   Bcopy, X: TVMobj;
+  badRow: Integer;
 begin
   assert(A.Rows = A.Cols, s+'A must be square');
   assert(B.Rows*B.Cols = A.Rows, s+'B must be a vector of length A.Rows');
+
+  badRow := FindMissingDiagonalRow(A);
+  if badRow >= 0 then
+    raise Exception.Create(s + 'row ' + IntToStr(badRow) + ' of A has no ' +
+      'diagonal entry (structurally absent from the sparsity pattern, not ' +
+      'merely zero-valued) - PARDISO cannot factorise this matrix. This ' +
+      'usually means node ' + IntToStr(badRow) + ' was never touched by ' +
+      'any element''s stiffness/mass contribution during assembly (a ' +
+      'disconnected node, or an Assembly.Add call with the wrong node ' +
+      'count for its element type).');
 
   if SymmetricPosDef then
   begin
