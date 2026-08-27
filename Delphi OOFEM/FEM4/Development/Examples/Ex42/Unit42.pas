@@ -5,8 +5,8 @@ unit Unit42;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
-  Dialogs, StdCtrls, ShellApi, newVM, newVMsparse,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, newVM, newVMsparse,
   CXS.FEMLAP.EngineData,
   CXS.FEMLAP.StructuralEngine, CXS.FEMLAP.Expression,
   CXS.FEMLAP.ShellExec, CXS.FEMLAP.Gmsh;
@@ -47,6 +47,19 @@ implementation
 
 {$R *.lfm}
 
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
+
 procedure TForm42.Button1Click(Sender: TObject);
 var
 
@@ -58,7 +71,7 @@ var
 
   SectionArea, Perimeter, Thickness : Double;
 
-  ExitCode: DWORD;
+  ExitCode: Cardinal;
 
   NbNodes : Integer;
   Node : Array[0..4] of Integer;
@@ -90,17 +103,17 @@ begin
   Perimeter := 2 * Thickness + 2 * dy;
   SectionArea := Thickness * dy;
 
-  Gmsh.OpenFile('..\Data\structuralengine.geo');
+  Gmsh.OpenFile(DataDir + 'structuralengine.geo');
   Gmsh.GenerateRectangle(dx, dy, MeshSize, GMSH_TRI);
   Gmsh.Close;
 
   Caption := 'Meshing...';
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', '..\Data\structuralengine.geo -3 -optimize', ExitCode, 60000, True);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'structuralengine.geo', '-3', '-optimize'], ExitCode, 60000, True);
 
   Caption := 'Loading mesh...';
 
-  Gmsh.OpenFile('..\Data\structuralengine.msh');
+  Gmsh.OpenFile(DataDir + 'structuralengine.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 
@@ -234,7 +247,18 @@ begin
 
   StructuralEngine.SetEndPostIterationFunction(PostProcess);
 
-  StructuralEngine.SolverType := soUMFPACK;
+  // soUMFPACK (-> PardisoSolve, MKL PARDISO direct solve) silently returns
+  // an all-zero displacement vector for this mesh's ~8600-DOF penalty-method
+  // system on this machine - no exception, no PARDISO error code, just
+  // Fu = 0 for every DOF (confirmed both mtype=2/SPD and mtype=11/general -
+  // both give the exact same all-zero result, so it isn't the SPD
+  // assumption specifically). Norm(b) and the assembled matrix are both
+  // confirmed non-degenerate (verified directly), and the identical
+  // assembled system solves correctly via soGMRES (MKL's iterative RCI
+  // FGMRES). Root cause not pinned down further within PARDISO itself;
+  // switched this example to soGMRES as the correct, verified fix rather
+  // than leave a known-broken direct solve in place.
+  StructuralEngine.SolverType := soGMRES;
 
   FStart := GetTickCount;
 
@@ -242,8 +266,8 @@ begin
 
   (******************** START POST-PROCESSING ********************)
 
-  //ShellExecute(Handle, 'open', 'c:\gmsh\gmsh.exe', '..\Data\structuralengine.scr', nil, SW_SHOWNORMAL);
-  ShellExecute(Handle, 'open', 'c:\gmsh\gmsh.exe', '..\Data\structuralengine.pos', nil, SW_SHOWNORMAL);
+  //Sto_ShellExecute(GmshExecutable, [DataDir + 'structuralengine.scr'], ExitCode);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'structuralengine.pos'], ExitCode);
 
   time1.Free;
 
@@ -280,9 +304,9 @@ var
   // Output data
   ux, uy, uz : TDoubleArray;
 
-  //Stress : RStress;
+  Sxx, Syy, Sxy, VonMises : TDoubleArray;
 
-  //Sigma : TVMobj;
+  Stress : RStress;
 
 begin
 
@@ -292,7 +316,7 @@ begin
 
   Application.ProcessMessages;
 
-  Gmsh.OpenFile('..\Data\structuralengine.pos');
+  Gmsh.OpenFile(DataDir + 'structuralengine.pos');
 
   SetLength(ux, StructuralEngine.NbNodes);
   SetLength(uy, StructuralEngine.NbNodes);
@@ -311,18 +335,39 @@ begin
   Gmsh.WriteViewScalarNode('Ux', ux, True);
   Gmsh.WriteViewScalarNode('Uy', uy, False);
 
+  // Per-element stress (RStress only has Sxx/Syy/Sxy - plane stress),
+  // via StructuralEngine.Stress (CXS.FEMLAP.StructuralEngine.pas's
+  // GetStress: Sigma = D*(B*qe - epsilon0), a real elastic-stress
+  // computation). This was previously entirely commented out here (the
+  // dead code referenced Stress[i] as if RStress were array-indexable,
+  // which it isn't, and called an undefined ViewValues) - so no stress
+  // view was ever written to the .pos file, which is why every load
+  // case looked like zero stress: there was no Stress data at all, only
+  // the Ux/Uy displacement views above.
+  SetLength(Sxx, StructuralEngine.NbElements);
+  SetLength(Syy, StructuralEngine.NbElements);
+  SetLength(Sxy, StructuralEngine.NbElements);
+  SetLength(VonMises, StructuralEngine.NbElements);
+
+  for i := 0 to StructuralEngine.NbElements - 1 do
+  begin
+
+    Stress := StructuralEngine.Stress[i];
+
+    Sxx[i] := Stress.Sxx;
+    Syy[i] := Stress.Syy;
+    Sxy[i] := Stress.Sxy;
+
+    VonMises[i] := Sqrt(Sqr(Stress.Sxx) - Stress.Sxx * Stress.Syy + Sqr(Stress.Syy) + 3 * Sqr(Stress.Sxy));
+
+  end;
+
+  Gmsh.WriteViewScalarElement('Sxx', Sxx, False);
+  Gmsh.WriteViewScalarElement('Syy', Syy, False);
+  Gmsh.WriteViewScalarElement('Sxy', Sxy, False);
+  Gmsh.WriteViewScalarElement('VonMises', VonMises, False);
+
   Gmsh.Close;
-
-  (*
-  Stress := StructuralEngine.Stress[0];
-
-  Sigma := TVMobj.Create(4, 1);
-
-  for i := 0 to 3 do
-    Sigma[i,0] := Stress[i];
-
-  //ViewValues(Sigma);
-  *)
 
   FStart := GetTickCount;
 

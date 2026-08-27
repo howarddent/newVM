@@ -26,8 +26,6 @@ uses
   CXS.FEMLAP.ShellExec in '..\..\Source\System\CXS.FEMLAP.ShellExec.pas',
   CXS.FEMLAP.EngineData in '..\..\Source\Applications\CXS.FEMLAP.EngineData.pas';
 
-{$R *.res}
-
 begin
   InitializeCBLAS;
   Application.Initialize;

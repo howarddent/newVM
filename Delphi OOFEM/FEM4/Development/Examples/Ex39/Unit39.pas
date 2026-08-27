@@ -5,7 +5,7 @@ unit Unit39;
 interface
 
 uses
-  Windows, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
   Dialogs,
   CXS.FEMLAP.Gmsh,
   CXS.FEMLAP.Node,

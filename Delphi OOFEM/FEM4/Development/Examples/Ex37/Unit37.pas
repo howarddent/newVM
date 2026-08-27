@@ -5,7 +5,7 @@ unit Unit37;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
   Dialogs, newVMsparse,
   CXS.FEMLAP.Gmsh,
   CXS.FEMLAP.Node,
@@ -20,7 +20,6 @@ uses
   CXS.FEMLAP.EngineData,
   CXS.FEMLAP.ThermalEngine,
   CXS.FEMLAP.Expression,
-  ShellAPI,
   StdCtrls, ExtCtrls;
 
 type
@@ -53,6 +52,19 @@ implementation
 
 {$R *.lfm}
 
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
+
 procedure TForm37.Button1Click(Sender: TObject);
 var
 
@@ -64,7 +76,7 @@ var
 
   SectionArea, Perimeter, Thickness : Double;
 
-  ExitCode: DWORD;
+  ExitCode: Cardinal;
 
   NbNodes : Integer;
   Node : Array[0..7] of Integer;
@@ -79,7 +91,7 @@ var
 
   SR: TSearchRec;
   Files: TStringList;
-  FileList: String;
+  Args: array of String;
   fi : Integer;
 
 begin
@@ -90,7 +102,7 @@ begin
 
   Caption := 'Building geometry...';
 
-  MeshSize := 0.003;
+  MeshSize := 0.02;
 
   dx := 1;
   dy := 0.1;
@@ -100,7 +112,7 @@ begin
   Perimeter := 2 * Thickness + 2 * dy;
   SectionArea := Thickness * dy;
 
-  Gmsh.OpenFile('..\Data\thermalengine.geo');
+  Gmsh.OpenFile(DataDir + 'thermalengine.geo');
   //Gmsh.GenerateLine(dx, MeshSize, GMSH_BEAM);
   //Gmsh.GenerateRectangle(dx, dy, MeshSize, GMSH_TRI);
   //Gmsh.GenerateRectangle(dx, dy, MeshSize, GMSH_QUAD);
@@ -111,11 +123,11 @@ begin
 
   Caption := 'Meshing...';
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', '..\Data\thermalengine.geo -3 -optimize', ExitCode, 60000, True);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'thermalengine.geo', '-3', '-optimize'], ExitCode, 60000, True);
 
   Caption := 'Loading mesh...';
 
-  Gmsh.OpenFile('..\Data\thermalengine.msh');
+  Gmsh.OpenFile(DataDir + 'thermalengine.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 
@@ -241,7 +253,7 @@ begin
   try
     Files.Sorted := True;
 
-    if FindFirst('..\Data\thermalengine_???.pos', faAnyFile, SR) = 0 then
+    if FindFirst(DataDir + 'thermalengine_???.pos', faAnyFile, SR) = 0 then
     begin
       repeat
         Files.Add(SR.Name);
@@ -252,11 +264,13 @@ begin
     if Files.Count > 0 then
     begin
 
-      FileList := '';
+      SetLength(Args, Files.Count + 2);
       for fi := 0 to Files.Count - 1 do
-        FileList := FileList + '..\Data\' + Files[fi] + ' ';
+        Args[fi] := DataDir + Files[fi];
+      Args[Files.Count] := '-combine';
+      Args[Files.Count + 1] := '-noview';
 
-      ShellExecute(Handle, 'open', 'c:\gmsh\gmsh.exe', PChar(FileList + '-combine -noview'), nil, SW_SHOWNORMAL) ;
+      Sto_ShellExecute(GmshExecutable, Args, ExitCode);
 
     end
     else
@@ -310,7 +324,7 @@ begin
 
     end;
 
-    Gmsh.OpenFile('..\Data\thermalengine_' + Format('%.3d', [ThermalEngine.Step]) + '.pos');
+    Gmsh.OpenFile(DataDir + 'thermalengine_' + Format('%.3d', [ThermalEngine.Step]) + '.pos');
     Gmsh.WriteViewScalarNode('T', v);
     Gmsh.Close;
 

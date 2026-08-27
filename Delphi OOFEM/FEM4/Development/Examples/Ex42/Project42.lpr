@@ -23,8 +23,6 @@ uses
   CXS.FEMLAP.Extrapolation in '..\..\Source\Algebra\CXS.FEMLAP.Extrapolation.pas',
   CXS.FEMLAP.EngineData in '..\..\Source\Applications\CXS.FEMLAP.EngineData.pas';
 
-{$R *.res}
-
 begin
   InitializeCBLAS;
   Application.Initialize;
