@@ -94,7 +94,7 @@ begin
   Gmsh.GenerateBox(1, 0.1, 0.1, 0.15, GMSH_HEXA);
   Gmsh.Close;
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', '..\Data\tbeam3D.geo -3', ExitCode, 60000, True);
+  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\tbeam3D.geo', '-3'], ExitCode, 60000, True);
 
   Gmsh.OpenFile('..\Data\tbeam3D.msh');
   Gmsh.ReadMesh;

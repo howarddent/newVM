@@ -86,7 +86,7 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', '..\Data\transient_plate.geo -3 -format msh1', ExitCode, 60000, True);
+  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\transient_plate.geo', '-3', '-format', 'msh1'], ExitCode, 60000, True);
 
   Gmsh.OpenFile('..\Data\transient_plate.msh');
   Gmsh.ReadMesh;

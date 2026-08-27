@@ -112,7 +112,7 @@ begin
 
   Caption := 'Meshing...';
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', '..\Data\thermalengine_ec.geo -3 -optimize', ExitCode, 60000, True);
+  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\thermalengine_ec.geo', '-3', '-optimize'], ExitCode, 60000, True);
 
   Caption := 'Loading mesh...';
 

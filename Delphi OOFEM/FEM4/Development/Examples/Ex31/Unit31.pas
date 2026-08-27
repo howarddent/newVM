@@ -152,7 +152,7 @@ begin
 
   Caption := 'Meshing...';
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', '..\Data\tvalid.geo -3', ExitCode, 60000, True);
+  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\tvalid.geo', '-3'], ExitCode, 60000, True);
 
   Caption := 'Loading mesh...';
 

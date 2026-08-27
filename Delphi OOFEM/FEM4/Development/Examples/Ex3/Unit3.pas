@@ -73,7 +73,7 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', '..\Data\curved.geo -3', ExitCode, 60000, True);
+  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\curved.geo', '-3'], ExitCode, 60000, True);
 
   Gmsh.OpenFile('..\Data\curved.msh');
   Gmsh.ReadMesh;

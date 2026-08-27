@@ -71,7 +71,7 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', '..\Data\shellgt.geo -3', ExitCode, 60000, True);
+  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\shellgt.geo', '-3'], ExitCode, 60000, True);
 
   Gmsh.OpenFile('..\Data\shellgt.msh');
   Gmsh.ReadMesh;

@@ -78,7 +78,7 @@ begin
 
   Form1.Caption := 'Meshing...';
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', '..\Data\solid.geo -3', ExitCode, 60000, True);
+  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\solid.geo', '-3'], ExitCode, 60000, True);
 
   Form1.Caption := 'Reading mesh...';
 

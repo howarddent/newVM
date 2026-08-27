@@ -94,7 +94,7 @@ begin
   Gmsh.GenerateRectangle(1, 0.05, 0.05, GMSH_QUAD);
   Gmsh.Close;
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', '..\Data\tbeam2D.geo -3', ExitCode, 60000, True);
+  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\tbeam2D.geo', '-3'], ExitCode, 60000, True);
 
   Gmsh.OpenFile('..\Data\tbeam2D.msh');
   Gmsh.ReadMesh;

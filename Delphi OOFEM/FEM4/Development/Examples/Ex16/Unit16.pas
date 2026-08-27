@@ -79,7 +79,7 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', '..\Data\squareq.geo -3', ExitCode, 60000, True);
+  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\squareq.geo', '-3'], ExitCode, 60000, True);
 
   Gmsh.OpenFile('..\Data\squareq.msh');
   Gmsh.ReadMesh;

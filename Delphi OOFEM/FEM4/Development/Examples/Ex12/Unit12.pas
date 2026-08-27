@@ -72,7 +72,7 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', '..\Data\solidh.geo -3', ExitCode, 60000, True);
+  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\solidh.geo', '-3'], ExitCode, 60000, True);
 
   Gmsh.OpenFile('..\Data\solidh.msh');
   Gmsh.ReadMesh;
