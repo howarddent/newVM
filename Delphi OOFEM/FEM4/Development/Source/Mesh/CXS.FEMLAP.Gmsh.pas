@@ -853,7 +853,7 @@ begin
 
       if (FElements[i].EleType = GMSH_BEAM) then
       begin
-        WriteLn(FGmshFile, Format('VL(%e,%e,%e,%e,%e,%e){%e,%e,%e,%e};',
+        WriteLn(FGmshFile, Format('VL(%e,%e,%e,%e,%e,%e){%e,%e,%e,%e,%e,%e};',
           [cx[0], cy[0], cz[0], cx[1], cy[1], cz[1],
           u[i], v[i], w[i],
           u[i], v[i], w[i]]));
@@ -861,7 +861,7 @@ begin
 
       if (FElements[i].EleType = GMSH_TRI) then
       begin
-        WriteLn(FGmshFile, Format('VT(%e,%e,%e,%e,%e,%e,%e,%e,%e){%e,%e,%e,%e,%e,%e};',
+        WriteLn(FGmshFile, Format('VT(%e,%e,%e,%e,%e,%e,%e,%e,%e){%e,%e,%e,%e,%e,%e,%e,%e,%e};',
           [cx[0], cy[0], cz[0], cx[1], cy[1], cz[1], cx[2], cy[2], cz[2],
           u[i], v[i], w[i],
           u[i], v[i], w[i],
@@ -890,7 +890,7 @@ begin
 
       if (FElements[i].EleType = GMSH_HEXA) then
       begin
-        WriteLn(FGmshFile, Format('VH(%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e){%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e};',
+        WriteLn(FGmshFile, Format('VH(%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e){%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e};',
           [cx[0], cy[0], cz[0], cx[1], cy[1], cz[1], cx[2], cy[2], cz[2], cx[3], cy[3], cz[3],cx[4], cy[4], cz[4], cx[5], cy[5], cz[5], cx[6], cy[6], cz[6], cx[7], cy[7], cz[7],
           u[i], v[i], w[i],
           u[i], v[i], w[i],
@@ -958,7 +958,7 @@ begin
 
       if (FElements[i].EleType = GMSH_BEAM) then
       begin
-        WriteLn(FGmshFile, Format('VL(%e,%e,%e,%e,%e,%e){%e,%e,%e,%e};',
+        WriteLn(FGmshFile, Format('VL(%e,%e,%e,%e,%e,%e){%e,%e,%e,%e,%e,%e};',
           [cx[0], cy[0], cz[0], cx[1], cy[1], cz[1],
           u[node[0]], v[node[0]], w[node[0]],
           u[node[1]], v[node[1]], w[node[1]]]));
@@ -966,7 +966,7 @@ begin
 
       if (FElements[i].EleType = GMSH_TRI) then
       begin
-        WriteLn(FGmshFile, Format('VT(%e,%e,%e,%e,%e,%e,%e,%e,%e){%e,%e,%e,%e,%e,%e};',
+        WriteLn(FGmshFile, Format('VT(%e,%e,%e,%e,%e,%e,%e,%e,%e){%e,%e,%e,%e,%e,%e,%e,%e,%e};',
           [cx[0], cy[0], cz[0], cx[1], cy[1], cz[1], cx[2], cy[2], cz[2],
           u[node[0]], v[node[0]], w[node[0]],
           u[node[1]], v[node[1]], w[node[1]],
@@ -995,7 +995,7 @@ begin
 
       if (FElements[i].EleType = GMSH_HEXA) then
       begin
-        WriteLn(FGmshFile, Format('VH(%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e){%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e};',
+        WriteLn(FGmshFile, Format('VH(%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e){%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e,%e};',
           [cx[0], cy[0], cz[0], cx[1], cy[1], cz[1], cx[2], cy[2], cz[2], cx[3], cy[3], cz[3],cx[4], cy[4], cz[4], cx[5], cy[5], cz[5], cx[6], cy[6], cz[6], cx[7], cy[7], cz[7],
           u[node[0]], v[node[0]], w[node[0]],
           u[node[1]], v[node[1]], w[node[1]],
