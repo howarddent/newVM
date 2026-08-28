@@ -266,8 +266,16 @@ begin
 
   (******************** START POST-PROCESSING ********************)
 
-  //Sto_ShellExecute(GmshExecutable, [DataDir + 'structuralengine.scr'], ExitCode);
-  Sto_ShellExecute(GmshExecutable, [DataDir + 'structuralengine.pos'], ExitCode);
+  // Hand gmsh the .scr script rather than the raw .pos: it Includes the
+  // .pos itself and then animates the deformed shape by ramping
+  // View[0].DisplacementFactor up and back down. It needs View[0] to be a
+  // vector view (it sets VectorType = 5, gmsh's "displacement" mode),
+  // which only became true once PostProcess started writing the
+  // 'Displacement' view first - see the comment there. Opening the .pos as
+  // well would load every view a second time, so that call is now the
+  // commented-out alternative.
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'structuralengine.scr'], ExitCode);
+  //Sto_ShellExecute(GmshExecutable, [DataDir + 'structuralengine.pos'], ExitCode);
 
   time1.Free;
 
@@ -331,8 +339,18 @@ begin
 
   end;
 
-  //Gmsh.WriteViewVector('Displacement', ux, uy, uz, True);
-  Gmsh.WriteViewScalarNode('Ux', ux, True);
+  // Vector displacement view, written first so it lands as gmsh's View[0].
+  // That matters for two reasons: it is the view structuralengine.scr's
+  // DisplacementFactor animation drives, and a vector view is what gmsh
+  // needs to offer "Deformed mesh" / VectorType display at all - the Ux/Uy
+  // scalar views below only colour the undeformed mesh. Written with
+  // ReWriteFile=True (moved off 'Ux', which now appends like the rest),
+  // since the first view written is the one that truncates the .pos file.
+  // The old commented-out line here called Gmsh.WriteViewVector, which
+  // does not exist - the method is WriteViewVectorNode (see
+  // CXS.FEMLAP.Gmsh.pas), so it could never have compiled as written.
+  Gmsh.WriteViewVectorNode('Displacement', ux, uy, uz, True);
+  Gmsh.WriteViewScalarNode('Ux', ux, False);
   Gmsh.WriteViewScalarNode('Uy', uy, False);
 
   // Per-element stress (RStress only has Sxx/Syy/Sxy - plane stress),
