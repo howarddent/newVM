@@ -20,7 +20,11 @@ unit uArchEx1;
   back to the quantity a mason - or Heyman's limit analysis - cares
   about: the position of the thrust line at each joint, and the joints
   where it leaves the middle third of the ring, which is exactly the
-  classical no-tension criterion. }
+  classical no-tension criterion.
+
+  ArchEx2 runs the same analysis on a Perpendicular (four-centred) arch
+  of the same span, ring, barrel, masonry and mesh density, so the two
+  reports compare line for line. }
 
 {$mode delphi}{$H+}
 
@@ -51,7 +55,7 @@ const
 
   // Structured mesh per voussoir: NbAcrossRing quads through the ring
   // thickness by NbAlongBlock quads along the arc. Six layers through the
-  // thickness is what makes the joint-by-joint thrust-line fit in
+  // thickness is what makes the joint-by-joint thrust-line integration in
   // ReportJoints meaningful - it needs the stress GRADIENT across the
   // ring, not just its average.
   NbAcrossRing = 6;
@@ -913,16 +917,22 @@ end;
 
 { The masonry reading of the elastic result.
 
-  At each of the NbBlocks+1 radial joints, the hoop stress Sn of the
-  elements lying within a narrow angular band of the joint is fitted -
-  area-weighted, least squares - as a straight line across the ring,
+  At each of the NbBlocks+1 radial joints, the elements lying within a
+  narrow angular band of the joint give the hoop stress Sn at
+  NbAcrossRing equally deep stations through the ring. The thrust and
+  the moment about mid-depth are integrated over the joint directly,
+  midpoint rule, one station per layer:
 
-    Sn(r) = a + b*(r - MidRadius).
+    N = t * h * mean(Sn)         M = t * h * mean(Sn * x)
 
-  Integrating that over the joint gives the thrust N = a*h*t carried
-  across it and the moment M = b*t*h^3/12 about mid-depth, so the thrust
-  line crosses the joint at an eccentricity e = M/N from the centre of
-  the ring.
+  with x = r - MidRadius, so the thrust line crosses the joint at an
+  eccentricity e = M/N = sum(Sn*x)/sum(Sn) from the centre of the ring.
+  Nothing here assumes the stress varies linearly across the joint - the
+  resultant sits at that ratio whatever shape the stress block has - and
+  every element counts equally, since each stands for one equally deep
+  slice of the joint; weighting by element area would bias the result
+  towards the extrados, where the elements are larger. ArchEx2 does the
+  same, so the two examples' reports compare directly.
 
   Heyman's no-tension criterion is then simply |e| <= h/6: while the
   thrust line stays inside the middle third, the joint is in compression
@@ -943,11 +953,11 @@ var
 
   k, i, n, nOutside : Integer;
 
-  theta, band, x, y, w, det, a, b, EndThrust : Double;
+  theta, band, x, y, EndThrust : Double;
 
-  S00, S01, S11, B0, B1 : Double;
+  SumSn, SumSnX : Double;
 
-  MinSn, MaxSn, Thrust, Moment, ecc : Double;
+  MinSn, MaxSn, Thrust, Moment, ecc, Sliver : Double;
 
   Status : String;
 
@@ -973,7 +983,8 @@ begin
     theta := Pi * k / NbBlocks;
 
     n := 0;
-    S00 := 0; S01 := 0; S11 := 0; B0 := 0; B1 := 0;
+    SumSn := 0;
+    SumSnX := 0;
     MinSn := 0; MaxSn := 0;
 
     for i := 0 to FEngine.NbElements - 1 do
@@ -984,14 +995,9 @@ begin
 
       x := FEleR[i] - MidRadius;
       y := FSn[i];
-      w := FEleArea[i];
 
-      S00 := S00 + w;
-      S01 := S01 + w * x;
-      S11 := S11 + w * x * x;
-
-      B0 := B0 + w * y;
-      B1 := B1 + w * x * y;
+      SumSn := SumSn + y;
+      SumSnX := SumSnX + y * x;
 
       if n = 0 then
       begin
@@ -1011,16 +1017,11 @@ begin
     if n < 2 then
       Continue;
 
-    det := S00 * S11 - S01 * S01;
-
-    if Abs(det) < 1e-30 then
-      Continue;
-
-    a := (S11 * B0 - S01 * B1) / det;
-    b := (S00 * B1 - S01 * B0) / det;
-
-    Thrust := a * RingThickness * BarrelDepth;
-    Moment := b * BarrelDepth * RingThickness * RingThickness * RingThickness / 12;
+    // Midpoint-rule integration over the ring depth: every element in
+    // the band stands for one equally deep slice, so the plain mean is
+    // the integral divided by the ring thickness.
+    Thrust := BarrelDepth * RingThickness * SumSn / n;
+    Moment := BarrelDepth * RingThickness * SumSnX / n;
 
     if Abs(Thrust) > 1e-9 then
       ecc := Moment / Thrust
@@ -1065,8 +1066,20 @@ begin
   WriteLn;
   WriteLn(Format('  Static check: springing thrusts total %.2f kN against an applied',
     [EndThrust / 1000]));
-  WriteLn(Format('  vertical load of %.2f kN (self weight %.2f + superimposed %.2f).',
-    [(FSelfWeight + FAppliedLoad) / 1000, FSelfWeight / 1000, FAppliedLoad / 1000]));
+  WriteLn(Format('  vertical load of %.2f kN (self weight %.2f + superimposed %.2f), %.1f%%.',
+    [(FSelfWeight + FAppliedLoad) / 1000, FSelfWeight / 1000, FAppliedLoad / 1000,
+     100 * (EndThrust / (FSelfWeight + FAppliedLoad) - 1)]));
+
+  // Half an element of ring sits below the plane the band actually
+  // samples, at each springing - weight the check cannot see. The rest
+  // of the gap is discretisation; both halve when the mesh is halved.
+  Sliver := 2 * Density * Abs(GravityAccel) * BarrelDepth * RingThickness *
+            0.5 * ((Pi / NbBlocks) / NbAlongBlock) * MidRadius;
+
+  WriteLn('  A check on the solve, not an identity: the band is sampled half an');
+  WriteLn(Format('  element above the springing face, missing %.1f%% of the ring''s own',
+    [100 * Sliver / (FSelfWeight + FAppliedLoad)]));
+  WriteLn('  weight, and element stresses are centre values. Both shrink with the mesh.');
 
 end;
 
