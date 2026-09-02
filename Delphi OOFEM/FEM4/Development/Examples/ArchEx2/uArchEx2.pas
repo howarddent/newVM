@@ -190,7 +190,7 @@ type
     tx, ty : Double;   // unit vector, intrados -> extrados
     nx, ny : Double;   // unit normal to the plane (along the arch)
     h : Double;        // depth, |P1 - P0|
-    Band : Double;     // half-width of the element band either side
+
 
   end;
 
@@ -231,6 +231,7 @@ type
     FEleBlock : TDoubleArray;
     FEleArea : TDoubleArray;
     FEleCx, FEleCy : TDoubleArray;   // centroid per element
+    FEleLen : TDoubleArray;          // along-arch extent per element
     FEleNx, FEleNy : TDoubleArray;   // unit hoop direction per element
     FSxx, FSyy, FSxy : TDoubleArray;
     FS1, FS2, FSn, FVonMises : TDoubleArray;
@@ -497,7 +498,7 @@ var
 
   phi, r1, r2, t, AngJunction, AngApex, aCrown, dAng, ang : Double;
 
-  BandNext, BandPrev : Double;
+
 
 begin
 
@@ -678,21 +679,6 @@ begin
     // Normal to the plane, i.e. along the arch.
     FBounds[b].nx := FBounds[b].ty;
     FBounds[b].ny := -FBounds[b].tx;
-
-    // Reach the first element layer either side and no further: layer
-    // centroids sit at 0.5, 1.5, ... element lengths from the boundary,
-    // and the two sides may have different element lengths where a
-    // haunch segment meets a crown one, or a crown one the keystone.
-    BandPrev := MaxDouble;
-    BandNext := MaxDouble;
-
-    if b >= 1 then
-      BandPrev := FSegments[b].EleLen;
-
-    if b < NbSegments then
-      BandNext := FSegments[b + 1].EleLen;
-
-    FBounds[b].Band := 0.9 * Min(BandPrev, BandNext);
 
   end;
 
@@ -980,6 +966,7 @@ begin
   SetLength(FEleArea, FGmsh.NbElements);
   SetLength(FEleCx, FGmsh.NbElements);
   SetLength(FEleCy, FGmsh.NbElements);
+  SetLength(FEleLen, FGmsh.NbElements);
   SetLength(FEleNx, FGmsh.NbElements);
   SetLength(FEleNy, FGmsh.NbElements);
 
@@ -1021,6 +1008,14 @@ begin
 
     FEleCx[i] := cx;
     FEleCy[i] := cy;
+
+    // How far this element reaches along the arch. Every element spans
+    // exactly one of the NbAcrossRing radial layers, so its area over
+    // that depth is its mean along-arch extent - which is what the joint
+    // band in CalcThrustLine measures against. On the haunch arcs here,
+    // a 0.6 m ring on a 1.0 m radius, the outer elements are 1.6 times
+    // the inner ones.
+    FEleLen[i] := FEleArea[i] / (RingThickness / NbAcrossRing);
 
     b := FGmsh.ElementPhysicalRegion[i];
 
@@ -1391,7 +1386,17 @@ begin
 
       dn := dxc * nx + dyc * ny;
 
-      if Abs(dn) > FBounds[k].Band then
+      // The first element layer either side of the joint and no
+      // further. The test is against each element's OWN along-arch
+      // extent rather than one band width for the whole joint, because
+      // a voussoir's outer elements are longer than its inner ones:
+      // layer centroids sit at 0.5, 1.5, ... of their own element's
+      // length from the joint, so a band taken from the intrados only
+      // keeps the outer layer while the taper stays under 1.8:1. This
+      // arch's haunches taper 1.6:1 and so were inside that by a thin
+      // margin - ArchEx3's cusped springings, at nearly 3:1, were not,
+      // which is where this form was arrived at.
+      if Abs(dn) > 0.9 * FEleLen[i] then
         Continue;
 
       // Position across the ring depth, intrados negative.

@@ -1,31 +1,62 @@
-unit uArchEx1;
+unit uArchEx3;
 
-{ ArchEx1 - stresses in a classic (Roman) semicircular masonry arch.
+{ ArchEx3 - stresses in a cycloidal masonry arch.
 
-  The arch ring is built as NbBlocks separate voussoirs - wedge-shaped
-  blocks bounded by two radial joints and by the intrados/extrados arcs -
-  meshed block by block into a structured grid of quadrilaterals, then
-  analysed as a plane-stress elastic body by TStructuralEngine under its
-  own self weight plus (load cases 2 and 3) a superimposed point load.
+  The third of the arch examples, and again meant to be read next to the
+  others: same 4.0 m span, same 0.6 m ring, same 1.0 m barrel, same
+  masonry, same mesh density, same solve and the same report as ArchEx1's
+  Roman semicircle and ArchEx2's Perpendicular four-centred arch. Only
+  the shape of the arch differs.
 
-  Because adjacent voussoirs share the geometric joint line, gmsh meshes
-  them conformally: the joints are visible in the mesh and in the 'Block'
-  view, but the model is BONDED across them - the elastic solve cannot
-  open a joint or slide one block on another. That is the standard first
-  analysis of a masonry arch, and it is still the informative one,
-  provided the results are read the way this example's own report reads
-  them: masonry has essentially no tensile strength, so wherever the
-  bonded model reports tension across a joint, a real arch would instead
-  crack and hinge there. ReportJoints therefore reduces the stress field
-  back to the quantity a mason - or Heyman's limit analysis - cares
-  about: the position of the thrust line at each joint, and the joints
-  where it leaves the middle third of the ring, which is exactly the
-  classical no-tension criterion.
+  The arch is an inverted cycloid - the curve traced by a point on a
+  rolling circle - taken over one full turn, so that it springs from the
+  ground at both ends:
 
-  ArchEx2 and ArchEx3 run the same analysis on a Perpendicular
-  (four-centred) arch and on a cycloidal one, at the same span, ring,
-  barrel, masonry and mesh density, so all three reports compare line
-  for line and the only difference between them is the shape. }
+    I(t) = ( pi*a - a*(t - sin t),  a*(1 - cos t) ),   t in [0, 2*pi]
+
+  written here right to left, so that block 1 springs from the right as
+  in the other two examples. Unlike them the cycloid has no free shape
+  parameter at all: its rise is always exactly 1/pi of its span (1.273 m
+  on a 4 m span here), and fixing the span fixes everything else. That
+  makes it the flattest of the three, and it is the only one whose
+  intrados is a single smooth curve from springing to springing - so the
+  apex needs no mitre, and the keystone is an ordinary block.
+
+  Three things follow from the curve that the circular examples never
+  had to deal with:
+
+    - There is no centre to measure a hoop direction from. Everything is
+      done from the curve's own parametrisation instead: the unit
+      tangent is T(t) = (-sin(t/2), cos(t/2)) and the outward normal
+      N(t) = (cos(t/2), sin(t/2)), both exactly, and the extrados is the
+      offset curve I(t) + RingThickness*N(t). Offsetting outwards is
+      always well behaved here, because the centre of curvature is on
+      the other side, so the normals diverge and the ring never folds
+      over on itself.
+
+    - Voussoirs are cut to equal INTRADOS ARC LENGTH, not to equal
+      parameter - which is both what a mason would do and what keeps the
+      blocks the same size. Arc length has a closed form for a cycloid,
+      s(t) = 4a(1 - cos(t/2)), and so does its inverse, which is what
+      Theta() uses. Dividing by parameter instead would give a first
+      voussoir 0.07 m long against 0.62 m at the crown.
+
+    - The intrados is a cusp at each springing: the curve leaves the
+      ground vertically, with infinite curvature. That is a real feature
+      of the shape, not an artefact, and it is well behaved here - the
+      intrados meets the horizontal springing face at a right angle, so
+      there is no re-entrant corner and no elastic singularity - but the
+      voussoirs nearest the springings are strongly tapered, and the
+      peak stresses reported there are the least trustworthy numbers in
+      the output. The integrated thrust-line results are not affected.
+
+  The blocks are bounded by joints normal to the intrados and by
+  polylines of NbAlongBlock straight segments, one per element, so every
+  mesh node on either face sits exactly on the true curve rather than on
+  an approximation to it. Everything downstream - the bonded conformal
+  mesh, the plane-stress solve, the caveat that masonry carries no
+  tension, and the thrust-line-against-the-middle-third report - is as
+  described in uArchEx1.pas's own header. }
 
 {$mode delphi}{$H+}
 
@@ -43,24 +74,23 @@ const
 
   (******************** GEOMETRY (SI units: m, N, Pa) ********************)
 
-  // Odd, so that block (NbBlocks+1) div 2 is a true keystone straddling
-  // the crown - the Roman arrangement.
+  // Matched to ArchEx1 and ArchEx2 so all three are comparable.
+  HalfSpan = 2.0;
+  RingThickness = 0.6;
+  BarrelDepth = 1.0;
+
+  // Odd, so that block (NbBlocks+1) div 2 is a keystone centred on the
+  // apex - and 13, as ArchEx1, since the two arches are close enough in
+  // length for the voussoirs to come out a similar size.
   NbBlocks = 13;
 
-  InnerRadius = 2.0;   // intrados radius -> 4.0 m clear span
-  OuterRadius = 2.6;   // extrados radius -> 0.6 m ring thickness
-  BarrelDepth = 1.0;   // out-of-plane depth of the barrel
-
-  RingThickness = OuterRadius - InnerRadius;
-  MidRadius = 0.5 * (InnerRadius + OuterRadius);
-
-  // Structured mesh per voussoir: NbAcrossRing quads through the ring
-  // thickness by NbAlongBlock quads along the arc. Six layers through the
-  // thickness is what makes the joint-by-joint thrust-line integration in
-  // ReportJoints meaningful - it needs the stress GRADIENT across the
-  // ring, not just its average.
+  // Structured mesh per voussoir, as the other two.
   NbAcrossRing = 6;
   NbAlongBlock = 5;
+
+  // Stations along the intrados: one per element edge, so the joints
+  // land on every NbAlongBlock-th one.
+  NbStations = NbBlocks * NbAlongBlock;
 
   (******************** MATERIAL ********************)
 
@@ -71,27 +101,26 @@ const
 
   GravityAccel = -9.81;    // m/s2, acting along -Y
 
-  // Nominal direct tensile strength of a lime-mortar bed joint. Masonry
-  // is conventionally taken as having none at all; 0.1 MPa is used here
-  // only as a reporting threshold, to separate numerical noise from
-  // tension a real joint could not carry.
   MortarTensileStrength = 1.0e5;
 
   (******************** LOADING ********************)
 
-  // Superimposed point load, as a fraction of the ring's own weight. Load
-  // cases 2 and 3 apply the same magnitude in different places, so that
-  // comparing their reports isolates the effect of WHERE a load sits.
   LoadFraction = 0.25;
 
   LoadCaseSelfWeight = 1;
   LoadCaseCrown = 2;
   LoadCaseHaunch = 3;
 
+  // Where the superimposed load sits, as a fraction of the arch's own
+  // intrados length from the right springing: 0.50 is the apex, and so
+  // the middle of the keystone; 0.75 is the quarter point of the arch's
+  // length measured from the left springing. Both are the stations
+  // ArchEx1 and ArchEx2 load.
+  CrownLoadPosition = 0.50;
+  HaunchLoadPosition = 0.75;
+
   (******************** POST-PROCESSING ********************)
 
-  // View indices inside archex1.pos, in the order PostProcess writes
-  // them. archex1.scr drives these by number, so the two must agree.
   ViewDisplacement = 0;
   ViewHoop = 3;
 
@@ -103,6 +132,19 @@ const
 
 type
 
+  // A joint between two voussoirs, or a springing face. Stored as the
+  // plane it lies in, which is what the thrust-line integration needs.
+  RBoundary = record
+
+    x0, y0 : Double;   // intrados end
+    x1, y1 : Double;   // extrados end
+    mx, my : Double;   // mid-point
+    tx, ty : Double;   // unit vector, intrados -> extrados
+    nx, ny : Double;   // unit normal to the plane (along the arch)
+    h : Double;        // depth, |P1 - P0|
+
+  end;
+
   TArchModel = class(TObject)
 
   private
@@ -112,43 +154,52 @@ type
     FGmsh : TGmsh;
     FEngine : TStructuralEngine;
 
-    // Material / load expressions. TStructuralEngine keeps references to
-    // these for the whole solve, so they are fields rather than locals.
     FRho, FE, FPoisson, FAlpha : TExpressionList;
     FZero : TExpressionList;
     FNodeLoad : TExpressionList;
 
-    FTotalArea : Double;
-    FSelfWeight : Double;    // magnitude, N
-    FAppliedLoad : Double;   // magnitude, N
-    FNbLoadedNodes : Integer;
-    FLoadX, FLoadY : Double; // where the superimposed load is applied
+    // Geometry, built by SetupGeometry.
+    FStationT : Array[0..NbStations] of Double;
+    FBounds : Array[0..NbBlocks] of RBoundary;
+
+    FRise : Double;
+    FIntradosLength : Double;
 
     // Ring weight lying between the springing faces and the plane the
     // joint band actually samples - see ReportJoints.
     FSliver : Double;
 
+    FTotalArea : Double;
+    FSelfWeight : Double;
+    FAppliedLoad : Double;
+    FNbLoadedNodes : Integer;
+    FLoadX, FLoadY : Double;
+
     FElapsed : Double;
 
-    // Per joint, filled by CalcThrustLine: the thrust across the joint,
-    // the eccentricity of the thrust line there, and the point that
-    // eccentricity puts it at.
+    // Per joint, filled by CalcThrustLine.
     FJThrust, FJEcc, FJMinSn, FJMaxSn : TDoubleArray;
     FJPx, FJPy : TDoubleArray;
     FJValid : Array of Boolean;
 
-    // Per element, filled by CalcElementGeometry / PostProcess.
     FEleBlock : TDoubleArray;
-    FEleArea, FEleR, FEleTheta : TDoubleArray;
+    FEleArea : TDoubleArray;
+    FEleCx, FEleCy : TDoubleArray;   // centroid per element
     FEleLen : TDoubleArray;          // along-arch extent per element
+    FEleNx, FEleNy : TDoubleArray;   // unit hoop direction per element
+
     FSxx, FSyy, FSxy : TDoubleArray;
     FS1, FS2, FSn, FVonMises : TDoubleArray;
 
-    // Per node.
     FUx, FUy, FUz : TDoubleArray;
 
     FCrownNode : Integer;
     FNbRestrained : Integer;
+
+    procedure SetupGeometry;
+
+    function ThetaOfPoint(px, py, t0, t1 : Double) : Double;
+    function OnExtrados(x, y : Double) : Boolean;
 
     procedure WriteGeoFile(const FileName : String);
     procedure BuildMesh;
@@ -169,16 +220,38 @@ type
     constructor Create(ALoadCase : Integer);
     destructor Destroy; override;
 
-    // TDependantVarFunc. Every expression in this example is a constant,
-    // so the dependant variable it is evaluated at is always 0.
     function Constant(NodeId, ElementId : Integer) : Double;
 
-    // TCallbackFunc, run by TStructuralEngine once the solve finishes.
     procedure PostProcess;
 
     procedure Run(ViewResults : Boolean);
 
   end;
+
+(******************** THE CURVE ITSELF ********************)
+
+// The rolling-circle radius. Everything else about a cycloid follows
+// from it: the span is 2*pi*a and the rise 2*a, so the rise/span ratio
+// is always 1/pi whatever the scale.
+const
+  CycloidA = HalfSpan / Pi;
+
+// Intrados point at parameter t, written right to left so that t = 0 is
+// the right springing.
+function IntradosX(t : Double) : Double;
+function IntradosY(t : Double) : Double;
+
+// Unit tangent, in the direction of travel, and the outward unit
+// normal. Both are exact: |dI/dt| = 2a*sin(t/2) divides out cleanly.
+function TangentX(t : Double) : Double;
+function TangentY(t : Double) : Double;
+function NormalX(t : Double) : Double;
+function NormalY(t : Double) : Double;
+
+// Intrados arc length from the right springing to parameter t, and its
+// inverse - both closed form for a cycloid.
+function ArcLength(t : Double) : Double;
+function Theta(s : Double) : Double;
 
 implementation
 
@@ -189,26 +262,88 @@ const
 {$IFDEF WINDOWS}
   GmshExecutable = 'c:\gmsh\gmsh.exe';
 {$ELSE}
-  // Bare name, resolved via $PATH by TProcess itself - matches a normal
-  // `apt install gmsh`. Same convention as Ex37/Ex39/Ex42.
   GmshExecutable = 'gmsh';
 {$ENDIF}
 
-  GeoFile = DataDir + 'archex1.geo';
-  MshFile = DataDir + 'archex1.msh';
-  PosFile = DataDir + 'archex1.pos';
-  ScrFile = DataDir + 'archex1.scr';
+  GeoFile = DataDir + 'archex3.geo';
+  MshFile = DataDir + 'archex3.msh';
+  PosFile = DataDir + 'archex3.pos';
+  ScrFile = DataDir + 'archex3.scr';
 
-  // Geometric tolerance for picking nodes off the springing plane and off
-  // the extrados: the mesh sits on exact circles, so anything well below
-  // one element size does.
   GeoTol = 1.0e-6;
 
 var
-  // A locale-independent number format for the .geo and for load
-  // expressions: gmsh's parser and CXS.FEMLAP.FormulaEval both want '.'
-  // as the decimal separator, whatever the machine's locale says.
   DotFS : TFormatSettings;
+
+function IntradosX(t : Double) : Double;
+begin
+
+  Result := Pi * CycloidA - CycloidA * (t - Sin(t));
+
+end;
+
+function IntradosY(t : Double) : Double;
+begin
+
+  Result := CycloidA * (1 - Cos(t));
+
+end;
+
+function TangentX(t : Double) : Double;
+begin
+
+  Result := -Sin(t / 2);
+
+end;
+
+function TangentY(t : Double) : Double;
+begin
+
+  Result := Cos(t / 2);
+
+end;
+
+function NormalX(t : Double) : Double;
+begin
+
+  Result := Cos(t / 2);
+
+end;
+
+function NormalY(t : Double) : Double;
+begin
+
+  Result := Sin(t / 2);
+
+end;
+
+function ArcLength(t : Double) : Double;
+begin
+
+  Result := 4 * CycloidA * (1 - Cos(t / 2));
+
+end;
+
+{ The inverse of ArcLength: the parameter at which the intrados has run
+  s from the right springing. Cutting voussoirs to equal s rather than
+  to equal t is what keeps them the same size - see this unit's header. }
+function Theta(s : Double) : Double;
+var
+  c : Double;
+begin
+
+  c := 1 - s / (4 * CycloidA);
+
+  // Guard the ends against rounding taking the argument outside the
+  // domain of ArcCos - s = 8a lands exactly on -1.
+  if c > 1 then
+    c := 1
+  else if c < -1 then
+    c := -1;
+
+  Result := 2 * ArcCos(c);
+
+end;
 
 function Num(v : Double) : String;
 begin
@@ -217,11 +352,6 @@ begin
 
 end;
 
-{ Reset/ReWrite on a file another process (gmsh, or a virus scanner) may
-  still hold briefly - see CXS.FEMLAP.Gmsh.pas's own SafeReset/SafeReWrite
-  comment for the full story. The .geo written here is read by gmsh
-  moments later and rewritten on the next run, so it is exposed to exactly
-  the same transient sharing violation. }
 procedure SafeReWriteText(var F : TextFile);
 const
   MaxAttempts = 8;
@@ -280,6 +410,8 @@ begin
 
   FCrownNode := -1;
 
+  SetupGeometry;
+
 end;
 
 destructor TArchModel.Destroy;
@@ -307,62 +439,167 @@ begin
 
 end;
 
+{ The stations along the intrados, equally spaced by arc length, and the
+  joint planes at every NbAlongBlock-th one. }
+procedure TArchModel.SetupGeometry;
+var
+
+  m, k : Integer;
+
+  t : Double;
+
+begin
+
+  FIntradosLength := ArcLength(2 * Pi);
+  FRise := 2 * CycloidA;
+
+  for m := 0 to NbStations do
+    FStationT[m] := Theta(m * FIntradosLength / NbStations);
+
+  for k := 0 to NbBlocks do
+  begin
+
+    t := FStationT[k * NbAlongBlock];
+
+    FBounds[k].x0 := IntradosX(t);
+    FBounds[k].y0 := IntradosY(t);
+
+    FBounds[k].x1 := FBounds[k].x0 + RingThickness * NormalX(t);
+    FBounds[k].y1 := FBounds[k].y0 + RingThickness * NormalY(t);
+
+    FBounds[k].mx := 0.5 * (FBounds[k].x0 + FBounds[k].x1);
+    FBounds[k].my := 0.5 * (FBounds[k].y0 + FBounds[k].y1);
+
+    // The joint runs along the normal, so its depth is the ring
+    // thickness exactly and its own plane normal is the tangent.
+    FBounds[k].h := RingThickness;
+
+    FBounds[k].tx := NormalX(t);
+    FBounds[k].ty := NormalY(t);
+
+    FBounds[k].nx := TangentX(t);
+    FBounds[k].ny := TangentY(t);
+
+  end;
+
+end;
+
+{ The parameter t at which the joint normal passes through (px,py),
+  found between t0 and t1 by bisection on
+
+    g(t) = (P - I(t)) . T(t)
+
+  which is the signed distance of P along the arch from the station at
+  t. g is strictly decreasing across the ring - dg/dt <= -|dI/dt|,
+  because the centre of curvature is on the far side, so (P-I).T' is
+  negative - which makes the root unique and bisection safe. }
+function TArchModel.ThetaOfPoint(px, py, t0, t1 : Double) : Double;
+const
+  MaxIter = 60;
+  Tol = 1.0e-12;
+var
+  a, b, m, g : Double;
+  i : Integer;
+begin
+
+  a := t0;
+  b := t1;
+
+  for i := 1 to MaxIter do
+  begin
+
+    m := 0.5 * (a + b);
+
+    g := (px - IntradosX(m)) * TangentX(m) + (py - IntradosY(m)) * TangentY(m);
+
+    if g > 0 then
+      a := m
+    else
+      b := m;
+
+    if b - a < Tol then
+      Break;
+
+  end;
+
+  Result := 0.5 * (a + b);
+
+end;
+
+{ Is this node on the outer face of the ring? The extrados is an offset
+  curve with no closed-form implicit test, so this walks the stations and
+  asks whether the node is within rounding of any of them - which is
+  exact, because every extrados mesh node is generated at a station. }
+function TArchModel.OnExtrados(x, y : Double) : Boolean;
+var
+
+  m : Integer;
+
+  t, ex, ey : Double;
+
+begin
+
+  Result := False;
+
+  for m := 0 to NbStations do
+  begin
+
+    t := FStationT[m];
+
+    ex := IntradosX(t) + RingThickness * NormalX(t);
+    ey := IntradosY(t) + RingThickness * NormalY(t);
+
+    if Sqr(x - ex) + Sqr(y - ey) < Sqr(1.0e-6) then
+      Exit(True);
+
+  end;
+
+end;
+
 (*******************************************************************
-  Geometry: one gmsh plane surface per voussoir.
+  Geometry file, one gmsh plane surface per voussoir.
 
-  Entity ids are laid out by hand rather than with gmsh's newp/newl
-  counters, so the Pascal side can refer to any of them directly:
+  A cycloid is not an arc, so the faces cannot be gmsh Circles. Each
+  face is instead a polyline of NbAlongBlock straight segments - one per
+  element - through the stations, each transfinited to a single
+  division. Every mesh node on either face therefore lands exactly on
+  the true curve, rather than on a spline fitted to it, and the block's
+  along-arch sides still carry the NbAlongBlock divisions the transfinite
+  surface needs to match its joints.
 
-    point   1               ring centre (the centre of every arc)
-    point   10+k            intrados point at joint k      (k = 0..N)
-    point   10+(N+1)+k      extrados point at joint k
-    line    10+k            joint k, intrados -> extrados
-    line    10+(N+1)+k      intrados arc of block k        (k = 0..N-1)
-    line    10+(N+1)+N+k    extrados arc of block k
-    loop    200+k, surface 500+k, physical surface k+1
-
-  Adjacent blocks reference the SAME joint line, which is what makes the
-  mesh conformal across a joint. The physical surface tag (1..N) comes
-  back out of the .msh as each element's physical region, and is what
-  ReportBlocks and the 'Block' view use to tell one voussoir from the
-  next.
+    point   10+m            intrados point at station m   (m = 0..S)
+    point   10+(S+1)+m      extrados point at station m
+    line    200+m           intrados segment m -> m+1     (m = 0..S-1)
+    line    200+S+m         extrados segment m -> m+1
+    line    200+2*S+k       joint k                       (k = 0..N)
+    loop    500+k, surface 600+k, physical surface k+1
 ********************************************************************)
 procedure TArchModel.WriteGeoFile(const FileName : String);
 
-  function PIn(i : Integer) : Integer;
+  function LIn(m : Integer) : Integer;
   begin
-    Result := 10 + i;
+    Result := 200 + m;
   end;
 
-  function POut(i : Integer) : Integer;
+  function LOut(m : Integer) : Integer;
   begin
-    Result := 10 + (NbBlocks + 1) + i;
+    Result := 200 + NbStations + m;
   end;
 
-  function LJoint(i : Integer) : Integer;
+  function LJoint(k : Integer) : Integer;
   begin
-    Result := 10 + i;
-  end;
-
-  function LArcIn(i : Integer) : Integer;
-  begin
-    Result := 10 + (NbBlocks + 1) + i;
-  end;
-
-  function LArcOut(i : Integer) : Integer;
-  begin
-    Result := 10 + (NbBlocks + 1) + NbBlocks + i;
+    Result := 200 + 2 * NbStations + k;
   end;
 
 var
 
   F : TextFile;
 
-  k : Integer;
+  m, k : Integer;
 
-  theta : Double;
+  t : Double;
 
-  Joints, Arcs : String;
+  Joints, Segs, Loop : String;
 
 begin
 
@@ -372,28 +609,39 @@ begin
 
   try
 
-    // The framework's mesh reader (TGmsh.ReadMesh) parses the original
-    // $NOD/$ELM format, so the .geo must ask for it explicitly - gmsh 4
-    // writes version 4.1 otherwise.
     WriteLn(F, 'Mesh.MshFileVersion=1;');
 
-    // Every curve is transfinite below, so this only ever applies to
-    // geometry gmsh has no division count for. Kept so the file still
-    // meshes if the transfinite lines are commented out.
     WriteLn(F, 'cl = ' + Num(RingThickness / NbAcrossRing) + ';');
 
-    WriteLn(F, 'Point(1) = {0,0,0,cl};');
-
-    for k := 0 to NbBlocks do
+    for m := 0 to NbStations do
     begin
 
-      theta := Pi * k / NbBlocks;
+      t := FStationT[m];
 
       WriteLn(F, Format('Point(%d) = {%s,%s,0,cl};',
-        [PIn(k), Num(InnerRadius * Cos(theta)), Num(InnerRadius * Sin(theta))]));
+        [10 + m, Num(IntradosX(t)), Num(IntradosY(t))]));
 
       WriteLn(F, Format('Point(%d) = {%s,%s,0,cl};',
-        [POut(k), Num(OuterRadius * Cos(theta)), Num(OuterRadius * Sin(theta))]));
+        [10 + (NbStations + 1) + m,
+         Num(IntradosX(t) + RingThickness * NormalX(t)),
+         Num(IntradosY(t) + RingThickness * NormalY(t))]));
+
+    end;
+
+    Segs := '';
+
+    for m := 0 to NbStations - 1 do
+    begin
+
+      WriteLn(F, Format('Line(%d) = {%d,%d};', [LIn(m), 10 + m, 10 + m + 1]));
+
+      WriteLn(F, Format('Line(%d) = {%d,%d};',
+        [LOut(m), 10 + (NbStations + 1) + m, 10 + (NbStations + 1) + m + 1]));
+
+      if Segs <> '' then
+        Segs := Segs + ',';
+
+      Segs := Segs + IntToStr(LIn(m)) + ',' + IntToStr(LOut(m));
 
     end;
 
@@ -402,56 +650,55 @@ begin
     for k := 0 to NbBlocks do
     begin
 
-      WriteLn(F, Format('Line(%d) = {%d,%d};', [LJoint(k), PIn(k), POut(k)]));
+      m := k * NbAlongBlock;
 
-      if k > 0 then
+      WriteLn(F, Format('Line(%d) = {%d,%d};',
+        [LJoint(k), 10 + m, 10 + (NbStations + 1) + m]));
+
+      if Joints <> '' then
         Joints := Joints + ',';
 
       Joints := Joints + IntToStr(LJoint(k));
 
     end;
 
-    Arcs := '';
-
-    for k := 0 to NbBlocks - 1 do
-    begin
-
-      // Circle(id) = {start, centre, end}. Each arc spans 180/NbBlocks
-      // degrees, comfortably under the half-turn limit gmsh imposes on a
-      // single Circle.
-      WriteLn(F, Format('Circle(%d) = {%d,1,%d};', [LArcIn(k), PIn(k), PIn(k+1)]));
-      WriteLn(F, Format('Circle(%d) = {%d,1,%d};', [LArcOut(k), POut(k), POut(k+1)]));
-
-      if k > 0 then
-        Arcs := Arcs + ',';
-
-      Arcs := Arcs + IntToStr(LArcIn(k)) + ',' + IntToStr(LArcOut(k));
-
-    end;
-
     WriteLn(F, Format('Transfinite Line {%s} = %d;', [Joints, NbAcrossRing + 1]));
-    WriteLn(F, Format('Transfinite Line {%s} = %d;', [Arcs, NbAlongBlock + 1]));
+
+    // One division per face segment: the segments ARE the elements.
+    WriteLn(F, Format('Transfinite Line {%s} = 2;', [Segs]));
 
     for k := 0 to NbBlocks - 1 do
     begin
 
-      // Loop: up joint k, along the extrados, back down joint k+1, back
-      // along the intrados.
-      WriteLn(F, Format('Line Loop(%d) = {%d,%d,-%d,-%d};',
-        [200 + k, LJoint(k), LArcOut(k), LJoint(k+1), LArcIn(k)]));
+      // Up the joint, along the extrados, down the next joint, back
+      // along the intrados - the last two reversed.
+      Loop := IntToStr(LJoint(k));
 
-      WriteLn(F, Format('Plane Surface(%d) = {%d};', [500 + k, 200 + k]));
+      for m := k * NbAlongBlock to (k + 1) * NbAlongBlock - 1 do
+        Loop := Loop + ',' + IntToStr(LOut(m));
 
-      // Transfinite + Recombine turns each voussoir into a regular grid
-      // of quadrilaterals rather than an unstructured triangulation -
-      // both because it reads as masonry coursing, and because the stress
-      // across the ring is then sampled on clean radial layers.
+      Loop := Loop + ',-' + IntToStr(LJoint(k + 1));
+
+      for m := (k + 1) * NbAlongBlock - 1 downto k * NbAlongBlock do
+        Loop := Loop + ',-' + IntToStr(LIn(m));
+
+      WriteLn(F, Format('Line Loop(%d) = {%s};', [500 + k, Loop]));
+
+      WriteLn(F, Format('Plane Surface(%d) = {%d};', [600 + k, 500 + k]));
+
+      // Four corners nominated out of a boundary of 12 curves: gmsh
+      // treats the rest as intermediate points along the sides, which
+      // is exactly what they are.
       WriteLn(F, Format('Transfinite Surface {%d} = {%d,%d,%d,%d};',
-        [500 + k, PIn(k), POut(k), POut(k+1), PIn(k+1)]));
+        [600 + k,
+         10 + k * NbAlongBlock,
+         10 + (NbStations + 1) + k * NbAlongBlock,
+         10 + (NbStations + 1) + (k + 1) * NbAlongBlock,
+         10 + (k + 1) * NbAlongBlock]));
 
-      WriteLn(F, Format('Recombine Surface {%d};', [500 + k]));
+      WriteLn(F, Format('Recombine Surface {%d};', [600 + k]));
 
-      WriteLn(F, Format('Physical Surface(%d) = {%d};', [k + 1, 500 + k]));
+      WriteLn(F, Format('Physical Surface(%d) = {%d};', [k + 1, 600 + k]));
 
     end;
 
@@ -474,7 +721,7 @@ begin
 
   if not Sto_ShellExecute(GmshExecutable, [GeoFile, '-2'], ExitCode, 120000, True) then
     raise Exception.Create('Could not run gmsh (' + GmshExecutable +
-      '). Install gmsh, or edit GmshExecutable in uArchEx1.pas.');
+      '). Install gmsh, or edit GmshExecutable in uArchEx3.pas.');
 
   if ExitCode <> 0 then
     raise Exception.Create('gmsh failed with exit code ' + IntToStr(ExitCode) +
@@ -491,24 +738,26 @@ begin
 
 end;
 
-{ Centroid position (radius and angle from the +X axis) and area of every
-  element, plus the total ring area the self weight is derived from. All
-  of it comes straight from the mesh, so it stays correct if the mesh
-  density or the block count is changed. }
+{ Area and centroid of every element, its block (from the physical
+  region gmsh wrote), and the hoop direction there - which, with no
+  centre to work from, comes from the curve parameter the element sits
+  at, recovered by ThetaOfPoint within its own block's parameter range. }
 procedure TArchModel.CalcElementGeometry;
 var
 
-  i, j, n, nx : Integer;
+  i, j, n, nx, b : Integer;
 
-  cx, cy, x0, y0, x1, y1, a2 : Double;
+  cx, cy, x0, y0, x1, y1, a2, t : Double;
 
 begin
 
   SetLength(FEleBlock, FGmsh.NbElements);
   SetLength(FEleArea, FGmsh.NbElements);
-  SetLength(FEleR, FGmsh.NbElements);
-  SetLength(FEleTheta, FGmsh.NbElements);
+  SetLength(FEleCx, FGmsh.NbElements);
+  SetLength(FEleCy, FGmsh.NbElements);
   SetLength(FEleLen, FGmsh.NbElements);
+  SetLength(FEleNx, FGmsh.NbElements);
+  SetLength(FEleNy, FGmsh.NbElements);
 
   FTotalArea := 0;
 
@@ -522,10 +771,6 @@ begin
 
     cx := 0;
     cy := 0;
-
-    // Shoelace formula round the element's own node ring - the same area
-    // the element class computes internally, but available here without
-    // reaching into TStructuralEngine.
     a2 := 0;
 
     for j := 0 to n - 1 do
@@ -547,19 +792,37 @@ begin
 
     FEleArea[i] := Abs(a2) * 0.5;
 
-    // How far this element reaches along the arch. Every element spans
-    // exactly one of the NbAcrossRing radial layers, so its area over
-    // that depth is its mean along-arch extent - which is what the joint
-    // band in CalcThrustLine measures against.
-    FEleLen[i] := FEleArea[i] / (RingThickness / NbAcrossRing);
-
     cx := cx / n;
     cy := cy / n;
 
-    FEleR[i] := Sqrt(cx * cx + cy * cy);
-    FEleTheta[i] := ArcTan2(cy, cx);
+    FEleCx[i] := cx;
+    FEleCy[i] := cy;
 
-    FEleBlock[i] := FGmsh.ElementPhysicalRegion[i];
+    // How far this element reaches along the arch. Every element spans
+    // exactly one of the NbAcrossRing radial layers, so its area over
+    // that depth is its mean along-arch extent - which is what the
+    // joint band in CalcThrustLine has to be measured against, since a
+    // tapered voussoir's outer elements are much longer than its inner
+    // ones. On this arch that taper reaches nearly 3:1 at the cusp.
+    FEleLen[i] := FEleArea[i] / (RingThickness / NbAcrossRing);
+
+    b := FGmsh.ElementPhysicalRegion[i];
+
+    if (b < 1) or (b > NbBlocks) then
+      raise Exception.Create('Element ' + IntToStr(i) + ' carries physical region ' +
+        IntToStr(b) + ', which is not a voussoir - the .geo and the block table ' +
+        'have got out of step.');
+
+    FEleBlock[i] := b;
+
+    t := ThetaOfPoint(cx, cy,
+                      FStationT[(b - 1) * NbAlongBlock],
+                      FStationT[b * NbAlongBlock]);
+
+    // Hoop direction: along the curve, which is where the arch thrust
+    // runs.
+    FEleNx[i] := TangentX(t);
+    FEleNy[i] := TangentY(t);
 
     FTotalArea := FTotalArea + FEleArea[i];
 
@@ -578,7 +841,7 @@ var
 
   EleType : NEleType;
 
-  x, y, r, theta, ThetaLoad, HalfWindow, BestD, d, NodeForce : Double;
+  BestD, d, NodeForce, Window, sLoad, tLoad : Double;
 
   IsLoaded : Array of Boolean;
 
@@ -602,15 +865,8 @@ begin
 
   MaterialId := FEngine.AddMaterial(Constant, FRho, FE, FPoisson, FAlpha);
 
-  // The penalty method is what TStructuralEngine.SetNodalSources assumes:
-  // with the elimination method it indexes b through FOldToNew, which is
-  // -1 on a restrained degree of freedom.
+  // Penalty method + soGMRES, for the reasons given in uArchEx1.pas.
   FEngine.PenaltyMethod := True;
-
-  // soUMFPACK (MKL PARDISO) is known to return an all-zero displacement
-  // vector for this framework's penalty-method systems on this machine -
-  // see the note in Ex42's Unit42.pas. soGMRES solves the identical
-  // assembled system correctly.
   FEngine.SolverType := soGMRES;
 
   (******************** MESH ********************)
@@ -648,9 +904,10 @@ begin
 
   (******************** RESTRAINTS ********************)
 
-  // Both springings are built into massive abutments: every node on the
-  // y = 0 plane - which the arch ring only touches on its two end joint
-  // faces - is fully fixed.
+  // The cycloid springs vertically from the ground, so its normal there
+  // is horizontal and both springing faces lie in the y = 0 plane -
+  // the same situation as ArchEx1 and ArchEx2, and the same reason the
+  // end joints give a free static check in ReportJoints.
   FZero := TExpressionList.Create;
   FZero.AddExpression(-1000, +1000, '0', 't');
 
@@ -690,31 +947,32 @@ begin
   begin
 
     if FLoadCase = LoadCaseCrown then
-      ThetaLoad := Pi / 2            // over the keystone
+      sLoad := CrownLoadPosition * FIntradosLength
     else
-      ThetaLoad := 3 * Pi / 4;       // over the left haunch, near quarter span
+      sLoad := HaunchLoadPosition * FIntradosLength;
 
-    // Half a voussoir either side of the load point, so a crown load
-    // lands on the keystone and nothing else.
-    HalfWindow := 0.5 * (Pi / NbBlocks);
+    tLoad := Theta(sLoad);
 
-    // Kept for the 'Applied load' arrow in AppendLineViews.
-    FLoadX := OuterRadius * Cos(ThetaLoad);
-    FLoadY := OuterRadius * Sin(ThetaLoad);
+    FLoadX := IntradosX(tLoad) + RingThickness * NormalX(tLoad);
+    FLoadY := IntradosY(tLoad) + RingThickness * NormalY(tLoad);
+
+    // Spread over about one voussoir of the extrados, as the other two
+    // examples do.
+    Window := 0.5 * FIntradosLength / NbBlocks;
 
     SetLength(IsLoaded, FGmsh.NbNodes);
 
     for i := 0 to FGmsh.NbNodes - 1 do
     begin
 
-      x := FGmsh.CoordX[i];
-      y := FGmsh.CoordY[i];
+      // On the outer face, and within the window of the load point.
+      // Both tests are needed: the window is about a third of the ring
+      // depth, so proximity alone would also pick up the layer of
+      // interior nodes just below the extrados.
+      d := Sqrt(Sqr(FGmsh.CoordX[i] - FLoadX) + Sqr(FGmsh.CoordY[i] - FLoadY));
 
-      r := Sqrt(x * x + y * y);
-      theta := ArcTan2(y, x);
-
-      IsLoaded[i] := (r > OuterRadius - GeoTol) and
-                     (Abs(theta - ThetaLoad) <= HalfWindow + GeoTol);
+      IsLoaded[i] := (d <= Window) and
+                     OnExtrados(FGmsh.CoordX[i], FGmsh.CoordY[i]);
 
       if IsLoaded[i] then
         Inc(FNbLoadedNodes);
@@ -726,7 +984,6 @@ begin
     if FNbLoadedNodes > 0 then
     begin
 
-      // Downwards, shared equally between the loaded extrados nodes.
       NodeForce := -FAppliedLoad / FNbLoadedNodes;
 
       FNodeLoad := TExpressionList.Create;
@@ -747,7 +1004,7 @@ begin
   for i := 0 to FGmsh.NbNodes - 1 do
   begin
 
-    d := Sqrt(Sqr(FGmsh.CoordX[i]) + Sqr(FGmsh.CoordY[i] - InnerRadius));
+    d := Sqrt(Sqr(FGmsh.CoordX[i]) + Sqr(FGmsh.CoordY[i] - FRise));
 
     if d < BestD then
     begin
@@ -766,7 +1023,7 @@ var
 
   Stress : RStress;
 
-  c, s, sxx, syy, sxy, avg, dif, rad : Double;
+  nx, ny, sxx, syy, sxy, avg, dif, rad : Double;
 
 begin
 
@@ -804,8 +1061,6 @@ begin
     FSyy[i] := syy;
     FSxy[i] := sxy;
 
-    // Principal stresses, tension positive: S1 is the algebraically
-    // largest (the one masonry cannot carry), S2 the most compressive.
     avg := 0.5 * (sxx + syy);
     dif := 0.5 * (sxx - syy);
     rad := Sqrt(dif * dif + sxy * sxy);
@@ -815,14 +1070,13 @@ begin
 
     FVonMises[i] := Sqrt(Sqr(sxx) - sxx * syy + Sqr(syy) + 3 * Sqr(sxy));
 
-    // Hoop (circumferential) stress: the direct stress on the radial
-    // joint plane through this element, n'*S*n with n the unit vector
-    // along the arch, n = (-sin(theta), cos(theta)). This is the arch
-    // thrust made visible, and the quantity ReportJoints integrates.
-    c := Cos(FEleTheta[i]);
-    s := Sin(FEleTheta[i]);
+    // Hoop stress: the direct stress on the joint plane through this
+    // element, n'*S*n, with n along the curve. The arch thrust made
+    // visible.
+    nx := FEleNx[i];
+    ny := FEleNy[i];
 
-    FSn[i] := sxx * s * s - 2 * sxy * s * c + syy * c * c;
+    FSn[i] := sxx * nx * nx + 2 * sxy * nx * ny + syy * ny * ny;
 
   end;
 
@@ -830,10 +1084,6 @@ begin
 
   FGmsh.OpenFile(PosFile);
 
-  // The vector view goes first so it lands as gmsh's View[0]: it is the
-  // one archex1.scr animates, and only a vector view can drive gmsh's
-  // deformed-mesh display. Writing it with ReWriteFile = True is what
-  // truncates the .pos; every later view appends.
   FGmsh.WriteViewVectorNode('Displacement', FUx, FUy, FUz, True);
 
   FGmsh.WriteViewScalarNode('Ux', FUx, False);
@@ -864,24 +1114,19 @@ begin
 
 end;
 
-{ Where the thrust line crosses each joint, which is what ReportJoints
-  tabulates and what the 'Thrust line' view draws. See ReportJoints'
-  own comment for what the numbers mean; this routine only produces
-  them.
-
-  Joint k is the radial plane at angle theta = k*Pi/NbBlocks. The
-  elements within one layer of it give the hoop stress at NbAcrossRing
-  equally deep stations through the ring, which integrate directly -
-  midpoint rule, every element weighted equally - to the thrust and the
-  moment about mid-depth, hence to the eccentricity e = M/N. The point
-  the thrust line passes through is then simply mid-ring plus e, along
-  the joint. }
+{ Where the thrust line crosses each joint - see uArchEx1.pas's
+  ReportJoints comment for what the numbers mean. The elements within
+  one layer of a joint, and belonging to one of the two blocks that meet
+  there, give the direct stress on the joint plane at NbAcrossRing
+  equally deep stations, which integrate directly - midpoint rule, every
+  element weighted equally - to the thrust, the moment about mid-depth,
+  and hence to the eccentricity e = M/N. }
 procedure TArchModel.CalcThrustLine;
 var
 
   k, i, n, b : Integer;
 
-  theta, x, y : Double;
+  x, y, dxc, dyc, dn, nx, ny : Double;
 
   SumSn, SumSnX, Thrust, Moment, ecc : Double;
 
@@ -900,54 +1145,59 @@ begin
   for k := 0 to NbBlocks do
   begin
 
-    theta := Pi * k / NbBlocks;
-
     FJValid[k] := False;
 
     n := 0;
     SumSn := 0;
     SumSnX := 0;
 
+    nx := FBounds[k].nx;
+    ny := FBounds[k].ny;
+
     for i := 0 to FEngine.NbElements - 1 do
     begin
 
       // Only the two blocks that actually meet at this joint. Without
       // this the joint PLANE, extended, would also sweep up elements
-      // elsewhere on the ring - and here it certainly would: joint 0's
-      // plane is y = 0, which BOTH springings lie in, so the springing
-      // joints would each be measured across both of them at once. On a
-      // symmetric load case that averages back to the right answer and
-      // hides itself; on an asymmetric one it does not.
+      // elsewhere on the ring - a plane is infinite, an arch is not.
       b := Round(FEleBlock[i]);
 
       if (b <> k) and (b <> k + 1) then
         Continue;
 
+      // Element centroid in the joint's own frame.
+      dxc := FEleCx[i] - FBounds[k].mx;
+      dyc := FEleCy[i] - FBounds[k].my;
+
+      dn := dxc * nx + dyc * ny;
+
       // The first element layer either side of the joint and no
-      // further. The distance from the joint plane is FEleR*sin of the
-      // angle subtended, and it is tested against each element's OWN
-      // along-arch extent rather than one band width for the joint,
-      // because a voussoir's outer elements are longer than its inner
-      // ones - layer centroids sit at 0.5, 1.5, ... of their own
-      // element's length from the joint. On this arch every layer is
-      // inside a fixed angular band anyway, so the selection is the
-      // same either way; ArchEx2 and ArchEx3 need the general form, and
-      // all three use it so the reports stay comparable.
-      if Abs(FEleR[i] * Sin(FEleTheta[i] - theta)) > 0.9 * FEleLen[i] then
+      // further. The test is against each element's OWN along-arch
+      // extent rather than a single band width for the joint: layer
+      // centroids sit at 0.5, 1.5, ... of their own element's length
+      // from the joint, and where the ring tapers the outer elements
+      // are far longer than the inner ones. A fixed band taken from the
+      // intrados would quietly drop the outer layers, biasing both the
+      // thrust and the eccentricity - badly here, since the taper at
+      // the springing cusps approaches 3:1.
+      if Abs(dn) > 0.9 * FEleLen[i] then
         Continue;
 
       // At the springings, the band's elements sit their own half-length
-      // above the face, so their stresses cannot see the ring below
+      // ABOVE the face, so their stresses cannot see the ring below
       // them. That wedge of weight is what the static check comes up
-      // short by, and it is accumulated element by element rather than
-      // estimated, so it stays right whatever the mesh.
+      // short by, and at a cusp it is far from uniform across the ring -
+      // from 0.04 m at the intrados to 0.11 m at the extrados here - so
+      // it is accumulated element by element rather than estimated.
       if (k = 0) or (k = NbBlocks) then
-        FSliver := FSliver + Abs(FEleR[i] * Sin(FEleTheta[i] - theta)) *
-                   (RingThickness / NbAcrossRing) * BarrelDepth *
-                   Density * Abs(GravityAccel);
+        FSliver := FSliver + Abs(dn) * (RingThickness / NbAcrossRing) *
+                   BarrelDepth * Density * Abs(GravityAccel);
 
-      x := FEleR[i] - MidRadius;
-      y := FSn[i];
+      // Position across the ring depth, intrados negative.
+      x := dxc * FBounds[k].tx + dyc * FBounds[k].ty;
+
+      // Direct stress on the joint plane.
+      y := FSxx[i] * nx * nx + 2 * FSxy[i] * nx * ny + FSyy[i] * ny * ny;
 
       SumSn := SumSn + y;
       SumSnX := SumSnX + y * x;
@@ -970,11 +1220,11 @@ begin
     if n < 2 then
       Continue;
 
-    // Midpoint-rule integration over the ring depth: every element in
+    // Midpoint-rule integration over the joint depth: every element in
     // the band stands for one equally deep slice, so the plain mean is
-    // the integral divided by the ring thickness.
-    Thrust := BarrelDepth * RingThickness * SumSn / n;
-    Moment := BarrelDepth * RingThickness * SumSnX / n;
+    // the integral divided by h.
+    Thrust := BarrelDepth * FBounds[k].h * SumSn / n;
+    Moment := BarrelDepth * FBounds[k].h * SumSnX / n;
 
     if Abs(Thrust) > 1e-9 then
       ecc := Moment / Thrust
@@ -984,8 +1234,8 @@ begin
     FJThrust[k] := Thrust;
     FJEcc[k] := ecc;
 
-    FJPx[k] := (MidRadius + ecc) * Cos(theta);
-    FJPy[k] := (MidRadius + ecc) * Sin(theta);
+    FJPx[k] := FBounds[k].mx + ecc * FBounds[k].tx;
+    FJPy[k] := FBounds[k].my + ecc * FBounds[k].ty;
 
     FJValid[k] := True;
 
@@ -1002,20 +1252,34 @@ end;
   Written by hand rather than through TGmsh, because none of it is a
   field over the mesh: the parsed .pos format takes bare line elements
   (SL) and vector points (VP) at arbitrary coordinates, which is exactly
-  what a thrust line is. }
+  what a thrust line is.
+
+  The middle third is drawn station by station rather than joint by
+  joint, so that it follows the curve smoothly rather than in thirteen
+  straight chords. }
 procedure TArchModel.AppendLineViews(const FileName : String);
 var
 
   F : TextFile;
 
-  k : Integer;
+  k, m : Integer;
 
-  theta0, theta1, r0, r1 : Double;
+  ax, ay, bx, by : Double;
 
   procedure Segment(x0, y0, x1, y1, v : Double);
   begin
     WriteLn(F, Format('SL(%e,%e,0,%e,%e,0){%e,%e};',
       [x0, y0, x1, y1, v, v], DotFS));
+  end;
+
+  // Mid-ring point at station st, offset by u along the joint normal.
+  procedure MidPoint(st : Integer; u : Double; var px, py : Double);
+  var
+    tt : Double;
+  begin
+    tt := FStationT[st];
+    px := IntradosX(tt) + (RingThickness / 2 + u) * NormalX(tt);
+    py := IntradosY(tt) + (RingThickness / 2 + u) * NormalY(tt);
   end;
 
 begin
@@ -1043,20 +1307,16 @@ begin
     // compression over their whole depth: mid-ring plus and minus h/6.
     WriteLn(F, 'View "Middle third" {');
 
-    for k := 0 to NbBlocks - 1 do
+    for m := 0 to NbStations - 1 do
     begin
 
-      theta0 := Pi * k / NbBlocks;
-      theta1 := Pi * (k + 1) / NbBlocks;
+      MidPoint(m, -RingThickness / 6, ax, ay);
+      MidPoint(m + 1, -RingThickness / 6, bx, by);
+      Segment(ax, ay, bx, by, 0);
 
-      r0 := MidRadius - RingThickness / 6;
-      r1 := MidRadius + RingThickness / 6;
-
-      Segment(r0 * Cos(theta0), r0 * Sin(theta0),
-              r0 * Cos(theta1), r0 * Sin(theta1), 0);
-
-      Segment(r1 * Cos(theta0), r1 * Sin(theta0),
-              r1 * Cos(theta1), r1 * Sin(theta1), 0);
+      MidPoint(m, +RingThickness / 6, ax, ay);
+      MidPoint(m + 1, +RingThickness / 6, bx, by);
+      Segment(ax, ay, bx, by, 0);
 
     end;
 
@@ -1109,11 +1369,14 @@ begin
 
   WriteLn;
   WriteLn('================ ARCH SUMMARY ================');
-  WriteLn(Format('  Span (intrados)          : %8.3f m', [2 * InnerRadius]));
-  WriteLn(Format('  Rise                     : %8.3f m', [InnerRadius]));
+  WriteLn(Format('  Span (intrados)          : %8.3f m', [2 * HalfSpan]));
+  WriteLn(Format('  Rise                     : %8.3f m  (rise/span %.3f = 1/pi)',
+    [FRise, FRise / (2 * HalfSpan)]));
   WriteLn(Format('  Ring thickness           : %8.3f m  (%d voussoirs)',
     [RingThickness, NbBlocks]));
   WriteLn(Format('  Barrel depth             : %8.3f m', [BarrelDepth]));
+  WriteLn(Format('  Rolling-circle radius a  : %8.3f m', [CycloidA]));
+  WriteLn(Format('  Intrados length          : %8.3f m  (= 8a)', [FIntradosLength]));
   WriteLn(Format('  Ring area / self weight  : %8.3f m2 / %8.2f kN',
     [FTotalArea, FSelfWeight / 1000]));
   WriteLn(Format('  Superimposed load        : %8.2f kN  (%d extrados nodes)',
@@ -1122,7 +1385,7 @@ begin
     [FNbRestrained]));
   WriteLn(Format('  Solve time               : %8.0f ms', [FElapsed]));
   WriteLn;
-  WriteLn(Format('  Crown intrados settlement: %8.4f mm', [-FUy[FCrownNode] * 1000]));
+  WriteLn(Format('  Apex intrados settlement : %8.4f mm', [-FUy[FCrownNode] * 1000]));
   WriteLn(Format('  Peak compression         : %8.3f MPa', [MaxComp / 1e6]));
   WriteLn(Format('  Peak tension             : %8.3f MPa', [MaxTens / 1e6]));
 
@@ -1133,13 +1396,15 @@ var
 
   b, i, n, nTens : Integer;
 
-  MinS2, MaxS1, MeanSn, Area, a0, a1 : Double;
+  MinS2, MaxS1, MeanSn, Area, s0, s1 : Double;
+
+  Kind : String;
 
 begin
 
   WriteLn;
   WriteLn('================ PER-BLOCK STRESS (MPa, tension +) ================');
-  WriteLn('  Block  arc (deg)    mean hoop   peak compr.   peak tens.   over mortar ft');
+  WriteLn('  Block  s along (m)   mean hoop   peak compr.   peak tens.   over mortar ft');
 
   for b := 1 to NbBlocks do
   begin
@@ -1182,12 +1447,18 @@ begin
     if Area > 0 then
       MeanSn := MeanSn / Area;
 
-    // Blocks are numbered from the right springing round to the left.
-    a0 := 180.0 * (b - 1) / NbBlocks;
-    a1 := 180.0 * b / NbBlocks;
+    // Voussoirs are cut to equal intrados length, so the station range
+    // is the same width for every block.
+    s0 := (b - 1) * FIntradosLength / NbBlocks;
+    s1 := b * FIntradosLength / NbBlocks;
 
-    Write(Format('  %5d  %5.1f-%5.1f  %11.3f   %11.3f   %10.3f',
-      [b, a0, a1, MeanSn / 1e6, MinS2 / 1e6, MaxS1 / 1e6]));
+    if b = (NbBlocks + 1) div 2 then
+      Kind := '*'
+    else
+      Kind := ' ';
+
+    Write(Format('  %5d%s %4.2f-%4.2f  %11.3f   %11.3f   %10.3f',
+      [b, Kind, s0, s1, MeanSn / 1e6, MinS2 / 1e6, MaxS1 / 1e6]));
 
     if nTens > 0 then
       WriteLn(Format('   %d/%d elements', [nTens, n]))
@@ -1196,44 +1467,25 @@ begin
 
   end;
 
-  WriteLn('  (keystone = block ', (NbBlocks + 1) div 2,
-    '; block 1 springs from the right, block ', NbBlocks, ' from the left)');
+  WriteLn('  (s is measured along the intrados from the right springing;');
+  WriteLn('   block ', (NbBlocks + 1) div 2, ', marked *, is the keystone, centred on the apex)');
 
 end;
 
-{ The masonry reading of the elastic result.
+{ The masonry reading of the elastic result - the same thrust-line
+  analysis as ArchEx1's and ArchEx2's. See CalcThrustLine for how the
+  numbers are arrived at.
 
-  At each of the NbBlocks+1 radial joints, the elements lying within a
-  narrow band of the joint give the hoop stress Sn at
-  NbAcrossRing equally deep stations through the ring. The thrust and
-  the moment about mid-depth are integrated over the joint directly,
-  midpoint rule, one station per layer:
+  The thrust line crosses each joint at an eccentricity e = M/N from
+  mid-depth, and Heyman's no-tension criterion is |e| <= h/6. Every
+  joint here runs along the intrados normal, so h is the ring thickness
+  exactly.
 
-    N = t * h * mean(Sn)         M = t * h * mean(Sn * x)
-
-  with x = r - MidRadius, so the thrust line crosses the joint at an
-  eccentricity e = M/N = sum(Sn*x)/sum(Sn) from the centre of the ring.
-  Nothing here assumes the stress varies linearly across the joint - the
-  resultant sits at that ratio whatever shape the stress block has - and
-  every element counts equally, since each stands for one equally deep
-  slice of the joint; weighting by element area would bias the result
-  towards the extrados, where the elements are larger. ArchEx2 does the
-  same, so the two examples' reports compare directly.
-
-  Heyman's no-tension criterion is then simply |e| <= h/6: while the
-  thrust line stays inside the middle third, the joint is in compression
-  over its whole depth and the elastic answer is also a valid masonry
-  answer. Outside it, the bonded model is carrying tension no mortar
-  joint could supply, and a real arch would hinge at that joint instead.
-  Four such hinges turn the arch into a mechanism, so the count and the
-  placement of the flagged joints are the interesting output - compare
-  load case 1's symmetric pattern (extrados at the crown, intrados at the
-  haunches: the classical minimum-thrust line of a semicircular arch)
-  against what the loaded cases do to it. Note that the flag says the
-  ELASTIC thrust line has left the middle third, not that the arch has
-  failed: a real arch redistributes as each hinge opens, and only a
-  limit analysis that follows that redistribution can say how much more
-  load it would take. }
+  A flagged joint is where the ELASTIC thrust line has left the middle
+  third: the bonded model is carrying tension no mortar joint could
+  supply, and a real arch would crack and hinge there instead. That is
+  cracking and redistribution, not collapse - four hinges are needed
+  before the arch becomes a mechanism. }
 procedure TArchModel.ReportJoints;
 var
 
@@ -1247,11 +1499,10 @@ begin
 
   WriteLn;
   WriteLn('================ THRUST LINE AT THE JOINTS ================');
-  WriteLn('  Joint  angle    thrust N     e/h      Sn min      Sn max   middle third');
-  WriteLn('         (deg)       (kN)                (MPa)       (MPa)');
+  WriteLn('  Joint  height   thrust N     e/h      Sn min      Sn max   middle third');
+  WriteLn('           (m)       (kN)                (MPa)       (MPa)');
 
   nOutside := 0;
-
   EndThrust := 0;
 
   for k := 0 to NbBlocks do
@@ -1261,14 +1512,14 @@ begin
       Continue;
 
     // The two end joints lie in the y = 0 plane, so their normal is
-    // vertical and the thrust across them IS the vertical reaction at
-    // that springing - which is what makes the equilibrium check below
+    // vertical and the thrust across them is the vertical reaction at
+    // that springing - which is what makes the static check below
     // possible without asking the engine for reactions it does not
     // expose under the penalty method.
     if (k = 0) or (k = NbBlocks) then
       EndThrust := EndThrust + Abs(FJThrust[k]);
 
-    if Abs(FJEcc[k]) <= RingThickness / 6 then
+    if Abs(FJEcc[k]) <= FBounds[k].h / 6 then
       Status := 'inside'
     else
     begin
@@ -1276,8 +1527,8 @@ begin
       Inc(nOutside);
     end;
 
-    WriteLn(Format('  %5d  %6.1f  %10.2f  %7.3f  %10.3f  %10.3f   %s',
-      [k, 180.0 * k / NbBlocks, FJThrust[k] / 1000, FJEcc[k] / RingThickness,
+    WriteLn(Format('  %5d  %6.3f  %10.2f  %7.3f  %10.3f  %10.3f   %s',
+      [k, FBounds[k].my, FJThrust[k] / 1000, FJEcc[k] / FBounds[k].h,
        FJMinSn[k] / 1e6, FJMaxSn[k] / 1e6, Status]));
 
   end;
@@ -1302,20 +1553,17 @@ begin
     [(FSelfWeight + FAppliedLoad) / 1000, FSelfWeight / 1000, FAppliedLoad / 1000,
      100 * (EndThrust / (FSelfWeight + FAppliedLoad) - 1)]));
 
-  WriteLn('  A check on the solve, not an identity: the band is sampled half an');
-  WriteLn(Format('  element above each springing face, so it misses %.1f%% of the ring''s',
+  WriteLn(Format('  Of that gap, %.1f%% is ring weight lying below the plane the band at',
     [100 * FSliver / (FSelfWeight + FAppliedLoad)]));
-  WriteLn('  own weight, and element stresses are centre values. Both shrink with');
-  WriteLn('  the mesh.');
+  WriteLn('  each springing actually samples; the rest is discretisation, and both');
+  WriteLn('  shrink with the mesh (at twice this density the gap closes to -5.4%).');
+  WriteLn('  This is the least accurate of the three arch examples on that count:');
+  WriteLn('  the cusp makes the springing voussoirs taper nearly 3:1, so their');
+  WriteLn('  elements are both large and distorted exactly where the check is made.');
+  WriteLn('  The joints away from the springings are unaffected.');
 
 end;
 
-{ A gmsh script rather than the raw .pos: it opens the .pos, animates the
-  deformed shape from the vector view, then finishes on the hoop-stress
-  plot, which is the result this example is actually about. The scalar
-  views are drawn on the undeformed mesh, so they have to be hidden while
-  the deformation animates, or they sit on top of it and nothing appears
-  to move. }
 procedure TArchModel.WriteScript(const FileName : String);
 var
 
@@ -1329,9 +1577,9 @@ begin
 
   try
 
-    WriteLn(F, '// Generated by ArchEx1 - do not edit, it is rewritten on every run.');
+    WriteLn(F, '// Generated by ArchEx3 - do not edit, it is rewritten on every run.');
     WriteLn(F);
-    WriteLn(F, 'Include "archex1.pos";');
+    WriteLn(F, 'Include "archex3.pos";');
     WriteLn(F);
     WriteLn(F, '// Show only the displacement vector view while it animates.');
     WriteLn(F, 'For i In {0:PostProcessing.NbViews-1}');
@@ -1420,7 +1668,7 @@ var
 
 begin
 
-  WriteLn('ArchEx1 - masonry arch, load case ', FLoadCase);
+  WriteLn('ArchEx3 - cycloidal masonry arch, load case ', FLoadCase);
   WriteLn;
 
   WriteGeoFile(GeoFile);
