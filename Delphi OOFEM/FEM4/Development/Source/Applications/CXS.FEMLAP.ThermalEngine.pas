@@ -1552,7 +1552,12 @@ begin
 
     end;
 
-    FPostIterFunc;
+    // Guarded, as NonLinearStaticSolve already guards it and as the
+    // structural engine guards its own: FPostIterFunc is optional, and
+    // calling it unconditionally makes any static thermal solve without
+    // a callback fail with an access violation.
+    if Assigned(FPostIterFunc) then
+      FPostIterFunc;
 
   finally
 
@@ -1617,7 +1622,8 @@ begin
 
         FStep := Step;
 
-        FPostIterFunc;
+        if Assigned(FPostIterFunc) then
+          FPostIterFunc;
 
       end;
 
