@@ -30,12 +30,18 @@ unit uArchEx2;
       against the semicircle's 0.50 - and closes at the apex with an
       included angle of 14.4 degrees.
 
-  The ring is divided into 14 voussoirs, 3 on each haunch arc and 4 on
-  each crown arc, which comes out at almost equal voussoir lengths
-  (0.349 m against 0.398 m). Unlike ArchEx1's semicircle there is no
-  keystone: the two halves meet on a joint at the apex, mitred on the
-  vertical centreline - the bisector of the two arcs' radial directions,
-  which is where a mason would put it.
+  The ring is divided into 15 voussoirs: 3 on each haunch arc, 4 on each
+  crown arc, and a keystone straddling the apex - so, as in ArchEx1, the
+  block count is odd and the middle block is a keystone. That keystone is
+  the one voussoir that does not belong to a single arc: half of it is
+  struck from each crown centre, meeting on the mitred joint up the
+  vertical centreline. It is therefore meshed as two gmsh surfaces
+  sharing one physical region, which is what makes it a single block
+  everywhere downstream - in the 'Block' view, in the per-block report,
+  and in the joint list, where the apex is not a joint at all. Sizing the
+  crown blocks at (NbCrownBlocks + 1/2) to the crown sweep leaves every
+  voussoir within a few percent of the same length (0.349 m on the
+  haunches against 0.354 m on the crown).
 
   Everything downstream of the geometry - the bonded conformal mesh, the
   plane-stress solve, the caveat that masonry carries no tension, and the
@@ -45,11 +51,11 @@ unit uArchEx2;
   measure from:
 
     - each voussoir carries its own arc centre, so the hoop direction is
-      taken from the block's own arc rather than from the origin;
+      taken from the block's own arc rather than from the origin (and for
+      the keystone, from whichever half of it the element sits in);
     - joints are found by distance from the joint PLANE, restricted to
       the two blocks that meet there, rather than by angle about a common
-      centre. That also handles the apex joint, which is not radial to
-      either arc. }
+      centre. }
 
 {$mode delphi}{$H+}
 
@@ -86,17 +92,30 @@ const
   // and the point disappears altogether, so keep this well above it.
   CrownRadius = 4.0;
 
-  // Voussoirs per half arch: 3 + 4 = 7, so 14 in all, with a joint - not
-  // a keystone - at the apex.
+  // Voussoirs per half arch, either side of the keystone: 3 on the
+  // haunch arc and 4 on the crown arc.
   NbHaunchBlocks = 3;
   NbCrownBlocks = 4;
 
-  NbBlocks = 2 * (NbHaunchBlocks + NbCrownBlocks);
+  // 15 - odd, with the keystone in the middle.
+  NbBlocks = 2 * (NbHaunchBlocks + NbCrownBlocks) + 1;
+
+  KeystoneBlock = NbHaunchBlocks + NbCrownBlocks + 1;
+
+  // 16 meshed segments, because the keystone is two of them - one per
+  // crown arc - sharing the keystone's physical region.
+  NbSegments = 2 * (NbHaunchBlocks + NbCrownBlocks + 1);
+
+  // The segment boundary at the apex: the mitre inside the keystone,
+  // which is a geometric edge but not a joint between blocks.
+  ApexBoundary = NbHaunchBlocks + NbCrownBlocks + 1;
 
   // Structured mesh per voussoir, as ArchEx1: NbAcrossRing quads through
-  // the ring by NbAlongBlock along the arc.
+  // the ring by NbAlongBlock along the arc. Each half of the keystone is
+  // half a voussoir long, so it gets half the divisions, rounded up.
   NbAcrossRing = 6;
   NbAlongBlock = 5;
+  NbAlongHalfKeystone = (NbAlongBlock + 1) div 2;
 
   (******************** MATERIAL ********************)
 
@@ -118,10 +137,11 @@ const
   LoadCaseHaunch = 3;
 
   // Where the superimposed load sits, as a fraction of the arch's own
-  // intrados length measured from the right springing. 0.50 is the apex;
-  // 0.75 is the quarter point of the arch's length, measured from the
-  // LEFT springing - the same position ArchEx1 loads (its 135 degrees is
-  // 45 degrees of a 180 degree arc from that springing).
+  // intrados length measured from the right springing. 0.50 is the apex,
+  // and so the middle of the keystone - the same station ArchEx1's crown
+  // load lands on. 0.75 is the quarter point of the arch's length
+  // measured from the LEFT springing, again as ArchEx1 (whose 135
+  // degrees is 45 degrees of a 180 degree arc from that springing).
   CrownLoadPosition = 0.50;
   HaunchLoadPosition = 0.75;
 
@@ -129,6 +149,12 @@ const
 
   ViewDisplacement = 0;
   ViewHoop = 3;
+
+  // The three line views AppendLineViews adds after the ten field views.
+  // 'Applied load' only exists when there is one, so it comes last.
+  ViewThrustLine = 11;
+  ViewMiddleThird = 12;
+  ViewLoad = 13;
 
 type
 
@@ -140,27 +166,30 @@ type
 
   end;
 
-  // One voussoir: a slice of one arc between two joints.
-  RBlock = record
+  // One meshed slice of one arc, between two boundaries. Every voussoir
+  // is one segment except the keystone, which is two.
+  RSegment = record
 
     Arc : Integer;
+    Block : Integer;
     Ang0, Ang1 : Double;   // angles about the arc centre, radians
+    Divisions : Integer;   // elements along the arch
     EleLen : Double;       // along-arch length of one element
 
   end;
 
-  // A radial joint between two voussoirs, or the mitred joint at the
-  // apex, or a springing face. Stored as the plane it lies in, since
-  // that is what the thrust-line integration needs, and it is the one
-  // description that covers all three kinds.
-  RJoint = record
+  // A boundary between segments: a radial joint, the mitre at the apex,
+  // or a springing face. Stored as the plane it lies in, since that is
+  // what the thrust-line integration needs and it is the one description
+  // that covers all three kinds.
+  RBoundary = record
 
     x0, y0 : Double;   // intrados end
     x1, y1 : Double;   // extrados end
-    mx, my : Double;   // mid-joint
+    mx, my : Double;   // mid-point
     tx, ty : Double;   // unit vector, intrados -> extrados
-    nx, ny : Double;   // unit normal to the joint plane (along the arch)
-    h : Double;        // joint depth, |P1 - P0|
+    nx, ny : Double;   // unit normal to the plane (along the arch)
+    h : Double;        // depth, |P1 - P0|
     Band : Double;     // half-width of the element band either side
 
   end;
@@ -180,8 +209,8 @@ type
 
     // Geometry, built by SetupGeometry.
     FArcs : Array[0..3] of RArc;
-    FBlocks : Array[1..NbBlocks] of RBlock;
-    FJoints : Array[0..NbBlocks] of RJoint;
+    FSegments : Array[1..NbSegments] of RSegment;
+    FBounds : Array[0..NbSegments] of RBoundary;
 
     FApexY, FApexYExt : Double;
     FIntradosLength : Double;
@@ -193,6 +222,11 @@ type
     FLoadX, FLoadY : Double;
 
     FElapsed : Double;
+
+    // Per joint, filled by CalcThrustLine.
+    FJThrust, FJEcc, FJMinSn, FJMaxSn : TDoubleArray;
+    FJPx, FJPy : TDoubleArray;
+    FJValid : Array of Boolean;
 
     FEleBlock : TDoubleArray;
     FEleArea : TDoubleArray;
@@ -209,11 +243,16 @@ type
     procedure SetupGeometry;
     function ExtradosPointAt(s : Double; var px, py : Double) : Boolean;
     function OnExtrados(x, y : Double) : Boolean;
+    function ArcOfElement(BlockId : Integer; cx : Double) : Integer;
+    function BlockKind(BlockId : Integer) : String;
 
     procedure WriteGeoFile(const FileName : String);
     procedure BuildMesh;
     procedure CalcElementGeometry;
     procedure BuildModel;
+
+    procedure CalcThrustLine;
+    procedure AppendLineViews(const FileName : String);
 
     procedure ReportSummary;
     procedure ReportBlocks;
@@ -233,6 +272,11 @@ type
     procedure Run(ViewResults : Boolean);
 
   end;
+
+// Joint j sits at this segment boundary. The two differ because the
+// boundary at the apex is inside the keystone, not between two blocks,
+// so every joint above it is one boundary further along.
+function JointBoundary(j : Integer) : Integer;
 
 implementation
 
@@ -262,6 +306,16 @@ const
 var
   DotFS : TFormatSettings;
 
+function JointBoundary(j : Integer) : Integer;
+begin
+
+  if j < ApexBoundary then
+    Result := j
+  else
+    Result := j + 1;
+
+end;
+
 function Num(v : Double) : String;
 begin
 
@@ -281,6 +335,31 @@ begin
   begin
     try
       ReWrite(F);
+      Exit;
+    except
+      if Attempt = MaxAttempts then
+        raise;
+      Sleep(RetryDelayMs);
+    end;
+  end;
+
+end;
+
+{ As SafeReWriteText, but opening an existing file to add to the end of
+  it - AppendLineViews puts its views after the ones TGmsh has just
+  written and closed. }
+procedure SafeAppendText(var F : TextFile);
+const
+  MaxAttempts = 8;
+  RetryDelayMs = 50;
+var
+  Attempt : Integer;
+begin
+
+  for Attempt := 1 to MaxAttempts do
+  begin
+    try
+      Append(F);
       Exit;
     except
       if Attempt = MaxAttempts then
@@ -331,6 +410,53 @@ begin
 
 end;
 
+{ Which arc an element belongs to. Every block but the keystone sits on
+  one arc; the keystone straddles both crown arcs, and which half an
+  element is in is decided by the side of the centreline it sits on -
+  the mitre it is divided on being the centreline itself. }
+function TArchModel.ArcOfElement(BlockId : Integer; cx : Double) : Integer;
+var
+
+  s : Integer;
+
+begin
+
+  if BlockId = KeystoneBlock then
+  begin
+
+    if cx >= 0 then
+      Result := ArcCrownRight
+    else
+      Result := ArcCrownLeft;
+
+    Exit;
+
+  end;
+
+  Result := ArcHaunchRight;
+
+  for s := 1 to NbSegments do
+    if FSegments[s].Block = BlockId then
+      Exit(FSegments[s].Arc);
+
+end;
+
+function TArchModel.BlockKind(BlockId : Integer) : String;
+begin
+
+  if BlockId = KeystoneBlock then
+    Result := 'keystone'
+  else if BlockId <= NbHaunchBlocks then
+    Result := 'haunch R'
+  else if BlockId < KeystoneBlock then
+    Result := 'crown R '
+  else if BlockId <= KeystoneBlock + NbCrownBlocks then
+    Result := 'crown L '
+  else
+    Result := 'haunch L';
+
+end;
+
 (*******************************************************************
   The four-centred construction, solved rather than drawn.
 
@@ -347,9 +473,9 @@ end;
 
     B = A + (r1 - r2) * (cos phi, sin phi)
 
-  which puts it below the springing line and - for r2 > 2*HalfSpan -
-  r1... in practice for any r2 large enough - on the far side of the
-  centreline. The apex is then where that arc crosses x = 0:
+  which puts it below the springing line and, for a large enough r2, on
+  the far side of the centreline. The apex is then where that arc
+  crosses x = 0:
 
     apexY = B.y + sqrt(r2^2 - B.x^2)
 
@@ -358,13 +484,18 @@ end;
   the whole ring is traversed as a single monotonic sweep: 0 -> phi
   about A, phi -> apex about B, then the mirror of that back down to
   180 degrees about the left haunch centre.
+
+  The crown sweep is divided into NbCrownBlocks whole voussoirs plus the
+  half keystone that reaches the apex - hence the division by
+  (NbCrownBlocks + 0.5), which is what keeps the keystone the same size
+  as its neighbours instead of half their size.
 ********************************************************************)
 procedure TArchModel.SetupGeometry;
 var
 
-  k, b, ArcId : Integer;
+  b, s, ArcId : Integer;
 
-  phi, r1, r2, t, AngJunction, AngApex, dAng, ang : Double;
+  phi, r1, r2, t, AngJunction, AngApex, aCrown, dAng, ang : Double;
 
   BandNext, BandPrev : Double;
 
@@ -410,35 +541,58 @@ begin
   AngApex := ArcTan2(FApexY - FArcs[ArcCrownRight].cy,
                      0 - FArcs[ArcCrownRight].cx);
 
-  (******************** BLOCKS ********************)
+  aCrown := (AngApex - AngJunction) / (NbCrownBlocks + 0.5);
 
-  // Right haunch: blocks 1..NbHaunchBlocks, 0 -> phi about A.
+  (******************** SEGMENTS ********************)
+
+  // Right haunch: segments 1..NbHaunchBlocks, 0 -> phi about A.
   dAng := phi / NbHaunchBlocks;
 
   for b := 1 to NbHaunchBlocks do
   begin
-    FBlocks[b].Arc := ArcHaunchRight;
-    FBlocks[b].Ang0 := (b - 1) * dAng;
-    FBlocks[b].Ang1 := b * dAng;
+    FSegments[b].Arc := ArcHaunchRight;
+    FSegments[b].Block := b;
+    FSegments[b].Ang0 := (b - 1) * dAng;
+    FSegments[b].Ang1 := b * dAng;
+    FSegments[b].Divisions := NbAlongBlock;
   end;
 
-  // Right crown: junction -> apex about B.
-  dAng := (AngApex - AngJunction) / NbCrownBlocks;
-
+  // Right crown: junction -> half a voussoir short of the apex.
   for b := 1 to NbCrownBlocks do
   begin
-    FBlocks[NbHaunchBlocks + b].Arc := ArcCrownRight;
-    FBlocks[NbHaunchBlocks + b].Ang0 := AngJunction + (b - 1) * dAng;
-    FBlocks[NbHaunchBlocks + b].Ang1 := AngJunction + b * dAng;
+    s := NbHaunchBlocks + b;
+    FSegments[s].Arc := ArcCrownRight;
+    FSegments[s].Block := s;
+    FSegments[s].Ang0 := AngJunction + (b - 1) * aCrown;
+    FSegments[s].Ang1 := AngJunction + b * aCrown;
+    FSegments[s].Divisions := NbAlongBlock;
   end;
 
-  // Left crown: apex -> junction about the mirrored centre, which in
-  // mirrored angles runs from (Pi - AngApex) up to (Pi - AngJunction).
+  // Keystone, right half: up to the apex.
+  s := ApexBoundary;
+  FSegments[s].Arc := ArcCrownRight;
+  FSegments[s].Block := KeystoneBlock;
+  FSegments[s].Ang0 := AngApex - 0.5 * aCrown;
+  FSegments[s].Ang1 := AngApex;
+  FSegments[s].Divisions := NbAlongHalfKeystone;
+
+  // Keystone, left half: away from the apex, mirrored.
+  s := ApexBoundary + 1;
+  FSegments[s].Arc := ArcCrownLeft;
+  FSegments[s].Block := KeystoneBlock;
+  FSegments[s].Ang0 := Pi - AngApex;
+  FSegments[s].Ang1 := Pi - AngApex + 0.5 * aCrown;
+  FSegments[s].Divisions := NbAlongHalfKeystone;
+
+  // Left crown: on to the junction.
   for b := 1 to NbCrownBlocks do
   begin
-    FBlocks[NbHaunchBlocks + NbCrownBlocks + b].Arc := ArcCrownLeft;
-    FBlocks[NbHaunchBlocks + NbCrownBlocks + b].Ang0 := Pi - AngApex + (b - 1) * dAng;
-    FBlocks[NbHaunchBlocks + NbCrownBlocks + b].Ang1 := Pi - AngApex + b * dAng;
+    s := ApexBoundary + 1 + b;
+    FSegments[s].Arc := ArcCrownLeft;
+    FSegments[s].Block := s - 1;
+    FSegments[s].Ang0 := Pi - AngApex + (b - 0.5) * aCrown;
+    FSegments[s].Ang1 := Pi - AngApex + (b + 0.5) * aCrown;
+    FSegments[s].Divisions := NbAlongBlock;
   end;
 
   // Left haunch: (Pi - phi) -> Pi about the left haunch centre.
@@ -446,112 +600,112 @@ begin
 
   for b := 1 to NbHaunchBlocks do
   begin
-    FBlocks[NbHaunchBlocks + 2 * NbCrownBlocks + b].Arc := ArcHaunchLeft;
-    FBlocks[NbHaunchBlocks + 2 * NbCrownBlocks + b].Ang0 := Pi - phi + (b - 1) * dAng;
-    FBlocks[NbHaunchBlocks + 2 * NbCrownBlocks + b].Ang1 := Pi - phi + b * dAng;
+    s := ApexBoundary + 1 + NbCrownBlocks + b;
+    FSegments[s].Arc := ArcHaunchLeft;
+    FSegments[s].Block := s - 1;
+    FSegments[s].Ang0 := Pi - phi + (b - 1) * dAng;
+    FSegments[s].Ang1 := Pi - phi + b * dAng;
+    FSegments[s].Divisions := NbAlongBlock;
   end;
 
   FIntradosLength := 0;
 
-  for b := 1 to NbBlocks do
+  for s := 1 to NbSegments do
   begin
 
-    ArcId := FBlocks[b].Arc;
+    ArcId := FSegments[s].Arc;
 
-    FBlocks[b].EleLen := FArcs[ArcId].r *
-      Abs(FBlocks[b].Ang1 - FBlocks[b].Ang0) / NbAlongBlock;
+    FSegments[s].EleLen := FArcs[ArcId].r *
+      Abs(FSegments[s].Ang1 - FSegments[s].Ang0) / FSegments[s].Divisions;
 
     FIntradosLength := FIntradosLength +
-      FArcs[ArcId].r * Abs(FBlocks[b].Ang1 - FBlocks[b].Ang0);
+      FArcs[ArcId].r * Abs(FSegments[s].Ang1 - FSegments[s].Ang0);
 
   end;
 
-  (******************** JOINTS ********************)
+  (******************** BOUNDARIES ********************)
 
-  // Joint k sits between block k and block k+1, so it is the start of
-  // block k+1 (and the end of block k). Every joint but the apex is
-  // radial to the arc it belongs to; the apex joint is the mitre on the
-  // centreline, which is the bisector of the two arcs' radial
-  // directions and so vertical by symmetry.
-  for k := 0 to NbBlocks do
+  // Boundary b is the start of segment b+1 and the end of segment b.
+  // All are radial to the arc they belong to except the one at the
+  // apex, which is the mitre inside the keystone: the bisector of the
+  // two crown arcs' radial directions there, and so vertical by
+  // symmetry.
+  for b := 0 to NbSegments do
   begin
 
-    if k = NbBlocks div 2 then
+    if b = ApexBoundary then
     begin
 
-      // The apex.
-      FJoints[k].x0 := 0;
-      FJoints[k].y0 := FApexY;
-      FJoints[k].x1 := 0;
-      FJoints[k].y1 := FApexYExt;
+      FBounds[b].x0 := 0;
+      FBounds[b].y0 := FApexY;
+      FBounds[b].x1 := 0;
+      FBounds[b].y1 := FApexYExt;
 
     end
     else
     begin
 
-      if k < NbBlocks then
+      if b < NbSegments then
       begin
-        b := k + 1;
-        ang := FBlocks[b].Ang0;
+        s := b + 1;
+        ang := FSegments[s].Ang0;
       end
       else
       begin
-        b := NbBlocks;
-        ang := FBlocks[b].Ang1;
+        s := NbSegments;
+        ang := FSegments[s].Ang1;
       end;
 
-      ArcId := FBlocks[b].Arc;
+      ArcId := FSegments[s].Arc;
 
-      FJoints[k].x0 := FArcs[ArcId].cx + FArcs[ArcId].r * Cos(ang);
-      FJoints[k].y0 := FArcs[ArcId].cy + FArcs[ArcId].r * Sin(ang);
+      FBounds[b].x0 := FArcs[ArcId].cx + FArcs[ArcId].r * Cos(ang);
+      FBounds[b].y0 := FArcs[ArcId].cy + FArcs[ArcId].r * Sin(ang);
 
-      FJoints[k].x1 := FArcs[ArcId].cx + (FArcs[ArcId].r + RingThickness) * Cos(ang);
-      FJoints[k].y1 := FArcs[ArcId].cy + (FArcs[ArcId].r + RingThickness) * Sin(ang);
+      FBounds[b].x1 := FArcs[ArcId].cx + (FArcs[ArcId].r + RingThickness) * Cos(ang);
+      FBounds[b].y1 := FArcs[ArcId].cy + (FArcs[ArcId].r + RingThickness) * Sin(ang);
 
     end;
 
-    FJoints[k].mx := 0.5 * (FJoints[k].x0 + FJoints[k].x1);
-    FJoints[k].my := 0.5 * (FJoints[k].y0 + FJoints[k].y1);
+    FBounds[b].mx := 0.5 * (FBounds[b].x0 + FBounds[b].x1);
+    FBounds[b].my := 0.5 * (FBounds[b].y0 + FBounds[b].y1);
 
-    FJoints[k].h := Sqrt(Sqr(FJoints[k].x1 - FJoints[k].x0) +
-                         Sqr(FJoints[k].y1 - FJoints[k].y0));
+    FBounds[b].h := Sqrt(Sqr(FBounds[b].x1 - FBounds[b].x0) +
+                         Sqr(FBounds[b].y1 - FBounds[b].y0));
 
-    FJoints[k].tx := (FJoints[k].x1 - FJoints[k].x0) / FJoints[k].h;
-    FJoints[k].ty := (FJoints[k].y1 - FJoints[k].y0) / FJoints[k].h;
+    FBounds[b].tx := (FBounds[b].x1 - FBounds[b].x0) / FBounds[b].h;
+    FBounds[b].ty := (FBounds[b].y1 - FBounds[b].y0) / FBounds[b].h;
 
-    // Normal to the joint plane, i.e. along the arch.
-    FJoints[k].nx := FJoints[k].ty;
-    FJoints[k].ny := -FJoints[k].tx;
+    // Normal to the plane, i.e. along the arch.
+    FBounds[b].nx := FBounds[b].ty;
+    FBounds[b].ny := -FBounds[b].tx;
 
-    // Reach the first element layer either side of the joint and no
-    // further: layer centroids sit at 0.5, 1.5, ... element lengths
-    // from the joint, and the two sides may have different element
-    // lengths where a haunch block meets a crown block.
+    // Reach the first element layer either side and no further: layer
+    // centroids sit at 0.5, 1.5, ... element lengths from the boundary,
+    // and the two sides may have different element lengths where a
+    // haunch segment meets a crown one, or a crown one the keystone.
     BandPrev := MaxDouble;
     BandNext := MaxDouble;
 
-    if k >= 1 then
-      BandPrev := FBlocks[k].EleLen;
+    if b >= 1 then
+      BandPrev := FSegments[b].EleLen;
 
-    if k < NbBlocks then
-      BandNext := FBlocks[k + 1].EleLen;
+    if b < NbSegments then
+      BandNext := FSegments[b + 1].EleLen;
 
-    FJoints[k].Band := 0.9 * Min(BandPrev, BandNext);
+    FBounds[b].Band := 0.9 * Min(BandPrev, BandNext);
 
   end;
 
 end;
 
-
 { The extrados point radially outside the intrados point a distance s
-  along the intrados from the right springing - i.e. indexed
-  by intrados arc length, not by its own. That keeps a load position
-  quoted as a fraction of the arch's length meaning the same thing on
-  either face. }
+  along the intrados from the right springing - i.e. indexed by intrados
+  arc length, not by its own. That keeps a load position quoted as a
+  fraction of the arch's length meaning the same thing on either face. }
 function TArchModel.ExtradosPointAt(s : Double; var px, py : Double) : Boolean;
 var
 
-  b, ArcId : Integer;
+  seg, ArcId : Integer;
 
   Len, ang : Double;
 
@@ -562,18 +716,18 @@ begin
   if (s < 0) or (s > FIntradosLength) then
     Exit;
 
-  for b := 1 to NbBlocks do
+  for seg := 1 to NbSegments do
   begin
 
-    ArcId := FBlocks[b].Arc;
+    ArcId := FSegments[seg].Arc;
 
-    Len := FArcs[ArcId].r * Abs(FBlocks[b].Ang1 - FBlocks[b].Ang0);
+    Len := FArcs[ArcId].r * Abs(FSegments[seg].Ang1 - FSegments[seg].Ang0);
 
-    if (s <= Len) or (b = NbBlocks) then
+    if (s <= Len) or (seg = NbSegments) then
     begin
 
-      ang := FBlocks[b].Ang0 +
-             (FBlocks[b].Ang1 - FBlocks[b].Ang0) * (s / Len);
+      ang := FSegments[seg].Ang0 +
+             (FSegments[seg].Ang1 - FSegments[seg].Ang0) * (s / Len);
 
       px := FArcs[ArcId].cx + (FArcs[ArcId].r + RingThickness) * Cos(ang);
       py := FArcs[ArcId].cy + (FArcs[ArcId].r + RingThickness) * Sin(ang);
@@ -617,45 +771,46 @@ begin
 end;
 
 (*******************************************************************
-  Geometry file, one gmsh plane surface per voussoir, exactly as
-  ArchEx1 - except that each block names its own arc centre, and the
-  apex joint closes two straight lines rather than two radii.
+  Geometry file, one gmsh plane surface per segment - so one per
+  voussoir, except the keystone, whose two halves are two surfaces
+  sharing its physical region.
 
     point   1+a             centre of arc a               (a = 0..3)
-    point   10+k            intrados point at joint k     (k = 0..N)
-    point   10+(N+1)+k      extrados point at joint k
-    line    10+k            joint k, intrados -> extrados
-    line    10+(N+1)+k      intrados arc of block k+1     (k = 0..N-1)
-    line    10+(N+1)+N+k    extrados arc of block k+1
-    loop    200+k, surface 500+k, physical surface k+1
+    point   10+b            intrados point at boundary b  (b = 0..S)
+    point   10+(S+1)+b      extrados point at boundary b
+    line    10+b            boundary b, intrados -> extrados
+    line    10+(S+1)+(s-1)  intrados arc of segment s     (s = 1..S)
+    line    10+(S+1)+S+(s-1)  extrados arc of segment s
+    loop    200+s, surface 500+s
+    physical surface k       the segments of block k
 
-  Adjacent blocks share the joint line, so the mesh is conformal across
-  every joint including the apex.
+  Adjacent segments share the boundary line, so the mesh is conformal
+  across every joint, and across the keystone's own internal mitre.
 ********************************************************************)
 procedure TArchModel.WriteGeoFile(const FileName : String);
 
-  function LJoint(i : Integer) : Integer;
+  function LBound(i : Integer) : Integer;
   begin
     Result := 10 + i;
   end;
 
-  function LArcIn(i : Integer) : Integer;
+  function LArcIn(s : Integer) : Integer;
   begin
-    Result := 10 + (NbBlocks + 1) + i;
+    Result := 10 + (NbSegments + 1) + (s - 1);
   end;
 
-  function LArcOut(i : Integer) : Integer;
+  function LArcOut(s : Integer) : Integer;
   begin
-    Result := 10 + (NbBlocks + 1) + NbBlocks + i;
+    Result := 10 + (NbSegments + 1) + NbSegments + (s - 1);
   end;
 
 var
 
   F : TextFile;
 
-  k, a, ArcId : Integer;
+  b, s, a, ArcId : Integer;
 
-  Joints, Arcs : String;
+  Bounds, ArcsFull, ArcsHalf, Surfaces : String;
 
 begin
 
@@ -673,73 +828,103 @@ begin
       WriteLn(F, Format('Point(%d) = {%s,%s,0,cl};',
         [1 + a, Num(FArcs[a].cx), Num(FArcs[a].cy)]));
 
-    for k := 0 to NbBlocks do
+    for b := 0 to NbSegments do
     begin
 
       WriteLn(F, Format('Point(%d) = {%s,%s,0,cl};',
-        [10 + k, Num(FJoints[k].x0), Num(FJoints[k].y0)]));
+        [10 + b, Num(FBounds[b].x0), Num(FBounds[b].y0)]));
 
       WriteLn(F, Format('Point(%d) = {%s,%s,0,cl};',
-        [10 + (NbBlocks + 1) + k, Num(FJoints[k].x1), Num(FJoints[k].y1)]));
+        [10 + (NbSegments + 1) + b, Num(FBounds[b].x1), Num(FBounds[b].y1)]));
 
     end;
 
-    Joints := '';
+    Bounds := '';
 
-    for k := 0 to NbBlocks do
+    for b := 0 to NbSegments do
     begin
 
       WriteLn(F, Format('Line(%d) = {%d,%d};',
-        [LJoint(k), 10 + k, 10 + (NbBlocks + 1) + k]));
+        [LBound(b), 10 + b, 10 + (NbSegments + 1) + b]));
 
-      if k > 0 then
-        Joints := Joints + ',';
+      if b > 0 then
+        Bounds := Bounds + ',';
 
-      Joints := Joints + IntToStr(LJoint(k));
+      Bounds := Bounds + IntToStr(LBound(b));
 
     end;
 
-    Arcs := '';
+    ArcsFull := '';
+    ArcsHalf := '';
 
-    for k := 0 to NbBlocks - 1 do
+    for s := 1 to NbSegments do
     begin
 
-      ArcId := FBlocks[k + 1].Arc;
+      ArcId := FSegments[s].Arc;
 
       // Circle(id) = {start, centre, end}. No arc here exceeds 20
       // degrees, well under gmsh's half-turn limit on one Circle.
       WriteLn(F, Format('Circle(%d) = {%d,%d,%d};',
-        [LArcIn(k), 10 + k, 1 + ArcId, 10 + k + 1]));
+        [LArcIn(s), 10 + (s - 1), 1 + ArcId, 10 + s]));
 
       WriteLn(F, Format('Circle(%d) = {%d,%d,%d};',
-        [LArcOut(k), 10 + (NbBlocks + 1) + k, 1 + ArcId,
-         10 + (NbBlocks + 1) + k + 1]));
+        [LArcOut(s), 10 + (NbSegments + 1) + (s - 1), 1 + ArcId,
+         10 + (NbSegments + 1) + s]));
 
-      if k > 0 then
-        Arcs := Arcs + ',';
-
-      Arcs := Arcs + IntToStr(LArcIn(k)) + ',' + IntToStr(LArcOut(k));
+      // Two division counts are in play - a whole voussoir's and a
+      // keystone half's - so the arcs are transfinited in two groups.
+      if FSegments[s].Divisions = NbAlongBlock then
+      begin
+        if ArcsFull <> '' then
+          ArcsFull := ArcsFull + ',';
+        ArcsFull := ArcsFull + IntToStr(LArcIn(s)) + ',' + IntToStr(LArcOut(s));
+      end
+      else
+      begin
+        if ArcsHalf <> '' then
+          ArcsHalf := ArcsHalf + ',';
+        ArcsHalf := ArcsHalf + IntToStr(LArcIn(s)) + ',' + IntToStr(LArcOut(s));
+      end;
 
     end;
 
-    WriteLn(F, Format('Transfinite Line {%s} = %d;', [Joints, NbAcrossRing + 1]));
-    WriteLn(F, Format('Transfinite Line {%s} = %d;', [Arcs, NbAlongBlock + 1]));
+    WriteLn(F, Format('Transfinite Line {%s} = %d;', [Bounds, NbAcrossRing + 1]));
+    WriteLn(F, Format('Transfinite Line {%s} = %d;', [ArcsFull, NbAlongBlock + 1]));
+    WriteLn(F, Format('Transfinite Line {%s} = %d;', [ArcsHalf, NbAlongHalfKeystone + 1]));
 
-    for k := 0 to NbBlocks - 1 do
+    for s := 1 to NbSegments do
     begin
 
       WriteLn(F, Format('Line Loop(%d) = {%d,%d,-%d,-%d};',
-        [200 + k, LJoint(k), LArcOut(k), LJoint(k + 1), LArcIn(k)]));
+        [200 + s, LBound(s - 1), LArcOut(s), LBound(s), LArcIn(s)]));
 
-      WriteLn(F, Format('Plane Surface(%d) = {%d};', [500 + k, 200 + k]));
+      WriteLn(F, Format('Plane Surface(%d) = {%d};', [500 + s, 200 + s]));
 
       WriteLn(F, Format('Transfinite Surface {%d} = {%d,%d,%d,%d};',
-        [500 + k, 10 + k, 10 + (NbBlocks + 1) + k,
-         10 + (NbBlocks + 1) + k + 1, 10 + k + 1]));
+        [500 + s, 10 + (s - 1), 10 + (NbSegments + 1) + (s - 1),
+         10 + (NbSegments + 1) + s, 10 + s]));
 
-      WriteLn(F, Format('Recombine Surface {%d};', [500 + k]));
+      WriteLn(F, Format('Recombine Surface {%d};', [500 + s]));
 
-      WriteLn(F, Format('Physical Surface(%d) = {%d};', [k + 1, 500 + k]));
+    end;
+
+    // One physical surface per voussoir. The keystone's two halves go
+    // into one physical surface, which is what makes them a single
+    // block everywhere the physical region is read back.
+    for b := 1 to NbBlocks do
+    begin
+
+      Surfaces := '';
+
+      for s := 1 to NbSegments do
+        if FSegments[s].Block = b then
+        begin
+          if Surfaces <> '' then
+            Surfaces := Surfaces + ',';
+          Surfaces := Surfaces + IntToStr(500 + s);
+        end;
+
+      WriteLn(F, Format('Physical Surface(%d) = {%s};', [b, Surfaces]));
 
     end;
 
@@ -841,18 +1026,17 @@ begin
 
     if (b < 1) or (b > NbBlocks) then
       raise Exception.Create('Element ' + IntToStr(i) + ' carries physical region ' +
-        IntToStr(b) + ', which is not a voussoir - the .geo and the block table ' +
+        IntToStr(b) + ', which is not a voussoir - the .geo and the segment table ' +
         'have got out of step.');
 
     FEleBlock[i] := b;
 
-    ArcId := FBlocks[b].Arc;
+    ArcId := ArcOfElement(b, cx);
 
     dx := cx - FArcs[ArcId].cx;
     dy := cy - FArcs[ArcId].cy;
 
     d := Sqrt(dx * dx + dy * dy);
-
 
     // Hoop direction: perpendicular to the radius of this element's own
     // arc, which is the direction the arch thrust runs in here.
@@ -1137,6 +1321,226 @@ begin
 
   FGmsh.Close;
 
+  // The thrust line and the middle third are not fields over the mesh,
+  // so TGmsh has no method that writes them - they go straight into the
+  // .pos as line views of their own once it has closed the file.
+  CalcThrustLine;
+
+  AppendLineViews(PosFile);
+
+end;
+
+{ Where the thrust line crosses each joint, which is what ReportJoints
+  tabulates and what the 'Thrust line' view draws. See ReportJoints' own
+  comment for what the numbers mean; this routine only produces them.
+
+  There are NbBlocks+1 joints for NbSegments+1 boundaries, the odd one
+  out being the mitre inside the keystone - JointBoundary maps between
+  the two. The elements within one layer of a joint, and belonging to
+  one of the two blocks that meet there, give the direct stress on the
+  joint plane at NbAcrossRing equally deep stations, which integrate
+  directly to the thrust, the moment about mid-depth, and hence to the
+  eccentricity e = M/N. }
+procedure TArchModel.CalcThrustLine;
+var
+
+  j, k, i, n, b : Integer;
+
+  x, y, dxc, dyc, dn, nx, ny : Double;
+
+  SumSn, SumSnX, Thrust, Moment, ecc : Double;
+
+begin
+
+  SetLength(FJThrust, NbBlocks + 1);
+  SetLength(FJEcc, NbBlocks + 1);
+  SetLength(FJMinSn, NbBlocks + 1);
+  SetLength(FJMaxSn, NbBlocks + 1);
+  SetLength(FJPx, NbBlocks + 1);
+  SetLength(FJPy, NbBlocks + 1);
+  SetLength(FJValid, NbBlocks + 1);
+
+  for j := 0 to NbBlocks do
+  begin
+
+    k := JointBoundary(j);
+
+    FJValid[j] := False;
+
+    n := 0;
+    SumSn := 0;
+    SumSnX := 0;
+
+    nx := FBounds[k].nx;
+    ny := FBounds[k].ny;
+
+    for i := 0 to FEngine.NbElements - 1 do
+    begin
+
+      // Only the two blocks that actually meet at this joint. Without
+      // this the joint PLANE, extended, would also sweep up elements
+      // elsewhere on the ring - a plane is infinite, an arch is not.
+      b := Round(FEleBlock[i]);
+
+      if (b <> j) and (b <> j + 1) then
+        Continue;
+
+      // Element centroid in the joint's own frame.
+      dxc := FEleCx[i] - FBounds[k].mx;
+      dyc := FEleCy[i] - FBounds[k].my;
+
+      dn := dxc * nx + dyc * ny;
+
+      if Abs(dn) > FBounds[k].Band then
+        Continue;
+
+      // Position across the ring depth, intrados negative.
+      x := dxc * FBounds[k].tx + dyc * FBounds[k].ty;
+
+      // Direct stress on the joint plane.
+      y := FSxx[i] * nx * nx + 2 * FSxy[i] * nx * ny + FSyy[i] * ny * ny;
+
+      SumSn := SumSn + y;
+      SumSnX := SumSnX + y * x;
+
+      if n = 0 then
+      begin
+        FJMinSn[j] := y;
+        FJMaxSn[j] := y;
+      end
+      else
+      begin
+        if y < FJMinSn[j] then FJMinSn[j] := y;
+        if y > FJMaxSn[j] then FJMaxSn[j] := y;
+      end;
+
+      Inc(n);
+
+    end;
+
+    if n < 2 then
+      Continue;
+
+    // Midpoint-rule integration over the joint depth: every element in
+    // the band stands for one equally deep slice, so the plain mean is
+    // the integral divided by h.
+    Thrust := BarrelDepth * FBounds[k].h * SumSn / n;
+    Moment := BarrelDepth * FBounds[k].h * SumSnX / n;
+
+    if Abs(Thrust) > 1e-9 then
+      ecc := Moment / Thrust
+    else
+      ecc := 0;
+
+    FJThrust[j] := Thrust;
+    FJEcc[j] := ecc;
+
+    FJPx[j] := FBounds[k].mx + ecc * FBounds[k].tx;
+    FJPy[j] := FBounds[k].my + ecc * FBounds[k].ty;
+
+    FJValid[j] := True;
+
+  end;
+
+end;
+
+{ Adds the line views to the .pos: the thrust line itself, the two
+  middle-third boundaries it has to stay between, and - when there is
+  one - an arrow at the superimposed load. Together these turn the .pos
+  into the diagram a masonry engineer would actually draw, rather than
+  just a stress plot.
+
+  Written by hand rather than through TGmsh, because none of it is a
+  field over the mesh: the parsed .pos format takes bare line elements
+  (SL) and vector points (VP) at arbitrary coordinates, which is exactly
+  what a thrust line is.
+
+  The middle third is drawn boundary by boundary rather than joint by
+  joint, so that it follows the ring through the apex rather than
+  cutting the corner across the keystone. }
+procedure TArchModel.AppendLineViews(const FileName : String);
+var
+
+  F : TextFile;
+
+  j, k : Integer;
+
+  ax, ay, bx, by : Double;
+
+  procedure Segment(x0, y0, x1, y1, v : Double);
+  begin
+    WriteLn(F, Format('SL(%e,%e,0,%e,%e,0){%e,%e};',
+      [x0, y0, x1, y1, v, v], DotFS));
+  end;
+
+begin
+
+  AssignFile(F, FileName);
+
+  SafeAppendText(F);
+
+  try
+
+    (******************** THRUST LINE ********************)
+
+    WriteLn(F, 'View "Thrust line" {');
+
+    for j := 0 to NbBlocks - 1 do
+      if FJValid[j] and FJValid[j + 1] then
+        Segment(FJPx[j], FJPy[j], FJPx[j + 1], FJPy[j + 1],
+                Abs(FJThrust[j]) / 1000);
+
+    WriteLn(F, '};');
+
+    (******************** MIDDLE THIRD ********************)
+
+    // The band the thrust line must stay inside for the joints to be in
+    // compression over their whole depth: mid-ring plus and minus h/6.
+    WriteLn(F, 'View "Middle third" {');
+
+    for k := 0 to NbSegments - 1 do
+    begin
+
+      ax := FBounds[k].mx - FBounds[k].tx * FBounds[k].h / 6;
+      ay := FBounds[k].my - FBounds[k].ty * FBounds[k].h / 6;
+
+      bx := FBounds[k + 1].mx - FBounds[k + 1].tx * FBounds[k + 1].h / 6;
+      by := FBounds[k + 1].my - FBounds[k + 1].ty * FBounds[k + 1].h / 6;
+
+      Segment(ax, ay, bx, by, 0);
+
+      ax := FBounds[k].mx + FBounds[k].tx * FBounds[k].h / 6;
+      ay := FBounds[k].my + FBounds[k].ty * FBounds[k].h / 6;
+
+      bx := FBounds[k + 1].mx + FBounds[k + 1].tx * FBounds[k + 1].h / 6;
+      by := FBounds[k + 1].my + FBounds[k + 1].ty * FBounds[k + 1].h / 6;
+
+      Segment(ax, ay, bx, by, 0);
+
+    end;
+
+    WriteLn(F, '};');
+
+    (******************** APPLIED LOAD ********************)
+
+    if FAppliedLoad > 0 then
+    begin
+
+      WriteLn(F, 'View "Applied load" {');
+
+      WriteLn(F, Format('VP(%e,%e,0){0,%e,0};',
+        [FLoadX, FLoadY, -FAppliedLoad / 1000], DotFS));
+
+      WriteLn(F, '};');
+
+    end;
+
+  finally
+
+    CloseFile(F);
+
+  end;
+
 end;
 
 procedure TArchModel.ReportSummary;
@@ -1194,8 +1598,6 @@ var
 
   MinS2, MaxS1, MeanSn, Area : Double;
 
-  Kind : String;
-
 begin
 
   WriteLn;
@@ -1243,16 +1645,8 @@ begin
     if Area > 0 then
       MeanSn := MeanSn / Area;
 
-    case FBlocks[b].Arc of
-      ArcHaunchRight : Kind := 'haunch R';
-      ArcCrownRight  : Kind := 'crown R ';
-      ArcCrownLeft   : Kind := 'crown L ';
-    else
-      Kind := 'haunch L';
-    end;
-
     Write(Format('  %5d  %s  %11.3f   %11.3f   %10.3f',
-      [b, Kind, MeanSn / 1e6, MinS2 / 1e6, MaxS1 / 1e6]));
+      [b, BlockKind(b), MeanSn / 1e6, MinS2 / 1e6, MaxS1 / 1e6]));
 
     if nTens > 0 then
       WriteLn(Format('   %d/%d elements', [nTens, n]))
@@ -1261,39 +1655,20 @@ begin
 
   end;
 
-  WriteLn('  (block 1 springs from the right; the apex joint is between blocks ',
-    NbBlocks div 2, ' and ', NbBlocks div 2 + 1, ' - there is no keystone)');
+  WriteLn('  (block 1 springs from the right; block ', KeystoneBlock,
+    ' is the keystone, straddling the apex)');
 
 end;
 
 { The masonry reading of the elastic result - the same thrust-line
-  analysis as ArchEx1's, restated for an arch with four centres.
+  analysis as ArchEx1's, restated for an arch with four centres. See
+  CalcThrustLine for how the numbers are arrived at.
 
-  At each joint the elements of the two blocks that meet there, and
-  within one element layer of the joint plane, give the direct stress on
-  that plane at NbAcrossRing equally deep stations through the ring. The
-  thrust and the moment about mid-depth are then integrated over the
-  joint directly, midpoint rule, one station per layer:
-
-    N = t * h * mean(Sn)         M = t * h * mean(Sn * x)
-
-  with x measured from mid-joint, intrados negative, so the thrust line
-  crosses the joint at an eccentricity e = M/N = sum(Sn*x)/sum(Sn) and
-  Heyman's no-tension criterion is |e| <= h/6. h is each joint's own
-  depth, which is RingThickness on every radial joint but slightly more
-  on the mitred apex joint, where the ring is crossed at an angle.
-
-  Integrating rather than fitting a straight line across the ring is
-  deliberate, though the two agree closely here. A line is the classical
-  assumption and is what a shallow ring gives anyway, but this arch's
-  haunch arcs carry a 0.6 m ring on a radius of only 1.0 m, where the
-  hoop stress varies across the joint too sharply to be a line, and
-  nothing about the middle-third rule needs one: the resultant's
-  position is sum(Sn*x)/sum(Sn) whatever shape the stress block is.
-  Every element in the band counts equally, because each stands for one
-  equally deep slice of the joint; weighting by element area would
-  quietly bias the result towards the extrados, where the elements are
-  larger. ArchEx1 does the same, so the two reports are comparable.
+  The thrust line crosses each joint at an eccentricity e = M/N from
+  mid-depth, and Heyman's no-tension criterion is |e| <= h/6. h is each
+  joint's own depth, which is RingThickness on every one of them here -
+  the mitre where the ring is crossed at an angle is inside the
+  keystone, and so not a joint.
 
   A flagged joint is where the ELASTIC thrust line has left the middle
   third: the bonded model is carrying tension no mortar joint could
@@ -1303,13 +1678,9 @@ end;
 procedure TArchModel.ReportJoints;
 var
 
-  k, i, n, nOutside, b : Integer;
+  j, nOutside : Integer;
 
-  x, y, dxc, dyc, dn, nx, ny : Double;
-
-  SumSn, SumSnX : Double;
-
-  MinSn, MaxSn, Thrust, Moment, ecc, EndThrust, Sliver : Double;
+  EndThrust, Sliver : Double;
 
   Status : String;
 
@@ -1323,84 +1694,21 @@ begin
   nOutside := 0;
   EndThrust := 0;
 
-  for k := 0 to NbBlocks do
+  for j := 0 to NbBlocks do
   begin
 
-    n := 0;
-    SumSn := 0;
-    SumSnX := 0;
-    MinSn := 0; MaxSn := 0;
-
-    nx := FJoints[k].nx;
-    ny := FJoints[k].ny;
-
-    for i := 0 to FEngine.NbElements - 1 do
-    begin
-
-      // Only the two blocks that actually meet at this joint. Without
-      // this the joint PLANE, extended, would also sweep up elements
-      // elsewhere on the ring - a plane is infinite, an arch is not.
-      b := Round(FEleBlock[i]);
-
-      if (b <> k) and (b <> k + 1) then
-        Continue;
-
-      // Element centroid in the joint's own frame.
-      dxc := FEleCx[i] - FJoints[k].mx;
-      dyc := FEleCy[i] - FJoints[k].my;
-
-      dn := dxc * nx + dyc * ny;
-
-      if Abs(dn) > FJoints[k].Band then
-        Continue;
-
-      // Position across the ring depth, intrados negative.
-      x := dxc * FJoints[k].tx + dyc * FJoints[k].ty;
-
-      // Direct stress on the joint plane.
-      y := FSxx[i] * nx * nx + 2 * FSxy[i] * nx * ny + FSyy[i] * ny * ny;
-
-      SumSn := SumSn + y;
-      SumSnX := SumSnX + y * x;
-
-      if n = 0 then
-      begin
-        MinSn := y;
-        MaxSn := y;
-      end
-      else
-      begin
-        if y < MinSn then MinSn := y;
-        if y > MaxSn then MaxSn := y;
-      end;
-
-      Inc(n);
-
-    end;
-
-    if n < 2 then
+    if not FJValid[j] then
       Continue;
-
-    // Midpoint-rule integration over the joint depth: every element in
-    // the band stands for one equally deep slice, so the plain mean is
-    // the integral divided by h.
-    Thrust := BarrelDepth * FJoints[k].h * SumSn / n;
-    Moment := BarrelDepth * FJoints[k].h * SumSnX / n;
-
-    if Abs(Thrust) > 1e-9 then
-      ecc := Moment / Thrust
-    else
-      ecc := 0;
 
     // The two end joints lie in the y = 0 plane, so their normal is
     // vertical and the thrust across them is the vertical reaction at
     // that springing - which is what makes the static check below
     // possible without asking the engine for reactions it does not
     // expose under the penalty method.
-    if (k = 0) or (k = NbBlocks) then
-      EndThrust := EndThrust + Abs(Thrust);
+    if (j = 0) or (j = NbBlocks) then
+      EndThrust := EndThrust + Abs(FJThrust[j]);
 
-    if Abs(ecc) <= FJoints[k].h / 6 then
+    if Abs(FJEcc[j]) <= FBounds[JointBoundary(j)].h / 6 then
       Status := 'inside'
     else
     begin
@@ -1409,8 +1717,9 @@ begin
     end;
 
     WriteLn(Format('  %5d  %6.3f  %10.2f  %7.3f  %10.3f  %10.3f   %s',
-      [k, FJoints[k].my, Thrust / 1000, ecc / FJoints[k].h,
-       MinSn / 1e6, MaxSn / 1e6, Status]));
+      [j, FBounds[JointBoundary(j)].my, FJThrust[j] / 1000,
+       FJEcc[j] / FBounds[JointBoundary(j)].h,
+       FJMinSn[j] / 1e6, FJMaxSn[j] / 1e6, Status]));
 
   end;
 
@@ -1438,11 +1747,10 @@ begin
   // samples, at each springing - weight the check cannot see. The rest
   // of the gap is discretisation; both halve when the mesh is halved.
   Sliver := 2 * Density * Abs(GravityAccel) * BarrelDepth * RingThickness *
-            0.5 * ((FBlocks[1].Ang1 - FBlocks[1].Ang0) / NbAlongBlock) *
-            (FArcs[FBlocks[1].Arc].r + RingThickness / 2);
+            0.5 * ((FSegments[1].Ang1 - FSegments[1].Ang0) / NbAlongBlock) *
+            (FArcs[FSegments[1].Arc].r + RingThickness / 2);
 
-  WriteLn(Format('  A check on the solve, not an identity: the band is sampled half an',
-    []));
+  WriteLn('  A check on the solve, not an identity: the band is sampled half an');
   WriteLn(Format('  element above the springing face, missing %.1f%% of the ring''s own',
     [100 * Sliver / (FSelfWeight + FAppliedLoad)]));
   WriteLn('  weight, and element stresses are centre values. Both shrink with the mesh.');
@@ -1503,10 +1811,34 @@ begin
     WriteLn(F, '  Draw;');
     WriteLn(F, 'EndFor');
     WriteLn(F);
-    WriteLn(F, '// Settle on the hoop stress: the arch thrust itself, negative');
-    WriteLn(F, '// (compressive) everywhere a masonry arch is working properly.');
+    WriteLn(F, '// Settle on the masonry diagram: the hoop stress - the arch thrust');
+    WriteLn(F, '// itself, negative (compressive) everywhere the arch is working');
+    WriteLn(F, '// properly - with the thrust line drawn over it between the two');
+    WriteLn(F, '// middle-third boundaries it has to stay inside.');
     WriteLn(F, Format('View[%d].Visible = 0;', [ViewDisplacement]));
     WriteLn(F, Format('View[%d].Visible = 1;', [ViewHoop]));
+    WriteLn(F);
+    WriteLn(F, Format('View[%d].Visible = 1;', [ViewThrustLine]));
+    WriteLn(F, Format('View[%d].LineWidth = 4;', [ViewThrustLine]));
+    WriteLn(F, Format('View[%d].ShowScale = 0;', [ViewThrustLine]));
+    WriteLn(F, Format('View[%d].ColormapNumber = 9;   // grayscale, so it reads',
+      [ViewThrustLine]));
+    WriteLn(F, '                              // against the stress colours');
+    WriteLn(F);
+    WriteLn(F, Format('View[%d].Visible = 1;', [ViewMiddleThird]));
+    WriteLn(F, Format('View[%d].LineWidth = 1;', [ViewMiddleThird]));
+    WriteLn(F, Format('View[%d].ShowScale = 0;', [ViewMiddleThird]));
+
+    if FAppliedLoad > 0 then
+    begin
+      WriteLn(F);
+      WriteLn(F, '// The superimposed load, as an arrow at the point it acts.');
+      WriteLn(F, Format('View[%d].Visible = 1;', [ViewLoad]));
+      WriteLn(F, Format('View[%d].ShowScale = 0;', [ViewLoad]));
+      WriteLn(F, Format('View[%d].ArrowSizeMax = 80;', [ViewLoad]));
+    end;
+
+    WriteLn(F);
     WriteLn(F, 'Draw;');
     WriteLn(F);
     WriteLn(F, '// The other views (Ux, Uy, S1, S2, Sxx, Syy, Sxy, VonMises,');

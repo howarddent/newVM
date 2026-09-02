@@ -94,6 +94,12 @@ const
   ViewDisplacement = 0;
   ViewHoop = 3;
 
+  // The three line views AppendLineViews adds after the ten field views.
+  // 'Applied load' only exists when there is one, so it comes last.
+  ViewThrustLine = 11;
+  ViewMiddleThird = 12;
+  ViewLoad = 13;
+
 type
 
   TArchModel = class(TObject)
@@ -115,8 +121,16 @@ type
     FSelfWeight : Double;    // magnitude, N
     FAppliedLoad : Double;   // magnitude, N
     FNbLoadedNodes : Integer;
+    FLoadX, FLoadY : Double; // where the superimposed load is applied
 
     FElapsed : Double;
+
+    // Per joint, filled by CalcThrustLine: the thrust across the joint,
+    // the eccentricity of the thrust line there, and the point that
+    // eccentricity puts it at.
+    FJThrust, FJEcc, FJMinSn, FJMaxSn : TDoubleArray;
+    FJPx, FJPy : TDoubleArray;
+    FJValid : Array of Boolean;
 
     // Per element, filled by CalcElementGeometry / PostProcess.
     FEleBlock : TDoubleArray;
@@ -134,6 +148,9 @@ type
     procedure BuildMesh;
     procedure CalcElementGeometry;
     procedure BuildModel;
+
+    procedure CalcThrustLine;
+    procedure AppendLineViews(const FileName : String);
 
     procedure ReportSummary;
     procedure ReportBlocks;
@@ -211,6 +228,31 @@ begin
   begin
     try
       ReWrite(F);
+      Exit;
+    except
+      if Attempt = MaxAttempts then
+        raise;
+      Sleep(RetryDelayMs);
+    end;
+  end;
+
+end;
+
+{ As SafeReWriteText, but opening an existing file to add to the end of
+  it - AppendLineViews puts its views after the ones TGmsh has just
+  written and closed. }
+procedure SafeAppendText(var F : TextFile);
+const
+  MaxAttempts = 8;
+  RetryDelayMs = 50;
+var
+  Attempt : Integer;
+begin
+
+  for Attempt := 1 to MaxAttempts do
+  begin
+    try
+      Append(F);
       Exit;
     except
       if Attempt = MaxAttempts then
@@ -643,6 +685,10 @@ begin
     // lands on the keystone and nothing else.
     HalfWindow := 0.5 * (Pi / NbBlocks);
 
+    // Kept for the 'Applied load' arrow in AppendLineViews.
+    FLoadX := OuterRadius * Cos(ThetaLoad);
+    FLoadY := OuterRadius * Sin(ThetaLoad);
+
     SetLength(IsLoaded, FGmsh.NbNodes);
 
     for i := 0 to FGmsh.NbNodes - 1 do
@@ -795,6 +841,204 @@ begin
   FGmsh.WriteViewScalarElement('Block', FEleBlock, False);
 
   FGmsh.Close;
+
+  // The thrust line and the middle third are not fields over the mesh,
+  // so TGmsh has no method that writes them - they go straight into the
+  // .pos as line views of their own once it has closed the file.
+  CalcThrustLine;
+
+  AppendLineViews(PosFile);
+
+end;
+
+{ Where the thrust line crosses each joint, which is what ReportJoints
+  tabulates and what the 'Thrust line' view draws. See ReportJoints'
+  own comment for what the numbers mean; this routine only produces
+  them.
+
+  Joint k is the radial plane at angle theta = k*Pi/NbBlocks. The
+  elements within one layer of it give the hoop stress at NbAcrossRing
+  equally deep stations through the ring, which integrate directly -
+  midpoint rule, every element weighted equally - to the thrust and the
+  moment about mid-depth, hence to the eccentricity e = M/N. The point
+  the thrust line passes through is then simply mid-ring plus e, along
+  the joint. }
+procedure TArchModel.CalcThrustLine;
+var
+
+  k, i, n : Integer;
+
+  theta, band, x, y : Double;
+
+  SumSn, SumSnX, Thrust, Moment, ecc : Double;
+
+begin
+
+  SetLength(FJThrust, NbBlocks + 1);
+  SetLength(FJEcc, NbBlocks + 1);
+  SetLength(FJMinSn, NbBlocks + 1);
+  SetLength(FJMaxSn, NbBlocks + 1);
+  SetLength(FJPx, NbBlocks + 1);
+  SetLength(FJPy, NbBlocks + 1);
+  SetLength(FJValid, NbBlocks + 1);
+
+  // One element layer either side of the joint. Each element spans
+  // 1/NbAlongBlock of a block, so its centroid sits half that from the
+  // joint: 0.15 of a block reaches the first layer and no further.
+  band := 0.15 * (Pi / NbBlocks);
+
+  for k := 0 to NbBlocks do
+  begin
+
+    theta := Pi * k / NbBlocks;
+
+    FJValid[k] := False;
+
+    n := 0;
+    SumSn := 0;
+    SumSnX := 0;
+
+    for i := 0 to FEngine.NbElements - 1 do
+    begin
+
+      if Abs(FEleTheta[i] - theta) > band then
+        Continue;
+
+      x := FEleR[i] - MidRadius;
+      y := FSn[i];
+
+      SumSn := SumSn + y;
+      SumSnX := SumSnX + y * x;
+
+      if n = 0 then
+      begin
+        FJMinSn[k] := y;
+        FJMaxSn[k] := y;
+      end
+      else
+      begin
+        if y < FJMinSn[k] then FJMinSn[k] := y;
+        if y > FJMaxSn[k] then FJMaxSn[k] := y;
+      end;
+
+      Inc(n);
+
+    end;
+
+    if n < 2 then
+      Continue;
+
+    // Midpoint-rule integration over the ring depth: every element in
+    // the band stands for one equally deep slice, so the plain mean is
+    // the integral divided by the ring thickness.
+    Thrust := BarrelDepth * RingThickness * SumSn / n;
+    Moment := BarrelDepth * RingThickness * SumSnX / n;
+
+    if Abs(Thrust) > 1e-9 then
+      ecc := Moment / Thrust
+    else
+      ecc := 0;
+
+    FJThrust[k] := Thrust;
+    FJEcc[k] := ecc;
+
+    FJPx[k] := (MidRadius + ecc) * Cos(theta);
+    FJPy[k] := (MidRadius + ecc) * Sin(theta);
+
+    FJValid[k] := True;
+
+  end;
+
+end;
+
+{ Adds the line views to the .pos: the thrust line itself, the two
+  middle-third boundaries it has to stay between, and - when there is
+  one - an arrow at the superimposed load. Together these turn the .pos
+  into the diagram a masonry engineer would actually draw, rather than
+  just a stress plot.
+
+  Written by hand rather than through TGmsh, because none of it is a
+  field over the mesh: the parsed .pos format takes bare line elements
+  (SL) and vector points (VP) at arbitrary coordinates, which is exactly
+  what a thrust line is. }
+procedure TArchModel.AppendLineViews(const FileName : String);
+var
+
+  F : TextFile;
+
+  k : Integer;
+
+  theta0, theta1, r0, r1 : Double;
+
+  procedure Segment(x0, y0, x1, y1, v : Double);
+  begin
+    WriteLn(F, Format('SL(%e,%e,0,%e,%e,0){%e,%e};',
+      [x0, y0, x1, y1, v, v], DotFS));
+  end;
+
+begin
+
+  AssignFile(F, FileName);
+
+  SafeAppendText(F);
+
+  try
+
+    (******************** THRUST LINE ********************)
+
+    WriteLn(F, 'View "Thrust line" {');
+
+    for k := 0 to NbBlocks - 1 do
+      if FJValid[k] and FJValid[k + 1] then
+        Segment(FJPx[k], FJPy[k], FJPx[k + 1], FJPy[k + 1],
+                Abs(FJThrust[k]) / 1000);
+
+    WriteLn(F, '};');
+
+    (******************** MIDDLE THIRD ********************)
+
+    // The band the thrust line must stay inside for the joints to be in
+    // compression over their whole depth: mid-ring plus and minus h/6.
+    WriteLn(F, 'View "Middle third" {');
+
+    for k := 0 to NbBlocks - 1 do
+    begin
+
+      theta0 := Pi * k / NbBlocks;
+      theta1 := Pi * (k + 1) / NbBlocks;
+
+      r0 := MidRadius - RingThickness / 6;
+      r1 := MidRadius + RingThickness / 6;
+
+      Segment(r0 * Cos(theta0), r0 * Sin(theta0),
+              r0 * Cos(theta1), r0 * Sin(theta1), 0);
+
+      Segment(r1 * Cos(theta0), r1 * Sin(theta0),
+              r1 * Cos(theta1), r1 * Sin(theta1), 0);
+
+    end;
+
+    WriteLn(F, '};');
+
+    (******************** APPLIED LOAD ********************)
+
+    if FAppliedLoad > 0 then
+    begin
+
+      WriteLn(F, 'View "Applied load" {');
+
+      WriteLn(F, Format('VP(%e,%e,0){0,%e,0};',
+        [FLoadX, FLoadY, -FAppliedLoad / 1000], DotFS));
+
+      WriteLn(F, '};');
+
+    end;
+
+  finally
+
+    CloseFile(F);
+
+  end;
 
 end;
 
@@ -951,13 +1195,9 @@ end;
 procedure TArchModel.ReportJoints;
 var
 
-  k, i, n, nOutside : Integer;
+  k, nOutside : Integer;
 
-  theta, band, x, y, EndThrust : Double;
-
-  SumSn, SumSnX : Double;
-
-  MinSn, MaxSn, Thrust, Moment, ecc, Sliver : Double;
+  EndThrust, Sliver : Double;
 
   Status : String;
 
@@ -968,11 +1208,6 @@ begin
   WriteLn('  Joint  angle    thrust N     e/h      Sn min      Sn max   middle third');
   WriteLn('         (deg)       (kN)                (MPa)       (MPa)');
 
-  // One element layer either side of the joint. Each element spans
-  // 1/NbAlongBlock of a block, so its centroid sits half that from the
-  // joint: 0.15 of a block reaches the first layer and no further.
-  band := 0.15 * (Pi / NbBlocks);
-
   nOutside := 0;
 
   EndThrust := 0;
@@ -980,53 +1215,8 @@ begin
   for k := 0 to NbBlocks do
   begin
 
-    theta := Pi * k / NbBlocks;
-
-    n := 0;
-    SumSn := 0;
-    SumSnX := 0;
-    MinSn := 0; MaxSn := 0;
-
-    for i := 0 to FEngine.NbElements - 1 do
-    begin
-
-      if Abs(FEleTheta[i] - theta) > band then
-        Continue;
-
-      x := FEleR[i] - MidRadius;
-      y := FSn[i];
-
-      SumSn := SumSn + y;
-      SumSnX := SumSnX + y * x;
-
-      if n = 0 then
-      begin
-        MinSn := y;
-        MaxSn := y;
-      end
-      else
-      begin
-        if y < MinSn then MinSn := y;
-        if y > MaxSn then MaxSn := y;
-      end;
-
-      Inc(n);
-
-    end;
-
-    if n < 2 then
+    if not FJValid[k] then
       Continue;
-
-    // Midpoint-rule integration over the ring depth: every element in
-    // the band stands for one equally deep slice, so the plain mean is
-    // the integral divided by the ring thickness.
-    Thrust := BarrelDepth * RingThickness * SumSn / n;
-    Moment := BarrelDepth * RingThickness * SumSnX / n;
-
-    if Abs(Thrust) > 1e-9 then
-      ecc := Moment / Thrust
-    else
-      ecc := 0;
 
     // The two end joints lie in the y = 0 plane, so their normal is
     // vertical and the thrust across them IS the vertical reaction at
@@ -1034,9 +1224,9 @@ begin
     // possible without asking the engine for reactions it does not
     // expose under the penalty method.
     if (k = 0) or (k = NbBlocks) then
-      EndThrust := EndThrust + Abs(Thrust);
+      EndThrust := EndThrust + Abs(FJThrust[k]);
 
-    if Abs(ecc) <= RingThickness / 6 then
+    if Abs(FJEcc[k]) <= RingThickness / 6 then
       Status := 'inside'
     else
     begin
@@ -1045,8 +1235,8 @@ begin
     end;
 
     WriteLn(Format('  %5d  %6.1f  %10.2f  %7.3f  %10.3f  %10.3f   %s',
-      [k, 180.0 * k / NbBlocks, Thrust / 1000, ecc / RingThickness,
-       MinSn / 1e6, MaxSn / 1e6, Status]));
+      [k, 180.0 * k / NbBlocks, FJThrust[k] / 1000, FJEcc[k] / RingThickness,
+       FJMinSn[k] / 1e6, FJMaxSn[k] / 1e6, Status]));
 
   end;
 
@@ -1143,10 +1333,34 @@ begin
     WriteLn(F, '  Draw;');
     WriteLn(F, 'EndFor');
     WriteLn(F);
-    WriteLn(F, '// Settle on the hoop stress: the arch thrust itself, negative');
-    WriteLn(F, '// (compressive) everywhere a masonry arch is working properly.');
+    WriteLn(F, '// Settle on the masonry diagram: the hoop stress - the arch thrust');
+    WriteLn(F, '// itself, negative (compressive) everywhere the arch is working');
+    WriteLn(F, '// properly - with the thrust line drawn over it between the two');
+    WriteLn(F, '// middle-third boundaries it has to stay inside.');
     WriteLn(F, Format('View[%d].Visible = 0;', [ViewDisplacement]));
     WriteLn(F, Format('View[%d].Visible = 1;', [ViewHoop]));
+    WriteLn(F);
+    WriteLn(F, Format('View[%d].Visible = 1;', [ViewThrustLine]));
+    WriteLn(F, Format('View[%d].LineWidth = 4;', [ViewThrustLine]));
+    WriteLn(F, Format('View[%d].ShowScale = 0;', [ViewThrustLine]));
+    WriteLn(F, Format('View[%d].ColormapNumber = 9;   // grayscale, so it reads',
+      [ViewThrustLine]));
+    WriteLn(F, '                              // against the stress colours');
+    WriteLn(F);
+    WriteLn(F, Format('View[%d].Visible = 1;', [ViewMiddleThird]));
+    WriteLn(F, Format('View[%d].LineWidth = 1;', [ViewMiddleThird]));
+    WriteLn(F, Format('View[%d].ShowScale = 0;', [ViewMiddleThird]));
+
+    if FAppliedLoad > 0 then
+    begin
+      WriteLn(F);
+      WriteLn(F, '// The superimposed load, as an arrow at the point it acts.');
+      WriteLn(F, Format('View[%d].Visible = 1;', [ViewLoad]));
+      WriteLn(F, Format('View[%d].ShowScale = 0;', [ViewLoad]));
+      WriteLn(F, Format('View[%d].ArrowSizeMax = 80;', [ViewLoad]));
+    end;
+
+    WriteLn(F);
     WriteLn(F, 'Draw;');
     WriteLn(F);
     WriteLn(F, '// The other views (Ux, Uy, S1, S2, Sxx, Syy, Sxy, VonMises,');

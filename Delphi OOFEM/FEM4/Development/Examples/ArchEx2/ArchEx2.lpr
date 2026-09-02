@@ -14,8 +14,8 @@ program ArchEx2;
   Usage:  ArchEx2 [1|2|3] [--no-view]
 
     1  self weight only (default)
-    2  self weight + a point load of 25% of the arch's weight at the
-       apex
+    2  self weight + a point load of 25% of the arch's weight on the
+       keystone
     3  self weight + the same load at the quarter point of the arch's
        own length, measured from the left springing - the same station
        ArchEx1 loads in its own load case 3
