@@ -28,11 +28,12 @@ uses
   Interfaces,           // the LCL widgetset
   Forms,
   SysUtils, cblas,
-  newVM,
   uThermEx1,
   uThermEx1Plot;
 
 var
+
+  DotFS : TFormatSettings;
 
   Model : TThermalModel;
 
@@ -40,18 +41,23 @@ var
 
   Case_, i, v : Integer;
 
+  Flow : Double;
+
   ShowPlot : Boolean;
 
-  Arg, Sub : String;
-
-  R, T0, TEnd : TVMobj;
+  Arg : String;
 
 begin
 
   InitializeCBLAS;
 
+  // Parse the cardiac output with a dot separator whatever the locale.
+  DotFS := DefaultFormatSettings;
+  DotFS.DecimalSeparator := '.';
+
   Case_ := CaseExposed;
   ShowPlot := True;
+  Flow := CardiacOutputDefault;
 
   for i := 1 to ParamCount do
   begin
@@ -62,10 +68,14 @@ begin
       ShowPlot := False
     else if TryStrToInt(Arg, v) and (v >= CaseDraped) and (v <= CaseExposed) then
       Case_ := v
+    else if TryStrToFloat(Arg, Flow, DotFS) and (Flow >= 0) and (Flow <= CardiacOutputMax) then
+      // A cardiac output, so the slider's value can be set headlessly too.
+      Continue
     else
     begin
-      WriteLn('Usage: ThermEx1 [1|2] [--no-plot]');
+      WriteLn('Usage: ThermEx1 [1|2] [litres/min] [--no-plot]');
       WriteLn('  1 = draped (hold balance), 2 = exposed at t=0');
+      WriteLn('  litres/min = cardiac output, 0 to 10, default 5');
       Halt(1);
     end;
 
@@ -77,7 +87,8 @@ begin
   try
 
     try
-      Model.Run;
+      Model.Prepare;
+      Model.Solve(Flow);
     except
       on E : Exception do
       begin
@@ -90,19 +101,9 @@ begin
     if ShowPlot then
     begin
 
-      Model.GetRadialProfiles(R, T0, TEnd);
-
-      if Model.CaseNumber = CaseDraped then
-        Sub := 'Draped: the balanced state held for the whole run'
-      else
-        Sub := 'Exposed at t = 0: bare skin and radiation into 16 C';
-
       Form := TProfileForm.CreateNew(Application);
 
-      Form.ShowProfiles(R, T0, TEnd,
-        Format('ThermEx1 - radial temperature profile, case %d',
-          [Model.CaseNumber]),
-        Sub, Model.Report, Model);
+      Form.Attach(Model);
 
       Form.Show;
 

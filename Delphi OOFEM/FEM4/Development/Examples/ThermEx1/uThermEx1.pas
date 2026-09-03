@@ -1,7 +1,7 @@
 unit uThermEx1;
 
 { ThermEx1 - core temperature of an anaesthetised adult losing heat to a
-  cold theatre. Four compartments, conduction only.
+  cold theatre. Four compartments, conduction and blood perfusion.
 
   A 75 kg adult at 5% body fat, generating heat at rest and losing it
   from the skin into a 16 C theatre. The question it answers is how the
@@ -36,21 +36,39 @@ unit uThermEx1;
   so the compartments matter as much for WHERE the heat appears as for
   how it conducts.
 
+  PERFUSION
+
+  Blood carries heat between the compartments far faster than tissue
+  conducts it, and that is the mechanism behind redistribution - the
+  early core fall after induction, as a vasodilated periphery draws on
+  a warm core. The model carries it as the Pennes term, a volumetric
+  exchange in each compartment with blood arriving at the pool
+  temperature, distributed by the resting shares of cardiac output:
+  75% to the core compartment, 18% to muscle, 5% to skin, 2% to fat.
+
+  The pool closes the loop. With no external source or sink of blood
+  heat, a well-mixed pool sits at the FLOW-WEIGHTED MEAN tissue
+  temperature, which makes the net perfusion heat identically zero -
+  perfusion moves heat about and creates none. The report carries that
+  net out and prints it, so the claim is checked rather than asserted.
+
+  Cardiac output is a parameter, 0 to 10 L/min, on a slider in the plot
+  window. Zero is the conduction-only model this began as. What it shows
+  is strongly non-linear: at 0 the core falls 0.6 C/h, at 5 it falls
+  2.7, and at 10 only 2.9 - once blood has flattened the internal
+  resistance, more of it barely matters, because the bottleneck has
+  moved to the skin surface.
+
   WHAT IS AND IS NOT IN THE MODEL
 
   In: conduction through all four compartments, heat storage, metabolic
-  generation where it actually arises, and surface losses by convection
-  and radiation into still air at 16 C.
+  generation where it actually arises, blood perfusion, and surface
+  losses by convection and radiation into still air at 16 C.
 
-  Out, deliberately: respiratory evaporative loss, cutaneous
-  evaporation, and - importantly - BLOOD PERFUSION. The last one is not
-  a detail. In a real anaesthetised patient the first hour is dominated
-  by redistribution: vasodilation moves heat from core to periphery far
-  faster than tissue conduction ever could. This model has no such
-  mechanism, so it will understate how quickly the core falls early on,
-  and its core-to-skin coupling is a conduction time constant of hours
-  rather than the minutes perfusion would give. Treat the numbers as the
-  conduction-only bound, not as a patient.
+  Out, deliberately: respiratory and cutaneous evaporative loss;
+  vasomotor control, so the flow shares are fixed rather than
+  responding to temperature; and any distinction between arterial and
+  venous blood beyond the single well-mixed pool.
 
   THE EQUIVALENT CYLINDER
 
@@ -162,6 +180,7 @@ type
     Cp : Double;          // J/kgK
     K : Double;           // W/mK
     GenShare : Double;    // of the total heat output
+    FlowShare : Double;   // of the cardiac output
     RadialDiv : Integer;
 
   end;
@@ -173,22 +192,33 @@ const
     // Viscera plus skeleton: three quarters of the resting output in
     // under half the volume.
     (Name : 'core';   Mass : 34.50; Density : 1050; Cp : 3700; K : 0.52;
-     GenShare : 0.74; RadialDiv : 0),
+     GenShare : 0.74; FlowShare : 0.75; RadialDiv : 0),
 
     // Skeletal muscle at rest. GenShare is the BASAL share - this is
     // the one that would climb with exercise, and the reason the
     // compartment is separate.
     (Name : 'muscle'; Mass : 33.75; Density : 1050; Cp : 3600; K : 0.51;
-     GenShare : 0.23; RadialDiv : 6),
+     GenShare : 0.23; FlowShare : 0.18; RadialDiv : 6),
 
     // Non-metabolic, as specified.
     (Name : 'fat';    Mass :  3.75; Density :  900; Cp : 2300; K : 0.21;
-     GenShare : 0.00; RadialDiv : 3),
+     GenShare : 0.00; FlowShare : 0.02; RadialDiv : 3),
 
     // 1.5 mm of it, and thermally almost inert until perfusion arrives.
     (Name : 'skin';   Mass :  3.00; Density : 1085; Cp : 3680; K : 0.37;
-     GenShare : 0.03; RadialDiv : 2)
+     GenShare : 0.03; FlowShare : 0.05; RadialDiv : 2)
   );
+
+  (******************** PERFUSION ********************)
+
+  // Blood, for the Pennes term.
+  BloodDensity = 1050.0;    // kg/m3
+  BloodCp = 3617.0;         // J/kgK
+
+  // Cardiac output, L/min. Zero is the conduction-only model this
+  // started as; 5 is a normal resting output; 10 is twice that.
+  CardiacOutputDefault = 5.0;
+  CardiacOutputMax = 10.0;
 
   (******************** ENVIRONMENT ********************)
 
@@ -250,6 +280,13 @@ type
     FLayerPower : Array[0..NbLayers - 1] of Double;    // W
     FLayerGen : Array[0..NbLayers - 1] of Double;      // W/m3
     FLayerDrop : Array[0..NbLayers - 1] of Double;     // K below the axis
+    FLayerFlow : Array[0..NbLayers - 1] of Double;     // L/min
+    FLayerW : Array[0..NbLayers - 1] of Double;        // 1/s perfusion rate
+    FLayerTau : Array[0..NbLayers - 1] of Double;      // s, perfusion time constant
+
+    FCardiacOutput : Double;   // L/min
+    FTArt : Double;            // K, the well-mixed blood pool
+    FPerfNet : Double;         // W, should be zero - see UpdateSources
 
     FROuter, FLength : Double;
     FMeshArea : Double;
@@ -265,6 +302,8 @@ type
 
     // Per node
     FNodeCapacity : TDoubleArray;        // J/K lumped to the node
+    FNodeQMet : TDoubleArray;            // W, metabolic generation
+    FNodePerfG : TDoubleArray;           // W/K, perfusion conductance
     FNodeR : TDoubleArray;               // radius from the axis
 
     FSkin : Array of RSkinFace;
@@ -274,6 +313,7 @@ type
 
     // History
     FHistT, FHistCore, FHistSkin, FHistLoss, FHistStore : TDoubleArray;
+    FHistTArt, FHistPerf : TDoubleArray;
     FNbHist : Integer;
 
     FTInitial : TDoubleArray;
@@ -288,6 +328,9 @@ type
     FReport : TStringList;
 
     procedure Say(const S : String);
+
+    procedure SetPerfusion(CardiacOutput : Double);
+    procedure UpdateSources;
 
     procedure SetupGeometry;
 
@@ -305,6 +348,7 @@ type
     procedure ReportSetup;
     procedure ReportHistory;
     procedure ReportProfile;
+    procedure ReportPerfusion;
 
     procedure WriteResults(const CsvName : String);
 
@@ -329,6 +373,16 @@ type
 
     // The run's console report, verbatim.
     property Report : TStringList read FReport;
+
+    // Mesh and measure the geometry - independent of the cardiac
+    // output, so it is done once and Solve may then be called repeatedly.
+    procedure Prepare;
+
+    // Build, settle and run at this cardiac output. The plot window
+    // calls this again whenever the slider moves.
+    procedure Solve(CardiacOutput : Double);
+
+    property CardiacOutput : Double read FCardiacOutput;
 
     procedure Run;
 
@@ -1053,8 +1107,6 @@ var
 
   Node : Array[0..7] of Integer;
 
-  NodeQ : TDoubleArray;
-
   EleType : NEleType;
 
   Q : Double;
@@ -1131,10 +1183,10 @@ begin
   // structural engine does internally for self weight. Scaled by the
   // MESHED volume of that layer, so each compartment receives exactly
   // its share of the total however coarsely the circle is polygonised.
-  SetLength(NodeQ, FGmsh.NbNodes);
+  SetLength(FNodeQMet, FGmsh.NbNodes);
 
   for i := 0 to FGmsh.NbNodes - 1 do
-    NodeQ[i] := 0;
+    FNodeQMet[i] := 0;
 
   for i := 0 to FGmsh.NbElements - 1 do
   begin
@@ -1152,22 +1204,20 @@ begin
     Q := FLayerPower[g] * (FEleVolume[i] / FMeshLayerVol[g]) / nb;
 
     for j := 0 to nb - 1 do
-      NodeQ[FGmsh.ElementNode[i, j]] := NodeQ[FGmsh.ElementNode[i, j]] + Q;
+      FNodeQMet[FGmsh.ElementNode[i, j]] := FNodeQMet[FGmsh.ElementNode[i, j]] + Q;
 
   end;
 
   SetLength(FGenSource, FGmsh.NbNodes);
 
+  // A source on EVERY node, not only the generating ones: perfusion
+  // exchanges at every node in a perfused compartment, and UpdateSources
+  // rewrites these in place each step rather than adding more.
   for i := 0 to FGmsh.NbNodes - 1 do
   begin
 
-    FGenSource[i] := nil;
-
-    if NodeQ[i] <= 0 then
-      Continue;
-
     FGenSource[i] := TExpressionList.Create;
-    FGenSource[i].AddExpression(-1E9, 1E9, Num(NodeQ[i]), 't');
+    FGenSource[i].AddExpression(-1E9, 1E9, Num(FNodeQMet[i]), 't');
 
     FEngine.AddNodeSource(i, Constant, FGenSource[i]);
 
@@ -1193,6 +1243,155 @@ begin
 
 end;
 
+
+{ Distribute a cardiac output across the compartments and turn it into a
+  per-node perfusion conductance.
+
+  The Pennes bioheat term is a volumetric exchange with blood arriving at
+  the arterial temperature,
+
+    q_perf = w * rho_b * c_b * (Tart - T)   [W/m3]
+
+  so lumping w*rho_b*c_b*V to the nodes of each element gives a
+  conductance in W/K, which is all the rest of the model needs.
+
+  Flow shares are the resting distribution of cardiac output: brain 14%,
+  heart 4%, splanchnic 25%, kidneys 20% and bone and the rest 14% all
+  fall in this model's core compartment, giving it 75%; muscle takes
+  18%, skin 5% and fat 2%. Fat is perfused even though it is not
+  metabolising - the two are different things, and it is the perfusion
+  that matters for carrying heat.
+
+  Note what this does to the coupling. At 5 L/min the core's perfusion
+  conductance is 237 W/K against a whole-body heat capacity of 269 kJ/K,
+  so blood equilibrates the core with the pool on a time constant of
+  about nine minutes, where conduction alone took hours. That is the
+  redistribution mechanism the conduction-only model could not
+  represent. }
+procedure TThermalModel.SetPerfusion(CardiacOutput : Double);
+var
+
+  i, g, j, nb : Integer;
+
+  Flow, w : Double;
+
+begin
+
+  FCardiacOutput := Max(0, Min(CardiacOutputMax, CardiacOutput));
+
+  SetLength(FNodePerfG, FGmsh.NbNodes);
+
+  for i := 0 to FGmsh.NbNodes - 1 do
+    FNodePerfG[i] := 0;
+
+  for g := 0 to NbLayers - 1 do
+  begin
+
+    // L/min to m3/s, then per unit volume of this compartment.
+    Flow := FCardiacOutput * Layers[g].FlowShare;
+
+    FLayerFlow[g] := Flow;
+
+    if FMeshLayerVol[g] > 0 then
+      w := (Flow / 1000 / 60) / FMeshLayerVol[g]
+    else
+      w := 0;
+
+    FLayerW[g] := w;
+
+    if w > 0 then
+      FLayerTau[g] := Layers[g].Density * Layers[g].Cp / (w * BloodDensity * BloodCp)
+    else
+      FLayerTau[g] := 0;
+
+  end;
+
+  for i := 0 to FGmsh.NbElements - 1 do
+  begin
+
+    g := Round(FEleLayer[i]);
+
+    if FLayerW[g] <= 0 then
+      Continue;
+
+    if FGmsh.ElementType[i] = GMSH_HEXA then
+      nb := 8
+    else
+      nb := 6;
+
+    for j := 0 to nb - 1 do
+      FNodePerfG[FGmsh.ElementNode[i, j]] :=
+        FNodePerfG[FGmsh.ElementNode[i, j]] +
+        FLayerW[g] * BloodDensity * BloodCp * FEleVolume[i] / nb;
+
+  end;
+
+end;
+
+{ Rewrite every node's source as metabolic generation plus its perfusion
+  exchange with the blood pool.
+
+  The pool closes the loop. Blood leaves it at Tart, exchanges with
+  tissue and returns; with no external source or sink of blood heat, a
+  well-mixed pool must sit at the FLOW-WEIGHTED MEAN tissue temperature,
+
+    Tart = sum(G_i * T_i) / sum(G_i)
+
+  and that choice makes sum(G_i * (Tart - T_i)) identically zero. So
+  perfusion moves heat from warm compartments to cold ones and creates
+  none, which is both the physics and the reason the energy-balance
+  column in the report stays meaningful with perfusion switched on -
+  FPerfNet is carried out and printed precisely so that claim is checked
+  rather than asserted.
+
+  The exchange is evaluated at the temperatures from the previous solve,
+  which makes it an explicit, one-step-lagged term. That is sound here
+  because the perfusion time constants run from 4.5 minutes at the core
+  with a doubled cardiac output up to 35 minutes in muscle, against a 60
+  second step; ReportPerfusion prints the tightest ratio so the margin
+  is visible rather than assumed. }
+procedure TThermalModel.UpdateSources;
+var
+
+  i : Integer;
+
+  Numer, Denom, Q : Double;
+
+begin
+
+  Numer := 0;
+  Denom := 0;
+
+  for i := 0 to FEngine.NbNodes - 1 do
+  begin
+    Numer := Numer + FNodePerfG[i] * FEngine.Temperature[i];
+    Denom := Denom + FNodePerfG[i];
+  end;
+
+  if Denom > 0 then
+    FTArt := Numer / Denom
+  else
+    FTArt := 0;
+
+  FPerfNet := 0;
+
+  for i := 0 to FEngine.NbNodes - 1 do
+  begin
+
+    Q := FNodeQMet[i];
+
+    if FNodePerfG[i] > 0 then
+    begin
+      Q := Q + FNodePerfG[i] * (FTArt - FEngine.Temperature[i]);
+      FPerfNet := FPerfNet + FNodePerfG[i] * (FTArt - FEngine.Temperature[i]);
+    end;
+
+    FGenSource[i].Clear;
+    FGenSource[i].AddExpression(-1E9, 1E9, Num(Q), 't');
+
+  end;
+
+end;
 
 function TThermalModel.TotalEnergy : Double;
 var
@@ -1310,6 +1509,8 @@ begin
     SetLength(FHistSkin, Length(FHistT));
     SetLength(FHistLoss, Length(FHistT));
     SetLength(FHistStore, Length(FHistT));
+    SetLength(FHistTArt, Length(FHistT));
+    SetLength(FHistPerf, Length(FHistT));
   end;
 
   FHistT[FNbHist] := Now_;
@@ -1321,6 +1522,17 @@ begin
     FHistStore[FNbHist] := (E - FEnergyPrev) / dt
   else
     FHistStore[FNbHist] := 0;
+
+  // Recompute the blood pool and every node's exchange from the field
+  // just solved, for the next step to use. Without this the perfusion
+  // term stays frozen at its t=0 values and goes on driving heat out of
+  // a core that has already cooled - which inverts the profile, putting
+  // the core below the skin, and is exactly what happened when this
+  // call was missing.
+  UpdateSources;
+
+  FHistTArt[FNbHist] := FTArt - Kelvin;
+  FHistPerf[FNbHist] := FPerfNet;
 
   Inc(FNbHist);
 
@@ -1469,8 +1681,8 @@ begin
 
   Say('');
   Say('================ CORE TEMPERATURE ================');
-  Say('    time    core    skin     generated       lost      stored    balance');
-  Say('   (min)     (C)     (C)           (W)        (W)         (W)        (W)');
+  Say('    time    core    skin    pool     generated       lost      stored   balance     perf');
+  Say('   (min)     (C)     (C)     (C)           (W)        (W)         (W)       (W)      (W)');
 
   for i := 0 to FNbHist - 1 do
   begin
@@ -1480,9 +1692,9 @@ begin
 
     Bal := Gen - FHistLoss[i] - FHistStore[i];
 
-    Say(Format('  %6.1f  %6.2f  %6.2f  %12.1f %10.1f  %10.1f %10.2f',
-      [FHistT[i] / 60, FHistCore[i], FHistSkin[i], Gen,
-       FHistLoss[i], FHistStore[i], Bal]));
+    Say(Format('  %6.1f  %6.2f  %6.2f  %6.2f  %12.1f %10.1f  %10.1f %9.2f %8.3f',
+      [FHistT[i] / 60, FHistCore[i], FHistSkin[i], FHistTArt[i], Gen,
+       FHistLoss[i], FHistStore[i], Bal, FHistPerf[i]]));
 
   end;
 
@@ -1650,7 +1862,84 @@ begin
 
 end;
 
-procedure TThermalModel.Run;
+{ Mesh and measure. Nothing here depends on the cardiac output, so it is
+  done once and Solve may then be called as often as the slider moves. }
+procedure TThermalModel.Prepare;
+begin
+
+  WriteGeoFile(GeoFile);
+
+  BuildMesh;
+
+  CalcElementGeometry;
+
+end;
+
+procedure TThermalModel.ReportPerfusion;
+var
+
+  g : Integer;
+
+  TightestRatio, Ratio : Double;
+
+begin
+
+  Say('');
+  Say('================ PERFUSION ================');
+
+  if FCardiacOutput <= 0 then
+  begin
+    Say('  Cardiac output 0 L/min - conduction only, as the model began.');
+    Exit;
+  end;
+
+  Say(Format('  Cardiac output           : %8.2f L/min', [FCardiacOutput]));
+  Say('');
+  Say('  compartment    flow        w      conductance   time constant');
+  Say('                (L/min)    (1/s)       (W/K)          (min)');
+
+  TightestRatio := 0;
+
+  for g := 0 to NbLayers - 1 do
+  begin
+
+    Say(Format('  %-10s %8.2f  %9.3e %12.1f %13.1f',
+      [Layers[g].Name, FLayerFlow[g], FLayerW[g],
+       FLayerW[g] * BloodDensity * BloodCp * FMeshLayerVol[g],
+       FLayerTau[g] / 60]));
+
+    if FLayerTau[g] > 0 then
+    begin
+      Ratio := TimeStep / FLayerTau[g];
+      if Ratio > TightestRatio then
+        TightestRatio := Ratio;
+    end;
+
+  end;
+
+  Say('');
+  Say(Format('  Blood pool (Tart)        : %8.2f C', [FTArt - Kelvin]));
+  Say(Format('  Net perfusion heat       : %8.3f W  (must be zero: the pool is',
+    [FPerfNet]));
+  Say('                                       the flow-weighted mean, so what');
+  Say('                                       one compartment gives another takes)');
+  Say(Format('  Step / shortest tau      : %8.3f  (explicit term, so this wants',
+    [TightestRatio]));
+  Say('                                       to stay well under 1)');
+
+end;
+
+{ Build at this cardiac output, settle to the balanced starting state,
+  then run the case.
+
+  The engine is rebuilt from scratch each time rather than patched:
+  Expose adds radiation boundary conditions that would otherwise
+  accumulate across re-solves, and rebuilding is cheap next to the
+  transient.
+
+  The starting state is solved without perfusion and perfusion then
+  begins with the transient; the reason is set out where it happens. }
+procedure TThermalModel.Solve(CardiacOutput : Double);
 var
 
   Start : QWord;
@@ -1659,14 +1948,12 @@ var
 
 begin
 
+  FReport.Clear;
+
   Say('ThermEx1 - heat loss from an anaesthetised adult, case ' + IntToStr(FCase));
   Say('');
 
-  WriteGeoFile(GeoFile);
-
-  BuildMesh;
-
-  CalcElementGeometry;
+  Start := GetTickCount64;
 
   BuildModel;
 
@@ -1674,10 +1961,27 @@ begin
 
   (******************** BALANCED STARTING STATE ********************)
 
+  // Solved WITHOUT perfusion, deliberately. Two reasons.
+  //
+  // Physically it is the right starting point: an awake, undraped
+  // patient is vasoconstricted, and it is induction that opens the
+  // periphery up. Switching perfusion on at t = 0 alongside the drapes
+  // coming off is the clinical sequence, and redistribution is then
+  // something the run shows rather than something assumed into the
+  // initial condition.
+  //
+  // Numerically it avoids a trap. Settling a perfused steady state by
+  // Picard iteration - solve, recompute the exchange, solve again -
+  // diverges, and violently: the core's perfusion conductance is 237
+  // W/K against about 5 W/K from the whole body to ambient, so the
+  // iteration matrix has a spectral radius far above one and the field
+  // reaches 1e80 within a few passes. An implicit treatment would need
+  // the term inside the stiffness matrix, which the framework has no
+  // call for - see the note on that in the header. In the TRANSIENT the
+  // mass matrix supplies exactly that stabilising diagonal, which is
+  // why the explicit term is safe there and not here.
   Say('');
-  Say('Solving the draped steady state...');
-
-  Start := GetTickCount64;
+  Say('Solving the draped steady state, conduction only...');
 
   FEngine.CalcTemperature(caStatic, False);
 
@@ -1689,6 +1993,12 @@ begin
 
   for i := 0 to FEngine.NbNodes - 1 do
     FTInitial[i] := FEngine.Temperature[i];
+
+  // Perfusion starts here, with the transient - see the note above.
+  SetPerfusion(CardiacOutput);
+  UpdateSources;
+
+  ReportPerfusion;
 
   (******************** TRANSIENT ********************)
 
@@ -1706,6 +2016,7 @@ begin
 
   FEngine.SetEndPostIterationFunction(PostProcess);
 
+  Say('');
   Say(Format('Running %d steps of %.0f s (%.1f h)...',
     [NbTimeSteps, TimeStep, NbTimeSteps * TimeStep / 3600]));
 
@@ -1723,6 +2034,15 @@ begin
 
   Say('');
   Say('History written to ' + CsvFile);
+
+end;
+
+procedure TThermalModel.Run;
+begin
+
+  Prepare;
+
+  Solve(CardiacOutputDefault);
 
 end;
 
