@@ -20,7 +20,7 @@ unit uThermEx1Plot;
 interface
 
 uses
-  SysUtils, Classes, Graphics, Forms, Controls,
+  SysUtils, Classes, Graphics, Forms, Controls, StdCtrls, ExtCtrls,
   newVM,
   uVMPlot2D;
 
@@ -31,6 +31,8 @@ type
   private
 
     FPlot : TVMPlot2D;
+    FMemo : TMemo;
+    FSplitter : TSplitter;
 
   public
 
@@ -38,7 +40,8 @@ type
 
     procedure ShowProfiles(const R, T0, TEnd : TVMobj;
                            const ACaption, ASubtitle : String;
-                           RLeanMm : Double);
+                           RLeanMm : Double;
+                           const AReport : TStrings);
 
   end;
 
@@ -51,10 +54,32 @@ begin
 
   Caption := 'ThermEx1 - radial temperature profile';
 
-  Width := 900;
-  Height := 620;
+  Width := 1400;
+  Height := 760;
 
   Position := poScreenCenter;
+
+  // Docking order matters: the memo claims the right edge, the splitter
+  // the edge left of it, and the plot takes whatever is left. Created
+  // the other way round, the plot would swallow the lot.
+  FMemo := TMemo.Create(Self);
+  FMemo.Parent := Self;
+  FMemo.Align := alRight;
+  FMemo.Width := 560;
+  FMemo.ReadOnly := True;
+  FMemo.WordWrap := False;
+  FMemo.ScrollBars := ssAutoBoth;
+
+  // The report is columnar - the per-step table lines up only in a fixed
+  // pitch face, which is also what it looks like in the terminal it is
+  // still printed to.
+  FMemo.Font.Name := 'Courier New';
+  FMemo.Font.Size := 9;
+
+  FSplitter := TSplitter.Create(Self);
+  FSplitter.Parent := Self;
+  FSplitter.Align := alRight;
+  FSplitter.Width := 5;
 
   FPlot := TVMPlot2D.Create(Self);
   FPlot.Parent := Self;
@@ -67,7 +92,8 @@ end;
   exactly right here. }
 procedure TProfileForm.ShowProfiles(const R, T0, TEnd : TVMobj;
                                     const ACaption, ASubtitle : String;
-                                    RLeanMm : Double);
+                                    RLeanMm : Double;
+                                    const AReport : TStrings);
 var
 
   i : Integer;
@@ -77,6 +103,12 @@ var
 begin
 
   Caption := ACaption;
+
+  FMemo.Lines.Assign(AReport);
+
+  // Show the top of the report rather than wherever Assign left the
+  // caret - the model summary is the part worth landing on.
+  FMemo.SelStart := 0;
 
   FPlot.Title := ASubtitle;
   FPlot.XAxisTitle := 'Radius from the axis (mm)';

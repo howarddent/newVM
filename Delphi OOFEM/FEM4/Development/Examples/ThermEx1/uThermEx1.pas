@@ -128,7 +128,7 @@ unit uThermEx1;
 interface
 
 uses
-  SysUtils, Math, newVM, newVMsparse,
+  SysUtils, Classes, Math, newVM, newVMsparse,
   CXS.FEMLAP.EngineData,
   CXS.FEMLAP.ThermalEngine,
   CXS.FEMLAP.Expression,
@@ -251,6 +251,13 @@ type
 
     FElapsed : Double;
 
+    // Everything the run prints, kept so the plot window can show the
+    // same text beside the graph rather than it living only in a
+    // terminal that may not even be visible.
+    FReport : TStringList;
+
+    procedure Say(const S : String);
+
     procedure SetupGeometry;
 
     procedure WriteGeoFile(const FileName : String);
@@ -284,6 +291,9 @@ type
     // For the plot window: where the fat starts, in mm.
     property LeanRadiusMm : Double read FRLeanMm;
     property CaseNumber : Integer read FCase;
+
+    // The run's console report, verbatim.
+    property Report : TStringList read FReport;
 
     procedure Run;
 
@@ -361,6 +371,8 @@ begin
 
   FCase := ACase;
 
+  FReport := TStringList.Create;
+
   FGmsh := TGmsh.Create;
 
   FCoreNode := -1;
@@ -373,6 +385,8 @@ destructor TThermalModel.Destroy;
 var
   i : Integer;
 begin
+
+  FReport.Free;
 
   FEngine.Free;
 
@@ -392,6 +406,17 @@ begin
   FGmsh.Free;
 
   inherited Destroy;
+
+end;
+
+{ Everything the model prints goes through here, so the plot window can
+  show the same report beside the graph. }
+procedure TThermalModel.Say(const S : String);
+begin
+
+  WriteLn(S);
+
+  FReport.Add(S);
 
 end;
 
@@ -612,7 +637,7 @@ var
 
 begin
 
-  WriteLn('Meshing the cylinder with gmsh...');
+  Say('Meshing the cylinder with gmsh...');
 
   if not Sto_ShellExecute(GmshExecutable, [GeoFile, '-3'], ExitCode, 120000, True) then
     raise Exception.Create('Could not run gmsh (' + GmshExecutable +
@@ -628,7 +653,7 @@ begin
   FGmsh.ReadMesh;
   FGmsh.Close;
 
-  WriteLn(Format('  %d nodes, %d elements', [FGmsh.NbNodes, FGmsh.NbElements]));
+  Say(Format('  %d nodes, %d elements', [FGmsh.NbNodes, FGmsh.NbElements]));
 
 end;
 
@@ -1112,36 +1137,36 @@ end;
 procedure TThermalModel.ReportSetup;
 begin
 
-  WriteLn;
-  WriteLn('================ SUBJECT AND MODEL ================');
-  WriteLn(Format('  Body mass / fat          : %8.1f kg / %.2f kg (%.0f%%)',
+  Say('');
+  Say('================ SUBJECT AND MODEL ================');
+  Say(Format('  Body mass / fat          : %8.1f kg / %.2f kg (%.0f%%)',
     [BodyMass, BodyMass * FatFraction, FatFraction * 100]));
-  WriteLn(Format('  VO2 / RQ                 : %8.0f mL/min at RQ %.2f', [VO2, RQ]));
-  WriteLn(Format('  Metabolic heat output    : %8.1f W', [FHeatOutput]));
-  WriteLn(Format('  Generation in lean mass  : %8.0f W/m3', [FGenPerVolume]));
-  WriteLn;
-  WriteLn(Format('  Equivalent cylinder      : R %6.1f mm, length %.2f m',
+  Say(Format('  VO2 / RQ                 : %8.0f mL/min at RQ %.2f', [VO2, RQ]));
+  Say(Format('  Metabolic heat output    : %8.1f W', [FHeatOutput]));
+  Say(Format('  Generation in lean mass  : %8.0f W/m3', [FGenPerVolume]));
+  Say('');
+  Say(Format('  Equivalent cylinder      : R %6.1f mm, length %.2f m',
     [FROuter * 1000, FLength]));
-  WriteLn(Format('  Fat layer                : %8.2f mm', [FFatThickness * 1000]));
-  WriteLn(Format('  Volume  nominal / meshed : %8.2f L / %.2f L',
+  Say(Format('  Fat layer                : %8.2f mm', [FFatThickness * 1000]));
+  Say(Format('  Volume  nominal / meshed : %8.2f L / %.2f L',
     [(FVolLean + FVolFat) * 1000, (FMeshVolLean + FMeshVolFat) * 1000]));
-  WriteLn(Format('  Surface nominal / meshed : %8.3f m2 / %.3f m2',
+  Say(Format('  Surface nominal / meshed : %8.3f m2 / %.3f m2',
     [BodySurfaceArea, FMeshArea]));
-  WriteLn(Format('  Heat capacity            : %8.0f kJ/K',
+  Say(Format('  Heat capacity            : %8.0f kJ/K',
     [(BodyMass - BodyMass * FatFraction) * LeanCp / 1000 +
      BodyMass * FatFraction * FatCp / 1000]));
-  WriteLn;
-  WriteLn(Format('  Ambient                  : %8.1f C', [AmbientC]));
-  WriteLn(Format('  Draped coefficient       : %8.2f W/m2K  (balances at a %.0f C core)',
+  Say('');
+  Say(Format('  Ambient                  : %8.1f C', [AmbientC]));
+  Say(Format('  Draped coefficient       : %8.2f W/m2K  (balances at a %.0f C core)',
     [FHBalance, CoreSetPointC]));
 
   if FCase = CaseExposed then
-    WriteLn(Format('  Exposed at t=0           : %8.2f W/m2K convection + radiation e=%.2f',
+    Say(Format('  Exposed at t=0           : %8.2f W/m2K convection + radiation e=%.2f',
       [BareConvection, SkinEmissivity]))
   else
-    WriteLn('  Exposed at t=0           :      no - the draped state is held');
+    Say('  Exposed at t=0           :      no - the draped state is held');
 
-  WriteLn(Format('  Mesh                     : %8d nodes, %d elements, %d skin faces',
+  Say(Format('  Mesh                     : %8d nodes, %d elements, %d skin faces',
     [FGmsh.NbNodes, FGmsh.NbElements, FNbSkin]));
 
 end;
@@ -1157,10 +1182,10 @@ begin
 
   Gen := FHeatOutput;
 
-  WriteLn;
-  WriteLn('================ CORE TEMPERATURE ================');
-  WriteLn('    time    core    skin     generated       lost      stored    balance');
-  WriteLn('   (min)     (C)     (C)           (W)        (W)         (W)        (W)');
+  Say('');
+  Say('================ CORE TEMPERATURE ================');
+  Say('    time    core    skin     generated       lost      stored    balance');
+  Say('   (min)     (C)     (C)           (W)        (W)         (W)        (W)');
 
   for i := 0 to FNbHist - 1 do
   begin
@@ -1170,32 +1195,32 @@ begin
 
     Bal := Gen - FHistLoss[i] - FHistStore[i];
 
-    WriteLn(Format('  %6.1f  %6.2f  %6.2f  %12.1f %10.1f  %10.1f %10.2f',
+    Say(Format('  %6.1f  %6.2f  %6.2f  %12.1f %10.1f  %10.1f %10.2f',
       [FHistT[i] / 60, FHistCore[i], FHistSkin[i], Gen,
        FHistLoss[i], FHistStore[i], Bal]));
 
   end;
 
-  WriteLn;
+  Say('');
 
   if FNbHist > 0 then
   begin
 
-    WriteLn(Format('  Core %.2f C -> %.2f C over %.0f min  (%.2f C, %.2f C/h)',
+    Say(Format('  Core %.2f C -> %.2f C over %.0f min  (%.2f C, %.2f C/h)',
       [FHistCore[0], FHistCore[FNbHist - 1], FHistT[FNbHist - 1] / 60,
        FHistCore[FNbHist - 1] - FHistCore[0],
        (FHistCore[FNbHist - 1] - FHistCore[0]) / (FHistT[FNbHist - 1] / 3600)]));
 
-    WriteLn(Format('  Skin %.2f C -> %.2f C', [FHistSkin[0], FHistSkin[FNbHist - 1]]));
+    Say(Format('  Skin %.2f C -> %.2f C', [FHistSkin[0], FHistSkin[FNbHist - 1]]));
 
   end;
 
-  WriteLn;
-  WriteLn('  The balance column is generation minus surface loss minus the rate of');
-  WriteLn('  change of stored energy, and should be zero: it is the model checking');
-  WriteLn('  its own first law, the way the arch examples check thrust against');
-  WriteLn('  weight. Stored is computed from the nodal temperatures and the lumped');
-  WriteLn('  heat capacities, loss from the skin faces, so the two are independent.');
+  Say('');
+  Say('  The balance column is generation minus surface loss minus the rate of');
+  Say('  change of stored energy, and should be zero: it is the model checking');
+  Say('  its own first law, the way the arch examples check thrust against');
+  Say('  weight. Stored is computed from the nodal temperatures and the lumped');
+  Say('  heat capacities, loss from the skin faces, so the two are independent.');
 
 end;
 
@@ -1317,11 +1342,11 @@ begin
 
   GetRadialProfiles(R, T0, TEnd);
 
-  WriteLn;
-  WriteLn(Format('  Radial profile: %d points from the axis to the skin', [R.Cols]));
-  WriteLn(Format('    t=0   axis %.2f C -> lean surface %.2f C -> skin %.2f C',
+  Say('');
+  Say(Format('  Radial profile: %d points from the axis to the skin', [R.Cols]));
+  Say(Format('    t=0   axis %.2f C -> lean surface %.2f C -> skin %.2f C',
     [T0[0, 0], T0[0, R.Cols - NbFatRadial - 1], T0[0, R.Cols - 1]]));
-  WriteLn(Format('    end   axis %.2f C -> lean surface %.2f C -> skin %.2f C',
+  Say(Format('    end   axis %.2f C -> lean surface %.2f C -> skin %.2f C',
     [TEnd[0, 0], TEnd[0, R.Cols - NbFatRadial - 1], TEnd[0, R.Cols - 1]]));
 
 end;
@@ -1365,8 +1390,8 @@ var
 
 begin
 
-  WriteLn('ThermEx1 - heat loss from an anaesthetised adult, case ', FCase);
-  WriteLn;
+  Say('ThermEx1 - heat loss from an anaesthetised adult, case ' + IntToStr(FCase));
+  Say('');
 
   WriteGeoFile(GeoFile);
 
@@ -1380,14 +1405,14 @@ begin
 
   (******************** BALANCED STARTING STATE ********************)
 
-  WriteLn;
-  WriteLn('Solving the draped steady state...');
+  Say('');
+  Say('Solving the draped steady state...');
 
   Start := GetTickCount64;
 
   FEngine.CalcTemperature(caStatic, False);
 
-  WriteLn(Format('  core %.2f C, skin %.2f C, loss %.1f W against %.1f W generated',
+  Say(Format('  core %.2f C, skin %.2f C, loss %.1f W against %.1f W generated',
     [FEngine.Temperature[FCoreNode] - Kelvin, MeanSkinTemperature - Kelvin,
      SurfaceLoss(False), FHeatOutput]));
 
@@ -1412,7 +1437,7 @@ begin
 
   FEngine.SetEndPostIterationFunction(PostProcess);
 
-  WriteLn(Format('Running %d steps of %.0f s (%.1f h)...',
+  Say(Format('Running %d steps of %.0f s (%.1f h)...',
     [NbTimeSteps, TimeStep, NbTimeSteps * TimeStep / 3600]));
 
   FEngine.CalcTemperature(caTransient, True);
@@ -1421,14 +1446,14 @@ begin
 
   ReportHistory;
 
-  WriteLn(Format('  Solve time: %.0f s', [FElapsed / 1000]));
+  Say(Format('  Solve time: %.0f s', [FElapsed / 1000]));
 
   ReportProfile;
 
   WriteResults(CsvFile);
 
-  WriteLn;
-  WriteLn('History written to ', CsvFile);
+  Say('');
+  Say('History written to ' + CsvFile);
 
 end;
 
