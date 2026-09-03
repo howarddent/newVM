@@ -485,20 +485,37 @@ begin
       zeta[p] := 0;
     end;
 
-    // Six integration points
+    // Six integration points: the three-point degree-two rule on the
+    // triangle, at each of two Gauss stations along the prism axis.
+    //
+    // The weights are multiplied together at the integration site
+    // (wxi*weta*wzeta*DetJ), so their PRODUCT is what has to come to the
+    // right total: the reference triangle's area of 1/2 times the
+    // 2 of the zeta range, i.e. 1 over the six points. Carrying 1/6 on
+    // wxi - the triangle rule's own weight - and 1 on the other two does
+    // that, and keeps each factor recognisable.
+    //
+    // Both of these were wrong before, and ThermSlab measured the
+    // consequences exactly. The weights were 1/2 each, so the product
+    // came to (1/2)^3 * 6 = 3/4 of what it should be, and every
+    // conduction matrix this element built was 3/4 of its correct
+    // magnitude. The two off-diagonal triangle points were at 1/3 rather
+    // than 2/3, which is not the degree-two rule at all - the three
+    // points have to sit at the midpoints of the lines from the centroid
+    // to the vertices for the rule to be exact on a quadratic.
     if FIntegPoints = 6 then
     begin
-      wxi[p] := 1/2;
-      weta[p] := 1/2;
-      wzeta[p] := 1/2;
+      wxi[p] := 1/6;
+      weta[p] := 1;
+      wzeta[p] := 1;
 
       case p of
       0: begin xi[p] := 1/6; eta[p] := 1/6; zeta[p] := -1/sqrt(3); end;
-      1: begin xi[p] := 1/3; eta[p] := 1/6; zeta[p] := -1/sqrt(3); end;
-      2: begin xi[p] := 1/6; eta[p] := 1/3; zeta[p] := -1/sqrt(3); end;
+      1: begin xi[p] := 2/3; eta[p] := 1/6; zeta[p] := -1/sqrt(3); end;
+      2: begin xi[p] := 1/6; eta[p] := 2/3; zeta[p] := -1/sqrt(3); end;
       3: begin xi[p] := 1/6; eta[p] := 1/6; zeta[p] :=  1/sqrt(3); end;
-      4: begin xi[p] := 1/3; eta[p] := 1/6; zeta[p] :=  1/sqrt(3); end;
-      5: begin xi[p] := 1/6; eta[p] := 1/3; zeta[p] :=  1/sqrt(3); end;
+      4: begin xi[p] := 2/3; eta[p] := 1/6; zeta[p] :=  1/sqrt(3); end;
+      5: begin xi[p] := 1/6; eta[p] := 2/3; zeta[p] :=  1/sqrt(3); end;
       end;
     end;
 

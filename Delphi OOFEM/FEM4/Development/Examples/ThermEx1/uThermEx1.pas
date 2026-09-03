@@ -45,70 +45,34 @@ unit uThermEx1;
   through the lateral surface and the whole of the nominal body surface
   area is doing the work.
 
-  VERIFICATION STATUS - READ BEFORE USING THE NUMBERS
+  VERIFICATION STATUS
 
-  What is verified: the global energy balance. Case 1 holds the balanced
-  state for two hours with the surface losing 83.7 W against 83.7 W
-  generated and a first-law residual of 0.00 W, and the meshed volume and
-  area come out within 0.3% of the subject's nominal values. Whatever
-  goes in comes out, and the storage is right.
+  Verified, as of the element fixes described below.
 
-  What is NOT verified: the radial temperature GRADIENT, and so the
-  core-to-skin difference. Against the closed-form solutions for this
-  geometry - q*R^2/(4k) across a uniformly generating cylinder, and
-  Q*ln(r2/r1)/(2*pi*k*L) across the fat shell - the model overstates the
-  lean drop by exactly a third (4.44 K against 3.33 K). That is
-  mesh-converged: refining the core from 12 mm to 3 mm (1670 to 11095
-  nodes) and the axial divisions from 4 to 20 leaves the answer
-  unchanged to 0.01 K.
+  Global energy balance: case 1 holds the balanced state for two hours
+  with the surface losing 83.7 W against 83.7 W generated and a
+  first-law residual of 0.00 W. Case 2's residual runs 0.3 to 1.2 W
+  against total flows of 170 to 270 W, shrinking as the transient
+  settles - that remainder is the backward difference used for the
+  stored-energy term and the one-step lag in the radiation
+  linearisation, both of which shrink with the time step.
 
-  ThermSlab (Examples/ThermSlab) has since pinned this down on a slab,
-  where the answer is exact, and the cause is neither this model nor the
-  mesh: BOTH 3D element conduction matrices are too small by a constant
-  factor. TBrick_H8V1's is out by 1/sqrt(3) (0.5774) and TBrick_W6V1's
-  by 3/4 (0.7500), mesh-independent, and confirmed two ways - a slab
-  with uniform generation overstates its mid-plane rise by exactly those
-  reciprocals, and a slab with conduction and a film in series returns a
-  through-flux matching (factor * L/k + 1/h) to four figures.
+  Radial gradient: the balanced state now settles at a core of 37.02 C
+  against the 37.00 C the balance was designed around, with the lean
+  surface at 33.69 C and the skin at 33.22 C - all three matching the
+  closed forms q*R^2/(4k) and Q*ln(r2/r1)/(2*pi*k*L) to the second
+  decimal, the remaining 0.02 K being ordinary discretisation.
 
-  That explains this model's numbers precisely. Its lean core is prisms,
-  and 3.33 K / 0.75 = 4.44 K is what it reports, to the digit. Its fat
-  shell is hexahedra, so the drop across it is out by 1/sqrt(3) as well.
-  An earlier note here guessed at hexahedron node ordering; that guess
-  was wrong and is withdrawn - the elements pass a patch test (a linear
-  field is reproduced to solver precision under the elimination method),
-  which rules out a scrambled ordering and is also insensitive to a
-  constant scaling of K, which is what this turned out to be.
-
-  The consequence for this model: the balanced state settles at 38.5 C
-  rather than the 37.0 C the balance was designed around, and the
-  core-to-skin coupling - which sets how fast the core follows the skin
-  - is too weak by the same factors. The total heat flows and the energy
-  balance are unaffected, since they depend on the boundary condition
-  and the storage rather than on the internal conductance. Fixing the
-  two element classes is a framework job; nothing is worked around here.
-
-  Second open item: case 2's balance column does not close, running 30 to
-  70 W against total flows of 170 to 260 W, where case 1's closes to
-  0.00 W. Most of that is the radiation boundary condition: rerunning
-  case 2 with the emissivity set to zero drops the residual to 4 to 5 W,
-  which is the time discretisation of the stored-energy difference and
-  shrinks with the step. The radiative part is not yet explained - the
-  framework linearises radiation on the previous step's temperature, and
-  a one-step lag at these cooling rates accounts for only a few watts on
-  a hand estimate, not thirty. Until that is understood, read case 2's
-  loss and storage columns as indicative and case 1 as the trustworthy
-  one. The column is doing its job by making the discrepancy visible.
-
-  THE DISPLAY
-
-  The model is radially symmetric by construction, so its entire field
-  collapses without loss onto one curve against radius - which is why
-  the result is shown on a TVMPlot2D (Graphs/uVMPlot2D.pas) as two
-  profiles, at t=0 and at the end of the run, rather than as a field in
-  gmsh. gmsh still does the meshing; it just has nothing left to display
-  that the graph does not show better. The time history goes to a CSV
-  alongside, and --no-plot gives a fully headless run.
+  It did not always. This model originally reported a lean drop of
+  4.44 K against an exact 3.33 K, mesh-converged, and a case 2 energy
+  residual of 30 to 70 W. Both traced to two defects in the framework's
+  3D elements, found by ThermSlab (Examples/ThermSlab) and fixed:
+  TBrick_H8V1's shape-function derivatives were written for a
+  lexicographically ordered hexahedron while gmsh writes the cyclic
+  order, and TBrick_W6V1's six-point integration rule carried weights
+  whose product came to 3/4 of the reference volume, with two of its
+  triangle points at 1/3 instead of 2/3. Run ThermSlab to confirm they
+  are still right.
 
   UNITS
 

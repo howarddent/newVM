@@ -435,17 +435,17 @@ begin
 
     Jacobian := TVMobj.Create(3,3);
 
-    Jacobian[0, 0] := -etam*zetam*x1+etam*zetam*x2-etap*zetam*x3+etap*zetam*x4-etam*zetap*x5+etam*zetap*x6-etap*zetap*x7+etap*zetap*x8;
-    Jacobian[0, 1] := -etam*zetam*y1+etam*zetam*y2-etap*zetam*y3+etap*zetam*y4-etam*zetap*y5+etam*zetap*y6-etap*zetap*y7+etap*zetap*y8;
-    Jacobian[0, 2] := -etam*zetam*z1+etam*zetam*z2-etap*zetam*z3+etap*zetam*z4-etam*zetap*z5+etam*zetap*z6-etap*zetap*z7+etap*zetap*z8;
+    Jacobian[0, 0] := -etam*zetam*x1+etam*zetam*x2+etap*zetam*x3-etap*zetam*x4-etam*zetap*x5+etam*zetap*x6+etap*zetap*x7-etap*zetap*x8;
+    Jacobian[0, 1] := -etam*zetam*y1+etam*zetam*y2+etap*zetam*y3-etap*zetam*y4-etam*zetap*y5+etam*zetap*y6+etap*zetap*y7-etap*zetap*y8;
+    Jacobian[0, 2] := -etam*zetam*z1+etam*zetam*z2+etap*zetam*z3-etap*zetam*z4-etam*zetap*z5+etam*zetap*z6+etap*zetap*z7-etap*zetap*z8;
 
-    Jacobian[1, 0] := -xim*zetam*x1-xip*zetam*x2+xim*zetam*x3+xip*zetam*x4-xim*zetap*x5-xip*zetap*x6+xim*zetap*x7+xip*zetap*x8;
-    Jacobian[1, 1] := -xim*zetam*y1-xip*zetam*y2+xim*zetam*y3+xip*zetam*y4-xim*zetap*y5-xip*zetap*y6+xim*zetap*y7+xip*zetap*y8;
-    Jacobian[1, 2] := -xim*zetam*z1-xip*zetam*z2+xim*zetam*z3+xip*zetam*z4-xim*zetap*z5-xip*zetap*z6+xim*zetap*z7+xip*zetap*z8;
+    Jacobian[1, 0] := -xim*zetam*x1-xip*zetam*x2+xip*zetam*x3+xim*zetam*x4-xim*zetap*x5-xip*zetap*x6+xip*zetap*x7+xim*zetap*x8;
+    Jacobian[1, 1] := -xim*zetam*y1-xip*zetam*y2+xip*zetam*y3+xim*zetam*y4-xim*zetap*y5-xip*zetap*y6+xip*zetap*y7+xim*zetap*y8;
+    Jacobian[1, 2] := -xim*zetam*z1-xip*zetam*z2+xip*zetam*z3+xim*zetam*z4-xim*zetap*z5-xip*zetap*z6+xip*zetap*z7+xim*zetap*z8;
 
-    Jacobian[2, 0] := -etam*xim*x1-etam*xip*x2-etap*xim*x3-etap*xip*x4+etam*xim*x5+etam*xip*x6+etap*xim*x7+etap*xip*x8;
-    Jacobian[2, 1] := -etam*xim*y1-etam*xip*y2-etap*xim*y3-etap*xip*y4+etam*xim*y5+etam*xip*y6+etap*xim*y7+etap*xip*y8;
-    Jacobian[2, 2] := -etam*xim*z1-etam*xip*z2-etap*xim*z3-etap*xip*z4+etam*xim*z5+etam*xip*z6+etap*xim*z7+etap*xip*z8;
+    Jacobian[2, 0] := -etam*xim*x1-etam*xip*x2-etap*xip*x3-etap*xim*x4+etam*xim*x5+etam*xip*x6+etap*xip*x7+etap*xim*x8;
+    Jacobian[2, 1] := -etam*xim*y1-etam*xip*y2-etap*xip*y3-etap*xim*y4+etam*xim*y5+etam*xip*y6+etap*xip*y7+etap*xim*y8;
+    Jacobian[2, 2] := -etam*xim*z1-etam*xip*z2-etap*xip*z3-etap*xim*z4+etam*xim*z5+etam*xip*z6+etap*xip*z7+etap*xim*z8;
 
     Jacobian := Jacobian * 0.125;
 
@@ -457,30 +457,30 @@ begin
 
     G[0, 0] := -0.125*etam*zetam;
     G[0, 1] := +0.125*etam*zetam;
-    G[0, 2] := -0.125*etap*zetam;
-    G[0, 3] := +0.125*etap*zetam;
+    G[0, 2] := +0.125*etap*zetam;
+    G[0, 3] := -0.125*etap*zetam;
     G[0, 4] := -0.125*etam*zetap;
     G[0, 5] := +0.125*etam*zetap;
-    G[0, 6] := -0.125*etap*zetap;
-    G[0, 7] := +0.125*etap*zetap;
+    G[0, 6] := +0.125*etap*zetap;
+    G[0, 7] := -0.125*etap*zetap;
 
     G[1, 0] := -0.125*xim*zetam;
     G[1, 1] := -0.125*xip*zetam;
-    G[1, 2] := +0.125*xim*zetam;
-    G[1, 3] := +0.125*xip*zetam;
+    G[1, 2] := +0.125*xip*zetam;
+    G[1, 3] := +0.125*xim*zetam;
     G[1, 4] := -0.125*xim*zetap;
     G[1, 5] := -0.125*xip*zetap;
-    G[1, 6] := +0.125*xim*zetap;
-    G[1, 7] := +0.125*xip*zetap;
+    G[1, 6] := +0.125*xip*zetap;
+    G[1, 7] := +0.125*xim*zetap;
 
     G[2, 0] := -0.125*etam*xim;
     G[2, 1] := -0.125*etam*xip;
-    G[2, 2] := -0.125*etap*xim;
-    G[2, 3] := -0.125*etap*xip;
+    G[2, 2] := -0.125*etap*xip;
+    G[2, 3] := -0.125*etap*xim;
     G[2, 4] := +0.125*etam*xim;
     G[2, 5] := +0.125*etam*xip;
-    G[2, 6] := +0.125*etap*xim;
-    G[2, 7] := +0.125*etap*xip;
+    G[2, 6] := +0.125*etap*xip;
+    G[2, 7] := +0.125*etap*xim;
 
     B := TVMobj.Create(3,8);
 
@@ -784,17 +784,17 @@ begin
 
     Jacobian := TVMobj.Create(3,3);
 
-    Jacobian[0, 0] := -etam*zetam*x1+etam*zetam*x2-etap*zetam*x3+etap*zetam*x4-etam*zetap*x5+etam*zetap*x6-etap*zetap*x7+etap*zetap*x8;
-    Jacobian[0, 1] := -etam*zetam*y1+etam*zetam*y2-etap*zetam*y3+etap*zetam*y4-etam*zetap*y5+etam*zetap*y6-etap*zetap*y7+etap*zetap*y8;
-    Jacobian[0, 2] := -etam*zetam*z1+etam*zetam*z2-etap*zetam*z3+etap*zetam*z4-etam*zetap*z5+etam*zetap*z6-etap*zetap*z7+etap*zetap*z8;
+    Jacobian[0, 0] := -etam*zetam*x1+etam*zetam*x2+etap*zetam*x3-etap*zetam*x4-etam*zetap*x5+etam*zetap*x6+etap*zetap*x7-etap*zetap*x8;
+    Jacobian[0, 1] := -etam*zetam*y1+etam*zetam*y2+etap*zetam*y3-etap*zetam*y4-etam*zetap*y5+etam*zetap*y6+etap*zetap*y7-etap*zetap*y8;
+    Jacobian[0, 2] := -etam*zetam*z1+etam*zetam*z2+etap*zetam*z3-etap*zetam*z4-etam*zetap*z5+etam*zetap*z6+etap*zetap*z7-etap*zetap*z8;
 
-    Jacobian[1, 0] := -xim*zetam*x1-xip*zetam*x2+xim*zetam*x3+xip*zetam*x4-xim*zetap*x5-xip*zetap*x6+xim*zetap*x7+xip*zetap*x8;
-    Jacobian[1, 1] := -xim*zetam*y1-xip*zetam*y2+xim*zetam*y3+xip*zetam*y4-xim*zetap*y5-xip*zetap*y6+xim*zetap*y7+xip*zetap*y8;
-    Jacobian[1, 2] := -xim*zetam*z1-xip*zetam*z2+xim*zetam*z3+xip*zetam*z4-xim*zetap*z5-xip*zetap*z6+xim*zetap*z7+xip*zetap*z8;
+    Jacobian[1, 0] := -xim*zetam*x1-xip*zetam*x2+xip*zetam*x3+xim*zetam*x4-xim*zetap*x5-xip*zetap*x6+xip*zetap*x7+xim*zetap*x8;
+    Jacobian[1, 1] := -xim*zetam*y1-xip*zetam*y2+xip*zetam*y3+xim*zetam*y4-xim*zetap*y5-xip*zetap*y6+xip*zetap*y7+xim*zetap*y8;
+    Jacobian[1, 2] := -xim*zetam*z1-xip*zetam*z2+xip*zetam*z3+xim*zetam*z4-xim*zetap*z5-xip*zetap*z6+xip*zetap*z7+xim*zetap*z8;
 
-    Jacobian[2, 0] := -etam*xim*x1-etam*xip*x2-etap*xim*x3-etap*xip*x4+etam*xim*x5+etam*xip*x6+etap*xim*x7+etap*xip*x8;
-    Jacobian[2, 1] := -etam*xim*y1-etam*xip*y2-etap*xim*y3-etap*xip*y4+etam*xim*y5+etam*xip*y6+etap*xim*y7+etap*xip*y8;
-    Jacobian[2, 2] := -etam*xim*z1-etam*xip*z2-etap*xim*z3-etap*xip*z4+etam*xim*z5+etam*xip*z6+etap*xim*z7+etap*xip*z8;
+    Jacobian[2, 0] := -etam*xim*x1-etam*xip*x2-etap*xip*x3-etap*xim*x4+etam*xim*x5+etam*xip*x6+etap*xip*x7+etap*xim*x8;
+    Jacobian[2, 1] := -etam*xim*y1-etam*xip*y2-etap*xip*y3-etap*xim*y4+etam*xim*y5+etam*xip*y6+etap*xip*y7+etap*xim*y8;
+    Jacobian[2, 2] := -etam*xim*z1-etam*xip*z2-etap*xip*z3-etap*xim*z4+etam*xim*z5+etam*xip*z6+etap*xip*z7+etap*xim*z8;
 
     Jacobian := Jacobian * 0.125;
 
