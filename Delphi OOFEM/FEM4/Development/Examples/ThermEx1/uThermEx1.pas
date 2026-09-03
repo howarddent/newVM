@@ -57,25 +57,36 @@ unit uThermEx1;
   core-to-skin difference. Against the closed-form solutions for this
   geometry - q*R^2/(4k) across a uniformly generating cylinder, and
   Q*ln(r2/r1)/(2*pi*k*L) across the fat shell - the model overstates the
-  lean drop by about a third (4.44 K against 3.33 K) and misreports the
-  fat drop too. That is mesh-converged: refining the core from 12 mm to
-  3 mm (1670 to 11095 nodes) and the axial divisions from 4 to 20 leaves
-  the answer unchanged to 0.01 K, so it is not discretisation. It tracks
-  back to the framework's 3D element formulation - TBrick_H8V1's shape
-  functions are written for a lexicographically ordered hexahedron while
-  gmsh writes the cyclic ordering, and swapping local nodes 2/3 and 6/7
-  moves the fat drop from 73% high to 17% low, so the element is
-  certainly sensitive to it and neither ordering reproduces the exact
-  answer. TBrick_W6V1's prisms are out by a third independently of that.
+  lean drop by exactly a third (4.44 K against 3.33 K). That is
+  mesh-converged: refining the core from 12 mm to 3 mm (1670 to 11095
+  nodes) and the axial divisions from 4 to 20 leaves the answer
+  unchanged to 0.01 K.
 
-  The consequence for this model: the core temperature is offset (the
-  balanced state settles at 38.5 C rather than the 37.0 C the balance
-  was designed around), and the core-to-skin coupling - which sets how
-  fast the core follows the skin - is too weak by roughly the same
-  factor. The shape of the response and the total heat flows are sound;
-  the absolute core-skin difference is not, yet. Verifying the 3D
-  elements against a one-dimensional slab with a known answer is the
-  next job, and it belongs to the framework rather than to this example.
+  ThermSlab (Examples/ThermSlab) has since pinned this down on a slab,
+  where the answer is exact, and the cause is neither this model nor the
+  mesh: BOTH 3D element conduction matrices are too small by a constant
+  factor. TBrick_H8V1's is out by 1/sqrt(3) (0.5774) and TBrick_W6V1's
+  by 3/4 (0.7500), mesh-independent, and confirmed two ways - a slab
+  with uniform generation overstates its mid-plane rise by exactly those
+  reciprocals, and a slab with conduction and a film in series returns a
+  through-flux matching (factor * L/k + 1/h) to four figures.
+
+  That explains this model's numbers precisely. Its lean core is prisms,
+  and 3.33 K / 0.75 = 4.44 K is what it reports, to the digit. Its fat
+  shell is hexahedra, so the drop across it is out by 1/sqrt(3) as well.
+  An earlier note here guessed at hexahedron node ordering; that guess
+  was wrong and is withdrawn - the elements pass a patch test (a linear
+  field is reproduced to solver precision under the elimination method),
+  which rules out a scrambled ordering and is also insensitive to a
+  constant scaling of K, which is what this turned out to be.
+
+  The consequence for this model: the balanced state settles at 38.5 C
+  rather than the 37.0 C the balance was designed around, and the
+  core-to-skin coupling - which sets how fast the core follows the skin
+  - is too weak by the same factors. The total heat flows and the energy
+  balance are unaffected, since they depend on the boundary condition
+  and the storage rather than on the internal conductance. Fixing the
+  two element classes is a framework job; nothing is worked around here.
 
   Second open item: case 2's balance column does not close, running 30 to
   70 W against total flows of 170 to 260 W, where case 1's closes to

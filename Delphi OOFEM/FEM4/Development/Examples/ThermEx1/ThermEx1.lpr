@@ -72,7 +72,6 @@ begin
   end;
 
   Application.Initialize;
-
   Model := TThermalModel.Create(Case_);
 
   try

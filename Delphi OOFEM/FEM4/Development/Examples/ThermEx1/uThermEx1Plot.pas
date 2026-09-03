@@ -20,7 +20,7 @@ unit uThermEx1Plot;
 interface
 
 uses
-  SysUtils, Classes, Graphics, Forms, Controls, StdCtrls, ExtCtrls,
+  SysUtils, Classes, Math, Graphics, Forms, Controls, StdCtrls, ExtCtrls,
   newVM,
   uVMPlot2D;
 
@@ -54,8 +54,12 @@ begin
 
   Caption := 'ThermEx1 - radial temperature profile';
 
-  Width := 1400;
-  Height := 760;
+  // Clamp to the work area rather than asking for a fixed 1400x760: on a
+  // smaller screen, or under display scaling, a form wider than the
+  // desktop puts its right-hand strip - which is where the memo lives -
+  // off the edge, and the report simply is not there to be read.
+  Width := Min(1400, Screen.WorkAreaWidth - 40);
+  Height := Min(760, Screen.WorkAreaHeight - 40);
 
   Position := poScreenCenter;
 
@@ -65,7 +69,9 @@ begin
   FMemo := TMemo.Create(Self);
   FMemo.Parent := Self;
   FMemo.Align := alRight;
-  FMemo.Width := 560;
+  // Never more than half the form, so the graph keeps usable width on a
+  // narrow screen; the splitter can rebalance it either way.
+  FMemo.Width := Min(560, Width div 2);
   FMemo.ReadOnly := True;
   FMemo.WordWrap := False;
   FMemo.ScrollBars := ssAutoBoth;
