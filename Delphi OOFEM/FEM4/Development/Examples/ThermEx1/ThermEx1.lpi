@@ -24,6 +24,14 @@
     <RunParams>
       <FormatVersion Value="2"/>
     </RunParams>
+    <RequiredPackages>
+      <Item>
+        <PackageName Value="LazOpenGLContext"/>
+      </Item>
+      <Item>
+        <PackageName Value="LCL"/>
+      </Item>
+    </RequiredPackages>
     <Units>
       <Unit>
         <Filename Value="ThermEx1.lpr"/>
@@ -31,6 +39,10 @@
       </Unit>
       <Unit>
         <Filename Value="uThermEx1.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="uThermEx1Plot.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
     </Units>
@@ -42,7 +54,7 @@
     </Target>
     <SearchPaths>
       <IncludeFiles Value="$(ProjOutDir)"/>
-      <OtherUnitFiles Value="..\..\..\..\..;..\..\Source\Algebra;..\..\Source\Analytical;..\..\Source\Applications;..\..\Source\Assembly;..\..\Source\Elements;..\..\Source\Expression;..\..\Source\Imposer;..\..\Source\Mesh;..\..\Source\System"/>
+      <OtherUnitFiles Value="..\..\..\..\..;..\..\..\..\..\Graphs;..\..\Source\Algebra;..\..\Source\Analytical;..\..\Source\Applications;..\..\Source\Assembly;..\..\Source\Elements;..\..\Source\Expression;..\..\Source\Imposer;..\..\Source\Mesh;..\..\Source\System"/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
     <CodeGeneration>

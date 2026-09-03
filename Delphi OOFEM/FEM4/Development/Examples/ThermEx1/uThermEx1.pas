@@ -89,6 +89,16 @@ unit uThermEx1;
   loss and storage columns as indicative and case 1 as the trustworthy
   one. The column is doing its job by making the discrepancy visible.
 
+  THE DISPLAY
+
+  The model is radially symmetric by construction, so its entire field
+  collapses without loss onto one curve against radius - which is why
+  the result is shown on a TVMPlot2D (Graphs/uVMPlot2D.pas) as two
+  profiles, at t=0 and at the end of the run, rather than as a field in
+  gmsh. gmsh still does the meshing; it just has nothing left to display
+  that the graph does not show better. The time history goes to a CSV
+  alongside, and --no-plot gives a fully headless run.
+
   UNITS
 
   Everything is SI, and every temperature is in KELVIN. That is not
@@ -179,8 +189,6 @@ const
 
   (******************** POST-PROCESSING ********************)
 
-  ViewInitial = 0;
-  ViewFinal = 1;
 
 type
 
@@ -211,6 +219,7 @@ type
 
     // Geometry
     FROuter, FRLean, FLength, FFatThickness : Double;
+    FRLeanMm : Double;
     FVolLean, FVolFat : Double;          // nominal, from mass and density
     FMeshVolLean, FMeshVolFat : Double;  // as actually meshed
     FMeshArea : Double;                  // as actually meshed
@@ -257,8 +266,9 @@ type
 
     procedure ReportSetup;
     procedure ReportHistory;
+    procedure ReportProfile;
 
-    procedure WriteResults(const PosName, CsvName, ScrName : String);
+    procedure WriteResults(const CsvName : String);
 
   public
 
@@ -269,7 +279,13 @@ type
 
     procedure PostProcess;
 
-    procedure Run(ViewResults : Boolean);
+    procedure GetRadialProfiles(out R, T0, TEnd : TVMobj);
+
+    // For the plot window: where the fat starts, in mm.
+    property LeanRadiusMm : Double read FRLeanMm;
+    property CaseNumber : Integer read FCase;
+
+    procedure Run;
 
   end;
 
@@ -287,9 +303,7 @@ const
 
   GeoFile = DataDir + 'thermex1.geo';
   MshFile = DataDir + 'thermex1.msh';
-  PosFile = DataDir + 'thermex1.pos';
   CsvFile = DataDir + 'thermex1.csv';
-  ScrFile = DataDir + 'thermex1.scr';
 
   Kelvin = 273.15;
   Sigma = 5.6704E-8;        // Stefan-Boltzmann, as the elements use
@@ -422,6 +436,8 @@ begin
   FRLean := Sqrt(FVolLean / (Pi * FLength));
 
   FFatThickness := FROuter - FRLean;
+
+  FRLeanMm := FRLean * 1000;
 
   FGenPerVolume := FHeatOutput / FVolLean;
 
@@ -1183,34 +1199,141 @@ begin
 
 end;
 
-procedure TThermalModel.WriteResults(const PosName, CsvName, ScrName : String);
+{ The radial temperature profile, at t=0 and as it now stands.
+
+  The model is radially symmetric by construction - uniform generation,
+  a uniform lateral boundary condition, adiabatic ends - so the whole
+  three-dimensional field collapses without loss to a single curve
+  against radius, which is why this replaces a field plot.
+
+  Nodes are grouped by radius rather than plotted raw. The fat's
+  structured layers sit at four exact radii and must stay distinct,
+  since the ring's steepest gradient is across them; the unstructured
+  lean core scatters its nodes over every radius and needs averaging or
+  the curve is a band rather than a line. Grouping to a tolerance well
+  under a fat layer does both: the four fat radii stay separate, and the
+  many lean nodes at a given radius average to one point. Any residual
+  spread within a group is the model's own departure from radial
+  symmetry, which is mesh noise only. }
+procedure TThermalModel.GetRadialProfiles(out R, T0, TEnd : TVMobj);
+const
+  // Well under the 0.74 mm fat layer spacing, so those stay resolved.
+  GroupTol = 0.0002;
+var
+
+  i, j, n, m : Integer;
+
+  Idx : Array of Integer;
+
+  tmp : Integer;
+
+  rSum, t0Sum, tESum : Double;
+
+  Rv, T0v, TEv : TDoubleArray;
+
+begin
+
+  n := FEngine.NbNodes;
+
+  // Index sort by radius - insertion sort over an index array, which is
+  // ample for a few thousand nodes and keeps the node data untouched.
+  SetLength(Idx, n);
+
+  for i := 0 to n - 1 do
+    Idx[i] := i;
+
+  for i := 1 to n - 1 do
+  begin
+
+    tmp := Idx[i];
+    j := i - 1;
+
+    while (j >= 0) and (FNodeR[Idx[j]] > FNodeR[tmp]) do
+    begin
+      Idx[j + 1] := Idx[j];
+      Dec(j);
+    end;
+
+    Idx[j + 1] := tmp;
+
+  end;
+
+  SetLength(Rv, n);
+  SetLength(T0v, n);
+  SetLength(TEv, n);
+
+  m := 0;
+  i := 0;
+
+  while i < n do
+  begin
+
+    j := i;
+    rSum := 0;
+    t0Sum := 0;
+    tESum := 0;
+
+    // Everything within GroupTol of where this group started.
+    while (j < n) and (FNodeR[Idx[j]] - FNodeR[Idx[i]] <= GroupTol) do
+    begin
+
+      rSum := rSum + FNodeR[Idx[j]];
+      t0Sum := t0Sum + FTInitial[Idx[j]];
+      tESum := tESum + FEngine.Temperature[Idx[j]];
+
+      Inc(j);
+
+    end;
+
+    Rv[m] := 1000 * rSum / (j - i);       // mm, for a readable axis
+    T0v[m] := t0Sum / (j - i) - Kelvin;   // C
+    TEv[m] := tESum / (j - i) - Kelvin;
+
+    Inc(m);
+
+    i := j;
+
+  end;
+
+  R := TVMobj.Create(1, m);
+  T0 := TVMobj.Create(1, m);
+  TEnd := TVMobj.Create(1, m);
+
+  for i := 0 to m - 1 do
+  begin
+    R[0, i] := Rv[i];
+    T0[0, i] := T0v[i];
+    TEnd[0, i] := TEv[i];
+  end;
+
+end;
+
+procedure TThermalModel.ReportProfile;
+var
+
+  R, T0, TEnd : TVMobj;
+
+begin
+
+  GetRadialProfiles(R, T0, TEnd);
+
+  WriteLn;
+  WriteLn(Format('  Radial profile: %d points from the axis to the skin', [R.Cols]));
+  WriteLn(Format('    t=0   axis %.2f C -> lean surface %.2f C -> skin %.2f C',
+    [T0[0, 0], T0[0, R.Cols - NbFatRadial - 1], T0[0, R.Cols - 1]]));
+  WriteLn(Format('    end   axis %.2f C -> lean surface %.2f C -> skin %.2f C',
+    [TEnd[0, 0], TEnd[0, R.Cols - NbFatRadial - 1], TEnd[0, R.Cols - 1]]));
+
+end;
+
+procedure TThermalModel.WriteResults(const CsvName : String);
 var
 
   F : TextFile;
 
   i : Integer;
 
-  T : TDoubleArray;
-
 begin
-
-  (******************** FIELDS FOR GMSH ********************)
-
-  SetLength(T, FEngine.NbNodes);
-
-  for i := 0 to FEngine.NbNodes - 1 do
-    T[i] := FTInitial[i] - Kelvin;
-
-  FGmsh.OpenFile(PosName);
-  FGmsh.WriteViewScalarNode('Temperature at t=0 (C)', T, True);
-
-  for i := 0 to FEngine.NbNodes - 1 do
-    T[i] := FEngine.Temperature[i] - Kelvin;
-
-  FGmsh.WriteViewScalarNode('Temperature at end (C)', T, False);
-  FGmsh.Close;
-
-  (******************** HISTORY ********************)
 
   AssignFile(F, CsvName);
   SafeReWriteText(F);
@@ -1231,42 +1354,10 @@ begin
 
   end;
 
-  (******************** VIEWER SCRIPT ********************)
-
-  AssignFile(F, ScrName);
-  SafeReWriteText(F);
-
-  try
-
-    WriteLn(F, '// Generated by ThermEx1 - rewritten on every run.');
-    WriteLn(F);
-    WriteLn(F, 'Include "thermex1.pos";');
-    WriteLn(F);
-    WriteLn(F, '// Show the final temperature field; the t=0 field is View[0],');
-    WriteLn(F, '// tick it in the Post-processing tree to compare.');
-    WriteLn(F, Format('View[%d].Visible = 0;', [ViewInitial]));
-    WriteLn(F, Format('View[%d].Visible = 1;', [ViewFinal]));
-    WriteLn(F, Format('View[%d].ShowScale = 1;', [ViewFinal]));
-    WriteLn(F);
-    WriteLn(F, '// The cylinder is long and thin - look down it end-on to see the');
-    WriteLn(F, '// radial profile, which is where all the physics is.');
-    WriteLn(F, 'General.RotationX = 0;');
-    WriteLn(F, 'General.RotationY = 0;');
-    WriteLn(F, 'General.RotationZ = 0;');
-    WriteLn(F, 'Draw;');
-
-  finally
-
-    CloseFile(F);
-
-  end;
-
 end;
 
-procedure TThermalModel.Run(ViewResults : Boolean);
+procedure TThermalModel.Run;
 var
-
-  ExitCode : Cardinal;
 
   Start : QWord;
 
@@ -1332,14 +1423,12 @@ begin
 
   WriteLn(Format('  Solve time: %.0f s', [FElapsed / 1000]));
 
-  WriteResults(PosFile, CsvFile, ScrFile);
+  ReportProfile;
+
+  WriteResults(CsvFile);
 
   WriteLn;
-  WriteLn('Fields written to ', PosFile);
   WriteLn('History written to ', CsvFile);
-
-  if ViewResults then
-    Sto_ShellExecute(GmshExecutable, [ScrFile], ExitCode);
 
 end;
 
