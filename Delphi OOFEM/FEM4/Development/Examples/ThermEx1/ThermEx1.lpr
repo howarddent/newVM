@@ -102,7 +102,7 @@ begin
       Form.ShowProfiles(R, T0, TEnd,
         Format('ThermEx1 - radial temperature profile, case %d',
           [Model.CaseNumber]),
-        Sub, Model.LeanRadiusMm, Model.Report);
+        Sub, Model.Report, Model);
 
       Form.Show;
 

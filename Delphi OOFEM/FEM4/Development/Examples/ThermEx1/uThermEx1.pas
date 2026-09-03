@@ -1,29 +1,56 @@
 unit uThermEx1;
 
 { ThermEx1 - core temperature of an anaesthetised adult losing heat to a
-  cold theatre. Conduction only.
+  cold theatre. Four compartments, conduction only.
 
   A 75 kg adult at 5% body fat, generating heat at rest and losing it
-  from the skin into a 16 C theatre, modelled as a two-layer cylinder:
-  lean body mass generating uniformly throughout, wrapped in a
-  non-metabolic fat layer. The question it answers is how the CORE
-  temperature moves over the course of a case.
+  from the skin into a 16 C theatre. The question it answers is how the
+  CORE temperature moves over the course of a case.
+
+  THE COMPARTMENTS
+
+  The body is four concentric compartments, innermost outward:
+
+    core    the highly metabolising viscera - brain, heart, liver,
+            kidneys, gut - lumped with the skeleton and everything else
+            that is neither muscle, fat nor skin
+    muscle  skeletal muscle, generating only its BASAL share here since
+            this subject is not exercising; the share is what would rise,
+            steeply, with exercise
+    fat     non-metabolic, as specified
+    skin    thin, barely metabolising, and thermally almost irrelevant
+            while the model is conduction-only - it is here because
+            perfusion is what makes it matter, and the compartment has
+            to exist before the blood flow through it can
+
+  Masses come to the 75 kg: 34.50 core, 33.75 muscle, 3.75 fat (the 5%),
+  3.00 skin. Muscle at 45% and skin at 4% of body mass are ordinary
+  figures for a lean adult, and the core is what is left.
+
+  Generation is split by the organ-specific resting rates: brain 20% of
+  basal, liver 21%, heart 9%, kidneys 8%, skeletal muscle 22%, the
+  remainder 16% - which puts 74% in the core compartment, 23% in muscle
+  and 3% in skin, with fat held at zero as specified. That is 62 W, 19 W
+  and 3 W of the 83.7 W total. Note what the layers do to the
+  volumetric rates: the core generates 1885 W/m3 and muscle only 599,
+  so the compartments matter as much for WHERE the heat appears as for
+  how it conducts.
 
   WHAT IS AND IS NOT IN THE MODEL
 
-  In: conduction through lean tissue and fat, heat storage (the whole
-  body's thermal mass), uniform metabolic generation, and surface losses
-  by convection and radiation into still air at 16 C.
+  In: conduction through all four compartments, heat storage, metabolic
+  generation where it actually arises, and surface losses by convection
+  and radiation into still air at 16 C.
 
-  Out, deliberately, for this first model: respiratory evaporative loss,
-  cutaneous evaporation, and - importantly - BLOOD PERFUSION. The last
-  one is not a detail. In a real anaesthetised patient the first hour is
-  dominated by redistribution: vasodilation moves heat from core to
-  periphery far faster than tissue conduction ever could. This model has
-  no such mechanism, so it will understate how quickly the core falls
-  early on, and its core-to-skin coupling is a conduction time constant
-  of hours rather than the minutes perfusion would give. Treat the
-  numbers as the conduction-only bound, not as a patient.
+  Out, deliberately: respiratory evaporative loss, cutaneous
+  evaporation, and - importantly - BLOOD PERFUSION. The last one is not
+  a detail. In a real anaesthetised patient the first hour is dominated
+  by redistribution: vasodilation moves heat from core to periphery far
+  faster than tissue conduction ever could. This model has no such
+  mechanism, so it will understate how quickly the core falls early on,
+  and its core-to-skin coupling is a conduction time constant of hours
+  rather than the minutes perfusion would give. Treat the numbers as the
+  conduction-only bound, not as a patient.
 
   THE EQUIVALENT CYLINDER
 
@@ -36,43 +63,33 @@ unit uThermEx1;
 
     R = 2V/A,   L = V/(pi*R^2)
 
-  giving 75.7 mm radius and 4.0 m length for this subject. The length is
-  not anatomical and is not meant to be; what it buys is that the model
-  stores exactly the right amount of heat and loses it through exactly
-  the right area. The 75.7 mm radius is a fair mean tissue depth, closer
-  to a limb's than a trunk's, which is the honest reading of a body whose
-  area is mostly limbs. The ends are left adiabatic, so all the loss is
-  through the lateral surface and the whole of the nominal body surface
-  area is doing the work.
+  giving a 75.6 mm radius and 4.0 m length for this subject. The length
+  is not anatomical and is not meant to be; what it buys is that the
+  model stores exactly the right amount of heat and loses it through
+  exactly the right area. The compartment boundaries then follow from
+  the cumulative volumes, which puts the core at 51.1 mm, muscle out to
+  71.9, fat to 74.1 and skin to 75.6 - so 20.8 mm of muscle over the
+  viscera, 2.3 mm of fat and 1.5 mm of skin, all of which are sensible
+  mean depths. The ends are left adiabatic, so all the loss is through
+  the lateral surface and the whole of the nominal body surface area is
+  doing the work.
 
-  VERIFICATION STATUS
+  VERIFICATION
 
-  Verified, as of the element fixes described below.
+  The layered profile is checked against its own closed form, layer by
+  layer, and the report prints both. SetupGeometry integrates the exact
+  radial solution outward through the compartments - q*R^2/(4k) across
+  the generating core, then the shell solution with internal generation
+  for each layer beyond - and uses it twice over: to set the skin
+  coefficient that balances the body at the core set point, and to check
+  the finite-element answer afterwards.
 
-  Global energy balance: case 1 holds the balanced state for two hours
-  with the surface losing 83.7 W against 83.7 W generated and a
-  first-law residual of 0.00 W. Case 2's residual runs 0.3 to 1.2 W
-  against total flows of 170 to 270 W, shrinking as the transient
-  settles - that remainder is the backward difference used for the
-  stored-energy term and the one-step lag in the radiation
-  linearisation, both of which shrink with the time step.
+  Case 1 is the model's other check on itself: nothing should move.
 
-  Radial gradient: the balanced state now settles at a core of 37.02 C
-  against the 37.00 C the balance was designed around, with the lean
-  surface at 33.69 C and the skin at 33.22 C - all three matching the
-  closed forms q*R^2/(4k) and Q*ln(r2/r1)/(2*pi*k*L) to the second
-  decimal, the remaining 0.02 K being ordinary discretisation.
-
-  It did not always. This model originally reported a lean drop of
-  4.44 K against an exact 3.33 K, mesh-converged, and a case 2 energy
-  residual of 30 to 70 W. Both traced to two defects in the framework's
-  3D elements, found by ThermSlab (Examples/ThermSlab) and fixed:
-  TBrick_H8V1's shape-function derivatives were written for a
-  lexicographically ordered hexahedron while gmsh writes the cyclic
-  order, and TBrick_W6V1's six-point integration rule carried weights
-  whose product came to 3/4 of the reference volume, with two of its
-  triangle points at 1/3 instead of 2/3. Run ThermSlab to confirm they
-  are still right.
+  This rests on the 3D elements being right, which they now are - see
+  Examples/ThermSlab, which found and now guards two defects in them
+  (TBrick_H8V1's node ordering and TBrick_W6V1's integration weights).
+  Before those were fixed this model was a third out on its gradients.
 
   UNITS
 
@@ -114,8 +131,6 @@ const
 
   (******************** THE SUBJECT ********************)
 
-  BodyMass = 75.0;          // kg
-  FatFraction = 0.05;       // of body mass
   BodySurfaceArea = 1.903;  // m2, DuBois for 75 kg / 1.75 m
 
   VO2 = 250.0;              // mL/min
@@ -123,33 +138,73 @@ const
 
   CoreSetPointC = 37.0;     // the core the balanced start is built around
 
-  (******************** TISSUE ********************)
+  (******************** THE COMPARTMENTS ********************)
 
-  LeanDensity = 1050.0;     // kg/m3
-  LeanCp = 3600.0;          // J/kgK
-  LeanK = 0.50;             // W/mK
+  NbLayers = 4;
 
-  FatDensity = 900.0;
-  FatCp = 2300.0;
-  FatK = 0.21;
+  LayerCore = 0;
+  LayerMuscle = 1;
+  LayerFat = 2;
+  LayerSkin = 3;
+
+type
+
+  // One compartment. Mass and density fix its volume, and so its
+  // boundary radius; GenShare is its fraction of the whole body's
+  // resting heat output; RadialDiv is how many element layers it gets
+  // through its thickness, and is ignored for the innermost, which is
+  // meshed unstructured.
+  RLayerSpec = record
+
+    Name : String[8];
+    Mass : Double;        // kg
+    Density : Double;     // kg/m3
+    Cp : Double;          // J/kgK
+    K : Double;           // W/mK
+    GenShare : Double;    // of the total heat output
+    RadialDiv : Integer;
+
+  end;
+
+const
+
+  Layers : Array[0..NbLayers - 1] of RLayerSpec =
+  (
+    // Viscera plus skeleton: three quarters of the resting output in
+    // under half the volume.
+    (Name : 'core';   Mass : 34.50; Density : 1050; Cp : 3700; K : 0.52;
+     GenShare : 0.74; RadialDiv : 0),
+
+    // Skeletal muscle at rest. GenShare is the BASAL share - this is
+    // the one that would climb with exercise, and the reason the
+    // compartment is separate.
+    (Name : 'muscle'; Mass : 33.75; Density : 1050; Cp : 3600; K : 0.51;
+     GenShare : 0.23; RadialDiv : 6),
+
+    // Non-metabolic, as specified.
+    (Name : 'fat';    Mass :  3.75; Density :  900; Cp : 2300; K : 0.21;
+     GenShare : 0.00; RadialDiv : 3),
+
+    // 1.5 mm of it, and thermally almost inert until perfusion arrives.
+    (Name : 'skin';   Mass :  3.00; Density : 1085; Cp : 3680; K : 0.37;
+     GenShare : 0.03; RadialDiv : 2)
+  );
 
   (******************** ENVIRONMENT ********************)
 
   AmbientC = 16.0;          // theatre air and surrounding surfaces
-  SkinEmissivity = 0.98;      // bare skin in the far infrared
+  SkinEmissivity = 0.98;    // bare skin in the far infrared
   BareConvection = 3.0;     // W/m2K, natural convection over a supine body
 
   (******************** MESH ********************)
 
-  // Circumferential divisions per quadrant, so 4x this around. At 12 the
-  // polygon under-states the true circle by 0.3% in area and 0.07% in
-  // perimeter; the report uses the MESHED volume and area throughout, so
-  // that discretisation never leaks into the energy balance.
+  // Circumferential divisions per quadrant, so 4x this around. The
+  // report uses the MESHED volume and area throughout, so the polygon's
+  // small deficit never leaks into the energy balance.
   NbCircPerQuadrant = 12;
 
-  NbFatRadial = 3;          // element layers through the 2.2 mm of fat
   NbAxial = 4;              // along the cylinder - nothing varies axially
-  CoreMeshSize = 0.006;     // m, unstructured element size in the lean core
+  CoreMeshSize = 0.006;     // m, unstructured element size in the core
 
   (******************** TIME ********************)
 
@@ -161,9 +216,6 @@ const
 
   CaseDraped = 1;
   CaseExposed = 2;
-
-  (******************** POST-PROCESSING ********************)
-
 
 type
 
@@ -187,25 +239,29 @@ type
     FGmsh : TGmsh;
     FEngine : TThermalEngine;
 
-    FRhoLean, FCpLean, FKLean : TExpressionList;
-    FRhoFat, FCpFat, FKFat : TExpressionList;
+    FRho, FCp, FK : Array[0..NbLayers - 1] of TExpressionList;
     FHConv, FTinf, FEmiss : TExpressionList;
     FGenSource : Array of TExpressionList;
 
-    // Geometry
-    FROuter, FRLean, FLength, FFatThickness : Double;
-    FRLeanMm : Double;
-    FVolLean, FVolFat : Double;          // nominal, from mass and density
-    FMeshVolLean, FMeshVolFat : Double;  // as actually meshed
-    FMeshArea : Double;                  // as actually meshed
+    // Geometry, per compartment
+    FLayerVol : Array[0..NbLayers - 1] of Double;      // nominal
+    FMeshLayerVol : Array[0..NbLayers - 1] of Double;  // as meshed
+    FLayerR : Array[0..NbLayers - 1] of Double;        // outer radius
+    FLayerPower : Array[0..NbLayers - 1] of Double;    // W
+    FLayerGen : Array[0..NbLayers - 1] of Double;      // W/m3
+    FLayerDrop : Array[0..NbLayers - 1] of Double;     // K below the axis
+
+    FROuter, FLength : Double;
+    FMeshArea : Double;
+    FTotalMass : Double;
 
     FHeatOutput : Double;                // W, whole body
-    FGenPerVolume : Double;              // W/m3 in the lean mass
     FHBalance : Double;                  // W/m2K that balances at the set point
+    FAnalyticDrop : Double;              // K, axis to skin surface
 
     // Per element
     FEleVolume : TDoubleArray;
-    FEleRegion : TDoubleArray;           // 1 lean, 2 fat
+    FEleLayer : TDoubleArray;
 
     // Per node
     FNodeCapacity : TDoubleArray;        // J/K lumped to the node
@@ -263,8 +319,12 @@ type
 
     procedure GetRadialProfiles(out R, T0, TEnd : TVMobj);
 
-    // For the plot window: where the fat starts, in mm.
-    property LeanRadiusMm : Double read FRLeanMm;
+    // For the plot window: the compartment boundaries, in mm, innermost
+    // outward, and their names.
+    function InterfaceCount : Integer;
+    function InterfaceMm(Index : Integer) : Double;
+    function InterfaceName(Index : Integer) : String;
+
     property CaseNumber : Integer read FCase;
 
     // The run's console report, verbatim.
@@ -365,12 +425,13 @@ begin
 
   FEngine.Free;
 
-  FRhoLean.Free;
-  FCpLean.Free;
-  FKLean.Free;
-  FRhoFat.Free;
-  FCpFat.Free;
-  FKFat.Free;
+  for i := 0 to NbLayers - 1 do
+  begin
+    FRho[i].Free;
+    FCp[i].Free;
+    FK[i].Free;
+  end;
+
   FHConv.Free;
   FTinf.Free;
   FEmiss.Free;
@@ -384,8 +445,27 @@ begin
 
 end;
 
-{ Everything the model prints goes through here, so the plot window can
-  show the same report beside the graph. }
+function TThermalModel.InterfaceCount : Integer;
+begin
+
+  Result := NbLayers - 1;
+
+end;
+
+function TThermalModel.InterfaceMm(Index : Integer) : Double;
+begin
+
+  Result := FLayerR[Index] * 1000;
+
+end;
+
+function TThermalModel.InterfaceName(Index : Integer) : String;
+begin
+
+  Result := Layers[Index].Name + '/' + Layers[Index + 1].Name;
+
+end;
+
 procedure TThermalModel.Say(const S : String);
 begin
 
@@ -406,10 +486,41 @@ end;
   the skin coefficient that puts the whole thing in balance at the core
   set point. All of it derived rather than tabulated, so changing the
   subject changes the model consistently. }
+
+(*******************************************************************
+  The compartments, and the temperature profile they imply.
+
+  Radii follow from the masses: each layer's volume is its mass over
+  its density, and since the layers are concentric cylinders of the same
+  length, the cumulative volume fixes each outer radius as
+
+    r_i = R * sqrt(V_cumulative_i / V_total)
+
+  Nothing is positioned by hand, so changing a mass or a density moves
+  the boundaries consistently.
+
+  The analytic profile is worked out here too, and used two ways: to set
+  the skin coefficient that balances the body at the core set point, and
+  to check the finite-element answer afterwards. For the innermost layer
+  - a solid cylinder generating uniformly - the drop from axis to its
+  surface is q*R^2/(4k). For each shell outside it, carrying power Qin
+  from within and generating its own, integrating
+
+    dT/dr = -Q(r) / (2*pi*k*L*r),   Q(r) = Qin + q*pi*(r^2 - rin^2)*L
+
+  gives
+
+    dT = (Qin - q*pi*rin^2*L)/(2*pi*k*L) * ln(rout/rin)
+         + q*(rout^2 - rin^2)/(4*k)
+
+  which is exact for every layer including the non-generating fat.
+********************************************************************)
 procedure TThermalModel.SetupGeometry;
 var
 
-  CalEquiv, MassLean, MassFat, V, qFlux, dTLean, dTFat, TSkin : Double;
+  i : Integer;
+
+  CalEquiv, V, Vcum, qFlux, Drop, Qin, rin, rout, q : Double;
 
 begin
 
@@ -420,73 +531,150 @@ begin
 
   FHeatOutput := (VO2 / 1000) * CalEquiv * 4184 / 60;
 
-  MassFat := BodyMass * FatFraction;
-  MassLean := BodyMass - MassFat;
+  (******************** VOLUMES AND RADII ********************)
 
-  FVolLean := MassLean / LeanDensity;
-  FVolFat := MassFat / FatDensity;
+  V := 0;
 
-  V := FVolLean + FVolFat;
+  for i := 0 to NbLayers - 1 do
+  begin
+    FLayerVol[i] := Layers[i].Mass / Layers[i].Density;
+    V := V + FLayerVol[i];
+  end;
+
+  FTotalMass := 0;
+
+  for i := 0 to NbLayers - 1 do
+    FTotalMass := FTotalMass + Layers[i].Mass;
 
   // The equivalent cylinder: match the body's volume AND its surface
   // area, with the ends adiabatic so the whole area is lateral.
   FROuter := 2 * V / BodySurfaceArea;
   FLength := V / (Pi * FROuter * FROuter);
 
-  FRLean := Sqrt(FVolLean / (Pi * FLength));
+  Vcum := 0;
 
-  FFatThickness := FROuter - FRLean;
+  for i := 0 to NbLayers - 1 do
+  begin
+    Vcum := Vcum + FLayerVol[i];
+    FLayerR[i] := Sqrt(Vcum / (Pi * FLength));
+  end;
 
-  FRLeanMm := FRLean * 1000;
+  // Guard the layer table: a mass or density that puts a boundary
+  // outside the one beyond it would mesh into nonsense rather than
+  // fail, so it is caught here instead.
+  for i := 1 to NbLayers - 1 do
+    if FLayerR[i] <= FLayerR[i - 1] then
+      raise Exception.Create('Layer ' + Layers[i].Name + ' has no thickness - ' +
+        'check the masses and densities in the layer table.');
 
-  FGenPerVolume := FHeatOutput / FVolLean;
+  (******************** GENERATION ********************)
+
+  for i := 0 to NbLayers - 1 do
+  begin
+
+    FLayerPower[i] := Layers[i].GenShare * FHeatOutput;
+
+    if FLayerVol[i] > 0 then
+      FLayerGen[i] := FLayerPower[i] / FLayerVol[i]
+    else
+      FLayerGen[i] := 0;
+
+  end;
+
+  (******************** THE ANALYTIC PROFILE ********************)
+
+  // Axis outward, accumulating the drop and the power passing each
+  // radius. FLayerTAnalytic[i] is the temperature at layer i's OUTER
+  // boundary, relative to the axis.
+  Drop := 0;
+  Qin := 0;
+
+  for i := 0 to NbLayers - 1 do
+  begin
+
+    q := FLayerGen[i];
+    rout := FLayerR[i];
+
+    if i = 0 then
+    begin
+      // Solid cylinder generating uniformly.
+      Drop := Drop + q * rout * rout / (4 * Layers[i].K);
+      Qin := q * Pi * rout * rout * FLength;
+    end
+    else
+    begin
+
+      rin := FLayerR[i - 1];
+
+      Drop := Drop +
+        (Qin - q * Pi * rin * rin * FLength) /
+          (2 * Pi * Layers[i].K * FLength) * Ln(rout / rin) +
+        q * (rout * rout - rin * rin) / (4 * Layers[i].K);
+
+      Qin := Qin + q * Pi * (rout * rout - rin * rin) * FLength;
+
+    end;
+
+    FLayerDrop[i] := Drop;
+
+  end;
+
+  FAnalyticDrop := Drop;
 
   // What surface coefficient balances generation against loss with the
-  // core at the set point? Work inwards from the skin: a cylinder with
-  // uniform generation drops q*R^2/(4k) from axis to lean surface, and
-  // the fat adds a plane-wall drop on top.
+  // core at the set point?
   qFlux := FHeatOutput / BodySurfaceArea;
 
-  dTLean := FGenPerVolume * FRLean * FRLean / (4 * LeanK);
-  dTFat := qFlux * FFatThickness / FatK;
-
-  TSkin := (CoreSetPointC + Kelvin) - dTLean - dTFat;
-
-  FHBalance := qFlux / (TSkin - (AmbientC + Kelvin));
+  FHBalance := qFlux / ((CoreSetPointC + Kelvin) - FAnalyticDrop - (AmbientC + Kelvin));
 
 end;
 
 (*******************************************************************
-  Geometry: a disc of lean tissue inside an annulus of fat, extruded
-  along the axis.
+  Geometry: a disc of the innermost compartment inside concentric
+  annuli, one per outer layer, extruded along the axis.
 
-  The lean core is meshed unstructured (triangles, hence prisms once
-  extruded) because nothing about it needs structure - it is one
-  material with a smooth field. The fat annulus is meshed structured
+  The core is meshed unstructured (triangles, hence prisms once
+  extruded): it is one material with a smooth field and nothing about
+  it needs structure. Every layer outside it is meshed structured
   instead, as four transfinite quadrants recombined into quads, hence
-  hexahedra: at 2.2 mm thick carrying the entire temperature drop to the
-  skin, it needs its element layers placed deliberately rather than
-  left to an unstructured mesher, which would either miss it or flood
-  the whole model with tiny elements.
+  hexahedra - the fat is 2.3 mm thick and the skin 1.5 mm, and an
+  unstructured mesher would either miss them or flood the whole model
+  with elements that size.
 
     point   1               axis
-    point   2+q, 6+q        the two circles at 0, 90, 180, 270 degrees
-    line    1+q, 5+q        inner and outer quadrant arcs
-    line    9+q             radial lines joining them
-    surface 21              lean disc
-    surface 40+q            fat quadrants
-    volume  physical 1      lean, physical 2 fat
+    point   10+4*L+q        interface radius L at quadrant angle q
+    line    100+4*L+q       arc of radius L, quadrant q
+    line    200+4*L+q       radial line from radius L to L+1 at angle q
+    surface 300             the core disc
+    surface 400+4*L+q       annulus of layer L, quadrant q
+    volume  physical L+1    layer L
 ********************************************************************)
 procedure TThermalModel.WriteGeoFile(const FileName : String);
+
+  function PIdx(L, q : Integer) : Integer;
+  begin
+    Result := 10 + 4 * L + (q mod 4);
+  end;
+
+  function ArcId(L, q : Integer) : Integer;
+  begin
+    Result := 100 + 4 * L + q;
+  end;
+
+  function RadId(L, q : Integer) : Integer;
+  begin
+    Result := 200 + 4 * L + (q mod 4);
+  end;
+
 var
 
   F : TextFile;
 
-  q, n : Integer;
+  L, q, n : Integer;
 
   a : Double;
 
-  Inner, Outer, Radial, FatVols : String;
+  Arcs, Rads, Vols : String;
 
 begin
 
@@ -508,94 +696,130 @@ begin
 
     WriteLn(F, 'Point(1) = {0,0,0,cl};');
 
-    for q := 0 to 3 do
-    begin
-
-      a := q * Pi / 2;
-
-      WriteLn(F, Format('Point(%d) = {%s,%s,0,cl};',
-        [2 + q, Num(FRLean * Cos(a)), Num(FRLean * Sin(a))]));
-
-      WriteLn(F, Format('Point(%d) = {%s,%s,0,cl};',
-        [6 + q, Num(FROuter * Cos(a)), Num(FROuter * Sin(a))]));
-
-    end;
-
-    Inner := '';
-    Outer := '';
-    Radial := '';
-
-    for q := 0 to 3 do
-    begin
-
-      n := (q + 1) mod 4;
-
-      WriteLn(F, Format('Circle(%d) = {%d,1,%d};', [1 + q, 2 + q, 2 + n]));
-      WriteLn(F, Format('Circle(%d) = {%d,1,%d};', [5 + q, 6 + q, 6 + n]));
-      WriteLn(F, Format('Line(%d) = {%d,%d};', [9 + q, 2 + q, 6 + q]));
-
-      if q > 0 then
+    for L := 0 to NbLayers - 1 do
+      for q := 0 to 3 do
       begin
-        Inner := Inner + ',';
-        Outer := Outer + ',';
-        Radial := Radial + ',';
+
+        a := q * Pi / 2;
+
+        WriteLn(F, Format('Point(%d) = {%s,%s,0,cl};',
+          [PIdx(L, q), Num(FLayerR[L] * Cos(a)), Num(FLayerR[L] * Sin(a))]));
+
       end;
 
-      Inner := Inner + IntToStr(1 + q);
-      Outer := Outer + IntToStr(5 + q);
-      Radial := Radial + IntToStr(9 + q);
+    // Arcs at every interface radius, and the radial lines joining
+    // consecutive ones.
+    for L := 0 to NbLayers - 1 do
+    begin
+
+      Arcs := '';
+
+      for q := 0 to 3 do
+      begin
+
+        WriteLn(F, Format('Circle(%d) = {%d,1,%d};',
+          [ArcId(L, q), PIdx(L, q), PIdx(L, q + 1)]));
+
+        if q > 0 then
+          Arcs := Arcs + ',';
+
+        Arcs := Arcs + IntToStr(ArcId(L, q));
+
+      end;
+
+      WriteLn(F, Format('Transfinite Line {%s} = %d;',
+        [Arcs, NbCircPerQuadrant + 1]));
 
     end;
 
-    WriteLn(F, Format('Transfinite Line {%s,%s} = %d;',
-      [Inner, Outer, NbCircPerQuadrant + 1]));
+    for L := 0 to NbLayers - 2 do
+    begin
 
-    WriteLn(F, Format('Transfinite Line {%s} = %d;', [Radial, NbFatRadial + 1]));
+      Rads := '';
 
-    WriteLn(F, Format('Line Loop(20) = {%s};', [Inner]));
-    WriteLn(F, 'Plane Surface(21) = {20};');
+      for q := 0 to 3 do
+      begin
+
+        WriteLn(F, Format('Line(%d) = {%d,%d};',
+          [RadId(L, q), PIdx(L, q), PIdx(L + 1, q)]));
+
+        if q > 0 then
+          Rads := Rads + ',';
+
+        Rads := Rads + IntToStr(RadId(L, q));
+
+      end;
+
+      // The layer OUTSIDE this pair of radii owns the divisions.
+      WriteLn(F, Format('Transfinite Line {%s} = %d;',
+        [Rads, Layers[L + 1].RadialDiv + 1]));
+
+    end;
+
+    // The core disc.
+    Arcs := '';
 
     for q := 0 to 3 do
     begin
-
-      n := (q + 1) mod 4;
-
-      WriteLn(F, Format('Line Loop(%d) = {%d,%d,-%d,-%d};',
-        [30 + q, 9 + q, 5 + q, 9 + n, 1 + q]));
-
-      WriteLn(F, Format('Plane Surface(%d) = {%d};', [40 + q, 30 + q]));
-
-      WriteLn(F, Format('Transfinite Surface {%d} = {%d,%d,%d,%d};',
-        [40 + q, 2 + q, 6 + q, 6 + n, 2 + n]));
-
-      WriteLn(F, Format('Recombine Surface {%d};', [40 + q]));
-
+      if q > 0 then
+        Arcs := Arcs + ',';
+      Arcs := Arcs + IntToStr(ArcId(0, q));
     end;
+
+    WriteLn(F, Format('Line Loop(299) = {%s};', [Arcs]));
+    WriteLn(F, 'Plane Surface(300) = {299};');
+
+    // The annuli, quadrant by quadrant.
+    for L := 1 to NbLayers - 1 do
+      for q := 0 to 3 do
+      begin
+
+        n := (q + 1) mod 4;
+
+        WriteLn(F, Format('Line Loop(%d) = {%d,%d,-%d,-%d};',
+          [500 + 4 * L + q, RadId(L - 1, q), ArcId(L, q),
+           RadId(L - 1, n), ArcId(L - 1, q)]));
+
+        WriteLn(F, Format('Plane Surface(%d) = {%d};',
+          [400 + 4 * L + q, 500 + 4 * L + q]));
+
+        WriteLn(F, Format('Transfinite Surface {%d} = {%d,%d,%d,%d};',
+          [400 + 4 * L + q, PIdx(L - 1, q), PIdx(L, q),
+           PIdx(L, n), PIdx(L - 1, n)]));
+
+        WriteLn(F, Format('Recombine Surface {%d};', [400 + 4 * L + q]));
+
+      end;
 
     // Extruded one surface at a time so each volume id can be captured
     // for its physical group; they still mesh conformally, because the
-    // arcs they share are meshed once.
-    WriteLn(F, Format('lean[] = Extrude {0,0,%s} { Surface{21}; Layers{%d}; Recombine; };',
+    // curves they share are meshed once.
+    WriteLn(F, Format('core[] = Extrude {0,0,%s} { Surface{300}; Layers{%d}; Recombine; };',
       [Num(FLength), NbAxial]));
 
-    WriteLn(F, 'Physical Volume(1) = {lean[1]};');
+    WriteLn(F, 'Physical Volume(1) = {core[1]};');
 
-    FatVols := '';
-
-    for q := 0 to 3 do
+    for L := 1 to NbLayers - 1 do
     begin
 
-      WriteLn(F, Format('fat%d[] = Extrude {0,0,%s} { Surface{%d}; Layers{%d}; Recombine; };',
-        [q, Num(FLength), 40 + q, NbAxial]));
+      Vols := '';
 
-      if q > 0 then
-        FatVols := FatVols + ',';
+      for q := 0 to 3 do
+      begin
 
-      FatVols := FatVols + Format('fat%d[1]', [q]);
+        WriteLn(F, Format('v%d_%d[] = Extrude {0,0,%s} { Surface{%d}; Layers{%d}; Recombine; };',
+          [L, q, Num(FLength), 400 + 4 * L + q, NbAxial]));
+
+        if q > 0 then
+          Vols := Vols + ',';
+
+        Vols := Vols + Format('v%d_%d[1]', [L, q]);
+
+      end;
+
+      WriteLn(F, Format('Physical Volume(%d) = {%s};', [L + 1, Vols]));
 
     end;
-
-    WriteLn(F, Format('Physical Volume(2) = {%s};', [FatVols]));
 
   finally
 
@@ -638,6 +862,13 @@ end;
   Both element types here are straight extrusions - a prism from a
   triangle, a hexahedron from a quadrilateral - so a volume is just its
   base area times the extrusion height, exactly. }
+
+{ Element volumes, the heat capacity lumped to each node, and the list of
+  faces lying on the skin.
+
+  Both element types here are straight extrusions - a prism from a
+  triangle, a hexahedron from a quadrilateral - so a volume is just its
+  base area times the extrusion height, exactly. }
 procedure TThermalModel.CalcElementGeometry;
 var
 
@@ -654,7 +885,7 @@ var
 begin
 
   SetLength(FEleVolume, FGmsh.NbElements);
-  SetLength(FEleRegion, FGmsh.NbElements);
+  SetLength(FEleLayer, FGmsh.NbElements);
   SetLength(FNodeCapacity, FGmsh.NbNodes);
   SetLength(FNodeR, FGmsh.NbNodes);
 
@@ -664,8 +895,9 @@ begin
     FNodeR[i] := Sqrt(Sqr(FGmsh.CoordX[i]) + Sqr(FGmsh.CoordY[i]));
   end;
 
-  FMeshVolLean := 0;
-  FMeshVolFat := 0;
+  for i := 0 to NbLayers - 1 do
+    FMeshLayerVol[i] := 0;
+
   FMeshArea := 0;
 
   FNbSkin := 0;
@@ -681,7 +913,7 @@ begin
     else
       raise Exception.Create('Unexpected element type ' +
         IntToStr(FGmsh.ElementType[i]) + ' - this model meshes only ' +
-        'hexahedra (fat) and prisms (lean).');
+        'hexahedra (the outer layers) and prisms (the core).');
 
     for j := 0 to nb - 1 do
       Nd[j] := FGmsh.ElementNode[i, j];
@@ -708,34 +940,27 @@ begin
 
     FEleVolume[i] := Base * dz;
 
-    g := FGmsh.ElementPhysicalRegion[i];
+    // Physical region 1..NbLayers, innermost outward.
+    g := FGmsh.ElementPhysicalRegion[i] - 1;
 
-    if (g < 1) or (g > 2) then
+    if (g < 0) or (g > NbLayers - 1) then
       raise Exception.Create('Element ' + IntToStr(i) + ' is in physical ' +
-        'region ' + IntToStr(g) + ', which is neither lean (1) nor fat (2).');
+        'region ' + IntToStr(g + 1) + ', which is not one of the ' +
+        IntToStr(NbLayers) + ' compartments.');
 
-    FEleRegion[i] := g;
+    FEleLayer[i] := g;
 
-    if g = 1 then
-    begin
-      FMeshVolLean := FMeshVolLean + FEleVolume[i];
-      for j := 0 to nb - 1 do
-        FNodeCapacity[Nd[j]] := FNodeCapacity[Nd[j]] +
-          LeanDensity * LeanCp * FEleVolume[i] / nb;
-    end
-    else
-    begin
-      FMeshVolFat := FMeshVolFat + FEleVolume[i];
-      for j := 0 to nb - 1 do
-        FNodeCapacity[Nd[j]] := FNodeCapacity[Nd[j]] +
-          FatDensity * FatCp * FEleVolume[i] / nb;
-    end;
+    FMeshLayerVol[g] := FMeshLayerVol[g] + FEleVolume[i];
+
+    for j := 0 to nb - 1 do
+      FNodeCapacity[Nd[j]] := FNodeCapacity[Nd[j]] +
+        Layers[g].Density * Layers[g].Cp * FEleVolume[i] / nb;
 
     (******************** SKIN FACES ********************)
 
-    // Only the fat carries skin, and only its outward face: every node
-    // of the face sits on the outer radius.
-    if g = 2 then
+    // Only the outermost layer carries skin, and only its outward face:
+    // every node of the face sits on the outer radius.
+    if g = NbLayers - 1 then
     begin
 
       for f := 0 to 5 do
@@ -822,7 +1047,9 @@ end;
 procedure TThermalModel.BuildModel;
 var
 
-  i, j, nb, MatLean, MatFat, g : Integer;
+  i, j, nb, g : Integer;
+
+  Mat : Array[0..NbLayers - 1] of Integer;
 
   Node : Array[0..7] of Integer;
 
@@ -841,23 +1068,22 @@ begin
 
   (******************** MATERIALS ********************)
 
-  FRhoLean := TExpressionList.Create;
-  FRhoLean.AddExpression(0, 1000, Num(LeanDensity), 'T');
-  FCpLean := TExpressionList.Create;
-  FCpLean.AddExpression(0, 1000, Num(LeanCp), 'T');
-  FKLean := TExpressionList.Create;
-  FKLean.AddExpression(0, 1000, Num(LeanK), 'T');
+  // One material per compartment, from the layer table.
+  for i := 0 to NbLayers - 1 do
+  begin
 
-  MatLean := FEngine.AddMaterial(Constant, FRhoLean, FCpLean, FKLean);
+    FRho[i] := TExpressionList.Create;
+    FRho[i].AddExpression(0, 1000, Num(Layers[i].Density), 'T');
 
-  FRhoFat := TExpressionList.Create;
-  FRhoFat.AddExpression(0, 1000, Num(FatDensity), 'T');
-  FCpFat := TExpressionList.Create;
-  FCpFat.AddExpression(0, 1000, Num(FatCp), 'T');
-  FKFat := TExpressionList.Create;
-  FKFat.AddExpression(0, 1000, Num(FatK), 'T');
+    FCp[i] := TExpressionList.Create;
+    FCp[i].AddExpression(0, 1000, Num(Layers[i].Cp), 'T');
 
-  MatFat := FEngine.AddMaterial(Constant, FRhoFat, FCpFat, FKFat);
+    FK[i] := TExpressionList.Create;
+    FK[i].AddExpression(0, 1000, Num(Layers[i].K), 'T');
+
+    Mat[i] := FEngine.AddMaterial(Constant, FRho[i], FCp[i], FK[i]);
+
+  end;
 
   (******************** MESH ********************)
 
@@ -883,16 +1109,7 @@ begin
     for j := 0 to nb - 1 do
       Node[j] := FGmsh.ElementNode[i, j];
 
-    if nb = 8 then
-    begin
-    end;
-
-    if Round(FEleRegion[i]) = 1 then
-      g := MatLean
-    else
-      g := MatFat;
-
-    FEngine.AddElement(Node, nb, EleType, g);
+    FEngine.AddElement(Node, nb, EleType, Mat[Round(FEleLayer[i])]);
 
   end;
 
@@ -909,11 +1126,11 @@ begin
 
   (******************** METABOLIC GENERATION ********************)
 
-  // There is no volumetric-source call on the engine, so the uniform
-  // generation is lumped to nodes here - the same thing the structural
-  // engine does internally for self weight. Scaled by the MESHED lean
-  // volume, so the model receives exactly FHeatOutput watts however
-  // coarsely the circle is polygonised.
+  // There is no volumetric-source call on the engine, so each layer's
+  // generation is lumped to its nodes here - the same thing the
+  // structural engine does internally for self weight. Scaled by the
+  // MESHED volume of that layer, so each compartment receives exactly
+  // its share of the total however coarsely the circle is polygonised.
   SetLength(NodeQ, FGmsh.NbNodes);
 
   for i := 0 to FGmsh.NbNodes - 1 do
@@ -922,7 +1139,9 @@ begin
   for i := 0 to FGmsh.NbElements - 1 do
   begin
 
-    if Round(FEleRegion[i]) <> 1 then
+    g := Round(FEleLayer[i]);
+
+    if FLayerPower[g] <= 0 then
       Continue;
 
     if FGmsh.ElementType[i] = GMSH_HEXA then
@@ -930,7 +1149,7 @@ begin
     else
       nb := 6;
 
-    Q := FHeatOutput * (FEleVolume[i] / FMeshVolLean) / nb;
+    Q := FLayerPower[g] * (FEleVolume[i] / FMeshLayerVol[g]) / nb;
 
     for j := 0 to nb - 1 do
       NodeQ[FGmsh.ElementNode[i, j]] := NodeQ[FGmsh.ElementNode[i, j]] + Q;
@@ -973,6 +1192,7 @@ begin
   FEngine.SetInitialTemperature(CoreSetPointC + Kelvin);
 
 end;
+
 
 function TThermalModel.TotalEnergy : Double;
 var
@@ -1109,27 +1329,44 @@ begin
 
 end;
 
+
 procedure TThermalModel.ReportSetup;
+var
+
+  i : Integer;
+
+  Cap : Double;
+
 begin
 
   Say('');
   Say('================ SUBJECT AND MODEL ================');
-  Say(Format('  Body mass / fat          : %8.1f kg / %.2f kg (%.0f%%)',
-    [BodyMass, BodyMass * FatFraction, FatFraction * 100]));
+  Say(Format('  Body mass                : %8.1f kg', [FTotalMass]));
   Say(Format('  VO2 / RQ                 : %8.0f mL/min at RQ %.2f', [VO2, RQ]));
   Say(Format('  Metabolic heat output    : %8.1f W', [FHeatOutput]));
-  Say(Format('  Generation in lean mass  : %8.0f W/m3', [FGenPerVolume]));
+  Say('');
+
+  Say('  compartment    mass    volume   outer r  thickness    power   generation');
+  Say('                 (kg)       (L)      (mm)       (mm)      (W)      (W/m3)');
+
+  for i := 0 to NbLayers - 1 do
+    Say(Format('  %-10s %7.2f %9.2f %9.2f %10.2f %8.1f %11.0f',
+      [Layers[i].Name, Layers[i].Mass, FLayerVol[i] * 1000,
+       FLayerR[i] * 1000,
+       1000 * (FLayerR[i] - IfThen(i = 0, 0, FLayerR[Max(i - 1, 0)])),
+       FLayerPower[i], FLayerGen[i]]));
+
+  Cap := 0;
+
+  for i := 0 to NbLayers - 1 do
+    Cap := Cap + Layers[i].Mass * Layers[i].Cp;
+
   Say('');
   Say(Format('  Equivalent cylinder      : R %6.1f mm, length %.2f m',
     [FROuter * 1000, FLength]));
-  Say(Format('  Fat layer                : %8.2f mm', [FFatThickness * 1000]));
-  Say(Format('  Volume  nominal / meshed : %8.2f L / %.2f L',
-    [(FVolLean + FVolFat) * 1000, (FMeshVolLean + FMeshVolFat) * 1000]));
   Say(Format('  Surface nominal / meshed : %8.3f m2 / %.3f m2',
     [BodySurfaceArea, FMeshArea]));
-  Say(Format('  Heat capacity            : %8.0f kJ/K',
-    [(BodyMass - BodyMass * FatFraction) * LeanCp / 1000 +
-     BodyMass * FatFraction * FatCp / 1000]));
+  Say(Format('  Heat capacity            : %8.0f kJ/K', [Cap / 1000]));
   Say('');
   Say(Format('  Ambient                  : %8.1f C', [AmbientC]));
   Say(Format('  Draped coefficient       : %8.2f W/m2K  (balances at a %.0f C core)',
@@ -1143,6 +1380,79 @@ begin
 
   Say(Format('  Mesh                     : %8d nodes, %d elements, %d skin faces',
     [FGmsh.NbNodes, FGmsh.NbElements, FNbSkin]));
+
+end;
+
+{ The radial profile, and how it compares with the closed form the layer
+  chain was integrated from in SetupGeometry. Anything beyond ordinary
+  discretisation here means the compartments, the generation split or
+  the elements are not doing what the analytic chain assumes. }
+procedure TThermalModel.ReportProfile;
+var
+
+  i, j, iBest : Integer;
+
+  R, T0, TEnd : TVMobj;
+
+  Axis, Best, d, TFE, TAn : Double;
+
+begin
+
+  GetRadialProfiles(R, T0, TEnd);
+
+  Say('');
+  Say('================ RADIAL PROFILE ================');
+  Say(Format('  %d points from the axis to the skin.', [R.Cols]));
+  Say('');
+  Say('  boundary          r (mm)     FE (C)  analytic (C)   diff (K)');
+
+  Axis := T0[0, 0];
+
+  Say(Format('  %-14s %8.2f %10.3f %13.3f %10.3f',
+    ['axis', 0.0, Axis, CoreSetPointC, Axis - CoreSetPointC]));
+
+  for i := 0 to NbLayers - 1 do
+  begin
+
+    // Nearest profile point to this compartment's outer radius.
+    Best := MaxDouble;
+    iBest := 0;
+
+    for j := 0 to R.Cols - 1 do
+    begin
+
+      d := Abs(R[0, j] - FLayerR[i] * 1000);
+
+      if d < Best then
+      begin
+        Best := d;
+        iBest := j;
+      end;
+
+    end;
+
+    TFE := T0[0, iBest];
+    TAn := CoreSetPointC - FLayerDrop[i];
+
+    Say(Format('  %-14s %8.2f %10.3f %13.3f %10.3f',
+      [Layers[i].Name + ' out', FLayerR[i] * 1000, TFE, TAn, TFE - TAn]));
+
+  end;
+
+  Say('');
+  Say(Format('  Axis to skin: %.3f K by the model, %.3f K by the layered closed',
+    [Axis - T0[0, R.Cols - 1], FAnalyticDrop]));
+  Say('  form. The analytic chain integrates q*R^2/(4k) across the generating');
+  Say('  core and the shell solution with internal generation across each layer');
+  Say('  beyond it, so agreement here checks the compartments, the generation');
+  Say('  split and the 3D elements together.');
+
+  if FNbHist > 0 then
+  begin
+    Say('');
+    Say(Format('  At the end of the run: axis %.2f C, skin %.2f C',
+      [TEnd[0, 0], TEnd[0, R.Cols - 1]]));
+  end;
 
 end;
 
@@ -1215,6 +1525,7 @@ end;
   many lean nodes at a given radius average to one point. Any residual
   spread within a group is the model's own departure from radial
   symmetry, which is mesh noise only. }
+
 procedure TThermalModel.GetRadialProfiles(out R, T0, TEnd : TVMobj);
 const
   // Well under the 0.74 mm fat layer spacing, so those stay resolved.
@@ -1308,23 +1619,6 @@ begin
 
 end;
 
-procedure TThermalModel.ReportProfile;
-var
-
-  R, T0, TEnd : TVMobj;
-
-begin
-
-  GetRadialProfiles(R, T0, TEnd);
-
-  Say('');
-  Say(Format('  Radial profile: %d points from the axis to the skin', [R.Cols]));
-  Say(Format('    t=0   axis %.2f C -> lean surface %.2f C -> skin %.2f C',
-    [T0[0, 0], T0[0, R.Cols - NbFatRadial - 1], T0[0, R.Cols - 1]]));
-  Say(Format('    end   axis %.2f C -> lean surface %.2f C -> skin %.2f C',
-    [TEnd[0, 0], TEnd[0, R.Cols - NbFatRadial - 1], TEnd[0, R.Cols - 1]]));
-
-end;
 
 procedure TThermalModel.WriteResults(const CsvName : String);
 var
