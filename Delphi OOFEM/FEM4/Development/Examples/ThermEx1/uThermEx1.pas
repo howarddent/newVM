@@ -394,6 +394,11 @@ const
   NbTimeSteps = 120;        // 2 hours
   ReportEvery = 10;         // console line every this many steps
 
+  // How often the whole field is kept for the gmsh animation. Every
+  // fifth minute over two hours is 25 frames including t = 0, one file
+  // each - see WriteViewFiles for why they are separate files.
+  SnapshotSeconds = 300.0;
+
   (******************** CASES ********************)
 
   CaseDraped = 1;
@@ -490,6 +495,13 @@ type
     FHistTArt, FHistPerf : TDoubleArray;
     FNbHist : Integer;
 
+    // The whole field, kept every SnapshotSeconds, for the gmsh
+    // animation. 25 frames of 4285 nodes is under a megabyte, so this
+    // is kept in full rather than rewritten to disk as the run goes.
+    FSnapTime : TDoubleArray;             // s
+    FSnap : Array of TDoubleArray;        // C, by node
+    FNbSnap : Integer;
+
     FTInitial : TDoubleArray;
     FEnergyPrev : Double;
     FTimePrev : Double;
@@ -531,6 +543,10 @@ type
 
     procedure WriteResults(const CsvName : String);
 
+    procedure TakeSnapshot(AtTime : Double);
+    procedure WriteViewFiles;
+    procedure WriteViewScript(const FileName : String);
+
   public
 
     constructor Create(ACase : Integer);
@@ -539,6 +555,12 @@ type
     function Constant(NodeId, ElementId : Integer) : Double;
 
     procedure PostProcess;
+
+    // Write the run out as a numbered series of gmsh views and open
+    // gmsh on them. Frames are SnapshotSeconds apart.
+    procedure ShowInGmsh;
+
+    function SnapshotCount : Integer;
 
     procedure GetRadialProfiles(Sector : TProfileSector;
                                 out S, T0, TEnd : TVMobj);
@@ -583,6 +605,10 @@ const
   GeoFile = DataDir + 'thermex1.geo';
   MshFile = DataDir + 'thermex1.msh';
   CsvFile = DataDir + 'thermex1.csv';
+  ScrFile = DataDir + 'thermex1.scr';
+
+  // One .pos per frame, numbered: ViewPrefix + '000.pos' upward.
+  ViewPrefix = DataDir + 'thermex1_';
 
   Kelvin = 273.15;
   Sigma = 5.6704E-8;        // Stefan-Boltzmann, as the elements use
@@ -1916,6 +1942,13 @@ begin
 
   Inc(FNbHist);
 
+  // Every fifth minute, keep the whole field for the gmsh animation.
+  // Rounded rather than compared as reals: the times are exact
+  // multiples of the step, but only once they have been through the
+  // engine's own accumulation.
+  if Round(Now_) mod Round(SnapshotSeconds) = 0 then
+    TakeSnapshot(Now_);
+
   FEnergyPrev := E;
   FTimePrev := Now_;
 
@@ -2421,10 +2454,15 @@ const
   // no better reason than which nodes fell where. A wider band inside
   // the core averages that away; there is no thin layer in there to
   // lose by it.
-  CoreGroupTol = 0.0015;
+  CoreGroupTol = 0.0020;
 
-  // Half-width of the front and back sectors.
-  ProfileHalfAngleDeg = 30.0;
+  // Half-width of the front and back sectors. Wider takes in more nodes
+  // per band, but the field varies with angle as well as with s, so a
+  // wide sector averages over a real spread of temperatures and which
+  // angles a band happens to contain then shows up as a wobble along
+  // the curve. 15 degrees is the compromise: enough nodes to average,
+  // narrow enough that what they are averaging is nearly one value.
+  ProfileHalfAngleDeg = 15.0;
 var
 
   i, j, n, m : Integer;
@@ -2584,6 +2622,211 @@ begin
 
 end;
 
+{ Keep the whole temperature field as it stands, for the gmsh animation.
+
+  Celsius, not Kelvin: this is the only thing in the model that leaves
+  as a picture rather than a number, and a colour scale reading 305 to
+  310 K tells a clinician nothing. }
+procedure TThermalModel.TakeSnapshot(AtTime : Double);
+var
+  i : Integer;
+begin
+
+  if FNbSnap >= Length(FSnapTime) then
+  begin
+    SetLength(FSnapTime, FNbSnap + 32);
+    SetLength(FSnap, FNbSnap + 32);
+  end;
+
+  SetLength(FSnap[FNbSnap], FEngine.NbNodes);
+
+  for i := 0 to FEngine.NbNodes - 1 do
+    FSnap[FNbSnap][i] := FEngine.Temperature[i] - Kelvin;
+
+  FSnapTime[FNbSnap] := AtTime;
+
+  Inc(FNbSnap);
+
+end;
+
+function TThermalModel.SnapshotCount : Integer;
+begin
+
+  Result := FNbSnap;
+
+end;
+
+{ The run as a numbered series of gmsh views, ONE FRAME PER FILE.
+
+  A single view carrying 25 time steps would animate in gmsh too, and
+  would be a good deal smaller. Separate files are written instead so
+  that the run is a set of similarly named files - thermex1_000.pos to
+  thermex1_024.pos, zero-padded so they sort and match as one pattern -
+  which is what gmsh's own file-pattern merging takes
+  (General.WatchFilePattern = "thermex1_*.pos"), and what lets the whole
+  series be brought in by a shell glob or by multi-selecting it under
+  File > Merge.
+
+  Worth knowing, since it is the obvious thing to try: opening
+  thermex1_000.pos on its own does NOT pull the rest in. Tested on gmsh
+  4.15.2, which has no "load all files with similar names" prompt of the
+  kind some tools offer. The script below therefore names all 25
+  explicitly, which needs no such feature and is what the View button
+  opens.
+
+  Each file is about 2.7 MB - the parsed .pos format repeats all 24
+  vertex coordinates of every hexahedron in every frame - so the series
+  comes to some 70 MB in Examples/Data. That is the price of the format,
+  not of the model.
+
+  Any higher-numbered files left over from a longer previous run are
+  deleted, or the similar-name prompt would sweep them back in and the
+  animation would end on frames from another solve. }
+procedure TThermalModel.WriteViewFiles;
+var
+
+  i : Integer;
+
+  FileName : String;
+
+begin
+
+  for i := 0 to FNbSnap - 1 do
+  begin
+
+    FileName := Format('%s%.3d.pos', [ViewPrefix, i]);
+
+    FGmsh.OpenFile(FileName);
+
+    FGmsh.WriteViewScalarNode(
+      Format('T (C) at %.0f min', [FSnapTime[i] / 60]), FSnap[i], True);
+
+    FGmsh.Close;
+
+  end;
+
+  i := FNbSnap;
+
+  while FileExists(Format('%s%.3d.pos', [ViewPrefix, i])) do
+  begin
+    DeleteFile(Format('%s%.3d.pos', [ViewPrefix, i]));
+    Inc(i);
+  end;
+
+end;
+
+{ The gmsh script that opens the series: merge every frame, put them all
+  on ONE colour scale, and set gmsh to animate by stepping through views
+  rather than through time steps within a view.
+
+  The common scale is the part that matters. Left to itself gmsh
+  normalises each view to its own range, so every frame would be drawn
+  with the same colours over a range that shrinks as the body cools, and
+  a run that loses four degrees would look like a run that does nothing.
+  Fixing CustomMin/CustomMax across all of them is what makes the
+  animation show the cooling.
+
+  No camera is set beyond squaring it up. The body is an extrusion along
+  z with nothing varying axially, and gmsh's default view looks straight
+  down z - so what faces the viewer is the elliptical section itself,
+  which is the whole of the result. }
+procedure TThermalModel.WriteViewScript(const FileName : String);
+var
+
+  F : TextFile;
+
+  i, j : Integer;
+
+  Lo, Hi : Double;
+
+begin
+
+  Lo := MaxDouble;
+  Hi := -MaxDouble;
+
+  for i := 0 to FNbSnap - 1 do
+    for j := 0 to Length(FSnap[i]) - 1 do
+    begin
+      if FSnap[i][j] < Lo then Lo := FSnap[i][j];
+      if FSnap[i][j] > Hi then Hi := FSnap[i][j];
+    end;
+
+  AssignFile(F, FileName);
+
+  SafeReWriteText(F);
+
+  try
+
+    WriteLn(F, '// Generated by ThermEx1 - do not edit, it is rewritten every');
+    WriteLn(F, '// time the View button is pressed.');
+    WriteLn(F, '//');
+    WriteLn(F, Format('// %d frames, %.0f minutes apart, of case %d at %.1f L/min.',
+      [FNbSnap, SnapshotSeconds / 60, FCase, FCardiacOutput]));
+    WriteLn(F);
+
+    for i := 0 to FNbSnap - 1 do
+      WriteLn(F, Format('Merge "thermex1_%.3d.pos";', [i]));
+
+    WriteLn(F);
+    WriteLn(F, '// One scale for every frame. Without this each view normalises to');
+    WriteLn(F, '// its own range and the cooling becomes invisible.');
+    WriteLn(F, 'For i In {0:PostProcessing.NbViews-1}');
+    WriteLn(F, '  View[i].RangeType = 2;   // custom');
+    WriteLn(F, '  View[i].CustomMin = ' + Num(Lo) + ';');
+    WriteLn(F, '  View[i].CustomMax = ' + Num(Hi) + ';');
+    WriteLn(F, '  View[i].Visible = 0;');
+    WriteLn(F, 'EndFor');
+    WriteLn(F);
+    WriteLn(F, 'View[0].Visible = 1;');
+    WriteLn(F);
+    WriteLn(F, '// Animate by stepping through the views, not through time steps');
+    WriteLn(F, '// inside one view: each frame is its own view here, with a single');
+    WriteLn(F, '// step in it. Press play in the status bar to run it, or the');
+    WriteLn(F, '// buttons either side of play to step frame by frame; the up and');
+    WriteLn(F, '// down arrow keys move from view to view as well. (The LEFT and');
+    WriteLn(F, '// RIGHT arrows step time steps within a view, so they do nothing');
+    WriteLn(F, '// here.)');
+    WriteLn(F, 'PostProcessing.AnimationCycle = 1;');
+    WriteLn(F, 'PostProcessing.AnimationDelay = 0.2;');
+    WriteLn(F);
+    WriteLn(F, '// Square on to the section - the body does not vary along its');
+    WriteLn(F, '// length, so this is the whole picture.');
+    WriteLn(F, 'General.RotationX = 0;');
+    WriteLn(F, 'General.RotationY = 0;');
+    WriteLn(F, 'General.RotationZ = 0;');
+    WriteLn(F, 'General.Trackball = 0;');
+
+  finally
+
+    CloseFile(F);
+
+  end;
+
+end;
+
+{ Write the frames and open gmsh on them. Called from the View button. }
+procedure TThermalModel.ShowInGmsh;
+var
+  ExitCode : Cardinal;
+begin
+
+  if FNbSnap = 0 then
+    raise Exception.Create('There is nothing to view yet - the model has ' +
+      'not been run.');
+
+  WriteViewFiles;
+
+  WriteViewScript(ScrFile);
+
+  WriteLn(Format('%d gmsh views written, %s000.pos upward.',
+    [FNbSnap, ViewPrefix]));
+
+  if not Sto_ShellExecute(GmshExecutable, [ScrFile], ExitCode) then
+    raise Exception.Create('Could not run gmsh (' + GmshExecutable +
+      '). Install gmsh, or edit GmshExecutable in uThermEx1.pas.');
+
+end;
+
 { Mesh and measure. Nothing here depends on the cardiac output, so it is
   done once and Solve may then be called as often as the slider moves. }
 procedure TThermalModel.Prepare;
@@ -2725,6 +2968,12 @@ begin
   for i := 0 to FEngine.NbNodes - 1 do
     FTInitial[i] := FEngine.Temperature[i];
 
+  // Frame zero of the gmsh animation is this state - the balanced one
+  // the run starts from, before either the drapes or the blood.
+  FNbSnap := 0;
+
+  TakeSnapshot(0);
+
   // Perfusion starts here, with the transient - see the note above.
   SetPerfusion(CardiacOutput);
   UpdateSources;
@@ -2765,6 +3014,8 @@ begin
 
   Say('');
   Say('History written to ' + CsvFile);
+  Say(Format('%d frames %.0f min apart held for the gmsh view.',
+    [FNbSnap, SnapshotSeconds / 60]));
 
 end;
 

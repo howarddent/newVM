@@ -11,9 +11,10 @@ unit uThermEx1Plot;
   does not already say. What it can no longer be is ONE profile: the
   patient lies on a foam cushion, so the back of the section conducts
   into foam while the front loses heat to the room, and the difference
-  between the two curves is the whole point of the model. Front is drawn
-  solid and back dashed; red is the balanced starting state and blue the
-  end of the run; the dotted verticals are the compartment boundaries.
+  between the two curves is the whole point of the model. All four are
+  drawn solid and told apart by colour - red and blue for the front at
+  the start and end of the run, orange and green for the back - with
+  dotted verticals marking the compartment boundaries.
 
   The horizontal axis is s, the semi-major axis of the similar ellipse
   through a point - the section's own radial coordinate, and the plain
@@ -37,6 +38,15 @@ unit uThermEx1Plot;
   released. The window is disabled and says so while it runs, since
   there is nothing useful to do with a half-solved model.
 
+  THE VIEW BUTTON
+
+  The profile is the result, but it is a graph of a solid, and a solid
+  is worth seeing. View in gmsh writes the run out as one view per five
+  minutes of it - 25 files, all on one colour scale - and opens gmsh on
+  them, where they animate as the body cools. The button runs off the
+  frames the last solve kept, so it costs no solving, only the few
+  seconds it takes to write them.
+
   The form is built in code rather than from a .lfm: a handful of docked
   controls, so a design-time resource would be more to keep in step than
   it is worth. TVMPlot2D is created and parented the same way
@@ -59,6 +69,12 @@ const
   // Ten slider steps per L/min, so the slider lands on 0.1 L/min.
   TrackPerLitre = 10;
 
+  // The back pair, as TColor - $00BBGGRR, so these are RGB(230,120,0)
+  // and RGB(0,140,60). Neither is in the clXxx set, and both were
+  // picked to stay clear of the front pair's red and blue.
+  BackStartColor = $000078E6;   // orange
+  BackEndColor = $003C8C00;     // green
+
 type
 
   TProfileForm = class(TForm)
@@ -72,6 +88,7 @@ type
     FPanel : TPanel;
     FTrack : TTrackBar;
     FCaption : TLabel;
+    FViewButton : TButton;
 
     FModel : TThermalModel;
     FSolving : Boolean;
@@ -81,6 +98,10 @@ type
                             Shift : TShiftState; X, Y : Integer);
     procedure TrackKeyUp(Sender : TObject; var Key : Word;
                          Shift : TShiftState);
+
+    procedure ViewClick(Sender : TObject);
+
+    procedure ShowCaption;
 
     procedure ShowFlow;
     procedure Resolve;
@@ -142,6 +163,18 @@ begin
   FTrack.OnChange := TrackChange;
   FTrack.OnMouseUp := TrackReleased;
   FTrack.OnKeyUp := TrackKeyUp;
+
+  FViewButton := TButton.Create(Self);
+  FViewButton.Parent := FPanel;
+  FViewButton.Left := 650;
+  FViewButton.Top := 26;
+  FViewButton.Width := 160;
+  FViewButton.Height := 28;
+  FViewButton.Caption := 'View in gmsh';
+  FViewButton.OnClick := ViewClick;
+  FViewButton.ShowHint := True;
+  FViewButton.Hint := 'Write the run as one gmsh view every five minutes ' +
+    'and open gmsh on them';
 
   FMemo := TMemo.Create(Self);
   FMemo.Parent := Self;
@@ -213,6 +246,52 @@ procedure TProfileForm.TrackKeyUp(Sender : TObject; var Key : Word;
 begin
 
   Resolve;
+
+end;
+
+procedure TProfileForm.ShowCaption;
+begin
+
+  Caption := Format('ThermEx1 - case %d, cardiac output %.1f L/min',
+    [FModel.CaseNumber, FModel.CardiacOutput]);
+
+end;
+
+{ Hand the run to gmsh: one view per five minutes of it, on one colour
+  scale, ready to animate.
+
+  Writing 25 frames of the parsed .pos format takes a few seconds, so
+  the window is disabled and says what it is doing, the same way a
+  re-solve does. gmsh itself is launched and not waited for - it is a
+  viewer, and the form stays live behind it. }
+procedure TProfileForm.ViewClick(Sender : TObject);
+begin
+
+  if FSolving or (FModel = nil) then
+    Exit;
+
+  FSolving := True;
+
+  try
+
+    FPanel.Enabled := False;
+
+    Caption := Format('ThermEx1 - writing %d gmsh views...',
+      [FModel.SnapshotCount]);
+
+    Application.ProcessMessages;
+
+    FModel.ShowInGmsh;
+
+  finally
+
+    FPanel.Enabled := True;
+
+    FSolving := False;
+
+    ShowCaption;
+
+  end;
 
 end;
 
@@ -289,8 +368,7 @@ begin
   FModel.GetRadialProfiles(psFront, SF, F0, FE);
   FModel.GetRadialProfiles(psBack, SB, B0, BE);
 
-  Caption := Format('ThermEx1 - case %d, cardiac output %.1f L/min',
-    [FModel.CaseNumber, FModel.CardiacOutput]);
+  ShowCaption;
 
   FMemo.Lines.Assign(FModel.Report);
 
@@ -307,13 +385,19 @@ begin
   FPlot.XAxisTitle := 'Similar-ellipse coordinate s (mm)';
   FPlot.YAxisTitle := 'Temperature (C)';
 
-  // Red starts, blue ends - the run only ever cools, so the warm curve
-  // is the one it started from. Solid is the exposed front, dashed the
-  // part lying on the foam.
+  // All four solid, and told apart by colour alone. Dashing the two
+  // back curves was tried first and read badly: GL_LINE_STIPPLE breaks
+  // a line into fixed-length screen-space segments, which on a curve
+  // that is nearly flat over most of its length and then bends sharply
+  // leaves the dashes crowding and skipping, so the curve looks
+  // distorted rather than merely dashed.
+  //
+  // Red and blue stay start and end, as before; orange and green are
+  // their counterparts for the back.
   FPlot.SetSeriesStyle(0, clRed, 2.0, plsSolid, 'Front, t = 0');
   FPlot.SetSeriesStyle(1, clBlue, 2.0, plsSolid, 'Front, end of run');
-  FPlot.SetSeriesStyle(2, clRed, 2.0, plsDash, 'Back (on cushion), t = 0');
-  FPlot.SetSeriesStyle(3, clBlue, 2.0, plsDash, 'Back (on cushion), end');
+  FPlot.SetSeriesStyle(2, BackStartColor, 2.0, plsSolid, 'Back (on cushion), t = 0');
+  FPlot.SetSeriesStyle(3, BackEndColor, 2.0, plsSolid, 'Back (on cushion), end');
 
   FPlot.SetData(SF, [F0, FE]);
 
