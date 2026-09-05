@@ -62,47 +62,150 @@ unit uThermEx1;
   WHAT IS AND IS NOT IN THE MODEL
 
   In: conduction through all four compartments, heat storage, metabolic
-  generation where it actually arises, blood perfusion, and surface
-  losses by convection and radiation into still air at 16 C.
+  generation where it actually arises, blood perfusion, surface losses
+  by convection and radiation into still air at 16 C from the exposed
+  surface, and conduction through the cushion from the surface lying on
+  it.
 
   Out, deliberately: respiratory and cutaneous evaporative loss;
   vasomotor control, so the flow shares are fixed rather than
-  responding to temperature; and any distinction between arterial and
-  venous blood beyond the single well-mixed pool.
+  responding to temperature; any distinction between arterial and
+  venous blood beyond the single well-mixed pool; and the cushion's own
+  transient warm-up, discussed under THE CUSHION above.
 
-  THE EQUIVALENT CYLINDER
+  THE EQUIVALENT ELLIPTICAL CYLINDER
 
-  A body is not a cylinder, and no single cylinder has both a human's
-  volume and a human's surface area - real bodies have limbs, so their
-  surface-to-volume ratio is much higher than a compact shape's. Since
-  the surface area drives the loss and the volume drives the storage,
-  both have to be right or the energy balance is wrong. So the cylinder
-  is sized to reproduce BOTH:
+  A body is not a cylinder, and it is not circular in section either: a
+  supine trunk is roughly twice as wide as it is deep. That matters here
+  for two reasons - the conduction path from the core to the front and
+  back is much shorter than the path out to the sides, and the shape has
+  a broad flat underside for the cushion to press against. So the
+  section is an ELLIPSE with its minor axis half its major, lying with
+  the major axis horizontal.
 
-    R = 2V/A,   L = V/(pi*R^2)
+  No single shape of a given family has both a human's volume and a
+  human's surface area unless it is sized for both - real bodies have
+  limbs, so their surface-to-volume ratio is much higher than a compact
+  shape's - and since the surface area drives the loss and the volume
+  drives the storage, both have to be right or the energy balance is
+  wrong. With k the axis ratio (minor over major, so 0.5 here), the
+  ellipse of semi-major axis a has cross-sectional area pi*k*a^2 and
+  perimeter p1*a, where p1 = p1(k) is a shape constant computed by
+  Ramanujan's approximation (2*pi for a circle, 4.8442 at k = 0.5).
+  Matching both the volume V and the area A then gives
 
-  giving a 75.6 mm radius and 4.0 m length for this subject. The length
-  is not anatomical and is not meant to be; what it buys is that the
-  model stores exactly the right amount of heat and loses it through
-  exactly the right area. The compartment boundaries then follow from
-  the cumulative volumes, which puts the core at 51.1 mm, muscle out to
-  71.9, fat to 74.1 and skin to 75.6 - so 20.8 mm of muscle over the
-  viscera, 2.3 mm of fat and 1.5 mm of skin, all of which are sensible
-  mean depths. The ends are left adiabatic, so all the loss is through
-  the lateral surface and the whole of the nominal body surface area is
-  doing the work.
+    a = p1*V/(pi*k*A),   b = k*a,   L = V/(pi*a*b)
+
+  which is 116.6 mm by 58.3 mm over a 3.37 m length for this subject,
+  against the 75.6 mm radius and 4.0 m of the circular cylinder this
+  model began as. Set AspectRatio back to 1.0 and every formula in this
+  unit collapses to that earlier circular case exactly, which is how the
+  elliptical generalisation was checked.
+
+  The length is not anatomical and is not meant to be; what it buys is
+  that the model stores exactly the right amount of heat and loses it
+  through exactly the right area. The ends are left adiabatic, so all
+  the loss is through the lateral surface and the whole of the nominal
+  body surface area is doing the work.
+
+  Compartment boundaries are SIMILAR ellipses - same axis ratio, scaled
+  by the cumulative volume, a_i = a*sqrt(V_i/V) - which puts the core
+  boundary at 78.8 mm on the major axis and 39.4 mm on the minor, with
+  32.0/16.0 mm of muscle over it, then 3.5/1.75 mm of fat and 2.3/1.13
+  mm of skin. Every point is then labelled by the semi-major axis s of
+  the similar ellipse through it, s = sqrt(x^2 + (y/k)^2), which is the
+  natural radial coordinate here and the one the profile plot uses.
+
+  What similar ellipses cost is that a layer is thinner over the front
+  and back than at the sides, by exactly the factor k, where a real
+  skin layer is closer to constant thickness. Constant-thickness layers
+  would be offset curves rather than ellipses, which the mesher cannot
+  draw as arcs and which would lose the single radial coordinate; the
+  error is small next to what the shape itself buys, but it does bias
+  the front and back slightly towards heat loss.
+
+  THE CUSHION
+
+  An anaesthetised patient is not suspended in the air: they lie on a
+  foam mattress, and the part of them in contact with it loses heat
+  through 100 mm of foam instead of into the room. The cushion is
+  carried as a surface condition rather than as meshed foam - the
+  contact patch gets a series conductance
+
+    U = 1/(t/k_foam + 1/h_under)
+
+  which is 0.37 W/m2K for 100 mm of open-cell polyurethane, against
+  something near 9 W/m2K for bare skin losing heat by convection and
+  radiation together. The back of the patient is, to a good
+  approximation, insulated.
+
+  The patch is the part of the surface within 60 degrees of straight
+  down, which on this ellipse - broad and flat underneath, where the
+  radius of curvature is a^2/b, four times the minor semi-axis - comes
+  to about 38% of the body surface. That is the well-known clinical
+  point that only some 60% of the body surface is available to lose
+  heat, arrived at here from the geometry rather than assumed.
+
+  Radiation is applied to the exposed surface only: a surface in contact
+  with foam has nothing to radiate to.
+
+  What this leaves out is the cushion's own warm-up. Foam has a thermal
+  diffusivity near 7e-7 m2/s, so 100 mm of it takes some four hours to
+  settle into the straight-line profile the U value assumes, and for the
+  first hour or so the patch behaves more like a semi-infinite solid at
+  room temperature - about 0.65 W/m2K at half an hour, against the 0.37
+  it tends to. On a 20 K difference that is a few watts out of ninety,
+  and always in the direction of losing slightly more early on than the
+  model says.
 
   VERIFICATION
 
-  The layered profile is checked against its own closed form, layer by
-  layer, and the report prints both. SetupGeometry integrates the exact
-  radial solution outward through the compartments - q*R^2/(4k) across
-  the generating core, then the shell solution with internal generation
-  for each layer beyond - and uses it twice over: to set the skin
-  coefficient that balances the body at the core set point, and to check
-  the finite-element answer afterwards.
+  The layered profile is still checked against a closed form, layer by
+  layer, with the report printing both - but the closed form now has to
+  work on an ellipse, and the way it does is worth setting out.
 
-  Case 1 is the model's other check on itself: nothing should move.
+  Write the chain in the similar-ellipse coordinate s. A shell between s
+  and s+ds has perimeter p1*s and, since similar ellipses are not
+  parallel curves, a thickness that varies around it as k*ds/N with
+  N = sqrt(sin^2 t + k^2 cos^2 t). Integrating the conductance around
+  the shell gives a total that is exactly as if the perimeter were
+  Pc = pi*(1 + k^2)/k and the thickness uniform, so the whole cylindrical
+  chain carries over with 2*pi replaced by Pc and pi*r^2 by pi*k*s^2:
+
+    core     dT = q*k^2*s^2 / (2*kc*(1 + k^2))
+    shell    dT = (Qin - q*pi*k*s_in^2*L)/(kc*Pc*L) * ln(s_out/s_in)
+                  + q*pi*k*(s_out^2 - s_in^2)/(2*kc*Pc)
+
+  At k = 1 these are the circular formulas q*R^2/(4*kc) and the shell
+  solution the earlier model used, unchanged. The core one is not an
+  approximation at any k: a uniformly generating solid ellipse held at a
+  fixed boundary temperature has the exact solution q*a^2*b^2/(2*kc*
+  (a^2+b^2)), and that is what this returns. The shell one is exact in
+  the thin-shell limit and an approximation between - a layered ellipse
+  has no genuinely one-dimensional solution, unlike the circle.
+
+  So the finite-element answer is the arbiter, and the check is run in a
+  configuration where the analytic chain is entitled to be right: one
+  extra static solve with a UNIFORM surface coefficient, no cushion,
+  which is the only case the chain describes. That solve also prints the
+  spread of temperature around each similar ellipse, which is the size
+  of the two-dimensional effect the chain cannot see - mesh noise on a
+  circle, real on an ellipse.
+
+  The draped coefficient itself is no longer taken from the chain. With
+  the cushion in place the surface is not uniform and the chain cannot
+  set it, so it is calibrated on the finite-element model directly, by
+  secant iteration on static solves until the core sits at the set point
+  - which is both more honest and independent of the shape.
+
+  Case 1 at a cardiac output of zero is the model's other check on
+  itself: nothing should move, and nothing does - the core holds 37.00 C
+  for the whole two hours, the surface loses exactly the 83.7 W being
+  generated, and the stored energy does not budge. Run case 1 WITH
+  perfusion and it does move, by design and not by error: the balanced
+  state is settled conduction-only, so switching blood on at t = 0 is
+  itself a change, and what follows is redistribution - see the note in
+  Solve on why the starting state is built that way.
 
   This rests on the 3D elements being right, which they now are - see
   Examples/ThermSlab, which found and now guards two defects in them
@@ -117,21 +220,46 @@ unit uThermEx1;
   Celsius would silently compute the wrong radiative flux. Only the
   report converts back to Celsius.
 
+  WHAT THE SHAPE AND THE CUSHION DO TO THE ANSWER
+
+  At 5 L/min, exposed at t = 0, the core now falls 2.08 C/h against the
+  2.66 C/h of the circular cylinder with nothing underneath it - a fifth
+  slower, and nearly all of that is the cushion rather than the shape.
+  Of the 138 W leaving at the end of the run, 4 W goes out through the
+  foam: the back of the patient has all but stopped losing heat, and its
+  skin sits some 3.5 K warmer than the front's, a gap already 7 K wide
+  in the balanced starting state. The drape coefficient the calibration
+  lands on is 5.49 W/m2K, against the 2.69 the same ellipse would need
+  with nothing underneath it, because the same 84 W now has to leave
+  through 62% of the surface.
+
+  Setting AspectRatio back to 1 and ContactHalfAngleDeg to 0 reproduces
+  the earlier model exactly - a 75.6 mm radius over 4.01 m, the core
+  boundary at 51.09 mm, an analytic drop of 4.889 K matched by the
+  finite-element answer to 0.001 K, and 2.66 C/h - which is how this
+  change was checked.
+
   THE TWO CASES
 
   Both start from the same physiological steady state: a static solve
-  with the skin coefficient set so the body is exactly in balance with a
-  37 C core - which is what "the skin initially emits as much heat as is
-  being generated" means once you work out what it implies. That
-  coefficient comes out at about 2.6 W/m2K, i.e. a draped patient; bare
-  skin at 16 C would lose over three times the metabolic output and
-  could never be in balance at 37 C.
+  with the drape coefficient calibrated so the body is exactly in
+  balance with a 37 C core - which is what "the skin initially emits as
+  much heat as is being generated" means once you work out what it
+  implies. The patient is on the cushion from the start, in both cases,
+  because that is the clinical picture: what changes at induction is the
+  drapes over the front, not what is underneath. So the calibrated
+  coefficient now has to carry the whole metabolic output out through
+  the 62% of the surface that is not lying on foam, and comes out near
+  5.5 W/m2K rather than the 2.7 the fully surrounded cylinder needed.
 
-    1  draped - the balanced state is simply held. Nothing should move,
-       which makes this the model's own check on itself.
-    2  exposed - at t = 0 the drapes come off: the coefficient drops to
-       bare-skin natural convection and radiation is switched on. This
-       is the tracking run. }
+    1  draped - the balanced state is simply held. At a cardiac output
+       of zero nothing moves at all, which makes this the model's own
+       check on itself; with blood flowing, redistribution alone still
+       cools the core, drapes or no drapes.
+    2  exposed - at t = 0 the drapes come off the front: its coefficient
+       drops to bare-skin natural convection and radiation is switched
+       on, while the contact patch carries on conducting into the
+       cushion exactly as before. This is the tracking run. }
 
 {$mode delphi}{$H+}
 
@@ -168,7 +296,7 @@ const
 type
 
   // One compartment. Mass and density fix its volume, and so its
-  // boundary radius; GenShare is its fraction of the whole body's
+  // boundary ellipse; GenShare is its fraction of the whole body's
   // resting heat output; RadialDiv is how many element layers it gets
   // through its thickness, and is ignored for the innermost, which is
   // meshed unstructured.
@@ -220,11 +348,35 @@ const
   CardiacOutputDefault = 5.0;
   CardiacOutputMax = 10.0;
 
+  (******************** SHAPE ********************)
+
+  // Minor axis over major, for the elliptical section. 0.5 is a supine
+  // trunk, twice as wide as it is deep. 1.0 gives back the circular
+  // cylinder this model began as, exactly - every formula in this unit
+  // reduces to the circular one at k = 1, which is how the elliptical
+  // generalisation is checked.
+  AspectRatio = 0.5;
+
   (******************** ENVIRONMENT ********************)
 
   AmbientC = 16.0;          // theatre air and surrounding surfaces
   SkinEmissivity = 0.98;    // bare skin in the far infrared
   BareConvection = 3.0;     // W/m2K, natural convection over a supine body
+
+  (******************** THE CUSHION ********************)
+
+  // The foam mattress the patient lies on, carried as a series
+  // conductance over the contact patch rather than as meshed foam - see
+  // THE CUSHION in the header for what that assumes and what it costs.
+  PadThickness = 0.10;      // m
+  PadConductivity = 0.040;  // W/mK, open-cell polyurethane foam
+  PadUnderside = 5.0;       // W/m2K, foam to table top and the still air under it
+
+  // Half-width of the contact patch, as the ellipse's parametric angle
+  // either side of straight down. 60 degrees is about 38% of the body
+  // surface on this section; 0 lifts the patient off the cushion
+  // altogether, which is the model as it stood before.
+  ContactHalfAngleDeg = 60.0;
 
   (******************** MESH ********************)
 
@@ -249,7 +401,11 @@ const
 
 type
 
-  // A face of an element lying on the outer (skin) surface.
+  // A face of an element lying on the outer (skin) surface. Supported
+  // means it is in contact with the cushion, so it conducts through
+  // foam rather than losing heat to the room; Angle is the ellipse's
+  // parametric angle at its centre, measured from the major axis, and
+  // is what decides that.
   RSkinFace = record
 
     Ele : Integer;
@@ -257,8 +413,15 @@ type
     NbNodes : Integer;
     Node : Array[0..3] of Integer;
     Area : Double;
+    Angle : Double;
+    Supported : Boolean;
 
   end;
+
+  // Which part of the surface, or of the body, a quantity refers to.
+  // The cushion makes front and back genuinely different, so most of
+  // what the model reports has to be asked for one or the other.
+  TProfileSector = (psAll, psFront, psBack);
 
   TThermalModel = class(TObject)
 
@@ -270,16 +433,16 @@ type
     FEngine : TThermalEngine;
 
     FRho, FCp, FK : Array[0..NbLayers - 1] of TExpressionList;
-    FHConv, FTinf, FEmiss : TExpressionList;
+    FHConv, FHPad, FTinf, FEmiss : TExpressionList;
     FGenSource : Array of TExpressionList;
 
     // Geometry, per compartment
     FLayerVol : Array[0..NbLayers - 1] of Double;      // nominal
     FMeshLayerVol : Array[0..NbLayers - 1] of Double;  // as meshed
-    FLayerR : Array[0..NbLayers - 1] of Double;        // outer radius
+    FLayerA : Array[0..NbLayers - 1] of Double;        // outer semi-major axis
     FLayerPower : Array[0..NbLayers - 1] of Double;    // W
     FLayerGen : Array[0..NbLayers - 1] of Double;      // W/m3
-    FLayerDrop : Array[0..NbLayers - 1] of Double;     // K below the axis
+    FLayerDrop : Array[0..NbLayers - 1] of Double;     // K below the centre
     FLayerFlow : Array[0..NbLayers - 1] of Double;     // L/min
     FLayerW : Array[0..NbLayers - 1] of Double;        // 1/s perfusion rate
     FLayerTau : Array[0..NbLayers - 1] of Double;      // s, perfusion time constant
@@ -288,13 +451,23 @@ type
     FTArt : Double;            // K, the well-mixed blood pool
     FPerfNet : Double;         // W, should be zero - see UpdateSources
 
-    FROuter, FLength : Double;
+    FSemiMajor, FSemiMinor, FLength : Double;
+    FShapeArea : Double;                 // pi*k, so section area = FShapeArea*s^2
+    FShapePerim : Double;                // pi*(1+k^2)/k, the chain's effective 2*pi
     FMeshArea : Double;
+    FMeshAreaFront : Double;             // exposed to the room
+    FMeshAreaBack : Double;              // lying on the cushion
     FTotalMass : Double;
 
+    FUPad : Double;                      // W/m2K through the cushion
+
     FHeatOutput : Double;                // W, whole body
-    FHBalance : Double;                  // W/m2K that balances at the set point
-    FAnalyticDrop : Double;              // K, axis to skin surface
+    FHBalance : Double;                  // W/m2K, uniform surface, no cushion
+    FHDraped : Double;                   // W/m2K, calibrated with the cushion
+    FAnalyticDrop : Double;              // K, centre to skin surface
+    FUniformDrop : Double;               // K, the same by FE in the reference solve
+    FUniformSpread : Double;             // K, worst spread around one similar ellipse
+    FNbCalibrations : Integer;           // static solves the calibration needed
 
     // Per element
     FEleVolume : TDoubleArray;
@@ -304,7 +477,7 @@ type
     FNodeCapacity : TDoubleArray;        // J/K lumped to the node
     FNodeQMet : TDoubleArray;            // W, metabolic generation
     FNodePerfG : TDoubleArray;           // W/K, perfusion conductance
-    FNodeR : TDoubleArray;               // radius from the axis
+    FNodeS : TDoubleArray;               // similar-ellipse semi-major axis
 
     FSkin : Array of RSkinFace;
     FNbSkin : Integer;
@@ -313,6 +486,7 @@ type
 
     // History
     FHistT, FHistCore, FHistSkin, FHistLoss, FHistStore : TDoubleArray;
+    FHistSkinB, FHistLossB : TDoubleArray;   // the back, on the cushion
     FHistTArt, FHistPerf : TDoubleArray;
     FNbHist : Integer;
 
@@ -340,8 +514,13 @@ type
     procedure BuildModel;
 
     function TotalEnergy : Double;
+    procedure SurfaceLosses(UseRadiation : Boolean; out Front, Back : Double);
     function SurfaceLoss(UseRadiation : Boolean) : Double;
-    function MeanSkinTemperature : Double;
+    function MeanSkinTemperature(Sector : TProfileSector) : Double;
+
+    procedure SetSurfaceCoefficients(HFront, UBack : Double);
+    procedure VerifyAgainstAnalytic;
+    procedure CalibrateDraped;
 
     procedure Expose;
 
@@ -361,7 +540,8 @@ type
 
     procedure PostProcess;
 
-    procedure GetRadialProfiles(out R, T0, TEnd : TVMobj);
+    procedure GetRadialProfiles(Sector : TProfileSector;
+                                out S, T0, TEnd : TVMobj);
 
     // For the plot window: the compartment boundaries, in mm, innermost
     // outward, and their names.
@@ -487,6 +667,7 @@ begin
   end;
 
   FHConv.Free;
+  FHPad.Free;
   FTinf.Free;
   FEmiss.Free;
 
@@ -509,7 +690,7 @@ end;
 function TThermalModel.InterfaceMm(Index : Integer) : Double;
 begin
 
-  Result := FLayerR[Index] * 1000;
+  Result := FLayerA[Index] * 1000;
 
 end;
 
@@ -536,45 +717,72 @@ begin
 
 end;
 
-{ The subject's heat output, the equivalent cylinder that carries it, and
-  the skin coefficient that puts the whole thing in balance at the core
-  set point. All of it derived rather than tabulated, so changing the
-  subject changes the model consistently. }
+{ The subject's heat output, the elliptical cylinder that carries it, and
+  the uniform surface coefficient that would put the whole thing in
+  balance at the core set point with nothing underneath it. All of it
+  derived rather than tabulated, so changing the subject changes the
+  model consistently - and the coefficient the run actually uses is
+  calibrated from here, in CalibrateDraped, since the cushion puts it
+  beyond what any closed form of this chain can say. }
 
 (*******************************************************************
-  The compartments, and the temperature profile they imply.
+  The compartments, the elliptical cylinder that carries them, and the
+  temperature profile they imply.
 
-  Radii follow from the masses: each layer's volume is its mass over
-  its density, and since the layers are concentric cylinders of the same
-  length, the cumulative volume fixes each outer radius as
+  The section is an ellipse of axis ratio k = AspectRatio, sized to
+  reproduce both the body's volume and its surface area - see THE
+  EQUIVALENT ELLIPTICAL CYLINDER in the header for the derivation of
 
-    r_i = R * sqrt(V_cumulative_i / V_total)
+    a = p1*V/(pi*k*A),   b = k*a,   L = V/(pi*a*b)
+
+  where p1 is the perimeter of the unit ellipse of that ratio, taken
+  from Ramanujan's second approximation.
+
+  Two shape constants carry the ellipse through everything that follows,
+  and both are 2*pi's circular value at k = 1:
+
+    FShapeArea  = pi*k          section area inside s is FShapeArea*s^2
+    FShapePerim = pi*(1+k^2)/k  the chain's effective perimeter constant
+
+  Boundaries follow from the masses: each layer's volume is its mass
+  over its density, and since the layers are SIMILAR ellipses of the
+  same length, the cumulative volume fixes each outer semi-major axis as
+
+    s_i = sqrt(V_cumulative_i / (FShapeArea * L))
 
   Nothing is positioned by hand, so changing a mass or a density moves
   the boundaries consistently.
 
-  The analytic profile is worked out here too, and used two ways: to set
-  the skin coefficient that balances the body at the core set point, and
-  to check the finite-element answer afterwards. For the innermost layer
-  - a solid cylinder generating uniformly - the drop from axis to its
-  surface is q*R^2/(4k). For each shell outside it, carrying power Qin
-  from within and generating its own, integrating
+  The analytic profile is worked out here too, and used two ways: as a
+  first guess at the surface coefficient that balances the body at the
+  core set point, and to check the finite-element answer afterwards in
+  the uniform-surface reference solve that is the only configuration it
+  describes. For the innermost layer - a solid ellipse generating
+  uniformly - the drop from centre to its surface is
 
-    dT/dr = -Q(r) / (2*pi*k*L*r),   Q(r) = Qin + q*pi*(r^2 - rin^2)*L
+    q*FShapeArea*s^2 / (2*kc*FShapePerim)
+
+  which is q*a^2*b^2/(2*kc*(a^2+b^2)), the exact solution of that
+  problem, and q*R^2/(4*kc) at k = 1. For each shell outside it,
+  carrying power Qin from within and generating its own, integrating
+
+    dT/ds = -Q(s) / (kc*FShapePerim*L*s),
+    Q(s)  = Qin + q*FShapeArea*(s^2 - s0^2)*L
 
   gives
 
-    dT = (Qin - q*pi*rin^2*L)/(2*pi*k*L) * ln(rout/rin)
-         + q*(rout^2 - rin^2)/(4*k)
+    dT = (Qin - q*FShapeArea*s0^2*L)/(kc*FShapePerim*L) * ln(s1/s0)
+         + q*FShapeArea*(s1^2 - s0^2)/(2*kc*FShapePerim)
 
-  which is exact for every layer including the non-generating fat.
+  exact for every layer including the non-generating fat at k = 1, and
+  exact in the thin-shell limit otherwise - see VERIFICATION.
 ********************************************************************)
 procedure TThermalModel.SetupGeometry;
 var
 
   i : Integer;
 
-  CalEquiv, V, Vcum, qFlux, Drop, Qin, rin, rout, q : Double;
+  CalEquiv, V, Vcum, qFlux, Drop, Qin, s0, s1, q, k, p1 : Double;
 
 begin
 
@@ -600,24 +808,39 @@ begin
   for i := 0 to NbLayers - 1 do
     FTotalMass := FTotalMass + Layers[i].Mass;
 
-  // The equivalent cylinder: match the body's volume AND its surface
-  // area, with the ends adiabatic so the whole area is lateral.
-  FROuter := 2 * V / BodySurfaceArea;
-  FLength := V / (Pi * FROuter * FROuter);
+  k := AspectRatio;
+
+  // Ramanujan's second approximation to the perimeter of an ellipse of
+  // semi-axes 1 and k. It is good to a few parts in 1e5 at this ratio
+  // and exact at k = 1, where it returns 2*pi.
+  p1 := Pi * (3 * (1 + k) - Sqrt((3 + k) * (1 + 3 * k)));
+
+  FShapeArea := Pi * k;
+  FShapePerim := Pi * (1 + k * k) / k;
+
+  // The equivalent elliptical cylinder: match the body's volume AND its
+  // surface area, with the ends adiabatic so the whole area is lateral.
+  FSemiMajor := p1 * V / (Pi * k * BodySurfaceArea);
+  FSemiMinor := k * FSemiMajor;
+  FLength := V / (Pi * FSemiMajor * FSemiMinor);
 
   Vcum := 0;
 
   for i := 0 to NbLayers - 1 do
   begin
     Vcum := Vcum + FLayerVol[i];
-    FLayerR[i] := Sqrt(Vcum / (Pi * FLength));
+    FLayerA[i] := Sqrt(Vcum / (FShapeArea * FLength));
   end;
+
+  // The cushion, as a series conductance: 100 mm of foam, then whatever
+  // film the table and the still air beneath it offer.
+  FUPad := 1 / (PadThickness / PadConductivity + 1 / PadUnderside);
 
   // Guard the layer table: a mass or density that puts a boundary
   // outside the one beyond it would mesh into nonsense rather than
   // fail, so it is caught here instead.
   for i := 1 to NbLayers - 1 do
-    if FLayerR[i] <= FLayerR[i - 1] then
+    if FLayerA[i] <= FLayerA[i - 1] then
       raise Exception.Create('Layer ' + Layers[i].Name + ' has no thickness - ' +
         'check the masses and densities in the layer table.');
 
@@ -637,9 +860,9 @@ begin
 
   (******************** THE ANALYTIC PROFILE ********************)
 
-  // Axis outward, accumulating the drop and the power passing each
-  // radius. FLayerTAnalytic[i] is the temperature at layer i's OUTER
-  // boundary, relative to the axis.
+  // Centre outward, accumulating the drop and the power passing each
+  // similar ellipse. FLayerDrop[i] is the temperature at layer i's
+  // OUTER boundary, relative to the centre.
   Drop := 0;
   Qin := 0;
 
@@ -647,25 +870,25 @@ begin
   begin
 
     q := FLayerGen[i];
-    rout := FLayerR[i];
+    s1 := FLayerA[i];
 
     if i = 0 then
     begin
-      // Solid cylinder generating uniformly.
-      Drop := Drop + q * rout * rout / (4 * Layers[i].K);
-      Qin := q * Pi * rout * rout * FLength;
+      // Solid ellipse generating uniformly - exact at any axis ratio.
+      Drop := Drop + q * FShapeArea * s1 * s1 / (2 * Layers[i].K * FShapePerim);
+      Qin := q * FShapeArea * s1 * s1 * FLength;
     end
     else
     begin
 
-      rin := FLayerR[i - 1];
+      s0 := FLayerA[i - 1];
 
       Drop := Drop +
-        (Qin - q * Pi * rin * rin * FLength) /
-          (2 * Pi * Layers[i].K * FLength) * Ln(rout / rin) +
-        q * (rout * rout - rin * rin) / (4 * Layers[i].K);
+        (Qin - q * FShapeArea * s0 * s0 * FLength) /
+          (Layers[i].K * FShapePerim * FLength) * Ln(s1 / s0) +
+        q * FShapeArea * (s1 * s1 - s0 * s0) / (2 * Layers[i].K * FShapePerim);
 
-      Qin := Qin + q * Pi * (rout * rout - rin * rin) * FLength;
+      Qin := Qin + q * FShapeArea * (s1 * s1 - s0 * s0) * FLength;
 
     end;
 
@@ -675,33 +898,43 @@ begin
 
   FAnalyticDrop := Drop;
 
-  // What surface coefficient balances generation against loss with the
-  // core at the set point?
+  // What UNIFORM surface coefficient - no cushion - balances generation
+  // against loss with the core at the set point? This is the reference
+  // configuration the analytic chain is checked in, and the first guess
+  // the calibration with the cushion starts from.
   qFlux := FHeatOutput / BodySurfaceArea;
 
   FHBalance := qFlux / ((CoreSetPointC + Kelvin) - FAnalyticDrop - (AmbientC + Kelvin));
 
+  FHDraped := FHBalance;
+
 end;
 
 (*******************************************************************
-  Geometry: a disc of the innermost compartment inside concentric
-  annuli, one per outer layer, extruded along the axis.
+  Geometry: an elliptical disc of the innermost compartment inside
+  similar elliptical annuli, one per outer layer, extruded along the
+  axis.
 
   The core is meshed unstructured (triangles, hence prisms once
   extruded): it is one material with a smooth field and nothing about
   it needs structure. Every layer outside it is meshed structured
   instead, as four transfinite quadrants recombined into quads, hence
-  hexahedra - the fat is 2.3 mm thick and the skin 1.5 mm, and an
-  unstructured mesher would either miss them or flood the whole model
-  with elements that size.
+  hexahedra - the fat is 3.5 mm thick on the major axis and 1.75 mm on
+  the minor, the skin 2.3 and 1.13, and an unstructured mesher would
+  either miss them or flood the whole model with elements that size.
 
-    point   1               axis
-    point   10+4*L+q        interface radius L at quadrant angle q
-    line    100+4*L+q       arc of radius L, quadrant q
-    line    200+4*L+q       radial line from radius L to L+1 at angle q
+    point   1               centre
+    point   10+4*L+q        boundary L at quadrant angle q
+    line    100+4*L+q       quarter-ellipse arc of boundary L, quadrant q
+    line    200+4*L+q       radial line from boundary L to L+1 at angle q
     surface 300             the core disc
     surface 400+4*L+q       annulus of layer L, quadrant q
     volume  physical L+1    layer L
+
+  The quadrant corner points sit at parametric angle 0, 90, 180 and 270
+  degrees, so they land on the axes and the four arcs of a boundary are
+  quarter ellipses - each under Pi, which is what the built-in kernel
+  requires of an elliptical arc.
 ********************************************************************)
 procedure TThermalModel.WriteGeoFile(const FileName : String);
 
@@ -756,12 +989,15 @@ begin
 
         a := q * Pi / 2;
 
+        // x = s*cos t, y = k*s*sin t - the similar ellipse of
+        // semi-major axis s at parametric angle t.
         WriteLn(F, Format('Point(%d) = {%s,%s,0,cl};',
-          [PIdx(L, q), Num(FLayerR[L] * Cos(a)), Num(FLayerR[L] * Sin(a))]));
+          [PIdx(L, q), Num(FLayerA[L] * Cos(a)),
+           Num(AspectRatio * FLayerA[L] * Sin(a))]));
 
       end;
 
-    // Arcs at every interface radius, and the radial lines joining
+    // Arcs at every boundary, and the radial lines joining
     // consecutive ones.
     for L := 0 to NbLayers - 1 do
     begin
@@ -771,8 +1007,11 @@ begin
       for q := 0 to 3 do
       begin
 
-        WriteLn(F, Format('Circle(%d) = {%d,1,%d};',
-          [ArcId(L, q), PIdx(L, q), PIdx(L, q + 1)]));
+        // Start, centre, a point on the major axis, end. The layer's
+        // own point at angle zero is on the major axis by construction,
+        // so it serves as the third argument for all four quadrants.
+        WriteLn(F, Format('Ellipse(%d) = {%d,1,%d,%d};',
+          [ArcId(L, q), PIdx(L, q), PIdx(L, 0), PIdx(L, q + 1)]));
 
         if q > 0 then
           Arcs := Arcs + ',';
@@ -890,7 +1129,7 @@ var
 
 begin
 
-  Say('Meshing the cylinder with gmsh...');
+  Say('Meshing the elliptical cylinder with gmsh...');
 
   if not Sto_ShellExecute(GmshExecutable, [GeoFile, '-3'], ExitCode, 120000, True) then
     raise Exception.Create('Could not run gmsh (' + GmshExecutable +
@@ -932,27 +1171,39 @@ var
 
   ax, ay, az, bx, by, bz, cx, cy, cz : Double;
 
+  mx, my, HalfAngle : Double;
+
   OnSkin : Boolean;
 
   Nd : Array[0..7] of Integer;
 
 begin
 
+  // The contact patch, as an angle either side of straight down.
+  HalfAngle := DegToRad(ContactHalfAngleDeg);
+
   SetLength(FEleVolume, FGmsh.NbElements);
   SetLength(FEleLayer, FGmsh.NbElements);
   SetLength(FNodeCapacity, FGmsh.NbNodes);
-  SetLength(FNodeR, FGmsh.NbNodes);
+  SetLength(FNodeS, FGmsh.NbNodes);
 
   for i := 0 to FGmsh.NbNodes - 1 do
   begin
     FNodeCapacity[i] := 0;
-    FNodeR[i] := Sqrt(Sqr(FGmsh.CoordX[i]) + Sqr(FGmsh.CoordY[i]));
+
+    // The semi-major axis of the similar ellipse through this node -
+    // the radial coordinate everything in this model is organised by,
+    // and the plain radius again at an axis ratio of 1.
+    FNodeS[i] := Sqrt(Sqr(FGmsh.CoordX[i]) +
+                      Sqr(FGmsh.CoordY[i] / AspectRatio));
   end;
 
   for i := 0 to NbLayers - 1 do
     FMeshLayerVol[i] := 0;
 
   FMeshArea := 0;
+  FMeshAreaFront := 0;
+  FMeshAreaBack := 0;
 
   FNbSkin := 0;
   SetLength(FSkin, FGmsh.NbElements);
@@ -1013,7 +1264,7 @@ begin
     (******************** SKIN FACES ********************)
 
     // Only the outermost layer carries skin, and only its outward face:
-    // every node of the face sits on the outer radius.
+    // every node of the face sits on the outer ellipse.
     if g = NbLayers - 1 then
     begin
 
@@ -1038,7 +1289,7 @@ begin
           else
             FSkin[FNbSkin].Node[j] := Nd[PrismFace[f, j]];
 
-          if FNodeR[FSkin[FNbSkin].Node[j]] < FROuter - 1.0E-5 then
+          if FNodeS[FSkin[FNbSkin].Node[j]] < FSemiMajor - 1.0E-5 then
             OnSkin := False;
 
         end;
@@ -1065,7 +1316,31 @@ begin
         FSkin[FNbSkin].NbNodes := n;
         FSkin[FNbSkin].Area := 0.5 * Sqrt(cx * cx + cy * cy + cz * cz);
 
+        // Where this face sits round the section, as the ellipse's own
+        // parametric angle: x = s*cos t, y = k*s*sin t, so dividing y
+        // by k before taking the angle is what makes t come out. The
+        // patch in contact with the cushion is the part within
+        // ContactHalfAngleDeg of straight down, t = -90.
+        mx := 0;
+        my := 0;
+
+        for j := 0 to n - 1 do
+        begin
+          mx := mx + FGmsh.CoordX[FSkin[FNbSkin].Node[j]];
+          my := my + FGmsh.CoordY[FSkin[FNbSkin].Node[j]];
+        end;
+
+        FSkin[FNbSkin].Angle := ArcTan2(my / (n * AspectRatio), mx / n);
+
+        FSkin[FNbSkin].Supported :=
+          Abs(FSkin[FNbSkin].Angle + Pi / 2) <= HalfAngle;
+
         FMeshArea := FMeshArea + FSkin[FNbSkin].Area;
+
+        if FSkin[FNbSkin].Supported then
+          FMeshAreaBack := FMeshAreaBack + FSkin[FNbSkin].Area
+        else
+          FMeshAreaFront := FMeshAreaFront + FSkin[FNbSkin].Area;
 
         Inc(FNbSkin);
 
@@ -1080,13 +1355,13 @@ begin
 
   SetLength(FSkin, FNbSkin);
 
-  // The core: on the axis, half way along.
+  // The core: at the centre, half way along.
   Base := MaxDouble;
 
   for i := 0 to FGmsh.NbNodes - 1 do
   begin
 
-    dz := Sqrt(Sqr(FNodeR[i]) + Sqr(FGmsh.CoordZ[i] - FLength / 2));
+    dz := Sqrt(Sqr(FNodeS[i]) + Sqr(FGmsh.CoordZ[i] - FLength / 2));
 
     if dz < Base then
     begin
@@ -1225,17 +1500,29 @@ begin
 
   (******************** SURFACE ********************)
 
+  // Two surface conditions, not one: the exposed front loses heat to
+  // the room through FHConv, the contact patch conducts into the
+  // cushion through FHPad. Both see the same far temperature - the foam
+  // stands on a table in the same theatre - and both are read afresh at
+  // every assembly, which is what lets the calibration below move the
+  // front coefficient without rebuilding anything.
   FTinf := TExpressionList.Create;
   FTinf.AddExpression(-1E9, 1E9, Num(AmbientC + Kelvin), 't');
 
   FHConv := TExpressionList.Create;
-  FHConv.AddExpression(-1E9, 1E9, Num(FHBalance), 't');
+  FHConv.AddExpression(-1E9, 1E9, Num(FHDraped), 't');
+
+  FHPad := TExpressionList.Create;
+  FHPad.AddExpression(-1E9, 1E9, Num(FUPad), 't');
 
   FEmiss := TExpressionList.Create;
   FEmiss.AddExpression(-1E9, 1E9, Num(SkinEmissivity), 't');
 
   for i := 0 to FNbSkin - 1 do
-    FEngine.AddFaceConvection(FSkin[i].Ele, FSkin[i].FaceIdx, Constant, FHConv, FTinf);
+    if FSkin[i].Supported then
+      FEngine.AddFaceConvection(FSkin[i].Ele, FSkin[i].FaceIdx, Constant, FHPad, FTinf)
+    else
+      FEngine.AddFaceConvection(FSkin[i].Ele, FSkin[i].FaceIdx, Constant, FHConv, FTinf);
 
   (******************** INITIAL CONDITION ********************)
 
@@ -1371,7 +1658,28 @@ begin
   if Denom > 0 then
     FTArt := Numer / Denom
   else
-    FTArt := 0;
+  begin
+
+    // No flow at all, so there is no flow-weighted mean to take. Blood
+    // that is not moving sits at the temperature of the tissue around
+    // it, so the capacity-weighted mean stands in - it drives nothing
+    // here, since every conductance is zero, and it keeps the pool
+    // column of the report from reading absolute zero.
+    Numer := 0;
+    Denom := 0;
+
+    for i := 0 to FEngine.NbNodes - 1 do
+    begin
+      Numer := Numer + FNodeCapacity[i] * FEngine.Temperature[i];
+      Denom := Denom + FNodeCapacity[i];
+    end;
+
+    if Denom > 0 then
+      FTArt := Numer / Denom
+    else
+      FTArt := 0;
+
+  end;
 
   FPerfNet := 0;
 
@@ -1405,19 +1713,31 @@ begin
 
 end;
 
-function TThermalModel.SurfaceLoss(UseRadiation : Boolean) : Double;
+{ Heat leaving the skin, split between the surface exposed to the room
+  and the patch lying on the cushion.
+
+  The two are worth carrying separately, and not only for the report:
+  they are the whole point of the cushion. Radiation is charged to the
+  exposed faces alone, because those are the only ones Expose gives a
+  radiation condition to - a surface pressed into foam has nothing to
+  radiate to. }
+procedure TThermalModel.SurfaceLosses(UseRadiation : Boolean;
+                                      out Front, Back : Double);
 var
 
   i, j : Integer;
 
-  Tf, Tinf, h : Double;
+  Tf, Tinf, h, u, Q : Double;
 
 begin
 
-  Result := 0;
+  Front := 0;
+  Back := 0;
 
   Tinf := AmbientC + Kelvin;
+
   h := FHConv.GetValue(0);
+  u := FHPad.GetValue(0);
 
   for i := 0 to FNbSkin - 1 do
   begin
@@ -1429,17 +1749,44 @@ begin
 
     Tf := Tf / FSkin[i].NbNodes;
 
-    Result := Result + h * (Tf - Tinf) * FSkin[i].Area;
+    if FSkin[i].Supported then
+    begin
+      Back := Back + u * (Tf - Tinf) * FSkin[i].Area;
+      Continue;
+    end;
+
+    Q := h * (Tf - Tinf) * FSkin[i].Area;
 
     if UseRadiation then
-      Result := Result + SkinEmissivity * Sigma *
-                (Tf * Tf * Tf * Tf - Tinf * Tinf * Tinf * Tinf) * FSkin[i].Area;
+      Q := Q + SkinEmissivity * Sigma *
+           (Tf * Tf * Tf * Tf - Tinf * Tinf * Tinf * Tinf) * FSkin[i].Area;
+
+    Front := Front + Q;
 
   end;
 
 end;
 
-function TThermalModel.MeanSkinTemperature : Double;
+function TThermalModel.SurfaceLoss(UseRadiation : Boolean) : Double;
+var
+  Front, Back : Double;
+begin
+
+  SurfaceLosses(UseRadiation, Front, Back);
+
+  Result := Front + Back;
+
+end;
+
+{ Area-weighted mean skin temperature over the whole surface, over the
+  exposed part of it, or over the patch on the cushion.
+
+  A sector with no faces in it has no mean of its own, so the
+  whole-surface mean stands in. That only arises with the patient lifted
+  off the cushion (ContactHalfAngleDeg = 0), where every face is exposed
+  and the two answers coincide anyway - and it keeps a degenerate
+  configuration from reporting a skin temperature of absolute zero. }
+function TThermalModel.MeanSkinTemperature(Sector : TProfileSector) : Double;
 var
 
   i, j : Integer;
@@ -1454,6 +1801,12 @@ begin
   for i := 0 to FNbSkin - 1 do
   begin
 
+    if (Sector = psFront) and FSkin[i].Supported then
+      Continue;
+
+    if (Sector = psBack) and not FSkin[i].Supported then
+      Continue;
+
     Tf := 0;
 
     for j := 0 to FSkin[i].NbNodes - 1 do
@@ -1467,15 +1820,35 @@ begin
   end;
 
   if A > 0 then
-    Result := Result / A;
+    Result := Result / A
+  else if Sector <> psAll then
+    Result := MeanSkinTemperature(psAll);
 
 end;
 
-{ Take the drapes off: the skin coefficient drops to bare-skin natural
-  convection, and radiation - which the drapes were standing in for -
-  becomes an explicit boundary condition of its own. The expression
-  objects are the ones already handed to the engine, so rewriting them
-  is enough; the assembly re-reads them every step. }
+{ Rewrite the two surface conditions in place. The engine holds the
+  expression objects themselves and re-reads them at every assembly, so
+  this is all it takes to move a coefficient between solves. }
+procedure TThermalModel.SetSurfaceCoefficients(HFront, UBack : Double);
+begin
+
+  FHConv.Clear;
+  FHConv.AddExpression(-1E9, 1E9, Num(HFront), 't');
+
+  FHPad.Clear;
+  FHPad.AddExpression(-1E9, 1E9, Num(UBack), 't');
+
+end;
+
+{ Take the drapes off the front: its coefficient drops to bare-skin
+  natural convection, and radiation - which the drapes were standing in
+  for - becomes an explicit boundary condition of its own. The
+  expression object is the one already handed to the engine, so
+  rewriting it is enough; the assembly re-reads it every step.
+
+  Nothing here touches the cushion. The patient does not get up off it
+  at induction, so the contact patch keeps the conductance it had, and
+  gets no radiation condition at all - it has nothing to radiate to. }
 procedure TThermalModel.Expose;
 var
   i : Integer;
@@ -1485,14 +1858,15 @@ begin
   FHConv.AddExpression(-1E9, 1E9, Num(BareConvection), 't');
 
   for i := 0 to FNbSkin - 1 do
-    FEngine.AddFaceRadiation(FSkin[i].Ele, FSkin[i].FaceIdx, Constant, FEmiss, FTinf);
+    if not FSkin[i].Supported then
+      FEngine.AddFaceRadiation(FSkin[i].Ele, FSkin[i].FaceIdx, Constant, FEmiss, FTinf);
 
 end;
 
 procedure TThermalModel.PostProcess;
 var
 
-  E, dt, Now_ : Double;
+  E, dt, Now_, LossFront, LossBack : Double;
 
 begin
 
@@ -1507,16 +1881,22 @@ begin
     SetLength(FHistT, Length(FHistT) + 256);
     SetLength(FHistCore, Length(FHistT));
     SetLength(FHistSkin, Length(FHistT));
+    SetLength(FHistSkinB, Length(FHistT));
     SetLength(FHistLoss, Length(FHistT));
+    SetLength(FHistLossB, Length(FHistT));
     SetLength(FHistStore, Length(FHistT));
     SetLength(FHistTArt, Length(FHistT));
     SetLength(FHistPerf, Length(FHistT));
   end;
 
+  SurfaceLosses(FCase = CaseExposed, LossFront, LossBack);
+
   FHistT[FNbHist] := Now_;
   FHistCore[FNbHist] := FEngine.Temperature[FCoreNode] - Kelvin;
-  FHistSkin[FNbHist] := MeanSkinTemperature - Kelvin;
-  FHistLoss[FNbHist] := SurfaceLoss(FCase = CaseExposed);
+  FHistSkin[FNbHist] := MeanSkinTemperature(psFront) - Kelvin;
+  FHistSkinB[FNbHist] := MeanSkinTemperature(psBack) - Kelvin;
+  FHistLoss[FNbHist] := LossFront + LossBack;
+  FHistLossB[FNbHist] := LossBack;
 
   if dt > 0 then
     FHistStore[FNbHist] := (E - FEnergyPrev) / dt
@@ -1558,14 +1938,19 @@ begin
   Say(Format('  Metabolic heat output    : %8.1f W', [FHeatOutput]));
   Say('');
 
-  Say('  compartment    mass    volume   outer r  thickness    power   generation');
-  Say('                 (kg)       (L)      (mm)       (mm)      (W)      (W/m3)');
+  // Thickness is quoted both ways round the section: similar ellipses
+  // are not parallel curves, so a layer is thinner over the front and
+  // back than at the sides, by exactly the axis ratio.
+  Say('  compartment    mass    volume   outer s   thickness (mm)      power   generation');
+  Say('                 (kg)       (L)      (mm)    major    minor       (W)      (W/m3)');
 
   for i := 0 to NbLayers - 1 do
-    Say(Format('  %-10s %7.2f %9.2f %9.2f %10.2f %8.1f %11.0f',
+    Say(Format('  %-10s %7.2f %9.2f %9.2f %8.2f %8.2f %9.1f %11.0f',
       [Layers[i].Name, Layers[i].Mass, FLayerVol[i] * 1000,
-       FLayerR[i] * 1000,
-       1000 * (FLayerR[i] - IfThen(i = 0, 0, FLayerR[Max(i - 1, 0)])),
+       FLayerA[i] * 1000,
+       1000 * (FLayerA[i] - IfThen(i = 0, 0, FLayerA[Max(i - 1, 0)])),
+       1000 * AspectRatio *
+         (FLayerA[i] - IfThen(i = 0, 0, FLayerA[Max(i - 1, 0)])),
        FLayerPower[i], FLayerGen[i]]));
 
   Cap := 0;
@@ -1574,15 +1959,31 @@ begin
     Cap := Cap + Layers[i].Mass * Layers[i].Cp;
 
   Say('');
-  Say(Format('  Equivalent cylinder      : R %6.1f mm, length %.2f m',
-    [FROuter * 1000, FLength]));
+  Say(Format('  Equivalent ellipse       : %6.1f x %.1f mm semi-axes, length %.2f m',
+    [FSemiMajor * 1000, FSemiMinor * 1000, FLength]));
+  Say(Format('  Axis ratio               : %8.2f  (1.0 is the circular cylinder',
+    [AspectRatio]));
+  Say('                                       this model began as)');
   Say(Format('  Surface nominal / meshed : %8.3f m2 / %.3f m2',
     [BodySurfaceArea, FMeshArea]));
   Say(Format('  Heat capacity            : %8.0f kJ/K', [Cap / 1000]));
   Say('');
   Say(Format('  Ambient                  : %8.1f C', [AmbientC]));
-  Say(Format('  Draped coefficient       : %8.2f W/m2K  (balances at a %.0f C core)',
-    [FHBalance, CoreSetPointC]));
+  Say('');
+  Say(Format('  On the cushion           : %8.3f m2 (%.0f%% of the surface), within',
+    [FMeshAreaBack, 100 * FMeshAreaBack / FMeshArea]));
+  Say(Format('                                       %.0f deg of straight down',
+    [ContactHalfAngleDeg]));
+  Say(Format('  Exposed to the room      : %8.3f m2 (%.0f%%)',
+    [FMeshAreaFront, 100 * FMeshAreaFront / FMeshArea]));
+  Say(Format('  Cushion conductance      : %8.3f W/m2K  (%.0f mm of foam at %.3f',
+    [FUPad, PadThickness * 1000, PadConductivity]));
+  Say(Format('                                       W/mK, then %.1f W/m2K beneath)',
+    [PadUnderside]));
+  Say('');
+  Say(Format('  Uniform-surface balance  : %8.2f W/m2K  (no cushion - the analytic',
+    [FHBalance]));
+  Say('                                       reference, not the model''s own)');
 
   if FCase = CaseExposed then
     Say(Format('  Exposed at t=0           : %8.2f W/m2K convection + radiation e=%.2f',
@@ -1595,75 +1996,315 @@ begin
 
 end;
 
-{ The radial profile, and how it compares with the closed form the layer
-  chain was integrated from in SetupGeometry. Anything beyond ordinary
-  discretisation here means the compartments, the generation split or
-  the elements are not doing what the analytic chain assumes. }
-procedure TThermalModel.ReportProfile;
+{ The model's check on itself: one static solve with a UNIFORM surface
+  coefficient and no cushion, compared layer by layer with the closed
+  form SetupGeometry integrated.
+
+  The reference configuration is not an evasion, it is the point. The
+  analytic chain describes a body losing heat evenly all over; with the
+  cushion under it the model no longer is one, and comparing the two
+  would only measure the cushion. Run it uniform and the chain is
+  entitled to be right, so anything beyond ordinary discretisation means
+  the compartments, the generation split, the shape constants or the 3D
+  elements are not doing what it assumes.
+
+  The last column is what the chain cannot see. It is the spread of
+  temperature among the nodes sitting on one similar ellipse, which on a
+  circle is mesh noise and on an ellipse is the real two-dimensional
+  part of the field - the section is one-dimensional in s only to the
+  extent that this stays small. }
+procedure TThermalModel.VerifyAgainstAnalytic;
+const
+  // The band of s counted as sitting on a boundary.
+  BandTol = 0.0002;
 var
 
-  i, j, iBest : Integer;
+  i, j, n : Integer;
 
-  R, T0, TEnd : TVMobj;
-
-  Axis, Best, d, TFE, TAn : Double;
+  TSum, TLo, THi, TFE, TAn, Centre, Skin, Spread : Double;
 
 begin
 
-  GetRadialProfiles(R, T0, TEnd);
-
   Say('');
-  Say('================ RADIAL PROFILE ================');
-  Say(Format('  %d points from the axis to the skin.', [R.Cols]));
+  Say('================ CHECK AGAINST THE CLOSED FORM ================');
+
+  SetSurfaceCoefficients(FHBalance, FHBalance);
+
+  FEngine.CalcTemperature(caStatic, False);
+
+  Centre := FEngine.Temperature[FCoreNode] - Kelvin;
+  Skin := MeanSkinTemperature(psAll) - Kelvin;
+
+  FUniformDrop := Centre - Skin;
+  FUniformSpread := 0;
+
+  Say(Format('  A uniform %.3f W/m2K over the whole surface, cushion lifted away',
+    [FHBalance]));
+  Say('  - the one configuration the closed form describes.');
   Say('');
-  Say('  boundary          r (mm)     FE (C)  analytic (C)   diff (K)');
+  Say('  boundary          s (mm)     FE (C)  analytic (C)   diff (K)  spread (K)');
 
-  Axis := T0[0, 0];
-
-  Say(Format('  %-14s %8.2f %10.3f %13.3f %10.3f',
-    ['axis', 0.0, Axis, CoreSetPointC, Axis - CoreSetPointC]));
+  Say(Format('  %-14s %8.2f %10.3f %13.3f %10.3f %11s',
+    ['centre', 0.0, Centre, CoreSetPointC, Centre - CoreSetPointC, '-']));
 
   for i := 0 to NbLayers - 1 do
   begin
 
-    // Nearest profile point to this compartment's outer radius.
-    Best := MaxDouble;
-    iBest := 0;
+    n := 0;
+    TSum := 0;
+    TLo := MaxDouble;
+    THi := -MaxDouble;
 
-    for j := 0 to R.Cols - 1 do
-    begin
-
-      d := Abs(R[0, j] - FLayerR[i] * 1000);
-
-      if d < Best then
+    for j := 0 to FEngine.NbNodes - 1 do
+      if Abs(FNodeS[j] - FLayerA[i]) < BandTol then
       begin
-        Best := d;
-        iBest := j;
+
+        Inc(n);
+        TSum := TSum + FEngine.Temperature[j];
+
+        if FEngine.Temperature[j] < TLo then
+          TLo := FEngine.Temperature[j];
+
+        if FEngine.Temperature[j] > THi then
+          THi := FEngine.Temperature[j];
+
       end;
 
-    end;
+    if n = 0 then
+      Continue;
 
-    TFE := T0[0, iBest];
+    TFE := TSum / n - Kelvin;
     TAn := CoreSetPointC - FLayerDrop[i];
+    Spread := THi - TLo;
 
-    Say(Format('  %-14s %8.2f %10.3f %13.3f %10.3f',
-      [Layers[i].Name + ' out', FLayerR[i] * 1000, TFE, TAn, TFE - TAn]));
+    if Spread > FUniformSpread then
+      FUniformSpread := Spread;
+
+    Say(Format('  %-14s %8.2f %10.3f %13.3f %10.3f %11.3f',
+      [Layers[i].Name + ' out', FLayerA[i] * 1000, TFE, TAn, TFE - TAn, Spread]));
 
   end;
 
   Say('');
-  Say(Format('  Axis to skin: %.3f K by the model, %.3f K by the layered closed',
-    [Axis - T0[0, R.Cols - 1], FAnalyticDrop]));
-  Say('  form. The analytic chain integrates q*R^2/(4k) across the generating');
-  Say('  core and the shell solution with internal generation across each layer');
-  Say('  beyond it, so agreement here checks the compartments, the generation');
-  Say('  split and the 3D elements together.');
+  Say(Format('  Centre to skin: %.3f K by the model, %.3f K by the layered closed',
+    [FUniformDrop, FAnalyticDrop]));
+  Say('  form, which integrates the exact solid-ellipse solution across the');
+  Say('  generating core and the shell solution with internal generation across');
+  Say('  each layer beyond it, both written with the shape constants pi*k and');
+  Say('  pi*(1+k^2)/k in place of the circle pi and 2*pi.');
+  Say('');
+  Say(Format('  Worst spread around one similar ellipse: %.3f K.',
+    [FUniformSpread]));
 
-  if FNbHist > 0 then
+  if SameValue(AspectRatio, 1.0) then
+  begin
+    Say('  At an axis ratio of 1 both of those are discretisation error and');
+    Say('  nothing else - the chain is exact on a circle, and this is the check');
+    Say('  that the elliptical generalisation did not disturb it.');
+  end
+  else
+  begin
+    Say('  Neither of those is discretisation error. The chain shorts every');
+    Say('  similar ellipse to a single temperature, and the spread is what it is');
+    Say('  shorting out; doing so puts the thick side of the section in parallel');
+    Say('  with the thin one, which can only UNDERSTATE the resistance, so the');
+    Say('  model must come out with the larger centre-to-skin drop of the two -');
+    Say('  as it does, by about a fifth at an axis ratio of 0.5. Set AspectRatio');
+    Say('  to 1 and both columns collapse to a few thousandths of a kelvin,');
+    Say('  which is the check that the shape constants themselves are right.');
+  end;
+
+end;
+
+{ Find the drape coefficient that leaves the body in balance at the core
+  set point, with the cushion in place.
+
+  The old model read this straight off the analytic chain, which it
+  could because the surface was uniform: one coefficient, one surface
+  temperature, one equation. It cannot now. The exposed front and the
+  patch on the foam sit at quite different temperatures and take quite
+  different shares of the output, and no closed form of this layer chain
+  knows anything about that.
+
+  So it is calibrated on the finite-element model itself. The draped
+  problem is linear - conduction, and convection at the surface, with no
+  radiation yet - so the body is exactly a fixed internal resistance in
+  series with a surface conductance:
+
+    Tcore = Tinf + Q*(Rint + 1/(h*Afront + U*Aback))
+
+  One static solve gives Rint, the next h follows from it, and because
+  Rint moves only as far as the flux split between front and back
+  shifts, this converges in two or three solves rather than by
+  bisection. Each solve is cheap next to the transient that follows. }
+procedure TThermalModel.CalibrateDraped;
+const
+  MaxIterations = 12;
+  CoreTolerance = 0.001;      // K
+var
+
+  i : Integer;
+
+  h, Target, Tinf, Tcore, GSurf, RInt, GNeed : Double;
+
+begin
+
+  Say('');
+  Say('================ THE DRAPED COEFFICIENT ================');
+
+  if FMeshAreaFront <= 0 then
+    raise Exception.Create('The whole surface is on the cushion - there is ' +
+      'nothing left to balance the body through. Reduce ContactHalfAngleDeg.');
+
+  Target := CoreSetPointC + Kelvin;
+  Tinf := AmbientC + Kelvin;
+
+  // The uniform-surface value is the natural first guess: exactly right
+  // in the limit of no cushion, and too low otherwise.
+  h := FHBalance;
+
+  FNbCalibrations := 0;
+
+  Say('  solve   h (W/m2K)    core (C)');
+
+  for i := 1 to MaxIterations do
+  begin
+
+    SetSurfaceCoefficients(h, FUPad);
+
+    FEngine.CalcTemperature(caStatic, False);
+
+    Inc(FNbCalibrations);
+
+    Tcore := FEngine.Temperature[FCoreNode];
+
+    Say(Format('  %5d %11.3f %11.3f', [i, h, Tcore - Kelvin]));
+
+    if Abs(Tcore - Target) < CoreTolerance then
+      Break;
+
+    GSurf := h * FMeshAreaFront + FUPad * FMeshAreaBack;
+
+    RInt := (Tcore - Tinf) / FHeatOutput - 1 / GSurf;
+
+    GNeed := 1 / ((Target - Tinf) / FHeatOutput - RInt);
+
+    if GNeed <= FUPad * FMeshAreaBack then
+      raise Exception.Create('The cushion alone already loses more than the ' +
+        'body generates at the set point - no drape coefficient can balance ' +
+        'it. Check PadThickness and ContactHalfAngleDeg.');
+
+    h := (GNeed - FUPad * FMeshAreaBack) / FMeshAreaFront;
+
+  end;
+
+  FHDraped := h;
+
+  Say('');
+  Say(Format('  Draped coefficient       : %8.3f W/m2K over the exposed %.0f%%',
+    [FHDraped, 100 * FMeshAreaFront / FMeshArea]));
+  Say(Format('  Uniform-surface value    : %8.3f W/m2K  (what it would take with',
+    [FHBalance]));
+  Say('                                       the patient off the cushion)');
+  Say(Format('  Converged in             : %8d static solves', [FNbCalibrations]));
+
+  if Abs(FEngine.Temperature[FCoreNode] - Target) >= CoreTolerance then
+    Say(Format('  NOT converged - the core is %.3f C, wanted %.3f C',
+      [FEngine.Temperature[FCoreNode] - Kelvin, CoreSetPointC]));
+
+end;
+
+{ The profile from the centre outward, front and back, at t = 0 and at
+  the end of the run.
+
+  One curve would do for a body losing heat evenly all over. With 100 mm
+  of foam under a third of it, the front and the back are thermally
+  different bodies, and the gap between them - there already in the
+  balanced starting state, before the drapes ever come off - is what the
+  cushion does. }
+procedure TThermalModel.ReportProfile;
+
+  // The profile value nearest a given s, in mm.
+  function At(const Sc, T : TVMobj; sWant : Double) : Double;
+  var
+    j, jBest : Integer;
+    Best, d : Double;
+  begin
+
+    Best := MaxDouble;
+    jBest := 0;
+
+    for j := 0 to Sc.Cols - 1 do
+    begin
+
+      d := Abs(Sc[0, j] - sWant);
+
+      if d < Best then
+      begin
+        Best := d;
+        jBest := j;
+      end;
+
+    end;
+
+    Result := T[0, jBest];
+
+  end;
+
+var
+
+  i : Integer;
+
+  SF, F0, FE, SB, B0, BE : TVMobj;
+
+  sWant, sSkin : Double;
+
+begin
+
+  GetRadialProfiles(psFront, SF, F0, FE);
+  GetRadialProfiles(psBack, SB, B0, BE);
+
+  Say('');
+  Say('================ PROFILE, FRONT AND BACK ================');
+  Say(Format('  %d points to the front and %d to the back, grouped by s and',
+    [SF.Cols, SB.Cols]));
+  Say('  taken within 30 degrees of straight up and of straight down.');
+  Say('');
+  Say('  boundary          s (mm)   front t=0    back t=0   front end    back end');
+
+  Say(Format('  %-14s %8.2f %11.3f %11.3f %11.3f %11.3f',
+    ['centre', 0.0, F0[0, 0], B0[0, 0], FE[0, 0], BE[0, 0]]));
+
+  for i := 0 to NbLayers - 1 do
+  begin
+
+    sWant := FLayerA[i] * 1000;
+
+    Say(Format('  %-14s %8.2f %11.3f %11.3f %11.3f %11.3f',
+      [Layers[i].Name + ' out', sWant,
+       At(SF, F0, sWant), At(SB, B0, sWant),
+       At(SF, FE, sWant), At(SB, BE, sWant)]));
+
+  end;
+
+  sSkin := FSemiMajor * 1000;
+
+  Say('');
+  Say(Format('  The skin is %.2f K warmer at the back than at the front before the',
+    [At(SB, B0, sSkin) - At(SF, F0, sSkin)]));
+  Say(Format('  run starts, and %.2f K warmer at the end of it. That gap is the',
+    [At(SB, BE, sSkin) - At(SF, FE, sSkin)]));
+  Say('  cushion: the same tissue, the same generation, and an order of magnitude');
+  Say('  between what the two of them are losing heat into.');
+
+  if At(SB, B0, FLayerA[LayerCore] * 1000) > F0[0, 0] then
   begin
     Say('');
-    Say(Format('  At the end of the run: axis %.2f C, skin %.2f C',
-      [TEnd[0, 0], TEnd[0, R.Cols - 1]]));
+    Say('  Note that the back of the core runs warmer than the centre itself.');
+    Say('  With the cushion under it the temperature maximum is displaced');
+    Say('  backwards, so the geometric centre - which is what this model reports');
+    Say('  as the core, and what the calibration holds at the set point - is no');
+    Say('  longer the hottest point in the body.');
   end;
 
 end;
@@ -1681,8 +2322,13 @@ begin
 
   Say('');
   Say('================ CORE TEMPERATURE ================');
-  Say('    time    core    skin    pool     generated       lost      stored   balance     perf');
-  Say('   (min)     (C)     (C)     (C)           (W)        (W)         (W)       (W)      (W)');
+  Say(Format('  Generation is %.1f W throughout; the skin columns are the exposed',
+    [Gen]));
+  Say('  front and the patch on the cushion, area-weighted, and "via pad" is the');
+  Say('  part of the loss that goes out through the foam.');
+  Say('');
+  Say('    time    core   front    back    pool       lost   via pad      stored   balance     perf');
+  Say('   (min)     (C)     (C)     (C)     (C)        (W)       (W)         (W)       (W)      (W)');
 
   for i := 0 to FNbHist - 1 do
   begin
@@ -1692,9 +2338,9 @@ begin
 
     Bal := Gen - FHistLoss[i] - FHistStore[i];
 
-    Say(Format('  %6.1f  %6.2f  %6.2f  %6.2f  %12.1f %10.1f  %10.1f %9.2f %8.3f',
-      [FHistT[i] / 60, FHistCore[i], FHistSkin[i], FHistTArt[i], Gen,
-       FHistLoss[i], FHistStore[i], Bal, FHistPerf[i]]));
+    Say(Format('  %6.1f  %6.2f  %6.2f  %6.2f  %6.2f %10.1f %9.2f  %10.1f %9.2f %8.3f',
+      [FHistT[i] / 60, FHistCore[i], FHistSkin[i], FHistSkinB[i], FHistTArt[i],
+       FHistLoss[i], FHistLossB[i], FHistStore[i], Bal, FHistPerf[i]]));
 
   end;
 
@@ -1708,7 +2354,15 @@ begin
        FHistCore[FNbHist - 1] - FHistCore[0],
        (FHistCore[FNbHist - 1] - FHistCore[0]) / (FHistT[FNbHist - 1] / 3600)]));
 
-    Say(Format('  Skin %.2f C -> %.2f C', [FHistSkin[0], FHistSkin[FNbHist - 1]]));
+    Say(Format('  Skin, front %.2f C -> %.2f C,  back %.2f C -> %.2f C',
+      [FHistSkin[0], FHistSkin[FNbHist - 1],
+       FHistSkinB[0], FHistSkinB[FNbHist - 1]]));
+
+    if FHistLoss[FNbHist - 1] <> 0 then
+      Say(Format('  Of the %.1f W leaving at the end, %.1f W goes through the cushion' +
+        ' (%.0f%%)',
+        [FHistLoss[FNbHist - 1], FHistLossB[FNbHist - 1],
+         100 * FHistLossB[FNbHist - 1] / FHistLoss[FNbHist - 1]]));
 
   end;
 
@@ -1721,27 +2375,56 @@ begin
 
 end;
 
-{ The radial temperature profile, at t=0 and as it now stands.
+{ The temperature profile from the centre outward, at t=0 and as it now
+  stands, for the whole section or for the front or back of it alone.
 
-  The model is radially symmetric by construction - uniform generation,
-  a uniform lateral boundary condition, adiabatic ends - so the whole
-  three-dimensional field collapses without loss to a single curve
-  against radius, which is why this replaces a field plot.
+  The coordinate is s, the semi-major axis of the similar ellipse
+  through a node - the plain radius at an axis ratio of 1, and the
+  coordinate every compartment boundary is a level set of either way.
 
-  Nodes are grouped by radius rather than plotted raw. The fat's
-  structured layers sit at four exact radii and must stay distinct,
-  since the ring's steepest gradient is across them; the unstructured
-  lean core scatters its nodes over every radius and needs averaging or
-  the curve is a band rather than a line. Grouping to a tolerance well
-  under a fat layer does both: the four fat radii stay separate, and the
-  many lean nodes at a given radius average to one point. Any residual
-  spread within a group is the model's own departure from radial
-  symmetry, which is mesh noise only. }
+  What has changed with the cushion is that ONE curve is no longer the
+  whole result. The old circular model was symmetric by construction -
+  uniform generation, a uniform lateral boundary condition, adiabatic
+  ends - so the field collapsed without loss to a single curve. An
+  insulated back and an exposed front break that, and the difference
+  between the two is the effect being modelled, so the caller asks for
+  a sector: psFront takes the nodes within ProfileHalfAngleDeg of
+  straight up, psBack those within the same angle of straight down, and
+  psAll everything, which is still the right thing to plot when the
+  surface is uniform.
 
-procedure TThermalModel.GetRadialProfiles(out R, T0, TEnd : TVMobj);
+  Nodes near the centre belong to every sector: there is no front or
+  back within a few millimetres of the middle, and dropping them would
+  leave each curve starting nowhere in particular.
+
+  Nodes are grouped by s rather than plotted raw. The fat's structured
+  layers sit at a few exact values of s and must stay distinct, since
+  the steepest gradient is across them; the unstructured core scatters
+  its nodes over every s and needs averaging or the curve is a band
+  rather than a line. Grouping to a tolerance well under a fat layer
+  does both. Residual spread within a group is now real - it is the
+  section's departure from being one-dimensional in s - and
+  VerifyAgainstAnalytic measures it. }
+
+procedure TThermalModel.GetRadialProfiles(Sector : TProfileSector;
+                                          out S, T0, TEnd : TVMobj);
 const
-  // Well under the 0.74 mm fat layer spacing, so those stay resolved.
+  // Well under the thinnest structured layer's node spacing - 1.13 mm
+  // in the skin - so those stay resolved.
   GroupTol = 0.0002;
+
+  // Inside the core the mesh is unstructured and 6 mm coarse, so a
+  // 0.2 mm band catches only a node or two, and once a sector is asked
+  // for it catches a fraction of one. Since the field is genuinely
+  // two-dimensional there, whichever few angles a band happens to
+  // contain sets its mean, and the curve comes out visibly ragged for
+  // no better reason than which nodes fell where. A wider band inside
+  // the core averages that away; there is no thin layer in there to
+  // lose by it.
+  CoreGroupTol = 0.0015;
+
+  // Half-width of the front and back sectors.
+  ProfileHalfAngleDeg = 30.0;
 var
 
   i, j, n, m : Integer;
@@ -1750,20 +2433,51 @@ var
 
   tmp : Integer;
 
-  rSum, t0Sum, tESum : Double;
+  sSum, t0Sum, tESum, Ang, HalfAngle, Near, Tol : Double;
 
-  Rv, T0v, TEv : TDoubleArray;
+  Sv, T0v, TEv : TDoubleArray;
+
+  Take : Boolean;
 
 begin
 
-  n := FEngine.NbNodes;
+  HalfAngle := DegToRad(ProfileHalfAngleDeg);
 
-  // Index sort by radius - insertion sort over an index array, which is
+  // Inside this, a node counts as central and goes into every sector.
+  Near := 2 * CoreMeshSize;
+
+  // Index sort by s - insertion sort over an index array, which is
   // ample for a few thousand nodes and keeps the node data untouched.
-  SetLength(Idx, n);
+  SetLength(Idx, FEngine.NbNodes);
 
-  for i := 0 to n - 1 do
-    Idx[i] := i;
+  n := 0;
+
+  for i := 0 to FEngine.NbNodes - 1 do
+  begin
+
+    if (Sector = psAll) or (FNodeS[i] <= Near) then
+      Take := True
+    else
+    begin
+
+      Ang := ArcTan2(FEngine.CoordY[i] / AspectRatio, FEngine.CoordX[i]);
+
+      if Sector = psFront then
+        Take := Abs(Ang - Pi / 2) <= HalfAngle
+      else
+        Take := Abs(Ang + Pi / 2) <= HalfAngle;
+
+    end;
+
+    if Take then
+    begin
+      Idx[n] := i;
+      Inc(n);
+    end;
+
+  end;
+
+  SetLength(Idx, n);
 
   for i := 1 to n - 1 do
   begin
@@ -1771,7 +2485,7 @@ begin
     tmp := Idx[i];
     j := i - 1;
 
-    while (j >= 0) and (FNodeR[Idx[j]] > FNodeR[tmp]) do
+    while (j >= 0) and (FNodeS[Idx[j]] > FNodeS[tmp]) do
     begin
       Idx[j + 1] := Idx[j];
       Dec(j);
@@ -1781,7 +2495,7 @@ begin
 
   end;
 
-  SetLength(Rv, n);
+  SetLength(Sv, n);
   SetLength(T0v, n);
   SetLength(TEv, n);
 
@@ -1792,15 +2506,22 @@ begin
   begin
 
     j := i;
-    rSum := 0;
+    sSum := 0;
     t0Sum := 0;
     tESum := 0;
 
-    // Everything within GroupTol of where this group started.
-    while (j < n) and (FNodeR[Idx[j]] - FNodeR[Idx[i]] <= GroupTol) do
+    // Well clear of the innermost boundary, where the mesh turns
+    // structured and the layers get thin?
+    if FNodeS[Idx[i]] < FLayerA[LayerCore] - 2 * CoreGroupTol then
+      Tol := CoreGroupTol
+    else
+      Tol := GroupTol;
+
+    // Everything within that of where this group started.
+    while (j < n) and (FNodeS[Idx[j]] - FNodeS[Idx[i]] <= Tol) do
     begin
 
-      rSum := rSum + FNodeR[Idx[j]];
+      sSum := sSum + FNodeS[Idx[j]];
       t0Sum := t0Sum + FTInitial[Idx[j]];
       tESum := tESum + FEngine.Temperature[Idx[j]];
 
@@ -1808,7 +2529,7 @@ begin
 
     end;
 
-    Rv[m] := 1000 * rSum / (j - i);       // mm, for a readable axis
+    Sv[m] := 1000 * sSum / (j - i);       // mm, for a readable axis
     T0v[m] := t0Sum / (j - i) - Kelvin;   // C
     TEv[m] := tESum / (j - i) - Kelvin;
 
@@ -1818,13 +2539,13 @@ begin
 
   end;
 
-  R := TVMobj.Create(1, m);
+  S := TVMobj.Create(1, m);
   T0 := TVMobj.Create(1, m);
   TEnd := TVMobj.Create(1, m);
 
   for i := 0 to m - 1 do
   begin
-    R[0, i] := Rv[i];
+    S[0, i] := Sv[i];
     T0[0, i] := T0v[i];
     TEnd[0, i] := TEv[i];
   end;
@@ -1846,12 +2567,13 @@ begin
 
   try
 
-    WriteLn(F, 'time_s,time_min,core_C,skin_C,generated_W,lost_W,stored_W,balance_W');
+    WriteLn(F, 'time_s,time_min,core_C,skin_front_C,skin_back_C,generated_W,' +
+               'lost_W,lost_pad_W,stored_W,balance_W');
 
     for i := 0 to FNbHist - 1 do
-      WriteLn(F, Format('%.1f,%.4f,%.4f,%.4f,%.3f,%.3f,%.3f,%.3f',
-        [FHistT[i], FHistT[i] / 60, FHistCore[i], FHistSkin[i],
-         FHeatOutput, FHistLoss[i], FHistStore[i],
+      WriteLn(F, Format('%.1f,%.4f,%.4f,%.4f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f',
+        [FHistT[i], FHistT[i] / 60, FHistCore[i], FHistSkin[i], FHistSkinB[i],
+         FHeatOutput, FHistLoss[i], FHistLossB[i], FHistStore[i],
          FHeatOutput - FHistLoss[i] - FHistStore[i]], DotFS));
 
   finally
@@ -1946,6 +2668,8 @@ var
 
   i : Integer;
 
+  LossFront, LossBack : Double;
+
 begin
 
   FReport.Clear;
@@ -1980,14 +2704,21 @@ begin
   // call for - see the note on that in the header. In the TRANSIENT the
   // mass matrix supplies exactly that stabilising diagonal, which is
   // why the explicit term is safe there and not here.
+  // The closed-form check runs first, in the uniform configuration it
+  // describes; the calibration then overwrites that field with the one
+  // the run actually starts from.
+  VerifyAgainstAnalytic;
+
+  CalibrateDraped;
+
+  SurfaceLosses(False, LossFront, LossBack);
+
   Say('');
-  Say('Solving the draped steady state, conduction only...');
-
-  FEngine.CalcTemperature(caStatic, False);
-
-  Say(Format('  core %.2f C, skin %.2f C, loss %.1f W against %.1f W generated',
-    [FEngine.Temperature[FCoreNode] - Kelvin, MeanSkinTemperature - Kelvin,
-     SurfaceLoss(False), FHeatOutput]));
+  Say(Format('  Draped steady state: core %.2f C, skin %.2f C at the front and',
+    [FEngine.Temperature[FCoreNode] - Kelvin, MeanSkinTemperature(psFront) - Kelvin]));
+  Say(Format('  %.2f C on the cushion, losing %.1f W to the room and %.1f W through',
+    [MeanSkinTemperature(psBack) - Kelvin, LossFront, LossBack]));
+  Say(Format('  the foam, against %.1f W generated.', [FHeatOutput]));
 
   SetLength(FTInitial, FEngine.NbNodes);
 

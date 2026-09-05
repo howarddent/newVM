@@ -1,16 +1,25 @@
 unit uThermEx1Plot;
 
-{ The window ThermEx1 shows its result in: the radial temperature profile
-  through the body, at t = 0 and at the end of the run, on one TVMPlot2D,
+{ The window ThermEx1 shows its result in: the temperature profile from
+  the centre of the body outward, at t = 0 and at the end of the run and
+  taken both towards the front and towards the back, on one TVMPlot2D,
   with the run's own report beside it and a cardiac-output slider under
   it.
 
-  The model is radially symmetric - uniform generation within each
-  compartment, a uniform lateral boundary condition, adiabatic ends - so
-  a field plot of the solid adds nothing a curve against radius does not
-  already say, and says it less clearly. Two lines from the axis to the
-  skin are the whole result, and the dashed markers are the compartment
-  boundaries.
+  Generation is uniform within each compartment and the ends are
+  adiabatic, so a field plot of the solid adds little that a profile
+  does not already say. What it can no longer be is ONE profile: the
+  patient lies on a foam cushion, so the back of the section conducts
+  into foam while the front loses heat to the room, and the difference
+  between the two curves is the whole point of the model. Front is drawn
+  solid and back dashed; red is the balanced starting state and blue the
+  end of the run; the dotted verticals are the compartment boundaries.
+
+  The horizontal axis is s, the semi-major axis of the similar ellipse
+  through a point - the section's own radial coordinate, and the plain
+  radius again if AspectRatio is set back to 1. Each compartment
+  boundary is one value of s, which is what lets a single set of
+  verticals mark them for both curves.
 
   The memo carries the report verbatim as the program also prints it to
   stdout. The text is the model's, built once through TThermalModel.Say
@@ -247,21 +256,38 @@ begin
 
 end;
 
-{ Both profiles are sampled at the same radii - they come from the same
-  nodes of the same mesh - so the single shared X that SetData takes is
-  exactly right here. }
+{ The front pair shares one X and goes in through SetData; the back pair
+  cannot, since it is drawn from a different set of nodes and so lands
+  on a different set of s values, and is built point by point with
+  PlotXY instead. TVMPlot2D keeps an X per series, so the two routes mix
+  freely as long as SetData goes first - which is also how the boundary
+  markers below get their own two-point X. }
 procedure TProfileForm.RefreshDisplay;
 var
 
   i, j : Integer;
 
-  lo, hi, v : Double;
+  lo, hi : Double;
 
-  R, T0, TEnd : TVMobj;
+  SF, F0, FE, SB, B0, BE : TVMobj;
+
+  procedure Span(const T : TVMobj);
+  var
+    c : Integer;
+  begin
+
+    for c := 0 to T.Cols - 1 do
+    begin
+      if T[0, c] < lo then lo := T[0, c];
+      if T[0, c] > hi then hi := T[0, c];
+    end;
+
+  end;
 
 begin
 
-  FModel.GetRadialProfiles(R, T0, TEnd);
+  FModel.GetRadialProfiles(psFront, SF, F0, FE);
+  FModel.GetRadialProfiles(psBack, SB, B0, BE);
 
   Caption := Format('ThermEx1 - case %d, cardiac output %.1f L/min',
     [FModel.CaseNumber, FModel.CardiacOutput]);
@@ -275,52 +301,53 @@ begin
   if FModel.CaseNumber = CaseDraped then
     FPlot.Title := 'Draped: the balanced state held for the whole run'
   else
-    FPlot.Title := 'Exposed at t = 0: bare skin and radiation into 16 C';
+    FPlot.Title := 'Exposed at t = 0: bare front and radiation into 16 C, ' +
+                   'back still on the cushion';
 
-  FPlot.XAxisTitle := 'Radius from the axis (mm)';
+  FPlot.XAxisTitle := 'Similar-ellipse coordinate s (mm)';
   FPlot.YAxisTitle := 'Temperature (C)';
 
-  // Start red, end blue: the run only ever cools, so the warm curve is
-  // the one it started from.
-  FPlot.SetSeriesStyle(0, clRed, 2.0, plsSolid, 'Start (t = 0)');
-  FPlot.SetSeriesStyle(1, clBlue, 2.0, plsSolid, 'End of run');
+  // Red starts, blue ends - the run only ever cools, so the warm curve
+  // is the one it started from. Solid is the exposed front, dashed the
+  // part lying on the foam.
+  FPlot.SetSeriesStyle(0, clRed, 2.0, plsSolid, 'Front, t = 0');
+  FPlot.SetSeriesStyle(1, clBlue, 2.0, plsSolid, 'Front, end of run');
+  FPlot.SetSeriesStyle(2, clRed, 2.0, plsDash, 'Back (on cushion), t = 0');
+  FPlot.SetSeriesStyle(3, clBlue, 2.0, plsDash, 'Back (on cushion), end');
 
-  FPlot.SetData(R, [T0, TEnd]);
+  FPlot.SetData(SF, [F0, FE]);
 
-  // The temperature range both profiles span, so the boundary markers
-  // are drawn full height whatever the run did.
-  lo := T0[0, 0];
-  hi := lo;
-
-  for i := 0 to R.Cols - 1 do
+  for i := 0 to SB.Cols - 1 do
   begin
-
-    v := T0[0, i];
-    if v < lo then lo := v;
-    if v > hi then hi := v;
-
-    v := TEnd[0, i];
-    if v < lo then lo := v;
-    if v > hi then hi := v;
-
+    FPlot.PlotXY(SB[0, i], B0[0, i], 2);
+    FPlot.PlotXY(SB[0, i], BE[0, i], 3);
   end;
 
-  // Mark each compartment boundary. The outer layers are thin - 2.3 mm
-  // of fat and 1.5 mm of skin on a 75.6 mm radius - so without the marks
-  // the steepening at the right-hand edge reads as a plotting artefact
+  // The temperature range all four profiles span, so the boundary
+  // markers are drawn full height whatever the run did.
+  lo := F0[0, 0];
+  hi := lo;
+
+  Span(F0);
+  Span(FE);
+  Span(B0);
+  Span(BE);
+
+  // Mark each compartment boundary. The outer layers are thin - 3.5 mm
+  // of fat and 2.3 mm of skin on a 116.6 mm semi-major axis, and half
+  // that towards the front and back - so without the marks the
+  // steepening at the right-hand edge reads as a plotting artefact
   // rather than as the layers it is.
   //
   // Each is a series with its OWN two-point x, which is why they are
-  // built with PlotXY rather than passed to SetData - SetData takes one
-  // shared x for every series it is given. The component stores an x per
-  // series, so the two routes mix as long as SetData goes first.
+  // built with PlotXY, as the back profile above is.
   for j := 0 to FModel.InterfaceCount - 1 do
   begin
 
-    FPlot.SetSeriesStyle(2 + j, clGray, 1.0, plsDash, FModel.InterfaceName(j));
+    FPlot.SetSeriesStyle(4 + j, clGray, 1.0, plsDot, FModel.InterfaceName(j));
 
-    FPlot.PlotXY(FModel.InterfaceMm(j), lo, 2 + j);
-    FPlot.PlotXY(FModel.InterfaceMm(j), hi, 2 + j);
+    FPlot.PlotXY(FModel.InterfaceMm(j), lo, 4 + j);
+    FPlot.PlotXY(FModel.InterfaceMm(j), hi, 4 + j);
 
   end;
 

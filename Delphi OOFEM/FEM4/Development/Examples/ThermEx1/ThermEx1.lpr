@@ -1,16 +1,18 @@
 program ThermEx1;
 
 { Core temperature of an anaesthetised adult losing heat into a cold
-  theatre, using TThermalEngine. Conduction only - see the header comment
-  of uThermEx1.pas for what that leaves out, blood perfusion above all,
-  and for the verification status of the numbers.
+  theatre, using TThermalEngine. Four compartments in an elliptical
+  section, conduction, blood perfusion, and a foam cushion under the
+  back - see the header comment of uThermEx1.pas for what all of that
+  assumes, what it leaves out, and the verification status of the
+  numbers.
 
-  Unlike the ArchEx examples this one has a window: the model is radially
-  symmetric, so its whole result is a temperature profile against radius,
-  and that is shown on a TVMPlot2D rather than as a field in gmsh. The
-  numeric report still goes to stdout - the program keeps a console
-  subsystem as well as the window - and the time history to a CSV, so
-  --no-plot still gives a headless run.
+  Unlike the ArchEx examples this one has a window: the result is a
+  temperature profile from the centre outward, taken towards the front
+  and towards the back, and that is shown on a TVMPlot2D rather than as
+  a field in gmsh. The numeric report still goes to stdout - the program
+  keeps a console subsystem as well as the window - and the time history
+  to a CSV, so --no-plot still gives a headless run.
 
   Usage:  ThermEx1 [1|2] [--no-plot]
 
