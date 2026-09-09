@@ -100,7 +100,7 @@ interface
 
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
-  StdCtrls, ComCtrls, Spin,
+  StdCtrls, ComCtrls, Spin, IniFiles, LazLogger,
   uSDRDevice, uSDRRFSource, uVMPlotSDRSpectrum, uFreqKeypad, uFMReceiver,
   uAMReceiver;
 
@@ -141,6 +141,7 @@ type
     procedure BiasTCheckBoxChange(Sender: TObject);
     procedure ConnectButtonClick(Sender: TObject);
     procedure EpochComboChange(Sender: TObject);
+    procedure FormClose(Sender: TObject; var CloseAction: TCloseAction);
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FreqEditEditingDone(Sender: TObject);
@@ -178,6 +179,11 @@ type
     FEdgePanTimer: TTimer;
     FAudioStatsTimer: TTimer;
     FEdgePanDirection: Integer;
+    FShutdownDone: Boolean;
+    procedure ShutdownAll;
+    function SettingsFileName: string;
+    procedure SaveSettings;
+    procedure LoadSettings;
     procedure AnalyserGPUStatusKnown(Sender: TObject);
     procedure AnalyserCursorChanged(Sender: TObject);
     procedure ApplyDeviceCapabilities;
@@ -404,15 +410,270 @@ begin
   BandwidthTrackBarChange(Self);   // sets BandwidthLabel's initial text
   ApplyListenModeVisibility;
 
+  // Last, deliberately: ListenFreqEdit only exists a few lines above,
+  // and takes its initial value from FreqEdit, so anything restored
+  // before this point would just be overwritten again.
+  LoadSettings;
+
   StatusLabel.Caption := 'Not connected';
+end;
+
+{ Both routes into shutdown call the same thing.
+
+  OnClose is the one that matters: it fires while the window and its
+  handle are still alive, with the widgetset fully up, which is the only
+  point at which tearing down a GL context, a running audio backend and a
+  USB device is unambiguously safe. OnDestroy runs far later - after the
+  handle has gone on some widgetsets - and is kept here purely as a net
+  for the paths that never raise OnClose at all (Application.Terminate
+  called directly, a session ending under us). ShutdownAll is idempotent,
+  so whichever arrives second does nothing. }
+procedure TForm1.FormClose(Sender: TObject; var CloseAction: TCloseAction);
+begin
+  ShutdownAll;
 end;
 
 procedure TForm1.FormDestroy(Sender: TObject);
 begin
-  if Assigned(FAnalyser) then FAnalyser.Active := False;
-  if Assigned(FReceiver) then FReceiver.Active := False;
-  if Assigned(FAMReceiver) then FAMReceiver.Active := False;
-  FRFSource.Free;   // stops RX and closes the device itself, if still open
+  ShutdownAll;
+end;
+
+{ Ordered shutdown: stop the demodulators, then release the device, then
+  free the memory, and only then let the application close.
+
+  This used to be four bare lines in FormDestroy, and the device was
+  reported as still claimed after closing the window on some platforms.
+  Three things about that old version explain it, and all three are what
+  the structure below is for.
+
+  FIRST, EVERY STAGE IS GUARDED. The old sequence deactivated the
+  analyser, then the two receivers, then freed the RF source - in that
+  order, unguarded, so an exception anywhere in the first three lines
+  meant the fourth never ran and the device was left open with the
+  process exiting around it. Those first three lines are exactly the ones
+  that can raise: they tear down an OpenGL context and an audio backend,
+  both of which are platform code with platform-specific failure modes.
+  Releasing the hardware must not be reachable only through their
+  success, so each stage below runs in its own try/except and the ones
+  after it run regardless.
+
+  SECOND, THE TIMERS GO OFF FIRST. FAudioStatsTimer fires every second
+  and dereferences FReceiver, FAMReceiver and FRFSource unconditionally
+  (see AudioStatsTimerTick); FEdgePanTimer and FFreqRetryTimer likewise
+  reach into the source. Left running, any of them can land in the middle
+  of the teardown below and fault on a half-freed object - which is
+  precisely the kind of fault that appears on one platform and not
+  another, since it depends entirely on where the tick happens to fall.
+
+  THIRD, THE ORDER IS EXPLICIT RATHER THAN INHERITED. Everything here is
+  owned by the form, so all of it would eventually be freed by component
+  destruction anyway - but in whatever order TComponent happens to hold
+  them, which is not something this unit should depend on. Consumers of
+  the stream (the receivers, then the analyser) are stopped before the
+  source they read from is torn down, and freed before it too. }
+procedure TForm1.ShutdownAll;
+var
+  Failures: string;
+
+  procedure Failed(const Stage: string; E: Exception);
+  begin
+    if Failures <> '' then Failures := Failures + '; ';
+    Failures := Failures + Stage + ' (' + E.ClassName + ': ' + E.Message + ')';
+  end;
+
+begin
+  if FShutdownDone then Exit;
+  FShutdownDone := True;
+  Failures := '';
+
+  // 0. Nothing may fire into a half-torn-down object - see above.
+  try
+    if Assigned(FAudioStatsTimer) then FAudioStatsTimer.Enabled := False;
+    if Assigned(FEdgePanTimer) then FEdgePanTimer.Enabled := False;
+    if Assigned(FFreqRetryTimer) then FFreqRetryTimer.Enabled := False;
+    FEdgePanDirection := 0;
+  except
+    on E: Exception do Failed('timers', E);
+  end;
+
+  // 1. Remembered settings, before anything that could fail has run. The
+  //    values come from the two edit controls, which outlive all of
+  //    this, so the only reason to do it this early is that a later
+  //    stage failing must not cost the user their tuning.
+  try
+    SaveSettings;
+  except
+    on E: Exception do Failed('save_settings', E);
+  end;
+
+  // 2. Demodulators. Each stops and joins its own DSP threads and closes
+  //    the audio backend (and, on macOS, ends the helper process that
+  //    owns CoreAudio - see uWaveOutPlayer.pas), so this is the stage
+  //    most likely to be slow and the one most likely to raise.
+  try
+    if Assigned(FReceiver) then FReceiver.Active := False;
+  except
+    on E: Exception do Failed('fm_receiver', E);
+  end;
+
+  try
+    if Assigned(FAMReceiver) then FAMReceiver.Active := False;
+  except
+    on E: Exception do Failed('am_receiver', E);
+  end;
+
+  // 3. The analyser is the other consumer of the stream, and owns the GL
+  //    context - stopped here, still inside the window's lifetime.
+  try
+    if Assigned(FAnalyser) then FAnalyser.Active := False;
+  except
+    on E: Exception do Failed('analyser', E);
+  end;
+
+  // 4. The device itself, now that nothing is reading from it. Stop and
+  //    join the poll/control threads first, then close the hardware.
+  //    Disconnect does both, but calling StopStreaming explicitly keeps
+  //    the sequence readable and means a failure inside the thread join
+  //    still leaves the close below to run.
+  try
+    if Assigned(FRFSource) then FRFSource.StopStreaming;
+  except
+    on E: Exception do Failed('stop_streaming', E);
+  end;
+
+  try
+    if Assigned(FRFSource) then FRFSource.Disconnect;
+  except
+    on E: Exception do Failed('disconnect', E);
+  end;
+
+  // 5. Memory, consumers before source. FreeAndNil rather than Free so
+  //    that anything reaching one of these later - a queued LCL message,
+  //    a stray event - finds nil rather than a stale pointer.
+  try
+    FreeAndNil(FReceiver);
+  except
+    on E: Exception do Failed('free_fm_receiver', E);
+  end;
+
+  try
+    FreeAndNil(FAMReceiver);
+  except
+    on E: Exception do Failed('free_am_receiver', E);
+  end;
+
+  try
+    FreeAndNil(FAnalyser);
+  except
+    on E: Exception do Failed('free_analyser', E);
+  end;
+
+  try
+    FreeAndNil(FRFSource);
+  except
+    on E: Exception do Failed('free_rf_source', E);
+  end;
+
+  // Reported, not swallowed - but not in a dialog either: this runs
+  // while the window is on its way out, and a modal box at that point is
+  // both unwelcome and, on some widgetsets, a good way to make the
+  // teardown worse. The device is released either way by the time this
+  // line is reached, which is the whole point of the guards above.
+  if Failures <> '' then
+    DebugLn('SDR_Radio shutdown: ' + Failures);
+end;
+
+{ WHERE THE REMEMBERED SETTINGS LIVE
+
+  GetAppConfigFile(False) - per-user, not next to the executable. A
+  program directory is very often read-only (Program Files, an app
+  bundle, /usr/local/bin) and writing there either fails outright or is
+  silently redirected somewhere the next run will not look. This gives a
+  per-user path the OS already guarantees is writable, on every platform
+  this app builds for. }
+function TForm1.SettingsFileName: string;
+begin
+  Result := GetAppConfigFile(False);
+end;
+
+{ Frequencies are stored as INTEGER HERTZ, written and read as plain
+  digit strings.
+
+  Not as floating-point MHz: TIniFile's ReadFloat/WriteFloat go through
+  the default format settings, so on a machine whose locale uses a comma
+  as the decimal separator they would write "95,3" - which reads back
+  correctly there and as nonsense anywhere else, including on the same
+  machine after a locale change. Hertz is what the device API takes
+  anyway (see CommitFrequencyHz and StartStopButtonClick, both of which
+  convert the edit's MHz to Hz at the point of use), and a whole number
+  of hertz has no separator to get wrong.
+
+  It will not fit an Integer, either: 6 GHz is past 2^31, so
+  WriteInteger/ReadInteger are not usable here. Hence plain strings and
+  StrToInt64Def. }
+procedure TForm1.SaveSettings;
+const
+  Sec = 'Tuning';
+var
+  Ini: TIniFile;
+begin
+  ForceDirectories(ExtractFilePath(SettingsFileName));
+
+  Ini := TIniFile.Create(SettingsFileName);
+  try
+    Ini.WriteString(Sec, 'LocalOscillatorHz', IntToStr(Round(FreqEdit.Value * 1e6)));
+    Ini.WriteString(Sec, 'DemodulatorHz', IntToStr(Round(ListenFreqEdit.Value * 1e6)));
+    Ini.UpdateFile;
+  finally
+    Ini.Free;
+  end;
+end;
+
+{ Restore what SaveSettings wrote, if it is still usable.
+
+  Each value is applied only when it falls inside the control's current
+  range, so a missing file, an empty entry, a hand-edited one, or one
+  saved against a different radio all fall back to the existing default
+  rather than being silently clamped to a bound and presented as though
+  the user had chosen it.
+
+  What this does NOT do is push the local oscillator at the hardware:
+  nothing is connected this early, CommitFrequencyHz would return
+  immediately anyway, and StartStopButtonClick reads FreqEdit.Value when
+  streaming starts - so restoring the control is the whole job. The
+  demodulator frequency does get pushed into both receivers, since they
+  hold their own tuned frequency rather than reading the control. The
+  analyser's cursor is deliberately left alone: it clamps against the
+  spectrum's X axis, which is still the constructor's placeholder domain
+  until a device is connected, and ConnectButtonClick already sets it at
+  the point that range becomes real. }
+procedure TForm1.LoadSettings;
+const
+  Sec = 'Tuning';
+var
+  Ini: TIniFile;
+  Hz: Int64;
+  MHz: Double;
+begin
+  if not FileExists(SettingsFileName) then Exit;
+
+  Ini := TIniFile.Create(SettingsFileName);
+  try
+    Hz := StrToInt64Def(Ini.ReadString(Sec, 'LocalOscillatorHz', ''), 0);
+    MHz := Hz / 1e6;
+    if (Hz > 0) and (MHz >= FreqEdit.MinValue) and (MHz <= FreqEdit.MaxValue) then
+      FreqEdit.Value := MHz;
+
+    Hz := StrToInt64Def(Ini.ReadString(Sec, 'DemodulatorHz', ''), 0);
+    MHz := Hz / 1e6;
+    if (Hz > 0) and (MHz >= ListenFreqEdit.MinValue) and (MHz <= ListenFreqEdit.MaxValue) then begin
+      ListenFreqEdit.Value := MHz;
+      FReceiver.TunedFrequencyHz := MHz * 1e6;
+      FAMReceiver.TunedFrequencyHz := MHz * 1e6;
+    end;
+  finally
+    Ini.Free;
+  end;
 end;
 
 procedure TForm1.ReportError(const Where: string);
@@ -553,6 +814,7 @@ var
   Caps: TSDRCapabilities;
   i, NumericSlot: Integer;
   BooleanStage: Integer;
+  WantLOMHz, WantListenMHz, LoMHz, HiMHz: Double;
 begin
   Caps := FRFSource.Capabilities;
 
@@ -560,9 +822,30 @@ begin
   FAnalyser.SpectrumTitle := Caps.DeviceName + ' Spectrum';
   FAnalyser.WaterfallTitle := Caps.DeviceName + ' Waterfall';
 
-  FreqEdit.MinValue := Caps.MinFreqHz / 1e6;
-  FreqEdit.MaxValue := Caps.MaxFreqHz / 1e6;
-  FreqEdit.Value := Caps.DefaultFreqHz / 1e6;
+  // Where the user is already tuned survives a connect if the device can
+  // reach it - which is what makes the remembered frequencies of the
+  // last session actually stick. This used to overwrite both edits with
+  // the device default unconditionally, so a restored setting would have
+  // lasted only until Connect was pressed. It matters just as much
+  // within a session: disconnect and reconnect the same radio and you
+  // come back where you were rather than at its default.
+  //
+  // Both wanted values are read BEFORE the bounds are touched: setting
+  // MinValue/MaxValue on a TFloatSpinEdit clamps its Value as a side
+  // effect, so reading afterwards can hand back a bound rather than what
+  // the user had.
+  WantLOMHz := FreqEdit.Value;
+  WantListenMHz := ListenFreqEdit.Value;
+
+  LoMHz := Caps.MinFreqHz / 1e6;
+  HiMHz := Caps.MaxFreqHz / 1e6;
+
+  FreqEdit.MinValue := LoMHz;
+  FreqEdit.MaxValue := HiMHz;
+  if (WantLOMHz >= LoMHz) and (WantLOMHz <= HiMHz) then
+    FreqEdit.Value := WantLOMHz
+  else
+    FreqEdit.Value := Caps.DefaultFreqHz / 1e6;
 
   // ListenFreqEdit isn't bounded any tighter than the device's own
   // hardware range here - it should really also stay within whatever's
@@ -570,9 +853,20 @@ begin
   // moves with every retune/rate change, so enforcing it precisely is
   // left as a soft user responsibility for this first cut (see this
   // unit's own header comment on ListenFreqEdit).
-  ListenFreqEdit.MinValue := Caps.MinFreqHz / 1e6;
-  ListenFreqEdit.MaxValue := Caps.MaxFreqHz / 1e6;
-  ListenFreqEdit.Value := Caps.DefaultFreqHz / 1e6;
+  ListenFreqEdit.MinValue := LoMHz;
+  ListenFreqEdit.MaxValue := HiMHz;
+  if (WantListenMHz >= LoMHz) and (WantListenMHz <= HiMHz) then
+    ListenFreqEdit.Value := WantListenMHz
+  else
+    ListenFreqEdit.Value := Caps.DefaultFreqHz / 1e6;
+
+  // The receivers hold their own tuned frequency rather than reading the
+  // control, so whichever of the two branches above ran, they need
+  // telling - the same three lines ListenFreqEditEditingDone does, minus
+  // the analyser cursor, which ConnectButtonClick sets once
+  // UpdateFrequencyAxis has made the axis range real.
+  FReceiver.TunedFrequencyHz := ListenFreqEdit.Value * 1e6;
+  FAMReceiver.TunedFrequencyHz := ListenFreqEdit.Value * 1e6;
 
   // RateCombo's real items are only ever known here, post-Connect - but
   // on macOS (Cocoa widgetset, NSPopUpButton), a csDropDownList TComboBox
