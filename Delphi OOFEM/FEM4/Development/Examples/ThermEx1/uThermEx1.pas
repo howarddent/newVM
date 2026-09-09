@@ -59,19 +59,55 @@ unit uThermEx1;
   resistance, more of it barely matters, because the bottleneck has
   moved to the skin surface.
 
+  METABOLISM AND TEMPERATURE
+
+  A body that has cooled does not go on generating heat at the rate it
+  did at 37 C. Metabolic rate follows temperature the way any enzymatic
+  process does, by van't Hoff's Q10 - the factor per 10 K - so the
+  generation is scaled by
+
+    Q10^((Tcore - 37)/10)
+
+  Q10 is 2.0 here, near the low end of the 2 to 2.5 usually quoted for
+  whole-body human metabolism in hypothermia, and worth 7.2% per degree.
+  Over this run the core falls 4.6 C and generation with it, from 83.7 W
+  to 59.5 W - 71% of the set-point rate. That feeds back: less heat
+  generated is faster cooling, which is less heat again, and the core
+  falls 2.33 C/h where holding generation fixed gave 2.08.
+
+  The scaling is read off the CORE temperature and applied to the whole
+  body rather than node by node, which is the more defensible choice
+  rather than the lazier one - published Q10 figures are measured
+  against core temperature and already contain the fact that the
+  periphery cools further than the core. The full argument, and the
+  measurement that the two schemes differ by about 1% here anyway, is in
+  UpdateSources, which is where the scaling happens.
+
+  Q10 = 1 removes the effect entirely and gives back the fixed 83.7 W
+  this model generated before.
+
   WHAT IS AND IS NOT IN THE MODEL
 
   In: conduction through all four compartments, heat storage, metabolic
-  generation where it actually arises, blood perfusion, surface losses
-  by convection and radiation into still air at 16 C from the exposed
-  surface, and conduction through the cushion from the surface lying on
-  it.
+  generation where it actually arises and falling with temperature by
+  Q10, blood perfusion, surface losses by convection and radiation into
+  still air at 16 C from the exposed surface, and conduction through the
+  cushion from the surface lying on it.
 
   Out, deliberately: respiratory and cutaneous evaporative loss;
   vasomotor control, so the flow shares are fixed rather than
   responding to temperature; any distinction between arterial and
   venous blood beyond the single well-mixed pool; and the cushion's own
   transient warm-up, discussed under THE CUSHION above.
+
+  Two things about the generation in particular are still out. Shivering
+  is one: muscle's share is the basal figure and cannot rise, which is
+  right for a paralysed or deeply anaesthetised patient and wrong for a
+  waking one. The other is that VO2 = 250 mL/min is an AWAKE resting
+  figure, and anaesthesia itself depresses metabolic rate 20 to 30% at
+  induction - a step change at t = 0, quite separate from the Q10 slide
+  that follows, and not modelled. The model therefore starts some 20%
+  warmer in its heat production than the patient it describes.
 
   THE EQUIVALENT ELLIPTICAL CYLINDER
 
@@ -220,24 +256,32 @@ unit uThermEx1;
   Celsius would silently compute the wrong radiative flux. Only the
   report converts back to Celsius.
 
-  WHAT THE SHAPE AND THE CUSHION DO TO THE ANSWER
+  WHAT THE SHAPE, THE CUSHION AND Q10 DO TO THE ANSWER
 
-  At 5 L/min, exposed at t = 0, the core now falls 2.08 C/h against the
-  2.66 C/h of the circular cylinder with nothing underneath it - a fifth
-  slower, and nearly all of that is the cushion rather than the shape.
-  Of the 138 W leaving at the end of the run, 4 W goes out through the
+  At 5 L/min, exposed at t = 0, the core falls 2.33 C/h against the
+  2.66 C/h of the circular cylinder with nothing underneath it and a
+  fixed heat output. The three changes do not pull the same way: the
+  ellipse and the cushion between them slow the fall to 2.08 C/h - a
+  fifth slower, nearly all of it the cushion rather than the shape - and
+  Q10 then speeds it back up to 2.33, because a cooling body makes less
+  heat.
+
+  Of the 134 W leaving at the end of the run, 4 W goes out through the
   foam: the back of the patient has all but stopped losing heat, and its
-  skin sits some 3.5 K warmer than the front's, a gap already 7 K wide
-  in the balanced starting state. The drape coefficient the calibration
-  lands on is 5.49 W/m2K, against the 2.69 the same ellipse would need
-  with nothing underneath it, because the same 84 W now has to leave
-  through 62% of the surface.
+  skin sits some 3.4 K warmer than the front's, a gap already 7.8 K wide
+  in the balanced starting state. Generation is down to 59.5 W by then,
+  71% of what the same body produces at 37 C. The drape coefficient the
+  calibration lands on is 5.49 W/m2K, against the 2.69 the same ellipse
+  would need with nothing underneath it, because the same 84 W has to
+  leave through 62% of the surface - and Q10 does not enter that at all,
+  since the balanced state is built at the set point where the factor is
+  exactly 1.
 
-  Setting AspectRatio back to 1 and ContactHalfAngleDeg to 0 reproduces
-  the earlier model exactly - a 75.6 mm radius over 4.01 m, the core
-  boundary at 51.09 mm, an analytic drop of 4.889 K matched by the
-  finite-element answer to 0.001 K, and 2.66 C/h - which is how this
-  change was checked.
+  Setting AspectRatio back to 1, ContactHalfAngleDeg to 0 and Q10 to 1
+  reproduces the earlier model exactly - a 75.6 mm radius over 4.01 m,
+  the core boundary at 51.09 mm, an analytic drop of 4.889 K matched by
+  the finite-element answer to 0.001 K, generation held at 83.7 W, and
+  2.66 C/h - which is how each of these changes was checked in turn.
 
   THE TWO CASES
 
@@ -283,6 +327,18 @@ const
   RQ = 0.8;                 // respiratory quotient
 
   CoreSetPointC = 37.0;     // the core the balanced start is built around
+
+  // How metabolic heat production follows temperature: the factor it
+  // changes by for a 10 K change, van't Hoff's Q10. Most enzymatic
+  // processes sit between 2 and 3; whole-body human metabolism in
+  // hypothermia is usually quoted near 2 to 2.5, which is 7 to 9% per
+  // degree. 1.0 switches the whole effect off and gives back the fixed
+  // 83.7 W this model used to generate whatever its temperature.
+  //
+  // The reference temperature is the core set point, so the factor is
+  // exactly 1 in the balanced starting state by construction and the
+  // calibration below is untouched by any of this.
+  Q10 = 2.0;
 
   (******************** THE COMPARTMENTS ********************)
 
@@ -466,7 +522,8 @@ type
 
     FUPad : Double;                      // W/m2K through the cushion
 
-    FHeatOutput : Double;                // W, whole body
+    FHeatOutput : Double;                // W, whole body at the set point
+    FMetFactor : Double;                 // Q10 scaling, 1 at the set point
     FHBalance : Double;                  // W/m2K, uniform surface, no cushion
     FHDraped : Double;                   // W/m2K, calibrated with the cushion
     FAnalyticDrop : Double;              // K, centre to skin surface
@@ -492,6 +549,7 @@ type
     // History
     FHistT, FHistCore, FHistSkin, FHistLoss, FHistStore : TDoubleArray;
     FHistSkinB, FHistLossB : TDoubleArray;   // the back, on the cushion
+    FHistGen : TDoubleArray;                 // W, generation as it stood
     FHistTArt, FHistPerf : TDoubleArray;
     FNbHist : Integer;
 
@@ -1509,6 +1567,11 @@ begin
 
   end;
 
+  // The static solves below run at the set point, where the Q10 factor
+  // is 1 by construction, so the sources start unscaled; UpdateSources
+  // takes it over once the transient begins.
+  FMetFactor := 1;
+
   SetLength(FGenSource, FGmsh.NbNodes);
 
   // A source on EVERY node, not only the generating ones: perfusion
@@ -1662,7 +1725,36 @@ end;
   because the perfusion time constants run from 4.5 minutes at the core
   with a doubled cardiac output up to 35 minutes in muscle, against a 60
   second step; ReportPerfusion prints the tightest ratio so the margin
-  is visible rather than assumed. }
+  is visible rather than assumed.
+
+  METABOLISM FOLLOWS TEMPERATURE
+
+  The other thing rewritten here is the generation itself. Tissue that
+  has cooled does not go on producing heat at the rate it did at 37 C:
+  metabolic rate falls with temperature by roughly Q10 per 10 K, so the
+  metabolic term is scaled by
+
+    Q10^((Tcore - Tset)/10)
+
+  which is 1 at the set point and about 0.75 four degrees below it. This
+  is why the report's generation is now a column rather than a constant,
+  and why the energy-balance column has to be computed against the
+  generation ACTUALLY in force at each step - see ReportHistory.
+
+  The factor is taken from the CORE temperature and applied to the whole
+  body, rather than each node being scaled by its own temperature. That
+  looks like the cruder choice and is the more defensible one: published
+  Q10 figures for whole-body human metabolism are measured against core
+  temperature, and they already contain the fact that the periphery
+  cools further than the core does. Scaling every node locally as well
+  would count that twice. It also happens to make almost no difference
+  here - the core holds 74% of the generation and is where the reference
+  temperature is read, so the two schemes end this run about 1% apart -
+  but the reasoning is what decides it, not the size.
+
+  Scaled like the perfusion term, this is explicit and one step lagged,
+  for the same reason and with a great deal more margin: the whole body
+  cools over hours, so a 60 second step resolves it easily. }
 procedure TThermalModel.UpdateSources;
 var
 
@@ -1707,12 +1799,19 @@ begin
 
   end;
 
+  // Metabolic rate against the core, referred to the set point - see
+  // METABOLISM FOLLOWS TEMPERATURE above. At Q10 = 1 this is identically
+  // 1 whatever the core is doing, which is the switch that turns the
+  // whole effect off.
+  FMetFactor := Power(Q10,
+    (FEngine.Temperature[FCoreNode] - (CoreSetPointC + Kelvin)) / 10);
+
   FPerfNet := 0;
 
   for i := 0 to FEngine.NbNodes - 1 do
   begin
 
-    Q := FNodeQMet[i];
+    Q := FNodeQMet[i] * FMetFactor;
 
     if FNodePerfG[i] > 0 then
     begin
@@ -1908,6 +2007,7 @@ begin
     SetLength(FHistCore, Length(FHistT));
     SetLength(FHistSkin, Length(FHistT));
     SetLength(FHistSkinB, Length(FHistT));
+    SetLength(FHistGen, Length(FHistT));
     SetLength(FHistLoss, Length(FHistT));
     SetLength(FHistLossB, Length(FHistT));
     SetLength(FHistStore, Length(FHistT));
@@ -1928,6 +2028,14 @@ begin
     FHistStore[FNbHist] := (E - FEnergyPrev) / dt
   else
     FHistStore[FNbHist] := 0;
+
+  // The generation that was actually in force over the step just taken,
+  // which is the one UpdateSources wrote at the END of the previous step
+  // - hence recorded before the call below rewrites it. The balance
+  // column is computed against this, not against FHeatOutput, or the
+  // model's own first-law check would fail by however much the Q10
+  // factor had moved.
+  FHistGen[FNbHist] := FHeatOutput * FMetFactor;
 
   // Recompute the blood pool and every node's exchange from the field
   // just solved, for the next step to use. Without this the perfusion
@@ -1968,7 +2076,12 @@ begin
   Say('================ SUBJECT AND MODEL ================');
   Say(Format('  Body mass                : %8.1f kg', [FTotalMass]));
   Say(Format('  VO2 / RQ                 : %8.0f mL/min at RQ %.2f', [VO2, RQ]));
-  Say(Format('  Metabolic heat output    : %8.1f W', [FHeatOutput]));
+  Say(Format('  Metabolic heat output    : %8.1f W  (at the %.0f C set point)',
+    [FHeatOutput, CoreSetPointC]));
+  Say(Format('  Q10                      : %8.2f  (%.1f%% per degree the core',
+    [Q10, 100 * (Power(Q10, 0.1) - 1)]));
+  Say('                                       falls; 1.0 would hold generation');
+  Say('                                       fixed, as this model once did)');
   Say('');
 
   // Thickness is quoted both ways round the section: similar ellipses
@@ -2355,13 +2468,15 @@ begin
 
   Say('');
   Say('================ CORE TEMPERATURE ================');
-  Say(Format('  Generation is %.1f W throughout; the skin columns are the exposed',
-    [Gen]));
-  Say('  front and the patch on the cushion, area-weighted, and "via pad" is the');
-  Say('  part of the loss that goes out through the foam.');
+  Say(Format('  Generation is %.1f W at the %.0f C set point and follows the core',
+    [Gen, CoreSetPointC]));
+  Say(Format('  from there at Q10 = %.1f, so it is a column here rather than a', [Q10]));
+  Say('  constant. The skin columns are the exposed front and the patch on the');
+  Say('  cushion, area-weighted, and "via pad" is the part of the loss that goes');
+  Say('  out through the foam.');
   Say('');
-  Say('    time    core   front    back    pool       lost   via pad      stored   balance     perf');
-  Say('   (min)     (C)     (C)     (C)     (C)        (W)       (W)         (W)       (W)      (W)');
+  Say('    time    core   front    back    pool      gen      lost   via pad     stored  balance     perf');
+  Say('   (min)     (C)     (C)     (C)     (C)      (W)       (W)       (W)        (W)      (W)      (W)');
 
   for i := 0 to FNbHist - 1 do
   begin
@@ -2369,11 +2484,14 @@ begin
     if (i mod ReportEvery <> 0) and (i <> FNbHist - 1) then
       Continue;
 
-    Bal := Gen - FHistLoss[i] - FHistStore[i];
+    // Against the generation in force over that step, not the set-point
+    // value - see PostProcess.
+    Bal := FHistGen[i] - FHistLoss[i] - FHistStore[i];
 
-    Say(Format('  %6.1f  %6.2f  %6.2f  %6.2f  %6.2f %10.1f %9.2f  %10.1f %9.2f %8.3f',
+    Say(Format('  %6.1f  %6.2f  %6.2f  %6.2f  %6.2f %8.1f %9.1f %9.2f  %9.1f %8.2f %8.3f',
       [FHistT[i] / 60, FHistCore[i], FHistSkin[i], FHistSkinB[i], FHistTArt[i],
-       FHistLoss[i], FHistLossB[i], FHistStore[i], Bal, FHistPerf[i]]));
+       FHistGen[i], FHistLoss[i], FHistLossB[i], FHistStore[i], Bal,
+       FHistPerf[i]]));
 
   end;
 
@@ -2390,6 +2508,10 @@ begin
     Say(Format('  Skin, front %.2f C -> %.2f C,  back %.2f C -> %.2f C',
       [FHistSkin[0], FHistSkin[FNbHist - 1],
        FHistSkinB[0], FHistSkinB[FNbHist - 1]]));
+
+    Say(Format('  Generation %.1f W -> %.1f W  (%.0f%% of the set-point rate, by Q10)',
+      [FHistGen[0], FHistGen[FNbHist - 1],
+       100 * FHistGen[FNbHist - 1] / FHeatOutput]));
 
     if FHistLoss[FNbHist - 1] <> 0 then
       Say(Format('  Of the %.1f W leaving at the end, %.1f W goes through the cushion' +
@@ -2611,8 +2733,8 @@ begin
     for i := 0 to FNbHist - 1 do
       WriteLn(F, Format('%.1f,%.4f,%.4f,%.4f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f',
         [FHistT[i], FHistT[i] / 60, FHistCore[i], FHistSkin[i], FHistSkinB[i],
-         FHeatOutput, FHistLoss[i], FHistLossB[i], FHistStore[i],
-         FHeatOutput - FHistLoss[i] - FHistStore[i]], DotFS));
+         FHistGen[i], FHistLoss[i], FHistLossB[i], FHistStore[i],
+         FHistGen[i] - FHistLoss[i] - FHistStore[i]], DotFS));
 
   finally
 
@@ -2729,7 +2851,17 @@ end;
   No camera is set beyond squaring it up. The body is an extrusion along
   z with nothing varying axially, and gmsh's default view looks straight
   down z - so what faces the viewer is the elliptical section itself,
-  which is the whole of the result. }
+  which is the whole of the result.
+
+  A clipping plane cuts the body in half across its length. Straight on
+  it changes nothing - the section is the same at every station - but it
+  means that turning the view shows the cut face and the gradient
+  through the compartments rather than an opaque skin. It is deliberately
+  the only camera-ish thing set: gmsh fits the view to the model's
+  bounding box, which clipping does not change, so any clip that removes
+  material off to one side leaves the remainder off-centre. A cut across
+  the length is the one that does not, since it takes nothing out of the
+  view straight on. }
 procedure TThermalModel.WriteViewScript(const FileName : String);
 var
 
@@ -2775,9 +2907,37 @@ begin
     WriteLn(F, '  View[i].CustomMin = ' + Num(Lo) + ';');
     WriteLn(F, '  View[i].CustomMax = ' + Num(Hi) + ';');
     WriteLn(F, '  View[i].Visible = 0;');
+    WriteLn(F, '  View[i].Clip = 1;        // clipping plane 0, below');
     WriteLn(F, 'EndFor');
     WriteLn(F);
     WriteLn(F, 'View[0].Visible = 1;');
+    WriteLn(F);
+    WriteLn(F, '// Cut the body in half across its length. Turn the view and the');
+    WriteLn(F, '// cut face is what you see - the compartments and the gradient');
+    WriteLn(F, '// through them - rather than an opaque skin. Straight on, which');
+    WriteLn(F, '// is where this opens, the cut changes nothing: the section is');
+    WriteLn(F, '// the same at every station along the body.');
+    WriteLn(F, '//');
+    WriteLn(F, '// ClipWholeElements matters. Left at 0 the clip is a plain OpenGL');
+    WriteLn(F, '// one, which cuts through the drawn surfaces and leaves the solid');
+    WriteLn(F, '// hollow - a shell seen from inside. At 1 whole elements are');
+    WriteLn(F, '// dropped instead, so the faces the cut exposes are real element');
+    WriteLn(F, '// faces and carry the field, at the price of a stepped edge one');
+    WriteLn(F, '// element deep. Note also that a second plane would not narrow');
+    WriteLn(F, '// this to a slab: gmsh keeps an element that satisfies ANY');
+    WriteLn(F, '// enabled plane, so two planes here draw the whole body again.');
+    WriteLn(F, '// Move it, or add more, under Tools > Clipping.');
+    WriteLn(F, '//');
+    WriteLn(F, '// A cut ACROSS the length is also the only one that costs nothing');
+    WriteLn(F, '// here. gmsh frames the view on the model bounding box, which');
+    WriteLn(F, '// clipping does not shrink, so a cut that takes material off to');
+    WriteLn(F, '// one side leaves what is left sitting off-centre. This one takes');
+    WriteLn(F, '// nothing out of the picture seen straight on.');
+    WriteLn(F, 'General.ClipWholeElements = 1;');
+    WriteLn(F, 'General.Clip0A = 0;');
+    WriteLn(F, 'General.Clip0B = 0;');
+    WriteLn(F, 'General.Clip0C = -1;');
+    WriteLn(F, 'General.Clip0D = ' + Num(FLength / 2) + ';');
     WriteLn(F);
     WriteLn(F, '// Animate by stepping through the views, not through time steps');
     WriteLn(F, '// inside one view: each frame is its own view here, with a single');
@@ -2789,12 +2949,10 @@ begin
     WriteLn(F, 'PostProcessing.AnimationCycle = 1;');
     WriteLn(F, 'PostProcessing.AnimationDelay = 0.2;');
     WriteLn(F);
-    WriteLn(F, '// Square on to the section - the body does not vary along its');
-    WriteLn(F, '// length, so this is the whole picture.');
-    WriteLn(F, 'General.RotationX = 0;');
-    WriteLn(F, 'General.RotationY = 0;');
-    WriteLn(F, 'General.RotationZ = 0;');
-    WriteLn(F, 'General.Trackball = 0;');
+    WriteLn(F, '// The camera is left alone. gmsh opens square on to the xy plane,');
+    WriteLn(F, '// which here is the section itself, and fits the view to it. Turn');
+    WriteLn(F, '// the model and you will want to zoom out with the wheel: the fit');
+    WriteLn(F, '// is to a 233 mm section, and there is 3.4 m of body behind it.');
 
   finally
 
