@@ -4,9 +4,29 @@ unit uSDRplay;
 
      Runtime (dlopen-based) binding to SDRplay's official API v3
      (sdrplay_api.dll), plus TSDRplayDevice - a TSDRDevice (uSDRDevice.pas)
-     implementation for the SDRplay RSP1A (confirmed on this machine: a
-     physically attached RSP1A, VID_1DF7&PID_3000, driver-bound and
-     enumerated by the API as hwVer=SDRPLAY_RSP1A_ID=255).
+     implementation for the SDRplay RSP1A and RSP1B. Both confirmed on
+     this machine against the physical hardware: an RSP1A
+     (VID_1DF7&PID_3000, hwVer=SDRPLAY_RSP1A_ID=255) and an RSP1B
+     (VID_1DF7&PID_3050, hwVer=SDRPLAY_RSP1B_ID=6), each driver-bound,
+     enumerated, opened and streamed.
+
+     THE TWO MODELS ARE ONE IMPLEMENTATION, not two. They present the
+     same parameters to the API - sdrplay_api_dev.h carries a single
+     sdrplay_api_Rsp1aParamsT covering both, the API ships no
+     sdrplay_api_rsp1b.h at all, and RSPIA_NUM_LNA_STATES (10) is the
+     LNA-state count for each - so everything this unit writes applies
+     unchanged to either, and only the reported DeviceName differs. The
+     other RSP models are deliberately not accepted: each has its own
+     struct in the same union (rsp2Params/rspDuoParams/rspDxParams) and
+     this unit writes rsp1aParams, so taking one would be a wrong net
+     rather than a wider one. See SDRplaySupportedModel.
+
+     The RSP1B was originally rejected here: Open tested hwVer against
+     SDRPLAY_RSP1A_ID alone, so an attached RSP1B failed autodetection
+     with "no SDRplay RSP1A found (1 other SDRplay device(s) present)" -
+     a message that reported how many other devices were present but not
+     WHAT they were, which is the one fact that would have identified
+     the cause. That message now names every device the API enumerated.
 
      WHY DLOPEN INSTEAD OF LINK-TIME EXTERNAL:
      Same rationale as uHackRF.pas/uRTLSDR.pas - tolerant of the API not
@@ -194,7 +214,21 @@ const
 
   SDRPLAY_MAX_DEVICES = 16;
   SDRPLAY_MAX_SER_NO_LEN = 64;
+  // hwVer values the API reports for each model, from sdrplay_api.h.
+  // All of them are listed, not just the two this backend drives, so
+  // that a device it cannot use is still NAMED when it declines it -
+  // see SDRplayModelName and Open's failure message.
+  SDRPLAY_RSP1_ID = 1;
+  SDRPLAY_RSP2_ID = 2;
+  SDRPLAY_RSPduo_ID = 3;
+  SDRPLAY_RSPdx_ID = 4;
+  SDRPLAY_RSP1B_ID = 6;
+  SDRPLAY_RSPdxR2_ID = 7;
   SDRPLAY_RSP1A_ID = 255;
+
+  // RSPIA_NUM_LNA_STATES in sdrplay_api_rsp1a.h, and shared with the
+  // RSP1B - the API ships no RSP1B header of its own, precisely because
+  // the two models present the same parameters (see Open).
   RSP1A_NUM_LNA_STATES = 10;
 
   // Ring buffer capacity - same "plenty of headroom, not a tuned minimum"
@@ -600,6 +634,42 @@ begin
   Pointer(sdrplay_api_Update)          := Load('sdrplay_api_Update');
 end;
 
+{ Which models this backend will drive, and what to call them.
+
+  The RSP1B is accepted alongside the RSP1A because the two present the
+  SAME parameters to the API: sdrplay_api_dev.h carries one
+  sdrplay_api_Rsp1aParamsT for both, there is no sdrplay_api_rsp1b.h at
+  all, and the LNA-state count the API defines (RSPIA_NUM_LNA_STATES,
+  10) covers both. Everything this unit writes - the notch enables, the
+  bias-T, gRdB and LNAstate, the single tuner - therefore applies to an
+  RSP1B unchanged, and the only thing that has to differ is the name.
+
+  The other models are deliberately NOT accepted. An RSP2, RSPduo or
+  RSPdx has its own parameter struct in the same union
+  (rsp2Params/rspDuoParams/rspDxParams); this unit writes rsp1aParams,
+  so accepting one of those would not be a wider net but a wrong one.
+  The plain RSP1 is excluded for the same reason in reverse - it has no
+  rsp1aParams, no notch and no bias-T. }
+function SDRplaySupportedModel(HwVer: Byte): Boolean;
+begin
+  Result := (HwVer = SDRPLAY_RSP1A_ID) or (HwVer = SDRPLAY_RSP1B_ID);
+end;
+
+function SDRplayModelName(HwVer: Byte): string;
+begin
+  case HwVer of
+    SDRPLAY_RSP1_ID: Result := 'RSP1';
+    SDRPLAY_RSP2_ID: Result := 'RSP2';
+    SDRPLAY_RSPduo_ID: Result := 'RSPduo';
+    SDRPLAY_RSPdx_ID: Result := 'RSPdx';
+    SDRPLAY_RSP1B_ID: Result := 'RSP1B';
+    SDRPLAY_RSPdxR2_ID: Result := 'RSPdx-R2';
+    SDRPLAY_RSP1A_ID: Result := 'RSP1A';
+  else
+    Result := 'unrecognised model (hwVer ' + IntToStr(HwVer) + ')';
+  end;
+end;
+
 function SDRplayLibCandidateList: string;
 var
   i: Integer;
@@ -711,6 +781,13 @@ procedure TSDRplayDevice.BuildCapabilities;
 var
   i: Integer;
 begin
+  // The one thing that differs between the two models this backend
+  // accepts - everything below is common to both (see
+  // SDRplaySupportedModel). Called from Open with FDeviceRec already
+  // filled in, so hwVer is the real device's, not the placeholder the
+  // constructor set.
+  FCapabilities.DeviceName := 'SDRplay ' + SDRplayModelName(FDeviceRec.hwVer);
+
   SetLength(FCapabilities.GainStages, 3);
   FCapabilities.GainStages[0].Name := 'IF Gain Reduction';
   FCapabilities.GainStages[0].Kind := gkContinuous;
@@ -758,6 +835,7 @@ var
   Devices: array[0..SDRPLAY_MAX_DEVICES-1] of sdrplay_api_DeviceT;
   NumDevs: LongWord;
   i, ChosenIdx: Integer;
+  Seen: string;
 begin
   Result := False;
   if FIsOpen then begin Result := True; Exit; end;
@@ -777,12 +855,30 @@ begin
 
   ChosenIdx := -1;
   for i := 0 to Integer(NumDevs) - 1 do
-    if Devices[i].hwVer = SDRPLAY_RSP1A_ID then begin
+    if SDRplaySupportedModel(Devices[i].hwVer) then begin
       ChosenIdx := i;
       Break;
     end;
+
   if ChosenIdx < 0 then begin
-    FLastError := 'no SDRplay RSP1A found (' + IntToStr(NumDevs) + ' other SDRplay device(s) present)';
+    // Name what was actually seen. The old message said only how MANY
+    // other devices were present, which is the one fact that does not
+    // help: an attached RSP1B failed here as "no SDRplay RSP1A found (1
+    // other SDRplay device(s) present)", indistinguishable from a
+    // genuinely unsupported model and giving no hint that hwVer was the
+    // thing to look at.
+    Seen := '';
+    for i := 0 to Integer(NumDevs) - 1 do begin
+      if Seen <> '' then Seen := Seen + ', ';
+      Seen := Seen + SDRplayModelName(Devices[i].hwVer);
+    end;
+    if Seen = '' then
+      Seen := 'none attached'
+    else
+      Seen := 'attached: ' + Seen;
+
+    FLastError := 'no supported SDRplay device found - this backend drives the ' +
+      'RSP1A and RSP1B (' + Seen + ')';
     sdrplay_api_Close();
     Exit;
   end;
