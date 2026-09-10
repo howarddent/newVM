@@ -175,6 +175,9 @@ type
     VolumeLabel: TLabel;
     VolumeTrackBar: TTrackBar;
     AudioStatsLabel: TLabel;
+    RDSStationLabel: TLabel;
+    RDSTextLabel: TLabel;
+    RDSStatsLabel: TLabel;
     FFreqRetryTimer: TTimer;
     FEdgePanTimer: TTimer;
     FAudioStatsTimer: TTimer;
@@ -212,6 +215,7 @@ type
     procedure ReportError(const Where: string);
     procedure ApplyListenModeVisibility;
     procedure UpdateCursorBandwidth;
+    procedure UpdateRDSDisplay;
     procedure StartSelectedReceiver;
     procedure ListenCheckBoxChange(Sender: TObject);
     procedure ModeComboChange(Sender: TObject);
@@ -422,6 +426,30 @@ begin
   AudioStatsLabel.ShowHint := True;   // hint carries the latest exception message, if any - see AudioStatsTimerTick
   AudioStatsLabel.SetBounds(10, 214, 400, 15);
   AudioStatsLabel.Caption := 'Audio: ring 0, acq-skip 0, drops 0, underruns 0, errors 0, dc-jump 0, clicks 0';
+
+  // RDS - FM only, so ApplyListenModeVisibility hides all three in AM.
+  // AutoSize is off and the width fixed: radiotext runs to 64 characters
+  // and would otherwise grow the label straight out through the side of
+  // the group box.
+  RDSStationLabel := TLabel.Create(Self);
+  RDSStationLabel.Parent := ReceiverGroupBox;
+  RDSStationLabel.AutoSize := False;
+  RDSStationLabel.SetBounds(10, 234, 400, 16);
+  RDSStationLabel.Font.Style := [fsBold];
+  RDSStationLabel.Caption := 'RDS: waiting';
+
+  RDSTextLabel := TLabel.Create(Self);
+  RDSTextLabel.Parent := ReceiverGroupBox;
+  RDSTextLabel.AutoSize := False;
+  RDSTextLabel.ShowHint := True;   // the hint carries text too long to fit
+  RDSTextLabel.SetBounds(10, 253, 400, 16);
+  RDSTextLabel.Caption := '';
+
+  RDSStatsLabel := TLabel.Create(Self);
+  RDSStatsLabel.Parent := ReceiverGroupBox;
+  RDSStatsLabel.AutoSize := False;
+  RDSStatsLabel.SetBounds(10, 272, 400, 16);
+  RDSStatsLabel.Caption := '';
 
   BandwidthTrackBarChange(Self);   // sets BandwidthLabel's initial text
   ApplyListenModeVisibility;
@@ -1484,8 +1512,43 @@ end;
 // receiver or not; "acq-skip"/"drops"/"underruns"/"errors"/"clicks" only
 // exist once a receiver is Active (StartSelectedReceiver guarantees at
 // most one of FReceiver/FAMReceiver ever is), so they read 0 otherwise.
+{ Station name, programme type and radiotext, as the RDS decoder has them
+  - see uRDSDecoder.pas.
+
+  Locked but nameless is a real and distinguishable state, not a failure:
+  block synchronisation can hold for a second or two before four type 0
+  groups have arrived carrying all eight characters of the name, and on a
+  marginal signal it can hold indefinitely without ever completing one.
+  Saying which of the three states the decoder is in is more use than an
+  empty label. }
+procedure TForm1.UpdateRDSDisplay;
+var
+  PS, RT, PTYName, PIText, Head: string;
+  Groups, BlockErrors: Int64;
+  Locked: Boolean;
+  Level, Quality, Pilot, MPX: Double;
+begin
+  FReceiver.GetRDS(PS, RT, PTYName, PIText, Groups, BlockErrors, Locked, Level, Quality, Pilot, MPX);
+
+  if PS <> '' then Head := PS
+  else if Locked then Head := '(locked, no name yet)'
+  else Head := 'waiting';
+  if PTYName <> '' then Head := Head + '  -  ' + PTYName;
+  RDSStationLabel.Caption := 'RDS: ' + Head;
+
+  RDSTextLabel.Caption := RT;
+  RDSTextLabel.Hint := RT;   // in full, for text wider than the label
+
+  // Level and quality are always shown, groups only once there are any -
+  // see TRDSDecoder.SubcarrierLevel for what the pair of them separates.
+  RDSStatsLabel.Caption := Format('mpx %.3f, pilot %.3f, 57k %.4f, lock %.2f, PI %s, %d grp, %d err',
+    [MPX, Pilot, Level, Quality, PIText, Groups, BlockErrors]);
+end;
+
 procedure TForm1.AudioStatsTimerTick(Sender: TObject);
 begin
+  UpdateRDSDisplay;
+
   if FReceiver.Active then begin
     AudioStatsLabel.Caption := Format('Audio: ring %d, acq-skip %d, drops %d, underruns %d, errors %d, dc-jump %d, clicks %d',
       [FRFSource.DeviceOverflowBytes, FReceiver.AudioAcquireSkipCount,
@@ -1702,6 +1765,10 @@ begin
   BandwidthTrackBar.Visible := IsAM;
   SynchronousCheckBox.Visible := IsAM;
   ClickBlankerCheckBox.Visible := not IsAM;
+  // RDS rides on the FM multiplex - there is no such thing on AM.
+  RDSStationLabel.Visible := not IsAM;
+  RDSTextLabel.Visible := not IsAM;
+  RDSStatsLabel.Visible := not IsAM;
 end;
 
 // Reflects whichever receiver's own channel bandwidth is currently

@@ -136,7 +136,7 @@ interface
 uses
   Classes, SysUtils, SyncObjs,
   newVM, newVMSingle, newVMComplexSingle,
-  uSDRRFSource, uDSPBlocks, uWaveOutPlayer;
+  uSDRRFSource, uDSPBlocks, uWaveOutPlayer, uRDSDecoder;
 
 const
   DefaultBasebandRateHz = 200000;    // = broadcast FM's own 200kHz channel bandwidth - see this unit's header comment
@@ -292,6 +292,9 @@ type
     FResamplerToBaseband: TRationalResamplerC;
     FDemod: TFMDemodulator;
     FStereoDecoder: TFMStereoDecoder;
+    // Fed the same multiplex the stereo decoder gets, and otherwise
+    // independent of the audio path - see uRDSDecoder.pas.
+    FRDS: TRDSDecoder;
     FResamplerL, FResamplerR: TRationalResamplerS;
     FPlayer: TWaveOutPlayer;
     FQueue: TBasebandQueue;
@@ -345,6 +348,17 @@ type
     // see their own Execute methods for why this is caught rather than
     // left to kill the thread. Empty string means no error has occurred.
     property LastError: string read FLastError;
+
+    // Everything the RDS decoder has made of the 57kHz subcarrier -
+    // station name, radiotext, programme type, programme identification,
+    // and the two counters that say whether any of it should be
+    // believed. Safe to call from the GUI thread while the receiver is
+    // running: the decoder itself locks (see uRDSDecoder.pas's
+    // GetState), and this returns empty strings when there is no chain
+    // built rather than making the caller check first.
+    procedure GetRDS(out PS, RT, PTYName, PIText: string;
+                     out Groups, BlockErrors: Int64; out Locked: Boolean;
+                     out Level, Quality, Pilot, MPX: Double);
     // Forwards TWaveOutPlayer.UnderrunCount - see that property's own
     // comment. 0 before Active is ever set True (FPlayer isn't open yet).
     function AudioUnderrunCount: Integer;
@@ -525,6 +539,31 @@ begin
   end;
 end;
 
+procedure TFMBroadcastReceiver.GetRDS(out PS, RT, PTYName, PIText: string;
+                                      out Groups, BlockErrors: Int64; out Locked: Boolean;
+                                      out Level, Quality, Pilot, MPX: Double);
+begin
+  if Assigned(FRDS) then begin
+    FRDS.GetState(PS, RT, PTYName, PIText, Groups, BlockErrors, Locked);
+    Level := FRDS.SubcarrierLevel;
+    Quality := FRDS.LockQuality;
+    Pilot := FRDS.PilotLevel;
+    MPX := FRDS.MultiplexLevel;
+  end else begin
+    Level := 0;
+    Quality := 0;
+    Pilot := 0;
+    MPX := 0;
+    PS := '';
+    RT := '';
+    PTYName := '';
+    PIText := '';
+    Groups := 0;
+    BlockErrors := 0;
+    Locked := False;
+  end;
+end;
+
 procedure TFMBroadcastReceiver.SetTunedFrequencyHz(AValue: Double);
 begin
   FTunedFrequencyHz := AValue;
@@ -536,8 +575,14 @@ begin
   // has no worse an effect than a one-epoch-late retune, and this
   // property is written far more often (a user dragging a frequency
   // control) than the cost of adding real synchronisation would justify.
-  if FChainBuilt and Assigned(FSource) then
+  if FChainBuilt and Assigned(FSource) then begin
     FMixer.FrequencyHz := -(FTunedFrequencyHz - FSource.CenterFreqHz);
+    // A different station means a different name and a different text,
+    // and the previous one's is worse than nothing - it would sit there
+    // looking authoritative until the new station happened to overwrite
+    // every character of it.
+    if Assigned(FRDS) then FRDS.Reset;
+  end;
 end;
 
 function TFMBroadcastReceiver.GetActive: Boolean;
@@ -665,6 +710,7 @@ begin
     FsIn * WidebandTransitionBWFraction);
   FDemod := TFMDemodulator.Create(DefaultBasebandRateHz, DefaultPeakDeviationHz);
   FStereoDecoder := TFMStereoDecoder.Create(DefaultBasebandRateHz, DefaultDeEmphasisTauSeconds);
+  FRDS := TRDSDecoder.Create(DefaultBasebandRateHz);
   FResamplerL := TRationalResamplerS.Create(DefaultBasebandRateHz, DefaultAudioRateHz, 8000);
   FResamplerR := TRationalResamplerS.Create(DefaultBasebandRateHz, DefaultAudioRateHz, 8000);
   FQueue := TBasebandQueue.Create(BasebandQueueCapacity);
@@ -693,6 +739,7 @@ begin
   FreeAndNil(FResamplerToBaseband);
   FreeAndNil(FDemod);
   FreeAndNil(FStereoDecoder);
+  FreeAndNil(FRDS);
   FreeAndNil(FResamplerL);
   FreeAndNil(FResamplerR);
   FreeAndNil(FQueue);
@@ -745,6 +792,22 @@ begin
 
   FDemod.BlankerEnabled := FClickBlankerEnabled;
   Multiplex := FDemod.Process(Baseband);
+
+  // RDS is a second reader of the multiplex, not a stage in the audio
+  // path: whatever it makes of the 57kHz subcarrier, the audio below is
+  // unaffected. It is also the only part of this chain that can fail
+  // harmlessly, so it is guarded - a decoder fault must not cost the
+  // listener the programme.
+  if Assigned(FRDS) then
+    try
+      FRDS.Process(Multiplex);
+    except
+      on E: Exception do begin
+        FLastError := 'rds: ' + E.Message;
+        Inc(FErrorCount);
+      end;
+    end;
+
   FStereoDecoder.Process(Multiplex, StereoL, StereoR);
   AudioL := FResamplerL.Process(StereoL);
   AudioR := FResamplerR.Process(StereoR);
