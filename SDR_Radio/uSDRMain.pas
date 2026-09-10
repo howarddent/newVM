@@ -180,10 +180,20 @@ type
     FAudioStatsTimer: TTimer;
     FEdgePanDirection: Integer;
     FShutdownDone: Boolean;
+
+    // Remembered front-end state - see LoadSettings for what each holds
+    // when nothing was remembered, and CaptureFrontEnd for how they are
+    // kept current within a session.
+    FPrefDevice: string;
+    FPrefRateHz: Int64;
+    FPrefGain0, FPrefGain1, FPrefGain2, FPrefBiasT: Integer;
+
     procedure ShutdownAll;
     function SettingsFileName: string;
     procedure SaveSettings;
     procedure LoadSettings;
+    procedure CaptureFrontEnd;
+    procedure SnapListenIntoSpan;
     procedure AnalyserGPUStatusKnown(Sender: TObject);
     procedure AnalyserCursorChanged(Sender: TObject);
     procedure ApplyDeviceCapabilities;
@@ -219,6 +229,12 @@ var
 implementation
 
 {$R *.lfm}
+
+const
+  // "nothing was remembered for this one" for the integer-valued
+  // front-end preferences. A real trackbar position or 0/1 checkbox
+  // state can never collide with it.
+  PrefAbsent = Low(Integer);
 
 { TForm1 }
 
@@ -611,18 +627,111 @@ end;
   It will not fit an Integer, either: 6 GHz is past 2^31, so
   WriteInteger/ReadInteger are not usable here. Hence plain strings and
   StrToInt64Def. }
+{ Take the live front-end controls into the remembered state.
+
+  Only meaningful while a device is open: the sample-rate list and every
+  gain control are built by ApplyDeviceCapabilities from the connected
+  radio's own capabilities, so before a connect they hold design-time
+  placeholders that mean nothing. Hence the early exit - what is already
+  remembered (from the file, or from an earlier connect this session) is
+  better than what the controls would say.
+
+  Called on disconnect and again at shutdown, which is what makes a
+  reconnect within one session come back to where the user actually was
+  rather than to whatever the file said at launch.
+
+  The sample rate is taken from the CAPABILITY the combo's index refers
+  to, not by parsing its text: the items are formatted with
+  FormatFloat, so their text carries the locale's decimal separator, and
+  reading it back would be one more thing to get wrong on a machine
+  configured differently from the one that wrote it. }
+procedure TForm1.CaptureFrontEnd;
+var
+  Caps: TSDRCapabilities;
+begin
+  if not FRFSource.IsOpen then Exit;
+
+  Caps := FRFSource.Capabilities;
+  FPrefDevice := Caps.DeviceName;
+
+  if (RateCombo.ItemIndex >= 0) and (RateCombo.ItemIndex <= High(Caps.SampleRates)) then
+    FPrefRateHz := Round(Caps.SampleRates[RateCombo.ItemIndex]);
+
+  if GainStage0TrackBar.Visible then FPrefGain0 := GainStage0TrackBar.Position;
+  if GainStage1TrackBar.Visible then FPrefGain1 := GainStage1TrackBar.Position;
+  if GainStage2CheckBox.Visible then FPrefGain2 := Ord(GainStage2CheckBox.Checked);
+  if BiasTCheckBox.Visible then FPrefBiasT := Ord(BiasTCheckBox.Checked);
+end;
+
+{ Bring the demodulator inside the span the radio is actually capturing.
+
+  A remembered listen frequency is absolute, and the span it has to live
+  in is the local oscillator plus or minus half the sample rate - so a
+  perfectly reasonable saved pair (95 MHz local oscillator, 88 MHz
+  demodulator) can describe a demodulator the receiver cannot reach,
+  because 88 is nowhere in the 94-96 MHz being captured. Clamping it to
+  the near edge is the useful answer: the cursor lands somewhere real,
+  the receiver has signal to work on, and the user can retune the local
+  oscillator to go and fetch the frequency they actually wanted.
+
+  Computed from the source's own centre frequency and sample rate - the
+  same two numbers UpdateFrequencyAxis builds the X axis from - rather
+  than by reading the axis back off the plot. The plot clamps its cursor
+  against the range it has actually recomputed bounds for, which is not
+  necessarily the range just assigned to it, so the source is the
+  authority here and the plot is told, not asked. }
+procedure TForm1.SnapListenIntoSpan;
+var
+  LoMHz, HiMHz: Double;
+begin
+  if not FRFSource.IsOpen then Exit;
+  if FRFSource.SampleRateHz <= 0 then Exit;
+
+  LoMHz := (FRFSource.CenterFreqHz - FRFSource.SampleRateHz / 2) / 1e6;
+  HiMHz := (FRFSource.CenterFreqHz + FRFSource.SampleRateHz / 2) / 1e6;
+
+  if ListenFreqEdit.Value < LoMHz then
+    ListenFreqEdit.Value := LoMHz
+  else if ListenFreqEdit.Value > HiMHz then
+    ListenFreqEdit.Value := HiMHz
+  else
+    Exit;   // already inside - leave it exactly where it was
+
+  FReceiver.TunedFrequencyHz := ListenFreqEdit.Value * 1e6;
+  FAMReceiver.TunedFrequencyHz := ListenFreqEdit.Value * 1e6;
+end;
+
 procedure TForm1.SaveSettings;
-const
-  Sec = 'Tuning';
 var
   Ini: TIniFile;
 begin
+  // Whatever is live wins over whatever was loaded at launch.
+  CaptureFrontEnd;
+
   ForceDirectories(ExtractFilePath(SettingsFileName));
 
   Ini := TIniFile.Create(SettingsFileName);
   try
-    Ini.WriteString(Sec, 'LocalOscillatorHz', IntToStr(Round(FreqEdit.Value * 1e6)));
-    Ini.WriteString(Sec, 'DemodulatorHz', IntToStr(Round(ListenFreqEdit.Value * 1e6)));
+    Ini.WriteString('Tuning', 'LocalOscillatorHz', IntToStr(Round(FreqEdit.Value * 1e6)));
+    Ini.WriteString('Tuning', 'DemodulatorHz', IntToStr(Round(ListenFreqEdit.Value * 1e6)));
+
+    // The front-end block is stamped with the radio it came from - see
+    // LoadSettings/ApplyDeviceCapabilities for why that matters. Absent
+    // entries are written as nothing at all rather than as a sentinel,
+    // so a file that never saw a connect stays honest about it.
+    if FPrefDevice <> '' then
+      Ini.WriteString('FrontEnd', 'Device', FPrefDevice);
+    if FPrefRateHz > 0 then
+      Ini.WriteString('FrontEnd', 'SampleRateHz', IntToStr(FPrefRateHz));
+    if FPrefGain0 <> PrefAbsent then
+      Ini.WriteString('FrontEnd', 'GainStage0', IntToStr(FPrefGain0));
+    if FPrefGain1 <> PrefAbsent then
+      Ini.WriteString('FrontEnd', 'GainStage1', IntToStr(FPrefGain1));
+    if FPrefGain2 <> PrefAbsent then
+      Ini.WriteString('FrontEnd', 'GainStage2', IntToStr(FPrefGain2));
+    if FPrefBiasT <> PrefAbsent then
+      Ini.WriteString('FrontEnd', 'BiasT', IntToStr(FPrefBiasT));
+
     Ini.UpdateFile;
   finally
     Ini.Free;
@@ -648,29 +757,54 @@ end;
   until a device is connected, and ConnectButtonClick already sets it at
   the point that range becomes real. }
 procedure TForm1.LoadSettings;
-const
-  Sec = 'Tuning';
 var
   Ini: TIniFile;
   Hz: Int64;
   MHz: Double;
+
+  function ReadPref(const Key: string): Integer;
+  begin
+    Result := StrToIntDef(Ini.ReadString('FrontEnd', Key, ''), PrefAbsent);
+  end;
+
 begin
+  // Nothing remembered until proven otherwise. ApplyDeviceCapabilities
+  // reads these on every connect, so they have to say "absent" rather
+  // than zero on a first run - a gain of 0 is a real setting.
+  FPrefDevice := '';
+  FPrefRateHz := 0;
+  FPrefGain0 := PrefAbsent;
+  FPrefGain1 := PrefAbsent;
+  FPrefGain2 := PrefAbsent;
+  FPrefBiasT := PrefAbsent;
+
   if not FileExists(SettingsFileName) then Exit;
 
   Ini := TIniFile.Create(SettingsFileName);
   try
-    Hz := StrToInt64Def(Ini.ReadString(Sec, 'LocalOscillatorHz', ''), 0);
+    Hz := StrToInt64Def(Ini.ReadString('Tuning', 'LocalOscillatorHz', ''), 0);
     MHz := Hz / 1e6;
     if (Hz > 0) and (MHz >= FreqEdit.MinValue) and (MHz <= FreqEdit.MaxValue) then
       FreqEdit.Value := MHz;
 
-    Hz := StrToInt64Def(Ini.ReadString(Sec, 'DemodulatorHz', ''), 0);
+    Hz := StrToInt64Def(Ini.ReadString('Tuning', 'DemodulatorHz', ''), 0);
     MHz := Hz / 1e6;
     if (Hz > 0) and (MHz >= ListenFreqEdit.MinValue) and (MHz <= ListenFreqEdit.MaxValue) then begin
       ListenFreqEdit.Value := MHz;
       FReceiver.TunedFrequencyHz := MHz * 1e6;
       FAMReceiver.TunedFrequencyHz := MHz * 1e6;
     end;
+
+    // The front end is only read here, not applied - none of these
+    // controls mean anything until a device is open and
+    // ApplyDeviceCapabilities has built them from its capabilities,
+    // which is where these get used.
+    FPrefDevice := Ini.ReadString('FrontEnd', 'Device', '');
+    FPrefRateHz := StrToInt64Def(Ini.ReadString('FrontEnd', 'SampleRateHz', ''), 0);
+    FPrefGain0 := ReadPref('GainStage0');
+    FPrefGain1 := ReadPref('GainStage1');
+    FPrefGain2 := ReadPref('GainStage2');
+    FPrefBiasT := ReadPref('BiasT');
   finally
     Ini.Free;
   end;
@@ -815,8 +949,13 @@ var
   i, NumericSlot: Integer;
   BooleanStage: Integer;
   WantLOMHz, WantListenMHz, LoMHz, HiMHz: Double;
+  PrefsMatch: Boolean;
 begin
   Caps := FRFSource.Capabilities;
+
+  // Remembered front-end settings only apply to the radio they were
+  // saved from - see the gain block at the end of this method for why.
+  PrefsMatch := (FPrefDevice <> '') and (FPrefDevice = Caps.DeviceName);
 
   Caption := 'newVM ' + Caps.DeviceName + ' Spectrum Analyser';
   FAnalyser.SpectrumTitle := Caps.DeviceName + ' Spectrum';
@@ -868,6 +1007,28 @@ begin
   FReceiver.TunedFrequencyHz := ListenFreqEdit.Value * 1e6;
   FAMReceiver.TunedFrequencyHz := ListenFreqEdit.Value * 1e6;
 
+  // AND THE DEVICE HAS TO BE TOLD TOO, which is easy to miss because
+  // nothing before this point does it. A freshly opened device sits on
+  // whatever its own constructor defaulted to (100 MHz for all three
+  // backends) until something tunes it, and the local oscillator is
+  // only otherwise pushed at StartStreaming. It is the DEVICE's centre
+  // frequency, not this edit, that UpdateFrequencyAxis builds the
+  // spectrum's X axis from - so leaving the two disagreeing produces an
+  // axis describing a span the radio is not tuned to.
+  //
+  // That was harmless while this method overwrote FreqEdit with the
+  // device default unconditionally: edit and device then agreed by
+  // construction. It stopped being harmless the moment the edit could
+  // carry a remembered frequency into a connect. With a restored 95 MHz
+  // against a device still on 100, the axis came out 99-101, the cursor
+  // assignment in ConnectButtonClick clamped to 99, and the clamp fired
+  // OnCursorChange - which overwrote the restored listen frequency with
+  // the clamped value and, seeing the cursor sitting on XAxisMin,
+  // started edge panning. The visible result was both halves of one
+  // bug: frequencies not restored, and the cursor walking left with the
+  // local oscillator falling behind it, indefinitely.
+  FRFSource.SetFrequencyHz(Round(FreqEdit.Value * 1e6));
+
   // RateCombo's real items are only ever known here, post-Connect - but
   // on macOS (Cocoa widgetset, NSPopUpButton), a csDropDownList TComboBox
   // auto-fits its native control's width to content ONLY at first Show;
@@ -892,6 +1053,20 @@ begin
     RateCombo.Items.Add(FormatFloat('0.###', Caps.SampleRates[i] / 1e6));
   RateCombo.ItemIndex := RateCombo.Items.IndexOf(FormatFloat('0.###', Caps.DefaultSampleRateHz / 1e6));
   if RateCombo.ItemIndex < 0 then RateCombo.ItemIndex := RateCombo.Items.Count - 1;
+
+  // A remembered sample rate replaces that default, matched against the
+  // capability values rather than against the combo's own text - the
+  // items are FormatFloat'd, so their text carries the locale's decimal
+  // separator and is the wrong thing to compare. Exact equality is
+  // right here: both sides are the same Double out of the same
+  // capability table, only one of them via a round-trip through the
+  // settings file as whole hertz.
+  if PrefsMatch and (FPrefRateHz > 0) then
+    for i := 0 to High(Caps.SampleRates) do
+      if Round(Caps.SampleRates[i]) = FPrefRateHz then begin
+        RateCombo.ItemIndex := i;
+        Break;
+      end;
 
   // Numeric (continuous/discrete-list) stages fill slots 0 then 1, in
   // Capabilities.GainStages' own order; the first boolean stage fills
@@ -929,6 +1104,38 @@ begin
     BiasTCheckBox.Caption := Caps.BoolOptions[0].Name;
   end else
     BiasTCheckBox.Visible := False;
+
+  // REMEMBERED GAINS AND SWITCHES, last of all - every control above has
+  // by now been given this device's own range, so a saved value can be
+  // checked against something real before being applied.
+  //
+  // Only when the file came from THIS radio. The slots are positional:
+  // GainStage0 is "whatever the first numeric stage happens to be",
+  // which is IF gain reduction (20-59 dB, where higher means LESS gain)
+  // on an SDRplay and RF/LNA gain on a HackRF. A saved 30 is a
+  // legitimate position in both and means close to opposite things, so a
+  // bare range check would not catch the mistake - the device name has
+  // to. Frequencies are exempt from this, deliberately: those are
+  // absolute, and 95.3 MHz means 95.3 MHz whatever is receiving it.
+  //
+  // Assigning Position/Checked fires each control's own OnChange, which
+  // is what pushes the value at the hardware - so this restores the
+  // radio's state, not merely the look of the panel.
+  if not PrefsMatch then Exit;
+
+  if GainStage0TrackBar.Visible and (FPrefGain0 <> PrefAbsent)
+     and (FPrefGain0 >= GainStage0TrackBar.Min) and (FPrefGain0 <= GainStage0TrackBar.Max) then
+    GainStage0TrackBar.Position := FPrefGain0;
+
+  if GainStage1TrackBar.Visible and (FPrefGain1 <> PrefAbsent)
+     and (FPrefGain1 >= GainStage1TrackBar.Min) and (FPrefGain1 <= GainStage1TrackBar.Max) then
+    GainStage1TrackBar.Position := FPrefGain1;
+
+  if GainStage2CheckBox.Visible and (FPrefGain2 <> PrefAbsent) then
+    GainStage2CheckBox.Checked := FPrefGain2 <> 0;
+
+  if BiasTCheckBox.Visible and (FPrefBiasT <> PrefAbsent) then
+    BiasTCheckBox.Checked := FPrefBiasT <> 0;
 end;
 
 procedure TForm1.ConnectButtonClick(Sender: TObject);
@@ -937,6 +1144,10 @@ var
 begin
   if FRFSource.IsOpen then begin
     if FRFSource.IsStreaming then StartStopButtonClick(Sender);   // stop first
+    // While the controls still describe a live device - a reconnect in
+    // the same session should come back to where the user actually was,
+    // not to whatever the settings file said at launch.
+    CaptureFrontEnd;
     FRFSource.Disconnect;
     ConnectButton.Caption := 'Connect';
     StartStopButton.Enabled := False;
@@ -957,12 +1168,26 @@ begin
 
   ApplyDeviceCapabilities;
   UpdateFrequencyAxis;
+  SnapListenIntoSpan;
   // Must come after UpdateFrequencyAxis - SpectrumCursorValue clamps
   // against the spectrum's current X-axis range, which UseFrequencyAxis/
   // XAxisMin/XAxisMax (set by UpdateFrequencyAxis) only just became valid
   // MHz bounds; set any earlier and this would clamp against the
   // constructor's own placeholder [0,1] domain instead.
   FAnalyser.SpectrumCursorValue := ListenFreqEdit.Value;
+
+  // Setting the cursor fires OnCursorChange exactly as a drag does, and
+  // if the value asked for lay outside the axis it arrives there
+  // clamped, sitting precisely on XAxisMin or XAxisMax - which is what
+  // AnalyserCursorChanged reads as "the user has dragged to the edge,
+  // start panning". A remembered listen frequency outside the span the
+  // radio currently captures is an ordinary thing to have saved, so
+  // this cancels any pan the assignment above provoked. Edge panning is
+  // for a cursor the USER pushed against the edge; it should never be
+  // started by this form setting the cursor itself.
+  FEdgePanDirection := 0;
+  FEdgePanTimer.Enabled := False;
+
   ConnectButton.Caption := 'Disconnect';
   StartStopButton.Enabled := True;
   StatusLabel.Caption := 'Connected (' + FRFSource.Capabilities.DeviceName + ', idle)';
@@ -1035,6 +1260,11 @@ begin
   end;
 
   UpdateFrequencyAxis;
+  // The span just changed - the sample rate chosen for this run may be
+  // narrower than the one the device was sitting on when Connect built
+  // the axis, so a demodulator frequency that was inside it then can be
+  // outside it now.
+  SnapListenIntoSpan;
   RateCombo.Enabled := False;
   EpochCombo.Enabled := False;
   StartStopButton.Caption := 'Stop';
