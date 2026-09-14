@@ -197,46 +197,88 @@ object fmMain: TfmMain
           Width = 92
           TabOrder = 10
         end
-        object LabelStopTime: TLabel
+        object LabelMixConcB: TLabel
           Left = 8
           Height = 15
           Top = 440
-          Width = 105
-          Caption = 'Stop time (min):'
+          Width = 145
+          Caption = 'Remi in mix (mcg/ml):'
         end
-        object EditStopTime: TEdit
+        object EditMixConcB: TEdit
           Left = 160
           Height = 23
           Top = 436
           Width = 92
           TabOrder = 11
         end
+        object LabelConcA: TLabel
+          Left = 8
+          Height = 15
+          Top = 440
+          Width = 145
+          Caption = 'Infusate (mg/ml):'
+        end
+        object EditConcA: TEdit
+          Left = 160
+          Height = 23
+          Top = 436
+          Width = 92
+          TabOrder = 11
+        end
+        object LabelInfusionRate: TLabel
+          Left = 8
+          Height = 15
+          Top = 468
+          Width = 130
+          Caption = 'Infusion rate (mL/hr):'
+        end
+        object EditInfusionRate: TEdit
+          Left = 160
+          Height = 23
+          Top = 464
+          Width = 92
+          TabOrder = 12
+        end
+        object LabelStopTime: TLabel
+          Left = 8
+          Height = 15
+          Top = 496
+          Width = 105
+          Caption = 'Stop time (min):'
+        end
+        object EditStopTime: TEdit
+          Left = 160
+          Height = 23
+          Top = 492
+          Width = 92
+          TabOrder = 13
+        end
         object ButtonRun: TButton
           Left = 8
           Height = 27
-          Top = 472
+          Top = 528
           Width = 118
           Caption = 'Run'
           OnClick = ButtonRunClick
-          TabOrder = 12
+          TabOrder = 14
         end
         object ButtonReset: TButton
           Left = 134
           Height = 27
-          Top = 472
+          Top = 528
           Width = 118
           Caption = 'Reset'
           OnClick = ButtonResetClick
-          TabOrder = 13
+          TabOrder = 15
         end
         object MemoInfo: TMemo
           Left = 8
-          Height = 178
-          Top = 512
+          Height = 100
+          Top = 566
           Width = 244
           ReadOnly = True
           ScrollBars = ssVertical
-          TabOrder = 14
+          TabOrder = 16
         end
       end
       object PanelCharts: TPanel
@@ -247,9 +289,10 @@ object fmMain: TfmMain
         Align = alClient
         BevelOuter = bvNone
         TabOrder = 1
+        OnResize = PanelChartsResize
       object ChartConc: TChart
         Left = 0
-        Height = 335
+        Height = 402
         Top = 0
         Width = 832
         AxisList = <
@@ -313,8 +356,8 @@ object fmMain: TfmMain
       end
       object ChartRate: TChart
         Left = 0
-        Height = 335
-        Top = 335
+        Height = 268
+        Top = 402
         Width = 832
         AxisList = <
           item

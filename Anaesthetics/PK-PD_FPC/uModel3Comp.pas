@@ -109,11 +109,14 @@ Type
     function RK45_init_bolus_solve(Bolus, totalTime, Interval: Double): TVMobj;
     function RK4_const_plasma_solve(Plasma_Target, totalTime,StopTime,
       Interval: Double): TVMobj;
-    function RK45_const_effect_solve(Effect_Target, totalTime, StopTime,
+    function RK45_const_effect_solve(Extra_Bolus, Effect_Target, totalTime, StopTime,
       Interval: Double): TVMobj;
     function RK45_const_plasma_solve(Extra_Bolus,Plasma_Target, totalTime, StopTime,
       Interval: Double): TVMobj;
-    function Arbitrary_Infusion(Rate : TVMobj;Bolus, TotalTime, Interval : Double): TVMobj;
+    function RK45_bolus_infusion_solve(Bolus, InfRate, totalTime, StopTime,
+      Interval: Double): TVMobj;
+    function Arbitrary_Infusion(Rate : TVMobj;Bolus, TotalTime, Interval : Double;
+      ExtraBolus: Double = 0): TVMobj;
     function Pump_Arbitrary_Infusion(Rate : TVMobj;Bolus, TotalTime: Double): TVMobj;
     function Analytic_Single_Step(Yinit : TVMobj; Infusion_Rate, Tstart,Tend : Double):TVMobj;
     function kaps_init_bolus_solve(Bolus, totalTime, Interval: Double): TVMobj;
@@ -122,8 +125,10 @@ Type
     function y_eff(t  :float):float; // for bisection root finder
     function find_TPeak:Double;
     function calc_eff_init_bolus(target : double):Double;
-    function Bristol_10_8_6_Infusion(weight: Double;TotalTime, Interval : Double): TVMobj;
-    function Bristol_12_9_6_Infusion(weight : double; TotalTime, Interval : Double): TVMobj;
+    function Bristol_10_8_6_Infusion(weight: Double;TotalTime, Interval : Double;
+      ExtraBolus: Double = 0): TVMobj;
+    function Bristol_12_9_6_Infusion(weight : double; TotalTime, Interval : Double;
+      ExtraBolus: Double = 0): TVMobj;
     function BIS(Ce :Double):Double;
   published
     property pCe50 : Double read read_Ce50;
@@ -284,6 +289,17 @@ begin
   result := MergeUD(time,Z);  //Put Time values in first row
 end;
 
+// State vector convention (set by DiffMatrix in Create, and shared by every
+// solve method in this unit): y = (A1/V1, A2/V1, A3/V1, Ce), i.e. each
+// compartment's drug AMOUNT divided by the CENTRAL volume V1 - not each
+// compartment's own concentration. y[0] is therefore the true plasma
+// concentration, but y[1]/y[2] are not the peripheral concentrations
+// A2/V2 and A3/V3: recovering an amount from either of them means
+// multiplying by V1, never by V2/V3. (Confirmed by DiffMatrix's own rows:
+// dy1/dt = -K*y1 + k21*y2 + k31*y3 is the amount-balance equation scaled
+// throughout by V1; the concentration form would carry V2/V1 and V3/V1
+// factors on those two off-diagonal terms, and k21 rather than k12 on
+// row 2.) See the maintenance-rate comment in RK45_const_plasma_solve.
 function TM3Comp.diffY(t:Double;y:TVMobj;N:Integer):TVMobj;
   var
     v : TVMobj;
@@ -368,7 +384,8 @@ begin
   result := MergeUD(t,output);
 end;
 
-function TM3Comp.Bristol_10_8_6_Infusion(Weight, TotalTime, Interval : Double): TVMobj;
+function TM3Comp.Bristol_10_8_6_Infusion(Weight, TotalTime, Interval : Double;
+  ExtraBolus: Double = 0): TVMobj;
 var
   NumSteps,Step :Integer;
   inf : TVMobj;
@@ -387,10 +404,11 @@ begin
     step := step+1;
     currentT:= currentT+interval/60;
   end;
-  result :=  Arbitrary_Infusion(inf,Bolus, TotalTime, Interval);
+  result :=  Arbitrary_Infusion(inf,Bolus, TotalTime, Interval, ExtraBolus);
 end;
 
-function TM3Comp.Bristol_12_9_6_Infusion(Weight, TotalTime, Interval : Double): TVMobj;
+function TM3Comp.Bristol_12_9_6_Infusion(Weight, TotalTime, Interval : Double;
+  ExtraBolus: Double = 0): TVMobj;
 var
   NumSteps,Step :Integer;
   inf : TVMobj;
@@ -409,7 +427,7 @@ begin
     step := step+1;
     currentT:= currentT+interval/60;
   end;
-  result :=  Arbitrary_Infusion(inf,Bolus, TotalTime, Interval);
+  result :=  Arbitrary_Infusion(inf,Bolus, TotalTime, Interval, ExtraBolus);
 end;
 
 function TM3Comp.kaps_init_bolus_solve(Bolus, totalTime,
@@ -453,8 +471,10 @@ begin
   VMSetCol(output,M,0);
   while step <=NumSteps do begin
     with fmodelParams do begin
+       // Same mass-balance maintenance rate as RK45_const_plasma_solve - see
+       // the comment there for the V1 (not V2/V3) scaling of M[1,0]/M[2,0].
        if CurrentT<Stoptime then
-         Inf_Rate:= ((K*Plasma_Target*V1) -(k21*M[1,0]*V2+k31*M[2,0]*V3))/Concentration
+         Inf_Rate:= ((K*Plasma_Target) -(k21*M[1,0]+k31*M[2,0]))*V1/Concentration
        else
          Inf_Rate:=0;
       t[1,step]:=Inf_rate*60;
@@ -498,8 +518,18 @@ begin
   gActiveM3Comp := Self;
   while step <=NumSteps do begin
       with fmodelParams do begin
+       // Maintenance rate: the mass-balance infusion that holds dA1/dt = 0,
+       // Inf(mass/min) = K*Ct*V1 - k21*A2 - k31*A3, divided by Concentration
+       // to give mL/min. A2/A3 come from the state as M[1,0]*V1 and
+       // M[2,0]*V1 (see the state-vector note above diffY) - NOT M[1,0]*V2
+       // and M[2,0]*V3, which over-subtracts the return flow by V2/V1 and
+       // V3/V1 (about 2x and 13x for Marsh propofol) and lets the plasma
+       // level sag well below target as the peripheral compartments fill.
+       // Using the *target* rather than the current plasma level in the
+       // first term is deliberate: it makes the residual dCp/dt = K*(Ct-Cp),
+       // so any drift back towards target is self-correcting.
        if CurrentT<Stoptime then
-         Inf_Rate:= ((K*Plasma_Target*V1) -(k21*M[1,0]*V2+k31*M[2,0]*V3))/Concentration
+         Inf_Rate:= ((K*Plasma_Target) -(k21*M[1,0]+k31*M[2,0]))*V1/Concentration
        else
          Inf_Rate:=0;
        t[1,step]:=Inf_rate*60;
@@ -518,7 +548,64 @@ begin
   result := MergeUD(t,output);
 end;
 
-function TM3Comp.RK45_const_effect_solve(Effect_Target, totalTime, StopTime,
+function TM3Comp.RK45_bolus_infusion_solve(Bolus, InfRate, totalTime, StopTime,
+  Interval: Double): TVMobj;
+// Backs the UI's "Constant Infusion Rate" regimen: a constant-rate infusion
+// (InfRate, mL/hr, active while CurrentT<StopTime then 0 - same StopTime
+// convention as RK45_const_plasma_solve/RK45_const_effect_solve) via the
+// same fmodelParams.Inf_Rate/diffY term those methods already drive the
+// infusion contribution through, with Bolus (a direct mg/mcg dose, NOT the
+// mL-of-stock-solution convention Arbitrary_Infusion/Bristol_*_Infusion use -
+// same Bolus/V1 initial condition as RK45_init_bolus_solve) layered on top
+// as a t=0 loading dose whenever the UI's Bolus field is non-zero - this is
+// the general "the Bolus box is added to whatever regimen is selected"
+// behaviour, not a separate dropdown entry (see uPKPDMain.pas's
+// RunCurrentRegimen, which threads the same Bolus field into every
+// infusion-type regimen's own Extra_Bolus/ExtraBolus parameter).
+Const
+  Err = 10e-4;
+var
+  NumSteps, step : Integer;
+  currentT,nextT: Double;
+  M,res,t,output : TVMobj;
+  flags : Integer;
+  Y, Yp : TVector;
+begin
+  NumSteps:= Round(TotalTime * 60 / interval);
+  output := TVMobj.Create(4,NumSteps+1);
+  t := TVMobj.Create(2,NumSteps+1);
+  t[0,0]:=0;
+  t[1,0]:=0;
+  CurrentT:= 0;
+  Step:=1;
+  Flags :=1;  // Initial Mode
+  M := TVMobj.Create(4,1,[Bolus / fmodelParams.V1,0,0,0]); //   bolus delivered at t=0
+  VMSetCol(output,M,0);
+  DimVector(Y,4);
+  DimVector(Yp,4);
+  TVMobjToLVector(M, Y, 4);
+  gActiveM3Comp := Self;
+  while step <=NumSteps do begin
+    with fmodelParams do begin
+      if CurrentT < StopTime then Inf_Rate := InfRate/60
+      else Inf_Rate := 0;
+      t[1,step] := Inf_Rate*60;
+    end;
+    nextT:= currentT+interval/60;
+    RKF45(GlobalDiffEqs,4,Y,Yp,currentT,nextT,Err,Err,flags);
+    if flags in [2,7] then flags:=2 else
+      raise Exception.Create('RKF45 Flags ='+IntToStr(Flags));
+    res := LVectorToTVMobj(Y, 4);
+    VMSetCol(output,res,step);
+    currentT:=nextT;
+    t[0,step]:= CurrentT;
+    M := CopyObj(res);
+    step:=step+1;
+  end;
+  result := MergeUD(t,output);
+end;
+
+function TM3Comp.RK45_const_effect_solve(Extra_Bolus, Effect_Target, totalTime, StopTime,
   Interval: Double): TVMobj;
 Const
   Err = 10e-4;
@@ -538,7 +625,7 @@ begin
   Step:=1;
   Flags :=1;  // Initial Mode
   Tau := find_TPeak;
-  InitBolus := calc_eff_init_bolus(Effect_target) ;
+  InitBolus := calc_eff_init_bolus(Effect_target) + Extra_Bolus;
   M := TVMobj.Create(4,1,[InitBolus / fmodelParams.V1,0,0,0]); //   set T=0 vector to initial conditions
   VMSetCol(output,M,0);
   DimVector(Y,4);
@@ -547,9 +634,12 @@ begin
   gActiveM3Comp := Self;
   while step <=NumSteps do begin
       with fmodelParams do begin
+       // Same mass-balance maintenance rate as RK45_const_plasma_solve (see
+       // the comment there for the V1 scaling of M[1,0]/M[2,0]), just aimed
+       // at Effect_Target and held off until the effect site has peaked.
        if CurrentT<Stoptime then begin
          if currentT < Tau then Inf_rate := 0
-           else Inf_Rate:= ((K*Effect_Target*V1) -(k21*M[1,0]*V2+k31*M[2,0]*V3))/Concentration
+           else Inf_Rate:= ((K*Effect_Target) -(k21*M[1,0]+k31*M[2,0]))*V1/Concentration
        end
        else
          Inf_Rate:=0;
@@ -569,7 +659,8 @@ begin
   result := MergeUD(t,output);
 end;
 
-function TM3Comp.Arbitrary_Infusion(Rate : TVMobj; Bolus, TotalTime, Interval : Double):TVMobj;
+function TM3Comp.Arbitrary_Infusion(Rate : TVMobj; Bolus, TotalTime, Interval : Double;
+  ExtraBolus: Double = 0):TVMobj;
 var
   NumSteps, step : Integer;
   currentT,nextT: Double;
@@ -583,6 +674,15 @@ begin
   // one extra column for the t=0 initial condition (see this unit's header
   // comment), so interval index i (Rate[0,i]) drives the advance into
   // column i+1.
+  // Bolus is in mL of stock solution (this method's own convention - see
+  // Bristol_10_8_6_Infusion/Bristol_12_9_6_Infusion, which each compute
+  // their own protocol-fixed Bolus this way); ExtraBolus, by contrast, is
+  // an already-in-mg/mcg dose in the same direct Bolus/V1 convention every
+  // other solve method in this unit uses (RK4/RK45/kaps/Analytic
+  // _init_bolus_solve, RK45_const_plasma/effect_solve's own Extra_Bolus) -
+  // so it's added directly to ABolus (mg) rather than scaled by
+  // Concentration, letting a caller layer a UI "Bolus" field's value on top
+  // of whatever mL-based dose this regimen already computes internally.
   NumSteps:= Round(TotalTime * 60 / interval);
   output := TVMobj.Create(4,NumSteps+1);
   t := TVMobj.Create(2,NumSteps+1);
@@ -591,7 +691,7 @@ begin
   CurrentT:= 0;
   Step:=1;
   Flags :=1;  // Initial Mode
-  ABolus := Bolus*fModelParams.Concentration;
+  ABolus := Bolus*fModelParams.Concentration + ExtraBolus;
   M := TVMobj.Create(4,1,[ABolus / fmodelParams.V1,0,0,0]); //   set T=0 vector to initial conditions
   VMSetCol(output,M,0);
   DimVector(Y,4);
@@ -873,7 +973,11 @@ begin
              Cl2 := 0;
              Cl3 := 0;
              Inf_Rate:=0;
-             Concentration:=20; // mcg/ml
+             // Alfentanil is dosed in mcg, so Concentration stays in mcg/ml
+             // for the mass balance: 500 mcg/ml = the 0.5 mg/ml presentation.
+             // This is the default for an alfentanil infusion on its own; a
+             // propofol/alfentanil mix uses the UI's own 20 mcg/ml default.
+             Concentration:=500; // mcg/ml (0.5 mg/ml)
            end; {with}
          end;
        end;{Models}
@@ -1031,14 +1135,17 @@ begin
        case model of
          Domino: begin
            // Domino, Domino, Kollef & Kilpatrick, Clin Pharmacol Ther
-           // 36:645-653, 1991 - the "human" kinetic set from Stanpump's own
+           // 36:645-653, 1984 - the "human" kinetic set from Stanpump's own
            // DRUGS.C (ketamine(), kinetic_set=1; see Anaesthetics/PK-PD_FPC/
-           // DRUGS.C), not the horse set also offered there. DRUGS.C has no
-           // real effect-site data for ketamine (effect_data=0) and sets its
-           // k41 (=ke0 in this codebase's naming - confirmed against
-           // DRUGS.C's own custom-kinetics loader, which reads k41 as the
-           // 17th "ke0" field) to 10 with the comment "no idea" - kept as-is
-           // rather than inventing a value Stanpump itself doesn't claim.
+           // DRUGS.C), not the horse set also offered there. Checked against
+           // the paper: these rate constants give half-lives of 24 s, 4.6 min
+           // and 1.9 h, vs the published 24.1 s, 4.68 min and 2.17 h.
+           // DRUGS.C has no real effect-site data for ketamine (effect_data=0)
+           // and sets k41 (=ke0 here) to 10/min with the comment "no idea" -
+           // a ~4 s equilibration half-time that makes Ce track (and briefly
+           // overshoot) Cp. Replaced with the EEG slow-wave effect-site
+           // equilibration half-time of 23 s measured in volunteers (BJA
+           // 2019;123:479, PMC6871266): ke0 = ln2/(23/60) = 1.81/min.
            with fmodelParams do begin
              DrugName:=DrugNameStrings[Drug];
              ModelName:=ModelNameStrings[Model];
@@ -1052,9 +1159,14 @@ begin
              k31 := 0.0146;
              V2 := V1*k12/k21;
              V3 := V1*k13/k31;
-             ke0 := 10; // DRUGS.C: "no idea" - no real effect-site data for ketamine
+             ke0 := 0.693/(23/60); // 1.81/min, t1/2ke0 23 s - see above
              Inf_Rate:=0;
-             Concentration:=100000; // mcg/ml (100mg/ml ketamine stock)
+             // mg/ml, like the other mg-dosed hypnotics: infusion code converts
+             // mL -> mass via Concentration and V1 is in L, so mg/L = mcg/ml.
+             // (Was 100000, which made every ketamine infusion 1000x too big.)
+             // 10 mg/ml, a typical diluted ketamine infusion, not the 100 mg/ml
+             // neat stock - this is the default the UI's infusate box offers.
+             Concentration:=10; // mg/ml (diluted ketamine infusion)
            end; {with}
          end; {case model}
        end; {Ketamine models}

@@ -37,6 +37,12 @@ type
     procedure TestAnalyticVsRK4Agree;
     procedure TestKapsRentropVsRK45Agree;
     procedure TestLinkedInfusionRateMatches;
+    procedure TestBolusInfusionCombinedInitialCondition;
+    procedure TestConstantInfusionMatchesArbitraryInfusion;
+    procedure TestExtraBolusAddsToConstPlasmaSolve;
+    procedure TestExtraBolusAddsToArbitraryInfusion;
+    procedure TestConstPlasmaHoldsTarget;
+    procedure TestConstEffectHoldsTarget;
   end;
 
 implementation
@@ -71,7 +77,7 @@ begin
 end;
 
 procedure TPKPDTests.TestKetamineDominoV1V2V3;
-// Domino et al. Clin Pharmacol Ther 36:645-653, 1991, human kinetic set -
+// Domino et al. Clin Pharmacol Ther 36:645-653, 1984, human kinetic set -
 // see Anaesthetics/PK-PD_FPC/DRUGS.C's ketamine()/kinetic_set=1.
 var
   M : TM3Comp;
@@ -194,6 +200,141 @@ begin
       AssertTrue(Abs(Rate[0,i] - R[1,i]) < Tol);
   finally
     A.Free;
+  end;
+end;
+
+procedure TPKPDTests.TestBolusInfusionCombinedInitialCondition;
+var
+  M : TM3Comp;
+  R : TVMobj;
+begin
+  // RK45_bolus_infusion_solve's t=0 column must still show the bolus as the
+  // initial condition (row layout: 0=time,1=rate,2..4=C1/C2/C3), exactly as
+  // the plain bolus solves do, even though an infusion is also running.
+  M := TM3Comp.Create(Propofol, Marsh, 70, 1.75, 35, Male);
+  try
+    R := M.RK45_bolus_infusion_solve(140, 200, 5, 5, 10);
+    AssertTrue(Abs(R[0,0]) < Tol);                           // t=0
+    AssertTrue(Abs(R[2,0] - 140/M.fModelParams.V1) < 1e-4);  // C1(0) = Bolus/V1
+    AssertTrue(Abs(R[3,0]) < Tol);                            // C2(0) = 0
+    AssertTrue(Abs(R[4,0]) < Tol);                            // C3(0) = 0
+  finally
+    M.Free;
+  end;
+end;
+
+procedure TPKPDTests.TestConstantInfusionMatchesArbitraryInfusion;
+var
+  M : TM3Comp;
+  R, Arb, RateVec : TVMobj;
+  i, NumSteps : Integer;
+begin
+  // A pure constant-rate infusion (Bolus=0) via RK45_bolus_infusion_solve
+  // should agree with the same fixed rate fed through Arbitrary_Infusion -
+  // two different code paths computing the same physical scenario.
+  M := TM3Comp.Create(Propofol, Marsh, 70, 1.75, 35, Male);
+  try
+    R := M.RK45_bolus_infusion_solve(0, 200, 5, 5, 10);
+    NumSteps := Round(5*60/10);
+    RateVec := TVMobj.Create(1, NumSteps);
+    for i := 0 to NumSteps-1 do RateVec[0,i] := 200;
+    Arb := M.Arbitrary_Infusion(RateVec, 0, 5, 10);
+    AssertEquals(R.Cols, Arb.Cols);
+    for i := 0 to R.Cols-1 do
+      AssertTrue(Abs(R[2,i] - Arb[2,i]) < 1e-3);
+  finally
+    M.Free;
+  end;
+end;
+
+procedure TPKPDTests.TestExtraBolusAddsToConstPlasmaSolve;
+var
+  M : TM3Comp;
+  R0, R50 : TVMobj;
+begin
+  // The UI's "Bolus" field is threaded into every infusion-type regimen's
+  // own Extra_Bolus/ExtraBolus parameter rather than being a separate
+  // dropdown entry - RK45_const_plasma_solve's t=0 C1 should therefore
+  // shift by exactly ExtraBolus/V1 when a non-zero Extra_Bolus is passed.
+  M := TM3Comp.Create(Propofol, Marsh, 70, 1.75, 35, Male);
+  try
+    R0 := M.RK45_const_plasma_solve(0, 2.5, 5, 5, 10);
+    R50 := M.RK45_const_plasma_solve(50, 2.5, 5, 5, 10);
+    AssertTrue(Abs((R50[2,0] - R0[2,0]) - 50/M.fModelParams.V1) < Tol);
+  finally
+    M.Free;
+  end;
+end;
+
+procedure TPKPDTests.TestExtraBolusAddsToArbitraryInfusion;
+var
+  M : TM3Comp;
+  RateVec, R0, R50 : TVMobj;
+  i, NumSteps : Integer;
+begin
+  // Same check as TestExtraBolusAddsToConstPlasmaSolve, for
+  // Arbitrary_Infusion's new ExtraBolus parameter (which
+  // Bristol_10_8_6_Infusion/Bristol_12_9_6_Infusion also forward into) -
+  // ExtraBolus is a direct mg dose, added on top of the mL-based Bolus
+  // this method already scales by Concentration internally.
+  M := TM3Comp.Create(Propofol, Marsh, 70, 1.75, 35, Male);
+  try
+    NumSteps := Round(5*60/10);
+    RateVec := TVMobj.Create(1, NumSteps);
+    for i := 0 to NumSteps-1 do RateVec[0,i] := 200;
+    R0 := M.Arbitrary_Infusion(RateVec, 20, 5, 10);
+    R50 := M.Arbitrary_Infusion(RateVec, 20, 5, 10, 50);
+    AssertTrue(Abs((R50[2,0] - R0[2,0]) - 50/M.fModelParams.V1) < Tol);
+  finally
+    M.Free;
+  end;
+end;
+
+procedure TPKPDTests.TestConstPlasmaHoldsTarget;
+var
+  M : TM3Comp;
+  R : TVMobj;
+  i : Integer;
+begin
+  // The whole point of the "Constant Plasma Target" regimen: C1 (row 2)
+  // must stay AT the target for the entire infusion, not just start there.
+  // Regression test for a maintenance-rate formula that recovered the
+  // peripheral amounts as M[1,0]*V2/M[2,0]*V3 instead of *V1 (see the
+  // state-vector note above TM3Comp.diffY) - which over-subtracted the
+  // return flow and let a 3 mcg/ml target sag to about 1.6 by 60 minutes,
+  // while still looking plausible over the first minute or two.
+  M := TM3Comp.Create(Propofol, Marsh, 70, 1.75, 35, Male);
+  try
+    R := M.RK45_const_plasma_solve(0, 3.0, 60, 60, 10);
+    for i := 0 to R.Cols-1 do
+      AssertTrue('Cp drifted off target at t='+FloatToStr(R[0,i])+
+        ' min: '+FloatToStr(R[2,i]), Abs(R[2,i] - 3.0) < 0.01);
+  finally
+    M.Free;
+  end;
+end;
+
+procedure TPKPDTests.TestConstEffectHoldsTarget;
+var
+  M : TM3Comp;
+  R : TVMobj;
+  i : Integer;
+begin
+  // Companion to TestConstPlasmaHoldsTarget for the "Constant Effect
+  // Target" regimen, which drives the same maintenance-rate formula: the
+  // effect-site concentration Ce (row 5) peaks at the target at t=Tau (the
+  // loading bolus is sized for exactly that by calc_eff_init_bolus), and
+  // the infusion then has to hold it there. Only checked from 20 min on,
+  // well past Tau plus the plasma/effect equilibration that follows it.
+  M := TM3Comp.Create(Propofol, Marsh, 70, 1.75, 35, Male);
+  try
+    R := M.RK45_const_effect_solve(0, 3.0, 60, 60, 10);
+    for i := 0 to R.Cols-1 do
+      if R[0,i] >= 20 then
+        AssertTrue('Ce drifted off target at t='+FloatToStr(R[0,i])+
+          ' min: '+FloatToStr(R[5,i]), Abs(R[5,i] - 3.0) < 0.05);
+  finally
+    M.Free;
   end;
 end;
 
