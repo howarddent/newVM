@@ -334,6 +334,16 @@ object fmMain: TfmMain
           LinePen.Color = clBlue
           LinePen.Width = 2
         end
+        object SeriesC2: TLineSeries
+          Title = 'Peripheral fast (C2)'
+          LinePen.Color = clOlive
+          LinePen.Width = 2
+        end
+        object SeriesC3: TLineSeries
+          Title = 'Peripheral slow (C3)'
+          LinePen.Color = clTeal
+          LinePen.Width = 2
+        end
         object SeriesBIS: TLineSeries
           Title = 'BIS'
           AxisIndexY = 2

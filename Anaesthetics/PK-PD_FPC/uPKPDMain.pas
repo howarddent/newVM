@@ -103,6 +103,8 @@ type
     ChartConc: TChart;
     SeriesC1: TLineSeries;
     SeriesCe: TLineSeries;
+    SeriesC2: TLineSeries;
+    SeriesC3: TLineSeries;
     SeriesBIS: TLineSeries;
     ChartRate: TChart;
     SeriesRate: TLineSeries;
@@ -514,7 +516,8 @@ end;
 procedure TfmMain.RunCurrentRegimen;
 var
   TotalTime, Interval, Target, Bolus, BolusB, StopTime, InfusionRate, MixConcB, ConcA : Double;
-  R, S, T, TB, C1, Ce, C1B, CeB, Rate, DrivingRate : TVMobj;
+  R, S, T, TB, C1, Ce, C2, C3, C1B, CeB, Rate, DrivingRate : TVMobj;
+  PeriphRow : Integer;
   i : Integer;
   Mode : Integer;
 begin
@@ -532,6 +535,13 @@ begin
 
   SeriesC1.Clear; SeriesCe.Clear; SeriesBIS.Clear;
   SeriesRate.Clear; SeriesC1B.Clear; SeriesCeB.Clear;
+  SeriesC2.Clear; SeriesC3.Clear;
+  // Legend entries only for series this regimen actually plots: the two
+  // peripheral compartments in the plain bolus modes, drug B in Linked TCI.
+  SeriesC2.Legend.Visible := CurrentMode in [RMBolusRK4..RMBolusAnalytic];
+  SeriesC3.Legend.Visible := SeriesC2.Legend.Visible;
+  SeriesC1B.Legend.Visible := CurrentMode = RMLinked;
+  SeriesCeB.Legend.Visible := SeriesC1B.Legend.Visible;
 
   Mode := CurrentMode; // an RM* regimen number, not the list position
   case Mode of
@@ -593,6 +603,19 @@ begin
   Ce := Ce * ConcDisplayScale(FModelA.fdrug);
   FConcMax := Max(MaxElementOf(C1), MaxElementOf(Ce));
 
+  if Mode in [RMBolusRK4..RMBolusAnalytic] then begin
+    // Peripheral compartments. The bolus solvers' state rows are (C1, A2/V1,
+    // A3/V1, Ce) - see the state-vector note in uModel3Comp.pas - so rows 2
+    // and 3 are rescaled by V1/V2 and V1/V3 to true concentrations. Kaps
+    // has no leading time row, so its state rows start one earlier.
+    if Mode = RMBolusKaps then PeriphRow := 1 else PeriphRow := 2;
+    with FModelA.fModelParams do begin
+      C2 := SubMatrix(R, PeriphRow, 0, 1, R.Cols) * (V1 / V2 * ConcDisplayScale(FModelA.fdrug));
+      C3 := SubMatrix(R, PeriphRow+1, 0, 1, R.Cols) * (V1 / V3 * ConcDisplayScale(FModelA.fdrug));
+    end;
+    FConcMax := Max(FConcMax, Max(MaxElementOf(C2), MaxElementOf(C3)));
+  end;
+
   if Mode = 9 then begin
     ExtractTimeC1Ce(S, True, False, TB, C1B, CeB);
     // Linked TCI plots Drug B on the same axis as Drug A (propofol, mcg/ml).
@@ -614,6 +637,10 @@ begin
 
   PlotSeries(T, C1, SeriesC1);
   PlotSeries(T, Ce, SeriesCe);
+  if Mode in [RMBolusRK4..RMBolusAnalytic] then begin
+    PlotSeries(T, C2, SeriesC2);
+    PlotSeries(T, C3, SeriesC3);
+  end;
   if FModelA.fdrug = Propofol then begin
     // BIS shares the concentration axis (see the FConcMax comment on its
     // declaration) - rescale its 0-100 value onto that axis's current
