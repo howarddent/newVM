@@ -404,6 +404,21 @@ function mkl_sparse_d_mv(operation: Integer; alpha: Double; const A: Pointer;
 function mkl_sparse_d_trsv(operation: Integer; alpha: Double; const A: Pointer;
   const descr: TMKLMatrixDescr; const x: PDouble; y: PDouble): Integer; cdecl; external;
 function mkl_sparse_destroy(A: Pointer): Integer; cdecl; external;
+
+{ Inspector-Executor "inspector" stage: record how often a handle will be
+  used for mv/trsv, then let mkl_sparse_optimize analyse it, so mv/trsv
+  use specialised kernels instead of generic ones (see newVMsparse.pas's
+  FGMRESSolve for measured gains). Performance-only - a failed
+  hint/optimize leaves the handle usable, just unoptimised. }
+function mkl_sparse_set_mv_hint(const A: Pointer; operation: Integer;
+  const descr: TMKLMatrixDescr; expected_calls: Integer): Integer; cdecl; external;
+function mkl_sparse_set_sv_hint(const A: Pointer; operation: Integer;
+  const descr: TMKLMatrixDescr; expected_calls: Integer): Integer; cdecl; external;
+function mkl_sparse_optimize(A: Pointer): Integer; cdecl; external;
+
+{ MKL global thread count (default: number of physical cores). }
+procedure MKL_Set_Num_Threads(nt: Integer); cdecl; external;
+function MKL_Get_Max_Threads: Integer; cdecl; external;
   {$ELSE}
   { No MKL on this Unix machine - these 22 LAPACKE_* entry points (exactly
     the set newVM.pas/newVMSingle.pas/newVMComplex.pas/newVMComplexSingle.pas
@@ -734,6 +749,11 @@ type
   Tmkl_sparse_d_trsv = function(operation: Integer; alpha: Double; const A: Pointer;
     const descr: TMKLMatrixDescr; const x: PDouble; y: PDouble): Integer; cdecl;
   Tmkl_sparse_destroy = function(A: Pointer): Integer; cdecl;
+  Tmkl_sparse_set_hint = function(const A: Pointer; operation: Integer;
+    const descr: TMKLMatrixDescr; expected_calls: Integer): Integer; cdecl; //mv and sv hints share this shape
+  Tmkl_sparse_optimize = function(A: Pointer): Integer; cdecl;
+  TMKL_Set_Num_Threads = procedure(nt: Integer); cdecl;
+  TMKL_Get_Max_Threads = function: Integer; cdecl;
 
   Tvmd3 = procedure(const n: Integer; a: PDouble; b: PDouble; r: PDouble); cdecl; //vmdAdd/Sub/Div shape
   Tvmd2 = procedure(const n: Integer; a: PDouble; r: PDouble); cdecl; //vmdSqr/Sin/Cos/Exp shape
@@ -827,6 +847,11 @@ var
   mkl_sparse_d_mv         : Tmkl_sparse_d_mv;
   mkl_sparse_d_trsv       : Tmkl_sparse_d_trsv;
   mkl_sparse_destroy      : Tmkl_sparse_destroy;
+  mkl_sparse_set_mv_hint  : Tmkl_sparse_set_hint;
+  mkl_sparse_set_sv_hint  : Tmkl_sparse_set_hint;
+  mkl_sparse_optimize     : Tmkl_sparse_optimize;
+  MKL_Set_Num_Threads     : TMKL_Set_Num_Threads;
+  MKL_Get_Max_Threads     : TMKL_Get_Max_Threads;
 
   vmdSqr  : Tvmd2;
   vmdAdd  : Tvmd3;
@@ -1127,6 +1152,11 @@ begin
   pointer(mkl_sparse_d_mv)         := MKLProc('mkl_sparse_d_mv');
   pointer(mkl_sparse_d_trsv)       := MKLProc('mkl_sparse_d_trsv');
   pointer(mkl_sparse_destroy)      := MKLProc('mkl_sparse_destroy');
+  pointer(mkl_sparse_set_mv_hint)  := MKLProc('mkl_sparse_set_mv_hint');
+  pointer(mkl_sparse_set_sv_hint)  := MKLProc('mkl_sparse_set_sv_hint');
+  pointer(mkl_sparse_optimize)     := MKLProc('mkl_sparse_optimize');
+  pointer(MKL_Set_Num_Threads)     := MKLProc('MKL_Set_Num_Threads');
+  pointer(MKL_Get_Max_Threads)     := MKLProc('MKL_Get_Max_Threads');
 
   pointer(vmdSqr)  := MKLProc('vmdSqr');
   pointer(vmdAdd)  := MKLProc('vmdAdd');
