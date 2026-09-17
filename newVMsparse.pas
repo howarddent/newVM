@@ -118,7 +118,7 @@ function PardisoSolve(const A: TVMSparseMtx; const B: TVMobj; SymmetricPosDef: B
 
 { Iterative sparse solve via MKL RCI ISS FGMRES, optionally ILU0-
   preconditioned. Same B/result shape convention as PardisoSolve. }
-function FGMRESSolve(const A: TVMSparseMtx; const B: TVMobj; UseILU0: Boolean = True; MaxIter: Integer = 500; Tol: Double = 1e-8): TVMobj;
+function FGMRESSolve(const A: TVMSparseMtx; const B: TVMobj; UseILU0: Boolean = True; MaxIter: Integer = 500; Tol: Double = 1e-8; Restart: Integer = 150): TVMobj;
 
 { MKL's global OpenMP thread count - applies to every MKL routine
   (PARDISO, sparse BLAS, and the dense BLAS/LAPACK in newVM.pas alike).
@@ -479,11 +479,11 @@ begin
   result := X;
 end;
 
-function FGMRESSolve(const A: TVMSparseMtx; const B: TVMobj; UseILU0: Boolean; MaxIter: Integer; Tol: Double): TVMobj;
+function FGMRESSolve(const A: TVMSparseMtx; const B: TVMobj; UseILU0: Boolean; MaxIter: Integer; Tol: Double; Restart: Integer): TVMobj;
 const
   s = 'Function FGMRESSolve : ';
 var
-  n, restart, tmpSize, i, st: Integer;
+  n, tmpSize, i, st: Integer;
   ia1, ja1: array of Integer; //1-based CSR copies, for the legacy dcsrilu0 call only
   ipar: array[0..127] of Integer;
   dpar: array[0..127] of Double;
@@ -528,7 +528,8 @@ begin
     for i := 0 to High(ja1) do ja1[i] := A.FColInd[i] + 1;
   end;
 
-  restart := Min(150, n);
+  assert(Restart > 0, s+'Restart must be > 0');
+  Restart := Min(Restart, n);
   { MKL's documented minimum is (2*restart+1)*n + restart*(restart+9) div 2
     + 1. A generous fixed safety margin is added on top - cheap for
     FEM-scale problems, and closes off any risk from this formula being
@@ -555,6 +556,11 @@ begin
     raise Exception.Create(s + 'dfgmres_init failed, code ' + IntToStr(RCI_request));
 
   ipar[4] := MaxIter;        //Fortran ipar(5): max iterations
+  ipar[6] := 0;               //Fortran ipar(7): no console warnings - changing
+                                //ipar(15) below after dfgmres_init always
+                                //triggers a (benign) "incompatible values"
+                                //warning, see dfgmres_check below. Genuine
+                                //errors are still reported via RCI_request.
   ipar[9] := 0;               //Fortran ipar(10): no user-defined stopping test
   ipar[10] := Ord(UseILU0);   //Fortran ipar(11): preconditioning on/off
   ipar[11] := 1;               //Fortran ipar(12): let dfgmres auto-check for a
@@ -597,8 +603,15 @@ begin
     mkl_sparse_optimize(ILU0handle);
   end;
 
+  { dfgmres_init lays out tmp's work blocks (ipar(16..21) offsets) for its
+    own default restart, min(150,n). When Restart differs, dfgmres_check
+    recomputes those offsets for the new value (confirmed by dumping ipar
+    before/after on MKL 2026.1) and reports -1001 ("warnings"). Intel
+    documents -1001/-1010/-1011 as non-fatal (warnings and/or parameters
+    corrected); only other negative codes (e.g. -1100) are real errors. }
   dfgmres_check(@n, @xvec[0], @bvec[0], @RCI_request, @ipar[0], @dpar[0], @tmp[0]);
-  if RCI_request <> 0 then
+  if (RCI_request <> 0) and (RCI_request <> -1001) and
+     (RCI_request <> -1010) and (RCI_request <> -1011) then
     raise Exception.Create(s + 'dfgmres_check reported invalid parameters, code ' + IntToStr(RCI_request));
 
   RCI_request := 0;
