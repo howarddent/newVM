@@ -1,10 +1,12 @@
 unit uThermEx1Plot;
 
-{ The window ThermEx1 shows its result in: the temperature profile from
-  the centre of the body outward, at t = 0 and at the end of the run and
-  taken both towards the front and towards the back, on one TVMPlot2D,
-  with the run's own report beside it and a cardiac-output slider under
-  it.
+{ The window ThermEx1 shows its result in: two tabs over a cardiac-output
+  slider. The front tab, Profile, is the temperature profile through the
+  trunk from its centre outward, at t = 0 and at the end of the run and
+  taken both towards the front and towards the back, on one TVMPlot2D;
+  the second, Case details, is the run's own report. The trunk is where
+  the core is; the head and limbs are summarised segment by segment in
+  the report.
 
   Generation is uniform within each compartment and the ends are
   adiabatic, so a field plot of the solid adds little that a profile
@@ -22,15 +24,19 @@ unit uThermEx1Plot;
   boundary is one value of s, which is what lets a single set of
   verticals mark them for both curves.
 
-  The memo carries the report verbatim as the program also prints it to
-  stdout. The text is the model's, built once through TThermalModel.Say
-  and handed here, so the window and the terminal cannot disagree.
+  The memo on the second tab carries the report verbatim as the program
+  also prints it to stdout. The text is the model's, built once through
+  TThermalModel.Say and handed here, so the window and the terminal
+  cannot disagree. It had a strip down the right of the graph until the
+  third case and the gown's extra columns crowded both; on a tab of its
+  own each gets the whole window.
 
   THE SLIDER
 
-  Cardiac output, 0 to 10 L/min. Zero is the conduction-only model this
-  began as; 5 is a normal resting output; 10 is twice that. Moving it
-  re-solves.
+  Cardiac output, 1 to 10 L/min. 1 is deep shock; 5 is a normal resting
+  output; 10 is twice that. There is no zero: with no blood nothing
+  empties the trunk's core, and the balanced starting state does not
+  exist - see CardiacOutputMin in uThermEx1.pas. Moving it re-solves.
 
   The re-solve takes the better part of a minute, so it deliberately does
   NOT fire on every tick of the drag - the label follows the slider
@@ -81,9 +87,12 @@ type
 
   private
 
+    FPages : TPageControl;
+    FProfileTab : TTabSheet;
+    FReportTab : TTabSheet;
+
     FPlot : TVMPlot2D;
     FMemo : TMemo;
-    FSplitter : TSplitter;
 
     FPanel : TPanel;
     FTrack : TTrackBar;
@@ -128,16 +137,18 @@ begin
 
   // Clamp to the work area rather than asking for a fixed size: on a
   // smaller screen, or under display scaling, a form wider than the
-  // desktop puts its right-hand strip - which is where the memo lives -
-  // off the edge, and the report simply is not there to be read.
-  Width := Min(1400, Screen.WorkAreaWidth - 40);
+  // desktop puts part of itself off the edge, and the report's long
+  // columnar lines are the first thing to go.
+  Width := Min(1100, Screen.WorkAreaWidth - 40);
   Height := Min(800, Screen.WorkAreaHeight - 40);
 
   Position := poScreenCenter;
 
-  // Docking order matters: the panel takes the bottom, the memo the
-  // right edge, the splitter the edge left of it, and the plot whatever
-  // is left. A client-aligned control created first would take the lot.
+  // Docking order matters: the panel takes the bottom, and the page
+  // control whatever is left. A client-aligned control created first
+  // would take the lot. The slider and the gmsh button stay on the
+  // form rather than on a tab, since they belong to the run as a
+  // whole, not to either way of looking at it.
   FPanel := TPanel.Create(Self);
   FPanel.Parent := Self;
   FPanel.Align := alBottom;
@@ -156,7 +167,7 @@ begin
   FTrack.Top := 26;
   FTrack.Width := 620;
   FTrack.Height := 30;
-  FTrack.Min := 0;
+  FTrack.Min := Round(CardiacOutputMin * TrackPerLitre);
   FTrack.Max := Round(CardiacOutputMax * TrackPerLitre);
   FTrack.Frequency := TrackPerLitre;
   FTrack.PageSize := TrackPerLitre;
@@ -176,12 +187,27 @@ begin
   FViewButton.Hint := 'Write the run as one gmsh view every five minutes ' +
     'and open gmsh on them';
 
+  // Two tabs: the graph in front, the report behind it. The report used
+  // to sit beside the graph in a strip down the right, which was fine
+  // for two cases and got crowded once there were three and the gown's
+  // columns joined the tables - each now has the whole window.
+  FPages := TPageControl.Create(Self);
+  FPages.Parent := Self;
+  FPages.Align := alClient;
+
+  FProfileTab := FPages.AddTabSheet;
+  FProfileTab.Caption := 'Profile';
+
+  FReportTab := FPages.AddTabSheet;
+  FReportTab.Caption := 'Case details';
+
+  FPlot := TVMPlot2D.Create(Self);
+  FPlot.Parent := FProfileTab;
+  FPlot.Align := alClient;
+
   FMemo := TMemo.Create(Self);
-  FMemo.Parent := Self;
-  FMemo.Align := alRight;
-  // Never more than half the form, so the graph keeps usable width on a
-  // narrow screen; the splitter can rebalance it either way.
-  FMemo.Width := Min(560, Width div 2);
+  FMemo.Parent := FReportTab;
+  FMemo.Align := alClient;
   FMemo.ReadOnly := True;
   FMemo.WordWrap := False;
   FMemo.ScrollBars := ssAutoBoth;
@@ -192,14 +218,7 @@ begin
   FMemo.Font.Name := 'Courier New';
   FMemo.Font.Size := 9;
 
-  FSplitter := TSplitter.Create(Self);
-  FSplitter.Parent := Self;
-  FSplitter.Align := alRight;
-  FSplitter.Width := 5;
-
-  FPlot := TVMPlot2D.Create(Self);
-  FPlot.Parent := Self;
-  FPlot.Align := alClient;
+  FPages.ActivePage := FProfileTab;
 
 end;
 
@@ -220,7 +239,7 @@ procedure TProfileForm.ShowFlow;
 begin
 
   FCaption.Caption := Format('Cardiac output %.1f L/min' +
-    '     (0 = conduction only, 5 = resting, 10 = twice resting)',
+    '     (1 = deep shock, 5 = resting, 10 = twice resting)',
     [FTrack.Position / TrackPerLitre]);
 
 end;
@@ -376,13 +395,18 @@ begin
   // caret - the model summary is the part worth landing on.
   FMemo.SelStart := 0;
 
-  if FModel.CaseNumber = CaseDraped then
-    FPlot.Title := 'Draped: the balanced state held for the whole run'
+  case FModel.CaseNumber of
+    CaseDraped :
+      FPlot.Title := 'Draped: the balanced state held for the whole run';
+    CaseGowned :
+      FPlot.Title := 'Exposed at t = 0 under a cotton gown over the trunk and ' +
+                     'arms, radiation into 16 C, back still on the cushion';
   else
     FPlot.Title := 'Exposed at t = 0: bare front and radiation into 16 C, ' +
                    'back still on the cushion';
+  end;
 
-  FPlot.XAxisTitle := 'Similar-ellipse coordinate s (mm)';
+  FPlot.XAxisTitle := 'Trunk: similar-ellipse coordinate s (mm)';
   FPlot.YAxisTitle := 'Temperature (C)';
 
   // All four solid, and told apart by colour alone. Dashing the two
@@ -417,9 +441,9 @@ begin
   Span(B0);
   Span(BE);
 
-  // Mark each compartment boundary. The outer layers are thin - 3.5 mm
-  // of fat and 2.3 mm of skin on a 116.6 mm semi-major axis, and half
-  // that towards the front and back - so without the marks the
+  // Mark each compartment boundary. The outer layers are thin - 3.3 mm
+  // of fat and 2.2 mm of skin on the trunk's 167.0 mm semi-major axis,
+  // and half that towards the front and back - so without the marks the
   // steepening at the right-hand edge reads as a plotting artefact
   // rather than as the layers it is.
   //
