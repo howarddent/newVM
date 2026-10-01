@@ -1020,6 +1020,15 @@ matrix raises `EMathError`.
   weighted problem into an ordinary one; on the normal-equations path
   every power sum and right-hand-side term carries `W[i]`, exactly as
   `WPolFit` does.
+- **Residual-returning overloads** `Fit(X, Y, Degree, out Residuals)`
+  and `Fit(X, Y, W, Degree, out Residuals)` return the same polynomial
+  plus `Y[i] - P(X[i])` as a `TVMobj` in `Y`'s shape (X's and Y's may
+  differ - one a row, one a column - so they are indexed flat). The
+  residuals are raw differences, not weight-scaled, so a point given
+  weight 0 still shows its distance from the curve. They are thin
+  wrappers: the matching fit, then the public `Residuals(X, Y)` method,
+  which works on any polynomial. An intercept fit's unweighted residuals
+  sum to zero, which `TestFitResidualsKnownValuesSumToZero` checks.
 - **`Evaluate(const X: TVMobj): TVMobj`** is the vector form of the
   scalar `Evaluate(X: Double)` (both marked `overload`): Horner's method
   on every element of `X`, returning a `TVMobj` of the same shape - any
@@ -1043,7 +1052,10 @@ matrix raises `EMathError`.
   four argument-error paths, the weighted overload (a common weight
   reproduces the unweighted fit, a zero weight drops a point to a
   closed-form 9/7 line, degree 0 is the weighted mean, negative/miscounted
-  weights raise), and the `TVMobj` `Evaluate` overload (agrees
+  weights raise), the residual-returning overloads (zero residuals on an
+  exact fit with Y a column and X a row, the known -0.1/0.8/-1.3/0.6 line
+  residuals summing to zero, a dropped point's raw -13/7 residual under
+  weights), and the `TVMobj` `Evaluate` overload (agrees
   with the scalar one elementwise, keeps a 2x3 shape, zero polynomial). Verified both ways: 321/321 with
   `HAVE_LAPACKE` on, and again with it forced off in `newVMConfig.inc`
   so `Fit` ran the LMath-derived normal-equations path through

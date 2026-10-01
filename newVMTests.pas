@@ -620,6 +620,9 @@ type
     procedure TestFitWeightedZeroWeightDropsPoint;
     procedure TestFitWeightedMeanKnownValue;
     procedure TestFitWeightedBadArgumentsRaise;
+    procedure TestFitResidualsZeroForExactFit;
+    procedure TestFitResidualsKnownValuesSumToZero;
+    procedure TestFitWeightedResidualsAreRaw;
     procedure TestEvaluateOnVectorMatchesScalar;
     procedure TestEvaluateOnMatrixKeepsShape;
   end;
@@ -5126,6 +5129,53 @@ procedure TPolynomialTests.TestFitWeightedBadArgumentsRaise;
 begin
   AssertException('negative weight', EArgumentException, @Raise_FitWeightNegative);
   AssertException('weight count', EArgumentException, @Raise_FitWeightLengthMismatch);
+end;
+
+procedure TPolynomialTests.TestFitResidualsZeroForExactFit;
+var X, Y, R: TVMobj; P: TPolynomial; i: Integer;
+begin
+  X := TVMobj.Create(1, 5, [-2, -1, 0, 1, 2]);
+  Y := TVMobj.Create(5, 1, [17, 6, 1, 2, 9]);   // column Y against row X
+  P := TPolynomial.Fit(X, Y, 2, R);
+  AssertEquals('a2', 3.0, P[2], DblTol);
+  AssertEquals('Rows follow Y', 5, R.Rows);
+  AssertEquals('Cols follow Y', 1, R.Cols);
+  for i := 0 to 4 do
+    AssertEquals(Format('r[%d]', [i]), 0.0, R[i, 0], DblTol);
+end;
+
+procedure TPolynomialTests.TestFitResidualsKnownValuesSumToZero;
+var X, Y, R: TVMobj; P: TPolynomial; Sum: Double; i: Integer;
+begin
+  // line 1.1 + 1.1x through (0,1),(1,3),(2,2),(3,5): residuals
+  // -0.1, 0.8, -1.3, 0.6, summing to zero as any intercept fit's must
+  X := TVMobj.Create(1, 4, [0, 1, 2, 3]);
+  Y := TVMobj.Create(1, 4, [1, 3, 2, 5]);
+  P := TPolynomial.Fit(X, Y, 1, R);
+  AssertEquals('slope', 1.1, P[1], DblTol);
+  AssertEquals('r[0]', -0.1, R[0, 0], DblTol);
+  AssertEquals('r[1]', 0.8, R[0, 1], DblTol);
+  AssertEquals('r[2]', -1.3, R[0, 2], DblTol);
+  AssertEquals('r[3]', 0.6, R[0, 3], DblTol);
+  Sum := 0;
+  for i := 0 to 3 do Sum := Sum + R[0, i];
+  AssertEquals('sum', 0.0, Sum, DblTol);
+  AssertTrue('Residuals method agrees', R = P.Residuals(X, Y));
+end;
+
+procedure TPolynomialTests.TestFitWeightedResidualsAreRaw;
+var X, Y, W, R: TVMobj; P: TPolynomial;
+begin
+  // zero weight on (2,2): the fit is the 9/7 + 9/7 x line through the
+  // other three, and the dropped point's residual is 2 - 27/7 = -13/7,
+  // reported unscaled rather than multiplied by its zero weight
+  X := TVMobj.Create(1, 4, [0, 1, 2, 3]);
+  Y := TVMobj.Create(1, 4, [1, 3, 2, 5]);
+  W := TVMobj.Create(4, 1, [1, 1, 0, 1]);
+  P := TPolynomial.Fit(X, Y, W, 1, R);
+  AssertEquals('slope', 9/7, P[1], DblTol);
+  AssertEquals('dropped point residual', -13/7, R[0, 2], DblTol);
+  AssertEquals('r[0]', 1 - 9/7, R[0, 0], DblTol);
 end;
 
 procedure TPolynomialTests.TestEvaluateOnVectorMatchesScalar;

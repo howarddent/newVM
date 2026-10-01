@@ -138,6 +138,24 @@ Type
       const X, Y, W: TVMobj;
       Degree: Integer): TPolynomial; overload; static;
 
+    { The same two fits, also returning the residuals Y[i] - P(X[i]) in
+      Y's shape - raw, not weight-scaled, in the weighted form }
+
+    class function Fit(
+      const X, Y: TVMobj;
+      Degree: Integer;
+      out Residuals: TVMobj): TPolynomial; overload; static;
+
+    class function Fit(
+      const X, Y, W: TVMobj;
+      Degree: Integer;
+      out Residuals: TVMobj): TPolynomial; overload; static;
+
+    { residuals of this polynomial against data - what the two above return }
+
+    function Residuals(
+      const X, Y: TVMobj): TVMobj;
+
 
     { Basic properties }
 
@@ -1316,6 +1334,15 @@ end;
   an ordinary one; on the normal-equations path every power sum and
   right-hand-side term carries the factor W[i], exactly as WPolFit does.
 
+  Two further overloads, Fit(X, Y, Degree, out Residuals) and
+  Fit(X, Y, W, Degree, out Residuals), return the same polynomial and
+  additionally the residuals Y[i] - P(X[i]) as a TVMobj in Y's shape -
+  the plain differences, not scaled by any weight, so a point given
+  weight 0 still shows how far it lies from the fitted curve. They
+  simply call the corresponding fit and then Residuals(X, Y), a public
+  method usable on any polynomial; for a least-squares fit with an
+  intercept the unweighted residuals sum to zero, which the tests use.
+
   Library-backed (HAVE_LAPACKE): LAPACKE_dgels on the N x (d+1) Vandermonde
   design matrix [1, x, x^2, ..., x^d] - a QR factorisation of the design
   matrix itself, which is far better conditioned than forming the normal
@@ -1511,6 +1538,51 @@ begin
         'TPolynomial.Fit: weight %d is negative.', [I]);
 
   Result := FitImpl(X, Y, W, True, Degree);
+end;
+
+
+function TPolynomial.Residuals(
+  const X, Y: TVMobj): TVMobj;
+var
+  I, N: Integer;
+  E: TVMobj;
+  YP, EP, RP: PDouble;
+begin
+  N := Y.Rows * Y.Cols;
+
+  if X.Rows * X.Cols <> N then
+    raise EArgumentException.Create(
+      'TPolynomial.Residuals: X and Y must have the same number of points.');
+
+  E := Evaluate(X);   { X's shape; Y's may differ, so index both flat }
+  Result := TVMobj.Create(Y.Rows, Y.Cols);
+
+  YP := Y.DataPtr;
+  EP := E.DataPtr;
+  RP := Result.DataPtr;
+
+  for I := 0 to N - 1 do
+    RP[I] := YP[I] - EP[I];
+end;
+
+
+class function TPolynomial.Fit(
+  const X, Y: TVMobj;
+  Degree: Integer;
+  out Residuals: TVMobj): TPolynomial;
+begin
+  Result := Fit(X, Y, Degree);
+  Residuals := Result.Residuals(X, Y);
+end;
+
+
+class function TPolynomial.Fit(
+  const X, Y, W: TVMobj;
+  Degree: Integer;
+  out Residuals: TVMobj): TPolynomial;
+begin
+  Result := Fit(X, Y, W, Degree);
+  Residuals := Result.Residuals(X, Y);
 end;
 
 
