@@ -1,0 +1,104 @@
+object fmMain: TfmMain
+  Left = 200
+  Height = 760
+  Top = 120
+  Width = 1200
+  Caption = 'Jet Ventilation Calculator (newVM) - Dr H Dent'
+  ClientHeight = 760
+  ClientWidth = 1200
+  Position = poScreenCenter
+  LCLVersion = '4.99.0.0'
+  OnCreate = FormCreate
+  OnDestroy = FormDestroy
+  object pnlRight: TPanel
+    Left = 900
+    Height = 760
+    Top = 0
+    Width = 300
+    Align = alRight
+    BevelOuter = bvNone
+    ClientHeight = 760
+    ClientWidth = 300
+    TabOrder = 0
+    object cgCalculated: TCheckGroup
+      Left = 8
+      Height = 150
+      Top = 8
+      Width = 136
+      AutoFill = True
+      Caption = 'Calculated'
+      ClientHeight = 130
+      ClientWidth = 132
+      Columns = 1
+      Items.Strings = (
+        'Lindholm'
+        'Cook'
+        'Biro'
+        '14G Venflon'
+        '16G Venflon'
+        '18G Venflon'
+      )
+      TabOrder = 0
+      OnItemClick = cgCalculatedItemClick
+    end
+    object cgMeasured: TCheckGroup
+      Left = 156
+      Height = 150
+      Top = 8
+      Width = 136
+      AutoFill = True
+      Caption = 'Measured'
+      ClientHeight = 130
+      ClientWidth = 132
+      Columns = 1
+      Items.Strings = (
+        'Lindholm'
+        'Cook'
+        'Biro'
+        '14G Venflon'
+        '16G Venflon'
+        '18G Venflon'
+      )
+      TabOrder = 1
+      OnItemClick = cgMeasuredItemClick
+    end
+    object rgPlotOption: TRadioGroup
+      Left = 8
+      Height = 230
+      Top = 168
+      Width = 284
+      AutoFill = True
+      Caption = 'Plot'
+      ClientHeight = 210
+      ClientWidth = 280
+      Columns = 1
+      ItemIndex = 0
+      Items.Strings = (
+        'Jet flow'
+        'Jet velocity Q/A (ambient density)'
+        'Total flow with entrainment'
+        'Entrainment ratio'
+        'Mach number at the exit (corrected)'
+        'Stall pressure into 22 mm'
+        'Stall pressure into 15 mm'
+        'Mass flow'
+        'True exit velocity (exit density)'
+      )
+      TabOrder = 2
+      OnSelectionChanged = rgPlotOptionSelectionChanged
+    end
+    object memo: TMemo
+      Left = 8
+      Height = 346
+      Top = 406
+      Width = 284
+      Anchors = [akTop, akLeft, akRight, akBottom]
+      Font.Name = 'Consolas'
+      ParentFont = False
+      ReadOnly = True
+      ScrollBars = ssAutoBoth
+      TabOrder = 3
+      WordWrap = False
+    end
+  end
+end

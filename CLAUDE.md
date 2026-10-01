@@ -1861,6 +1861,56 @@ packages. Compiled binaries and each demo's own `lib/` output are
   `TChart`/`TLineSeries`, computed with `TVMobj.linspace` plus the
   elementwise `Exp`/`Sin`/`Sqr`/`*` functions from `newVM.pas`. Default
   function is `y = exp(-0.1*x^2) * sin(3*x)`, 1000 points over `[-10,10]`.
+- **`JetVent`** — jet-ventilation cannula calculator, the Lazarus port of
+  a Delphi/MtxVec/TeeChart project (`prjJetVent.dpr`, `uJetCalc.pas`,
+  `uMain.pas/.dfm`, kept in the same folder untouched for reference; the
+  port is `JetVent.lpi/.lpr`, `uJetCalcVM.pas`, `uJetMain.pas/.lfm`).
+  Six cannulae (Lindholm, Cook, Biro, 14/16/18G Venflon) with bench
+  measurements at seven driving pressures (0.5-3.5 bar gauge) - jet flow,
+  entrained flow, stall pressures into 15 and 22 mm - against a
+  Darcy-Weisbach/Crane 3-20 flow estimate. Two `TCheckGroup`s pick which
+  cannulae to show calculated and/or measured, a radio group picks the
+  variable, and a `TVMPlot2D` redraws on every change (no Plot button
+  now), coloured by cannula and styled by kind (calculated solid, measured
+  dashed with circle markers); a memo lists Reynolds numbers and, for the
+  Mach/exit-velocity plots, the exit state at 3.5 bar. Four things worth
+  knowing:
+  - **MtxVec -> newVM/newPolymath**: measured vectors are `TVMobj` row
+    vectors; MtxVec's `PolyFit`/`PolyEval` cubic over the Crane A-22
+    tables (critical pressure ratio and expansion factor `Y` against `K`,
+    gamma 1.4) is `TPolynomial.Fit(..., 3)`/`Evaluate`, fitted once
+    lazily rather than per call. Same cubic on `K` directly as the
+    original, deliberately - a fit on `ln K` would interpolate the
+    1.2..100 table far better but would change the calculated flows.
+  - **The Mach number is corrected.** The original used `(Q/A)/342`:
+    ambient-density velocity over a fixed speed of sound (roughly air at
+    room temperature; oxygen at 293 K is ~326 m/s, at a choked exit
+    ~298 m/s). `TCatheter.ExitState` works from the mass flow
+    `rho_amb*Q` and the exit conditions in oxygen: unchoked, continuity
+    `V = G R T_e/p_amb` with energy `T_e = T0 - V^2/(2 cp)` is a quadratic
+    in `V` solved in closed form, then `M = V/sqrt(gamma R T_e)`; if that
+    reaches 1 the exit is sonic (a constant-bore cannula cannot exceed
+    M = 1 at its exit), so `M = 1`, `T_e` from NACA 1135 `Eq43`, and the
+    exit density/pressure follow from `G/V` - the under-expanded jet. A
+    probe over the measured flows showed the old Mach running to 2.0 for
+    the 18G at 3.5 bar while the corrected one saturates at 1 with exit
+    pressure 1.9 atm; below choking the two agree within a few percent,
+    the colder exit roughly cancelling the density change. A new "true
+    exit velocity" option plots `V_e` against the old `Q/A`.
+  - **Two original quirks fixed rather than ported**: the "mass flow"
+    option computed `DP - 0.5 rho V^2/1 bar`, not a mass flow, and now is
+    `rho_amb*Q` in g/s as its label said; and "calculated" entrainment
+    plotted the measured jet flow (ratio: zero) - entrainment has no
+    model, so those two options draw measured series only and say so.
+    The TeeChart SVG export and cursor tool are dropped.
+  - **FPC gotchas**: `naca1135.pas` (Carmichael's public-domain NACA 1135
+    unit, used for `Eq43`) had an unterminated `(*` comment that Delphi
+    tolerates but FPC, which nests `(* *)`, reads as swallowing the
+    interface - closed, and noted in its revision history. `rayfanno.pas`
+    is left in the folder but out of the project: it uses `result :=` in
+    default FPC mode and `Dialogs`, and nothing here needs it.
+    `VMPlotMaxSeries` had to rise from 10 to 16 for the 12 possible
+    series (see `Graphs/uVMPlot2D.pas` above).
 - **`newPoly`** — least-squares polynomial fitting with
   `newPolymath.pas`'s `TPolynomial.Fit` (see its own section above),
   shown on two `TVMPlot2D` components stacked in one form, the fit above
@@ -1970,7 +2020,10 @@ OpenGL in Lazarus, requiring no GLScene dependency at all. Leave
 ### `Graphs/uVMPlot2D.pas` (`TVMPlot2D` component)
 
 A reusable `TOpenGLControl`-descended LCL component - not tied to the
-`Plot2D` demo - that plots up to `VMPlotMaxSeries` (10) series, each its
+`Plot2D` demo - that plots up to `VMPlotMaxSeries` (16 - raised from 10 for `demos/JetVent`, whose six
+cannulae x calculated/measured make 12; the ten-colour default palette
+wraps with `i mod 10` for slots 10..15, so a caller with that many
+series should style them explicitly, as JetVent does) series, each its
 own `x`/`y` pair, generalising what used to be `Plot2D`'s single-series,
 hand-rolled-per-form OpenGL code (see git history of `uplot2dmain.pas`
 for the original version this was lifted from) into something any form

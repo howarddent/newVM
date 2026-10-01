@@ -32,7 +32,7 @@ unit uVMPlot2D;
        Plot.PlotXY(0.2, 0.55, 3);
 
      SetData takes a single TVMobj for X and an open array of up to
-     VMPlotMaxSeries (10) TVMobj vectors for Y - each must be the same
+     VMPlotMaxSeries (16) TVMobj vectors for Y - each must be the same
      length as X (row or column shaped, either is accepted, matching
      newVM's (1,N)/(N,1) vector convention) - all sharing that one X for
      this call. PlotXY(X, Y, PlotLine) is the incremental alternative:
@@ -84,7 +84,7 @@ uses
   newVM;
 
 const
-  VMPlotMaxSeries = 10;
+  VMPlotMaxSeries = 16;   // was 10; raised for demos/JetVent's six catheters x calculated/measured
 
 type
   // plsNone suppresses the connecting line entirely (appended, not
@@ -259,6 +259,11 @@ const
   s = 'TVMPlot2D : ';
 
   // A 10-colour, mutually-distinguishable default palette (the classic
+  // "tab10" set), applied with wrap-around (i mod 10) now that
+  // VMPlotMaxSeries exceeds 10 - slots 10..15 repeat the first six colours;
+  // callers with that many series should style them explicitly, as
+  // demos/JetVent does.
+  // Original comment follows: a 10-colour palette (the classic
   // "tab10" categorical set) applied to the Series collection's slots at
   // construction, so multiple series are readable out of the box even if
   // the caller never touches SetSeriesStyle/the Series property.
@@ -436,7 +441,7 @@ begin
   FSeriesStyles := TVMPlotSeriesStyles.Create(Self);
   for i := 0 to VMPlotMaxSeries - 1 do begin
     Item := TVMPlotSeriesStyle(FSeriesStyles.Add);
-    Item.LineColor := RGBToColor(DefaultPaletteR[i], DefaultPaletteG[i], DefaultPaletteB[i]);
+    Item.LineColor := RGBToColor(DefaultPaletteR[i mod 10], DefaultPaletteG[i mod 10], DefaultPaletteB[i mod 10]);
   end;
   FSeriesCount := 0;
   FHasData := False;
