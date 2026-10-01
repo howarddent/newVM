@@ -1003,6 +1003,23 @@ matrix raises `EMathError`.
   MKL the fallback already gets a real LU via `LinearSolve`, and the
   normal equations are adequate at the modest degrees a fit to `N`
   points sensibly uses.
+- **Weighted overload `Fit(X, Y, W, Degree)`** minimises
+  `sum W[i]*(P(X[i])-Y[i])^2`. `W` is a vector of plain non-negative
+  weights, one per point (either vector shape, like `X`/`Y`); a zero
+  weight drops its point, a negative one raises `EArgumentException`.
+  This is weights, **not** the standard deviations LMath's `WPolFit`
+  takes (it forms `w = 1/S^2` itself). Both overloads call one private
+  `FitImpl` taking `W` plus a `Weighted` flag, so the two backends
+  aren't duplicated. (Not a `PDouble`-or-nil parameter, which was the
+  first attempt: `PDouble` names System's type in the interface but
+  cblas's own `Pdouble` alias in the implementation, where the LAPACKE
+  units are `uses`d, and FPC rejects the method header as not matching
+  any declaration - a trap for any record method here whose signature
+  mentions `PDouble`.) On the `dgels` path row `i` of the
+  design matrix and of `Y` are scaled by `sqrt(W[i])`, turning the
+  weighted problem into an ordinary one; on the normal-equations path
+  every power sum and right-hand-side term carries `W[i]`, exactly as
+  `WPolFit` does.
 - **`Evaluate(const X: TVMobj): TVMobj`** is the vector form of the
   scalar `Evaluate(X: Double)` (both marked `overload`): Horner's method
   on every element of `X`, returning a `TVMobj` of the same shape - any
@@ -1023,8 +1040,11 @@ matrix raises `EMathError`.
   interpolates all 4 points, a degree-1 line checked against the
   closed-form slope/intercept (`Sxy/Sxx`), degree 0 as the mean, the
   same quadratic from column vectors, inputs left untouched, the
-  four argument-error paths, and the `TVMobj` `Evaluate` overload (agrees
-  with the scalar one elementwise, keeps a 2x3 shape, zero polynomial). Verified both ways: 315/315 with
+  four argument-error paths, the weighted overload (a common weight
+  reproduces the unweighted fit, a zero weight drops a point to a
+  closed-form 9/7 line, degree 0 is the weighted mean, negative/miscounted
+  weights raise), and the `TVMobj` `Evaluate` overload (agrees
+  with the scalar one elementwise, keeps a 2x3 shape, zero polynomial). Verified both ways: 321/321 with
   `HAVE_LAPACKE` on, and again with it forced off in `newVMConfig.inc`
   so `Fit` ran the LMath-derived normal-equations path through
   `PurePascalLU`. One gotcha for repeating that: force `HAVE_LAPACKE`

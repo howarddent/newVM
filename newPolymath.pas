@@ -101,6 +101,17 @@ Type
 
     function GetEnumerator: TPolynomialEnumerator;
 
+    { shared body of the two Fit overloads - W is read only if Weighted.
+      (A TVMobj plus a flag rather than a PDouble-or-nil: PDouble names
+      System's type in this interface but cblas's own alias in the
+      implementation, and FPC then rejects the method header as a
+      mismatch.) }
+
+    class function FitImpl(
+      const X, Y, W: TVMobj;
+      Weighted: Boolean;
+      Degree: Integer): TPolynomial; static;
+
 
   public
 
@@ -114,11 +125,18 @@ Type
     class function One: TPolynomial; static;
 
 
-    { Least-squares fit - see the implementation for the two backends }
+    { Least-squares fit - see the implementation for the two backends.
+      The second form is weighted: minimises sum W[i]*(P(X[i])-Y[i])^2,
+      W being plain non-negative weights (a zero excludes its point),
+      not the standard deviations LMath's WPolFit takes. }
 
     class function Fit(
       const X, Y: TVMobj;
-      Degree: Integer): TPolynomial; static;
+      Degree: Integer): TPolynomial; overload; static;
+
+    class function Fit(
+      const X, Y, W: TVMobj;
+      Degree: Integer): TPolynomial; overload; static;
 
 
     { Basic properties }
@@ -1287,6 +1305,17 @@ end;
   Degree = N-1 the fit is exact interpolation through every point (for
   distinct X). Degree 0 is the mean of Y. Neither input is modified.
 
+  The weighted overload Fit(X, Y, W, Degree) minimises the sum of
+  W[i]*(P(X[i]) - Y[i])^2 instead - W a vector of plain non-negative
+  weights, same length as X (a zero weight simply drops its point; a
+  negative one is rejected). Note LMath's WPolFit takes standard
+  deviations S and forms w = 1/S^2 itself; here the caller passes w.
+  Both overloads share FitImpl, which takes W plus a Weighted flag (and
+  reads W only when it is set): on the dgels path row i of the design matrix and
+  of Y are scaled by sqrt(W[i]), which turns the weighted problem into
+  an ordinary one; on the normal-equations path every power sum and
+  right-hand-side term carries the factor W[i], exactly as WPolFit does.
+
   Library-backed (HAVE_LAPACKE): LAPACKE_dgels on the N x (d+1) Vandermonde
   design matrix [1, x, x^2, ..., x^d] - a QR factorisation of the design
   matrix itself, which is far better conditioned than forming the normal
@@ -1312,13 +1341,14 @@ end;
   a negligible leading coefficient.
 ******************************************************************************}
 
-class function TPolynomial.Fit(
-  const X, Y: TVMobj;
+class function TPolynomial.FitImpl(
+  const X, Y, W: TVMobj;
+  Weighted: Boolean;
   Degree: Integer): TPolynomial;
 var
   N, M, I, J, Info: Integer;
-  XP, YP: PDouble;
-  XI: Double;
+  XP, YP, WP: PDouble;
+  XI, Wt: Double;
   Coef: TArray<Double>;
 {$IFDEF HAVE_LAPACKE}
   A: TArray<Double>;
@@ -1350,6 +1380,11 @@ begin
   XP := X.DataPtr;
   YP := Y.DataPtr;
 
+  if Weighted then
+    WP := W.DataPtr
+  else
+    WP := nil;
+
 {$IFDEF HAVE_LAPACKE}
 
   { Row-major N x M Vandermonde matrix: row i is 1, x_i, x_i^2, ..., x_i^d.
@@ -1361,7 +1396,12 @@ begin
 
   for I := 0 to N - 1 do
   begin
-    XI := 1.0;
+    if WP = nil then
+      Wt := 1.0
+    else
+      Wt := Sqrt(WP[I]);   { sqrt(w) on both sides: the weighted problem as an ordinary one }
+
+    XI := Wt;
 
     for J := 0 to M - 1 do
     begin
@@ -1369,7 +1409,7 @@ begin
       XI := XI * XP[I];
     end;
 
-    Coef[I] := YP[I];
+    Coef[I] := YP[I] * Wt;
   end;
 
   Info := lapacke_dgels(CBlasRowMajor, 'N', N, M, 1, @A[0], M, @Coef[0], 1);
@@ -1392,8 +1432,13 @@ begin
 
   for K := 0 to N - 1 do
   begin
-    { first row of V: x^0 .. x^d; right-hand side: x^i * y }
-    XI := 1.0;
+    if WP = nil then
+      Wt := 1.0
+    else
+      Wt := WP[K];
+
+    { first row of V: w*x^0 .. w*x^d; right-hand side: w*x^i * y }
+    XI := Wt;
 
     for I := 0 to M - 1 do
     begin
@@ -1402,7 +1447,7 @@ begin
       XI := XI * XP[K];
     end;
 
-    { last column of V: x^(d+1) .. x^(2d) - XI is x^(d+1) here }
+    { last column of V: w*x^(d+1) .. w*x^(2d) - XI is w*x^(d+1) here }
     for I := 1 to M - 1 do
     begin
       V[I, M - 1] := V[I, M - 1] + XI;
@@ -1430,6 +1475,42 @@ begin
 {$ENDIF}
 
   Result := TPolynomial.Create(Coef);
+end;
+
+
+class function TPolynomial.Fit(
+  const X, Y: TVMobj;
+  Degree: Integer): TPolynomial;
+begin
+  Result := FitImpl(X, Y, X, False, Degree);   { W unused }
+end;
+
+
+class function TPolynomial.Fit(
+  const X, Y, W: TVMobj;
+  Degree: Integer): TPolynomial;
+var
+  I, N: Integer;
+  WP: PDouble;
+begin
+  if (W.Rows <> 1) and (W.Cols <> 1) then
+    raise EArgumentException.Create(
+      'TPolynomial.Fit: W must be a vector (one row or one column).');
+
+  N := W.Rows * W.Cols;
+
+  if X.Rows * X.Cols <> N then
+    raise EArgumentException.Create(
+      'TPolynomial.Fit: W must have one weight per point.');
+
+  WP := W.DataPtr;
+
+  for I := 0 to N - 1 do
+    if WP[I] < 0 then
+      raise EArgumentException.CreateFmt(
+        'TPolynomial.Fit: weight %d is negative.', [I]);
+
+  Result := FitImpl(X, Y, W, True, Degree);
 end;
 
 

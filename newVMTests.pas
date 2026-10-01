@@ -604,6 +604,8 @@ type
     procedure Raise_FitDegreeNegative;
     procedure Raise_FitLengthMismatch;
     procedure Raise_FitNonVector;
+    procedure Raise_FitWeightNegative;
+    procedure Raise_FitWeightLengthMismatch;
   published
     procedure TestArithmeticAndEvaluate;
     procedure TestDivideByRecoversQuotientAndRemainder;
@@ -614,6 +616,10 @@ type
     procedure TestFitAcceptsColumnVectors;
     procedure TestFitLeavesInputsUntouched;
     procedure TestFitBadArgumentsRaise;
+    procedure TestFitWeightedEqualWeightsMatchUnweighted;
+    procedure TestFitWeightedZeroWeightDropsPoint;
+    procedure TestFitWeightedMeanKnownValue;
+    procedure TestFitWeightedBadArgumentsRaise;
     procedure TestEvaluateOnVectorMatchesScalar;
     procedure TestEvaluateOnMatrixKeepsShape;
   end;
@@ -5063,6 +5069,63 @@ begin
   end;
   AssertEquals('Y[0]', 17.0, Y[0, 0], DblTol);
   AssertEquals('Y[4]', 9.0, Y[0, 4], DblTol);
+end;
+
+procedure TPolynomialTests.TestFitWeightedEqualWeightsMatchUnweighted;
+var X, Y, W: TVMobj; P, Q: TPolynomial;
+begin
+  X := TVMobj.Create(1, 4, [0, 1, 2, 3]);
+  Y := TVMobj.Create(1, 4, [1, 3, 2, 5]);
+  W := TVMobj.Create(4, 1, [2, 2, 2, 2]);   // a common weight changes nothing
+  P := TPolynomial.Fit(X, Y, W, 1);
+  Q := TPolynomial.Fit(X, Y, 1);
+  AssertEquals('intercept', Q[0], P[0], DblTol);
+  AssertEquals('slope', Q[1], P[1], DblTol);
+  AssertEquals('slope known', 1.1, P[1], DblTol);
+end;
+
+procedure TPolynomialTests.TestFitWeightedZeroWeightDropsPoint;
+var X, Y, W: TVMobj; P: TPolynomial;
+begin
+  // weight 0 on (2,2) leaves (0,1),(1,3),(3,5): xbar=4/3, ybar=3,
+  // Sxy=6, Sxx=14/3, so slope = 9/7 and intercept = 3 - (9/7)(4/3) = 9/7
+  X := TVMobj.Create(1, 4, [0, 1, 2, 3]);
+  Y := TVMobj.Create(1, 4, [1, 3, 2, 5]);
+  W := TVMobj.Create(4, 1, [1, 1, 0, 1]);
+  P := TPolynomial.Fit(X, Y, W, 1);
+  AssertEquals('intercept', 9/7, P[0], DblTol);
+  AssertEquals('slope', 9/7, P[1], DblTol);
+end;
+
+procedure TPolynomialTests.TestFitWeightedMeanKnownValue;
+var X, Y, W: TVMobj; P: TPolynomial;
+begin
+  // degree 0 is the weighted mean: (1+3+2+5*5)/8 = 31/8
+  X := TVMobj.Create(1, 4, [0, 1, 2, 3]);
+  Y := TVMobj.Create(1, 4, [1, 3, 2, 5]);
+  W := TVMobj.Create(1, 4, [1, 1, 1, 5]);   // a row of weights works too
+  P := TPolynomial.Fit(X, Y, W, 0);
+  AssertEquals('Degree', 0, P.Degree);
+  AssertEquals('weighted mean', 3.875, P[0], DblTol);
+  AssertEquals('W untouched', 5.0, W[0, 3], DblTol);
+end;
+
+procedure TPolynomialTests.Raise_FitWeightNegative;
+begin
+  TPolynomial.Fit(TVMobj.Create(1, 4, [0, 1, 2, 3]), TVMobj.Create(1, 4, [1, 3, 2, 5]),
+                  TVMobj.Create(4, 1, [1, -1, 1, 1]), 1);
+end;
+
+procedure TPolynomialTests.Raise_FitWeightLengthMismatch;
+begin
+  TPolynomial.Fit(TVMobj.Create(1, 4, [0, 1, 2, 3]), TVMobj.Create(1, 4, [1, 3, 2, 5]),
+                  TVMobj.Create(3, 1, [1, 1, 1]), 1);
+end;
+
+procedure TPolynomialTests.TestFitWeightedBadArgumentsRaise;
+begin
+  AssertException('negative weight', EArgumentException, @Raise_FitWeightNegative);
+  AssertException('weight count', EArgumentException, @Raise_FitWeightLengthMismatch);
 end;
 
 procedure TPolynomialTests.TestEvaluateOnVectorMatchesScalar;
