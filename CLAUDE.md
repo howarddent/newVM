@@ -9,10 +9,11 @@ wrap Intel MKL (BLAS/LAPACK/VSL) and Intel IPP for linear algebra. It is
 explicitly inspired by the Dew MtxVec library for FPC, but — unlike Dew —
 does not distinguish matrix and vector types: a vector is just an (N,1) or
 (1,N) matrix. There are four parallel "flavors" of the same object model for
-real/complex × double/single precision (see Architecture below), plus four
+real/complex × double/single precision (see Architecture below), plus five
 further non-duplicated companion units: `newVMI.pas`, providing an integer
 array/matrix type for index operations (pivot vectors, index lists) on the
-other four; `newVMsparse.pas`, providing a sparse double-real matrix type
+other four; `newPolymath.pas`, a polynomial type with a least-squares
+`Fit` over `TVMobj` vectors; `newVMsparse.pas`, providing a sparse double-real matrix type
 with MKL's PARDISO and RCI FGMRES solvers over it; and two GPU-resident
 single-precision types, `newVMCL.pas` (OpenCL + clFFT) and `newVMMetal.pas`
 (Metal + MetalPerformanceShadersGraph). The last three are each gated on a
@@ -926,6 +927,104 @@ compaction primitive exists either). It lives here rather than in the
 real units since it operates purely on `TVMobjI`. Asserts if A has no
 non-zero elements, since `TVMobjI.Create` disallows a zero-length result
 — there is no "empty index list" representation in this type.
+
+### `newPolymath.pas` (`TPolynomial`, and least-squares fitting over `TVMobj`)
+
+`newPolymath.pas` is a polynomial type - `TPolynomial`, a record holding
+`P(x) = a0 + a1*x + ... + an*x^n` as a dynamic array of `Double`
+coefficients, `FCoeff[i] = ai`, with arithmetic/calculus/division
+operators and methods on it (see its own header comment). It was written
+as a Delphi unit ("Modern Delphi Polynomial Mathematics Library") and
+brought into this repo to gain one thing from newVM: a least-squares fit
+to data held in a `TVMobj` vector. Two consequences of that origin are
+worth knowing before touching it:
+
+- **It is `{$mode delphi}` but was never compiled by FPC before `Fit`
+  was added**, and three things had to change to get it through:
+  `System.SysUtils`/`System.Math`/`System.Generics.Collections` become
+  the plain FPC unit names (FPC has no default unit-scope mapping
+  without `-FN`); the record helper's `DivideBy` has to be called as
+  `Self.DivideBy` from inside the record's own `Modulus` method (FPC
+  doesn't search helpers for a bare identifier there); and the unit is
+  named `newPolymath` to match its filename, as every other unit here
+  does, so a case-sensitive filesystem can find it.
+- **FPC does not hand a record-returning function a fresh, zeroed
+  `Result`.** `Result` is the caller's destination variable (or a reused
+  temporary) by hidden reference, so `SetLength(Result.FCoeff, N)` keeps
+  whatever coefficients were already there. Every routine that
+  accumulated into, or only partly filled, its result (`Add`,
+  `Subtract`, `Multiply`, `Shift`, `Reverse`) silently relied on zeros
+  and had to be changed to build into a local array and assign it to
+  `Result.FCoeff` at the end - which as a side effect makes `P := P * Q`
+  safe when `Result` aliases an operand. Found, not reasoned out: a
+  probe program showed `P*Q` with stale low-order terms and `DivideBy`
+  looping forever on a `Shift` result with garbage in it, and the FPCUnit
+  runner hung in the first `DivideBy` test. The remaining "function
+  result variable of a managed type does not seem to be initialized"
+  warnings on `Zero`/`One`/`Negative`/scalar `Multiply`/`Integral` are
+  benign - those assign every element after `SetLength`, in place, with
+  the same index on both sides.
+
+**`TPolynomial.Fit(const X, Y: TVMobj; Degree: Integer): TPolynomial`**
+(a static class function, alongside `Zero`/`One`) fits a polynomial of
+the given degree to the `N` points `(X[i], Y[i])` in the least-squares
+sense. `X` and `Y` are vectors - row `(1,N)` or column `(N,1)`, same
+vector-only convention as `DCT1`/`Norm` - of equal length, and
+`0 <= Degree <= N-1`: at `N-1` the fit is exact interpolation (for
+distinct `X`), at 0 it is the mean of `Y`. Neither input is modified.
+Argument errors raise `EArgumentException`/`EArgumentOutOfRangeException`
+rather than `assert`, following this unit's own exception-based
+convention rather than newVM's assert one; a rank-deficient design
+matrix raises `EMathError`.
+
+- **Library-backed (`HAVE_LAPACKE`)**: `LAPACKE_dgels` on the
+  `N x (Degree+1)` row-major Vandermonde matrix `[1, x, x^2, ..., x^d]` -
+  a QR factorisation of the design matrix itself, far better conditioned
+  than the normal equations (condition number of `V` rather than
+  `V'V`). `dgels` wants the right-hand side sized `max(N, d+1) = N` and
+  overwrites both array arguments, so `Fit` works on copies (checked by
+  `TestFitLeavesInputsUntouched`); the solution comes back in the first
+  `d+1` entries. `lapacke_dgels` is a new binding, added to all five
+  places in `OneAPI.pas` (Unix MKL `external`, the Unix-no-MKL/ArmPL
+  type+var+loader, the Windows type+var+loader) - the "22 LAPACKE_*
+  entry points" the ArmPL comments count is now 23. Gated on
+  `HAVE_LAPACKE` (not `PUREPASCAL`) because it needs real LAPACK and
+  nothing else, same as `LinearSolve`/`Invert`/`Det`.
+- **Fallback (no `HAVE_LAPACKE`)**: the normal equations, ported from
+  LMath's `PolFit` (`LMath/uRegression/upolfit.pas`): the
+  `(d+1)x(d+1)` matrix of power sums `V[i,j] = sum x^(i+j)` is Hankel,
+  so only its first row (`x^0..x^d`) and last column (`x^(d+1)..x^(2d)`)
+  are accumulated and the rest copied along the anti-diagonals, exactly
+  as LMath does, with `B[i] = sum x^i*y` on the right. Solved with
+  newVM's own `LinearSolve` in place of LMath's `LinEq`, so it routes to
+  whichever LU this machine has (Accelerate's `dgetrf_`, or
+  `PurePascalLU`) and the unit carries no linear algebra of its own.
+  There is deliberately no Accelerate `dgels_` branch: on a Mac without
+  MKL the fallback already gets a real LU via `LinearSolve`, and the
+  normal equations are adequate at the modest degrees a fit to `N`
+  points sensibly uses.
+- `Fit` returns through `TPolynomial.Create`, so trailing coefficients
+  within `DefaultTolerance` (1e-12) of zero are trimmed like any other
+  polynomial here - a fit that comes back of lower degree than asked
+  for simply had a negligible leading coefficient.
+- **Tests**: `TPolynomialTests` in `newVMTests.pas` - a few checks of
+  the pre-existing arithmetic (`+`, `*`, `Evaluate`, `Derivative`,
+  `DivideBy`/`Modulus`, since none of it had run under FPC before),
+  then `Fit` against known values rather than hard-coded solver output:
+  an exact quadratic recovered from 5 points, a degree-`N-1` cubic that
+  interpolates all 4 points, a degree-1 line checked against the
+  closed-form slope/intercept (`Sxy/Sxx`), degree 0 as the mean, the
+  same quadratic from column vectors, inputs left untouched, and the
+  four argument-error paths. Verified both ways: 315/315 with
+  `HAVE_LAPACKE` on, and again with it forced off in `newVMConfig.inc`
+  so `Fit` ran the LMath-derived normal-equations path through
+  `PurePascalLU`. One gotcha for repeating that: force `HAVE_LAPACKE`
+  off **and** `PUREPASCAL` on together. `PurePascalLU`/`PurePascalLUSolve`
+  are only compiled under `PUREPASCAL`, but `LinearSolve`/`Invert`/`Det`
+  call them under `{$IFNDEF HAVE_LAPACKE}` (minus the Accelerate case),
+  so "no LAPACKE, not PUREPASCAL" fails to compile with "Identifier not
+  found PurePascalLU". The configure tool can never emit that pair (no
+  MKL/ArmPL always sets `PUREPASCAL` too), so it only bites a hand edit.
 
 ### `newVMsparse.pas` (sparse double-real matrix and MKL sparse solvers)
 

@@ -347,6 +347,10 @@ function lapacke_dgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : I
 function lapacke_sgeev(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
                         wr ,wi : PSingle; vl : PSingle; ldvl :integer; vr : PSingle; ldvr : Integer):Integer;cdecl;external;
 
+{Least-squares solve of an over- or under-determined system via QR/LQ - for
+ newPolymath.pas's TPolynomial.Fit}
+function lapacke_dgels(matrix_layout: CBLAS_ORDER; trans: UTF8Char; m: Integer; n: Integer; nrhs: Integer; a: PDouble; lda: Integer; b: PDouble; ldb: Integer): Integer; cdecl; external;
+
 { Sparse direct solver (PARDISO) and RCI iterative sparse solver (FGMRES) -
   MKL-exclusive, no ArmPL/OpenBLAS/Accelerate equivalent, so these are only
   ever declared in the HAVE_MKL branch - newVMsparse.pas (the one caller)
@@ -420,7 +424,7 @@ function mkl_sparse_optimize(A: Pointer): Integer; cdecl; external;
 procedure MKL_Set_Num_Threads(nt: Integer); cdecl; external;
 function MKL_Get_Max_Threads: Integer; cdecl; external;
   {$ELSE}
-  { No MKL on this Unix machine - these 22 LAPACKE_* entry points (exactly
+  { No MKL on this Unix machine - these 23 LAPACKE_* entry points (exactly
     the set newVM.pas/newVMSingle.pas/newVMComplex.pas/newVMComplexSingle.pas
     actually call - lapacke_?lacpy above is declared but genuinely unused,
     see CopyObj/SubMatrix's own comments for why they moved to cblas_?copy
@@ -458,6 +462,7 @@ function MKL_Get_Max_Threads: Integer; cdecl; external;
                           wr ,wi : PDouble; vl : PDouble; ldvl :integer; vr : PDouble; ldvr : Integer):Integer; cdecl;
     Tlapacke_sgeev  = function(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
                           wr ,wi : PSingle; vl : PSingle; ldvl :integer; vr : PSingle; ldvr : Integer):Integer; cdecl;
+    Tlapacke_dgels  = function(matrix_layout: CBLAS_ORDER; trans: UTF8Char; m: Integer; n: Integer; nrhs: Integer; a: PDouble; lda: Integer; b: PDouble; ldb: Integer): Integer; cdecl;
   var
     lapacke_dgetrf : Tlapacke_dgetrf;
     lapacke_dgesv  : Tlapacke_dgesv;
@@ -481,6 +486,7 @@ function MKL_Get_Max_Threads: Integer; cdecl; external;
     lapacke_cgetrs : Tlapacke_cgetrs;
     lapacke_dgeev  : Tlapacke_dgeev;
     lapacke_sgeev  : Tlapacke_sgeev;
+    lapacke_dgels  : Tlapacke_dgels;
 
   {$IFDEF HAVE_ARMPL}
   procedure LoadArmPLLAPACKEFunctions;
@@ -723,6 +729,7 @@ type
                         wr ,wi : PDouble; vl : PDouble; ldvl :integer; vr : PDouble; ldvr : Integer):Integer; cdecl;
   Tlapacke_sgeev  = function(matrix_layout : CBLAS_ORDER; jobvl,jobvr :UTF8Char; n : Integer; A : PSingle; lda : Integer;
                         wr ,wi : PSingle; vl : PSingle; ldvl :integer; vr : PSingle; ldvr : Integer):Integer; cdecl;
+  Tlapacke_dgels  = function(matrix_layout: CBLAS_ORDER; trans: UTF8Char; m: Integer; n: Integer; nrhs: Integer; a: PDouble; lda: Integer; b: PDouble; ldb: Integer): Integer; cdecl;
 
   { PARDISO / RCI FGMRES - see the matching Unix external declarations above
     for the full rationale (MKL-exclusive, LP64 Integer, caller-owned
@@ -835,6 +842,7 @@ var
   lapacke_cgetrs : Tlapacke_cgetrs;
   lapacke_dgeev  : Tlapacke_dgeev;
   lapacke_sgeev  : Tlapacke_sgeev;
+  lapacke_dgels  : Tlapacke_dgels;
 
   pardisoinit    : Tpardisoinit;
   pardiso        : Tpardiso;
@@ -953,7 +961,7 @@ implementation
 {$IFDEF UNIX}
 {$IFNDEF HAVE_MKL}
 {$IFDEF HAVE_ARMPL}
-// Runtime loader for the 22 LAPACKE_* entry points declared above (Unix,
+// Runtime loader for the 23 LAPACKE_* entry points declared above (Unix,
 // no MKL, ArmPL present) - mirrors GetMKLHandle/MKLProc/LoadMKLFunctions
 // below (Windows) exactly, just against a single fixed library name
 // instead of a versioned-DLL candidate list, and only for LAPACKE_* (not
@@ -1020,6 +1028,7 @@ begin
   pointer(lapacke_cgetrs) := ArmPLProc('LAPACKE_cgetrs');
   pointer(lapacke_dgeev)  := ArmPLProc('LAPACKE_dgeev');
   pointer(lapacke_sgeev)  := ArmPLProc('LAPACKE_sgeev');
+  pointer(lapacke_dgels)  := ArmPLProc('LAPACKE_dgels');
 end;
 {$ENDIF}
 {$ENDIF}
@@ -1140,6 +1149,7 @@ begin
   pointer(lapacke_cgetrs) := MKLProc('LAPACKE_cgetrs');
   pointer(lapacke_dgeev)  := MKLProc('LAPACKE_dgeev');
   pointer(lapacke_sgeev)  := MKLProc('LAPACKE_sgeev');
+  pointer(lapacke_dgels)  := MKLProc('LAPACKE_dgels');
 
   pointer(pardisoinit)   := MKLProc('pardisoinit');
   pointer(pardiso)       := MKLProc('pardiso');

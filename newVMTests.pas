@@ -25,6 +25,12 @@ unit newVMTests;
      MatMult/LinearSolve/Invert/operators/VML functions, since newVMI has no
      equivalents (BLAS/LAPACK/VML don't operate on plain integers).
 
+     TPolynomialTests (newPolymath.pas) covers TPolynomial.Fit - least-squares
+     polynomial fitting over TVMobj vectors via LAPACKE_dgels, or LMath's
+     normal equations through LinearSolve when HAVE_LAPACKE is off - against
+     known-value fits, plus a few checks of the unit's own arithmetic, which
+     had never run under FPC before (see newPolymath.pas's FPC NOTE).
+
      TVMobjCLTests (newVMCL.pas, GPU-resident single via OpenCL+clFFT) - a
      SIXTH TTestCase, deliberately not mentioned alongside the five above:
      it covers the same "core object shape" subset as TVMobjSTests
@@ -71,7 +77,7 @@ interface
 
 uses
   Classes, SysUtils, fpcunit, testregistry,
-  OneAPI, newVM, newVMSingle, newVMComplex, newVMComplexSingle, newVMI
+  OneAPI, newVM, newVMSingle, newVMComplex, newVMComplexSingle, newVMI, newPolymath
   {$IFDEF HAVE_OPENCL}, OpenCLAPI, newVMCL{$ENDIF}
   {$IFDEF HAVE_METAL}, MetalAPI, newVMMetal{$ENDIF}
   {$IFDEF HAVE_MKL}, newVMsparse{$ENDIF};
@@ -584,6 +590,31 @@ type
     procedure TestFGMRESSolveNoPreconditionerMatchesPardiso;
   end;
   {$ENDIF}
+
+  { TPolynomialTests - newPolymath.pas, TPolynomial.Fit over TVMobj vectors.
+    A few checks of the pre-existing polynomial arithmetic come first, since
+    this unit was written for Delphi and had never been compiled under FPC
+    before Fit was added; the Fit tests use known-value fits (an exact
+    quadratic, an interpolating cubic, a closed-form least-squares line, a
+    degree-0 mean) rather than hard-coding dgels's own output. }
+
+  TPolynomialTests = class(TTestCase)
+  private
+    procedure Raise_FitDegreeTooHigh;
+    procedure Raise_FitDegreeNegative;
+    procedure Raise_FitLengthMismatch;
+    procedure Raise_FitNonVector;
+  published
+    procedure TestArithmeticAndEvaluate;
+    procedure TestDivideByRecoversQuotientAndRemainder;
+    procedure TestFitRecoversExactQuadratic;
+    procedure TestFitDegreeNMinusOneInterpolates;
+    procedure TestFitLeastSquaresLineKnownValues;
+    procedure TestFitDegreeZeroIsMean;
+    procedure TestFitAcceptsColumnVectors;
+    procedure TestFitLeavesInputsUntouched;
+    procedure TestFitBadArgumentsRaise;
+  end;
 
 implementation
 
@@ -4921,12 +4952,152 @@ begin
 end;
 {$ENDIF}
 
+{ TPolynomialTests }
+
+procedure TPolynomialTests.TestArithmeticAndEvaluate;
+var P, Q, R: TPolynomial;
+begin
+  P := TPolynomial.Create([1, 2, 3]);   // 1 + 2x + 3x^2
+  Q := TPolynomial.Create([1, -1]);     // 1 - x
+  AssertEquals('P.Degree', 2, P.Degree);
+  AssertEquals('P(2)', 17.0, P.Evaluate(2.0), DblTol);
+  R := P + Q;                            // 2 + x + 3x^2
+  AssertEquals('(P+Q)[0]', 2.0, R[0], DblTol);
+  AssertEquals('(P+Q)[1]', 1.0, R[1], DblTol);
+  AssertEquals('(P+Q)[2]', 3.0, R[2], DblTol);
+  R := P * Q;                            // 1 + x + x^2 - 3x^3
+  AssertEquals('(P*Q).Degree', 3, R.Degree);
+  AssertEquals('(P*Q)[0]', 1.0, R[0], DblTol);
+  AssertEquals('(P*Q)[1]', 1.0, R[1], DblTol);
+  AssertEquals('(P*Q)[2]', 1.0, R[2], DblTol);
+  AssertEquals('(P*Q)[3]', -3.0, R[3], DblTol);
+  R := P.Derivative;                     // 2 + 6x
+  AssertEquals('P''.Degree', 1, R.Degree);
+  AssertEquals('P''[0]', 2.0, R[0], DblTol);
+  AssertEquals('P''[1]', 6.0, R[1], DblTol);
+end;
+
+procedure TPolynomialTests.TestDivideByRecoversQuotientAndRemainder;
+var D: TPolynomialDivision; P: TPolynomial;
+begin
+  P := TPolynomial.Create([-1, 0, 0, 1]);          // x^3 - 1
+  D := P.DivideBy(TPolynomial.Create([-1, 1]));    // / (x - 1)
+  AssertEquals('quotient degree', 2, D.Quotient.Degree);
+  AssertEquals('q[0]', 1.0, D.Quotient[0], DblTol);
+  AssertEquals('q[1]', 1.0, D.Quotient[1], DblTol);
+  AssertEquals('q[2]', 1.0, D.Quotient[2], DblTol);
+  AssertTrue('remainder is zero', D.Remainder.IsZero);
+  AssertTrue('Modulus agrees', P.Modulus(TPolynomial.Create([-1, 1])).IsZero);
+end;
+
+procedure TPolynomialTests.TestFitRecoversExactQuadratic;
+var X, Y: TVMobj; P: TPolynomial;
+begin
+  // y = 1 - 2x + 3x^2 sampled at x = -2..2
+  X := TVMobj.Create(1, 5, [-2, -1, 0, 1, 2]);
+  Y := TVMobj.Create(1, 5, [17, 6, 1, 2, 9]);
+  P := TPolynomial.Fit(X, Y, 2);
+  AssertEquals('Degree', 2, P.Degree);
+  AssertEquals('a0', 1.0, P[0], DblTol);
+  AssertEquals('a1', -2.0, P[1], DblTol);
+  AssertEquals('a2', 3.0, P[2], DblTol);
+end;
+
+procedure TPolynomialTests.TestFitDegreeNMinusOneInterpolates;
+var X, Y: TVMobj; P: TPolynomial; i: Integer;
+begin
+  X := TVMobj.Create(1, 4, [0, 1, 2, 3]);
+  Y := TVMobj.Create(1, 4, [1, 3, 2, 5]);
+  P := TPolynomial.Fit(X, Y, 3);
+  AssertEquals('Degree', 3, P.Degree);
+  for i := 0 to 3 do
+    AssertEquals(Format('P(x[%d])', [i]), Y[0, i], P.Evaluate(X[0, i]), DblTol);
+end;
+
+procedure TPolynomialTests.TestFitLeastSquaresLineKnownValues;
+var X, Y: TVMobj; P: TPolynomial;
+begin
+  // same four points, not collinear: closed-form slope Sxy/Sxx = 5.5/5 = 1.1,
+  // intercept ybar - slope*xbar = 2.75 - 1.1*1.5 = 1.1
+  X := TVMobj.Create(1, 4, [0, 1, 2, 3]);
+  Y := TVMobj.Create(1, 4, [1, 3, 2, 5]);
+  P := TPolynomial.Fit(X, Y, 1);
+  AssertEquals('Degree', 1, P.Degree);
+  AssertEquals('intercept', 1.1, P[0], DblTol);
+  AssertEquals('slope', 1.1, P[1], DblTol);
+end;
+
+procedure TPolynomialTests.TestFitDegreeZeroIsMean;
+var X, Y: TVMobj; P: TPolynomial;
+begin
+  X := TVMobj.Create(1, 4, [0, 1, 2, 3]);
+  Y := TVMobj.Create(1, 4, [1, 3, 2, 5]);
+  P := TPolynomial.Fit(X, Y, 0);
+  AssertEquals('Degree', 0, P.Degree);
+  AssertEquals('mean', 2.75, P[0], DblTol);
+end;
+
+procedure TPolynomialTests.TestFitAcceptsColumnVectors;
+var X, Y: TVMobj; P: TPolynomial;
+begin
+  X := TVMobj.Create(5, 1, [-2, -1, 0, 1, 2]);
+  Y := TVMobj.Create(5, 1, [17, 6, 1, 2, 9]);
+  P := TPolynomial.Fit(X, Y, 2);
+  AssertEquals('a0', 1.0, P[0], DblTol);
+  AssertEquals('a1', -2.0, P[1], DblTol);
+  AssertEquals('a2', 3.0, P[2], DblTol);
+end;
+
+procedure TPolynomialTests.TestFitLeavesInputsUntouched;
+var X, Y: TVMobj; i: Integer;
+begin
+  // dgels overwrites both of its array arguments in place, so Fit must be
+  // working on copies, not on X's and Y's own buffers
+  X := TVMobj.Create(1, 5, [-2, -1, 0, 1, 2]);
+  Y := TVMobj.Create(1, 5, [17, 6, 1, 2, 9]);
+  TPolynomial.Fit(X, Y, 2);
+  for i := 0 to 4 do begin
+    AssertEquals(Format('X[%d]', [i]), -2.0 + i, X[0, i], DblTol);
+  end;
+  AssertEquals('Y[0]', 17.0, Y[0, 0], DblTol);
+  AssertEquals('Y[4]', 9.0, Y[0, 4], DblTol);
+end;
+
+procedure TPolynomialTests.Raise_FitDegreeTooHigh;
+begin
+  TPolynomial.Fit(TVMobj.Create(1, 4, [0, 1, 2, 3]), TVMobj.Create(1, 4, [1, 3, 2, 5]), 4);
+end;
+
+procedure TPolynomialTests.Raise_FitDegreeNegative;
+begin
+  TPolynomial.Fit(TVMobj.Create(1, 4, [0, 1, 2, 3]), TVMobj.Create(1, 4, [1, 3, 2, 5]), -1);
+end;
+
+procedure TPolynomialTests.Raise_FitLengthMismatch;
+begin
+  TPolynomial.Fit(TVMobj.Create(1, 4, [0, 1, 2, 3]), TVMobj.Create(1, 3, [1, 3, 2]), 1);
+end;
+
+procedure TPolynomialTests.Raise_FitNonVector;
+begin
+  TPolynomial.Fit(TVMobj.Create(2, 2, [0, 1, 2, 3]), TVMobj.Create(2, 2, [1, 3, 2, 5]), 1);
+end;
+
+procedure TPolynomialTests.TestFitBadArgumentsRaise;
+begin
+  AssertException('degree N', EArgumentOutOfRangeException, @Raise_FitDegreeTooHigh);
+  AssertException('degree -1', EArgumentOutOfRangeException, @Raise_FitDegreeNegative);
+  AssertException('length mismatch', EArgumentException, @Raise_FitLengthMismatch);
+  AssertException('matrix input', EArgumentException, @Raise_FitNonVector);
+end;
+
 initialization
   RegisterTest(TVMobjTests);
   RegisterTest(TVMobjSTests);
   RegisterTest(TVMobjZTests);
   RegisterTest(TVMobjCTests);
   RegisterTest(TVMobjITests);
+  RegisterTest(TPolynomialTests);
   {$IFDEF HAVE_OPENCL}
   RegisterTest(TVMobjCLTests);
   {$ENDIF}
