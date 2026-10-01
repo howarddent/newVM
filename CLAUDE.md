@@ -1003,6 +1003,14 @@ matrix raises `EMathError`.
   MKL the fallback already gets a real LU via `LinearSolve`, and the
   normal equations are adequate at the modest degrees a fit to `N`
   points sensibly uses.
+- **`Evaluate(const X: TVMobj): TVMobj`** is the vector form of the
+  scalar `Evaluate(X: Double)` (both marked `overload`): Horner's method
+  on every element of `X`, returning a `TVMobj` of the same shape - any
+  shape, not only vectors, since it's elementwise - so a `Fit` can be
+  evaluated on a whole plotting grid in one call. A plain loop, like
+  `Trace`/`Find` in newVM: there is no BLAS/VML polynomial primitive, and
+  vectorising each Horner step as a whole-buffer axpy would cost one
+  pass over `X` per coefficient for nothing. No backend gating needed.
 - `Fit` returns through `TPolynomial.Create`, so trailing coefficients
   within `DefaultTolerance` (1e-12) of zero are trimmed like any other
   polynomial here - a fit that comes back of lower degree than asked
@@ -1014,8 +1022,9 @@ matrix raises `EMathError`.
   an exact quadratic recovered from 5 points, a degree-`N-1` cubic that
   interpolates all 4 points, a degree-1 line checked against the
   closed-form slope/intercept (`Sxy/Sxx`), degree 0 as the mean, the
-  same quadratic from column vectors, inputs left untouched, and the
-  four argument-error paths. Verified both ways: 315/315 with
+  same quadratic from column vectors, inputs left untouched, the
+  four argument-error paths, and the `TVMobj` `Evaluate` overload (agrees
+  with the scalar one elementwise, keeps a 2x3 shape, zero polynomial). Verified both ways: 315/315 with
   `HAVE_LAPACKE` on, and again with it forced off in `newVMConfig.inc`
   so `Fit` ran the LMath-derived normal-equations path through
   `PurePascalLU`. One gotcha for repeating that: force `HAVE_LAPACKE`

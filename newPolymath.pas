@@ -222,7 +222,13 @@ Type
     { Calculus }
 
     function Evaluate(
-      X: Double): Double;
+      X: Double): Double; overload;
+
+    { Evaluate at every element of a TVMobj - any shape - returning a
+      TVMobj of the same shape; the vector form of the scalar overload }
+
+    function Evaluate(
+      const X: TVMobj): TVMobj; overload;
 
 
     function Derivative: TPolynomial;
@@ -885,6 +891,46 @@ begin
     Result :=
       Result * X +
       FCoeff[I];
+end;
+
+
+{******************************************************************************
+  Polynomial evaluation on a TVMobj
+
+  Horner's method applied to every element of X, giving a TVMobj of the
+  same shape - a fitted polynomial evaluated on a whole x grid in one
+  call, e.g. for plotting a Fit against its data. Any shape is accepted,
+  not only vectors, since the evaluation is elementwise. A plain loop, as
+  Trace and Find are in newVM: no BLAS/VML primitive evaluates a
+  polynomial, and a Horner step vectorised as whole-buffer axpy calls
+  would cost one pass over X per coefficient for no gain at these sizes.
+******************************************************************************}
+
+function TPolynomial.Evaluate(
+  const X: TVMobj): TVMobj;
+var
+  I, K, N: Integer;
+  XP, RP: PDouble;
+  Acc: Double;
+begin
+  Result := TVMobj.Create(X.Rows, X.Cols);
+
+  if IsZero then
+    Exit;   { Create zero-fills }
+
+  N := X.Rows * X.Cols;
+  XP := X.DataPtr;
+  RP := Result.DataPtr;
+
+  for K := 0 to N - 1 do
+  begin
+    Acc := FCoeff[High(FCoeff)];
+
+    for I := High(FCoeff) - 1 downto 0 do
+      Acc := Acc * XP[K] + FCoeff[I];
+
+    RP[K] := Acc;
+  end;
 end;
 
 

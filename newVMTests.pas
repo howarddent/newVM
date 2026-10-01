@@ -614,6 +614,8 @@ type
     procedure TestFitAcceptsColumnVectors;
     procedure TestFitLeavesInputsUntouched;
     procedure TestFitBadArgumentsRaise;
+    procedure TestEvaluateOnVectorMatchesScalar;
+    procedure TestEvaluateOnMatrixKeepsShape;
   end;
 
 implementation
@@ -5061,6 +5063,38 @@ begin
   end;
   AssertEquals('Y[0]', 17.0, Y[0, 0], DblTol);
   AssertEquals('Y[4]', 9.0, Y[0, 4], DblTol);
+end;
+
+procedure TPolynomialTests.TestEvaluateOnVectorMatchesScalar;
+var X, Y: TVMobj; P: TPolynomial; i: Integer;
+begin
+  // the fitted quadratic, evaluated back on its own x grid, reproduces y
+  X := TVMobj.Create(1, 5, [-2, -1, 0, 1, 2]);
+  Y := TVMobj.Create(1, 5, [17, 6, 1, 2, 9]);
+  P := TPolynomial.Fit(X, Y, 2);
+  Y := P.Evaluate(X);
+  AssertEquals('Rows', 1, Y.Rows);
+  AssertEquals('Cols', 5, Y.Cols);
+  for i := 0 to 4 do
+    AssertEquals(Format('[%d]', [i]), P.Evaluate(X[0, i]), Y[0, i], DblTol);
+  AssertEquals('[0] known', 17.0, Y[0, 0], DblTol);
+  AssertEquals('[4] known', 9.0, Y[0, 4], DblTol);
+end;
+
+procedure TPolynomialTests.TestEvaluateOnMatrixKeepsShape;
+var X, Y: TVMobj; P: TPolynomial;
+begin
+  P := TPolynomial.Create([1, 2, 3]);   // 1 + 2x + 3x^2
+  X := TVMobj.Create(2, 3, [0, 1, 2, 3, 4, 5]);
+  Y := P.Evaluate(X);
+  AssertEquals('Rows', 2, Y.Rows);
+  AssertEquals('Cols', 3, Y.Cols);
+  AssertEquals('[0,0]', 1.0, Y[0, 0], DblTol);
+  AssertEquals('[0,2]', 17.0, Y[0, 2], DblTol);
+  AssertEquals('[1,2]', 86.0, Y[1, 2], DblTol);
+  AssertEquals('X untouched', 5.0, X[1, 2], DblTol);
+  Y := TPolynomial.Zero.Evaluate(X);
+  AssertEquals('zero poly [1,1]', 0.0, Y[1, 1], DblTol);
 end;
 
 procedure TPolynomialTests.Raise_FitDegreeTooHigh;
