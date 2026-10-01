@@ -9,10 +9,19 @@ wrap Intel MKL (BLAS/LAPACK/VSL) and Intel IPP for linear algebra. It is
 explicitly inspired by the Dew MtxVec library for FPC, but — unlike Dew —
 does not distinguish matrix and vector types: a vector is just an (N,1) or
 (1,N) matrix. There are four parallel "flavors" of the same object model for
-real/complex × double/single precision (see Architecture below), plus a
-fifth, non-duplicated companion unit (`newVMI.pas`) providing an integer
+real/complex × double/single precision (see Architecture below), plus four
+further non-duplicated companion units: `newVMI.pas`, providing an integer
 array/matrix type for index operations (pivot vectors, index lists) on the
-other four.
+other four; `newVMsparse.pas`, providing a sparse double-real matrix type
+with MKL's PARDISO and RCI FGMRES solvers over it; and two GPU-resident
+single-precision types, `newVMCL.pas` (OpenCL + clFFT) and `newVMMetal.pas`
+(Metal + MetalPerformanceShadersGraph). The last three are each gated on a
+config define and are simply absent on a machine without their backend.
+
+Despite the name, the accelerated backends are no longer Intel-only:
+`cblas.pas` will bind Arm Performance Libraries or Apple's Accelerate in
+place of OpenBLAS where those are what a machine actually has — see the
+`newVMConfig.inc` section for how that's detected and what it changes.
 
 There is no README and no CI, but there is a real automated test suite:
 `newVMTests.pas` (FPCUnit `TTestCase`s, one per `TVMobj*` type) plus
@@ -751,6 +760,102 @@ The same treatment has since been rolled out to all three sibling units -
   missing only), `PUREPASCAL` on/`HAVE_FFTW` on (BLAS/LAPACK/IPP missing
   only), and the two uniform states - all 262/262 in every combination.
 
+
+#### The define set, as it stands now
+
+`newVMConfig.inc` has grown well past the original
+`HAVE_OPENBLAS`/`HAVE_MKL`/`HAVE_IPP`/`HAVE_FFTW` + `PUREPASCAL` set
+described above, in two directions: more BLAS/LAPACK backends (so a Mac
+or an Arm machine with no Intel libraries can still run accelerated
+bodies rather than dropping wholesale to plain Pascal), and the two GPU
+backends. `newvmconfigure.lpr` probes per-platform candidate name lists
+(Windows `.dll` / Darwin `.dylib` + framework paths / Unix `.so`), and
+leaves a list empty rather than guessing where a naming convention hasn't
+been confirmed against a real install — which is why, for example,
+`HAVE_ARMPL` simply never fires on Windows.
+
+Detected directly:
+
+| Define | Means |
+|---|---|
+| `HAVE_OPENBLAS` | OpenBLAS found |
+| `HAVE_ACCELERATE` | Apple Accelerate/vecLib found (Darwin only) |
+| `HAVE_ARMPL` | Arm Performance Libraries (`libarmpl_lp64`) found |
+| `HAVE_MKL` | MKL found |
+| `HAVE_IPP` | all three of ippcore/ippvm/ipps found |
+| `HAVE_FFTW` | both double and single FFTW found |
+| `HAVE_OPENCL` | OpenCL **and** clFFT both found — gates `newVMCL.pas` |
+| `HAVE_METAL` | Metal **and** MPSGraph found **and** AArch64 — gates `newVMMetal.pas` |
+
+Derived from those:
+
+- **`HAVE_BLAS`** — any of OpenBLAS / Accelerate / ArmPL.
+- **`HAVE_LAPACKE`** — a `LAPACKE_*` implementation from *either* MKL or
+  ArmPL (which exports a standard `LAPACKE_*` ABI alongside its `cblas_*`
+  one). Deliberately **narrower than `PUREPASCAL`**: it gates only
+  `LinearSolve`/`Invert`/`Det`/`Id`/`EigDecompose` — the routines that call
+  `LAPACKE_*` and nothing else — so ArmPL alone can take those off the
+  plain-Pascal path while the VML/VSL/IPP-dependent routines
+  (`Sin`/`Cos`/…, `fillRandom`, `linspace`/`AddScalar`/`FlipLR`/…) stay on
+  their fallback, ArmPL providing no equivalent under matching names.
+- **`PUREPASCAL`** — unchanged in meaning: set when *any* of
+  OpenBLAS/MKL/IPP is missing.
+- **`PUREPASCAL_BLAS`** — a finer-grained sibling, for the subset of
+  `newVM.pas` whose library-backed body calls **only** `cblas_*` (no
+  LAPACKE/ipps/vd*/vsl*): `MatMult`, `Kron`, `Diag`, `Norm`, `FlipUD`,
+  `MergeUD`/`MergeLR`, `Reshape`, `Repmat`, and the `+`/`-`/unary-`-`/
+  scalar-`*` operators. Those run their real accelerated body whenever
+  *any* CBLAS-compatible backend is present, even on a machine that sets
+  `PUREPASCAL` for everything else.
+
+Both `PUREPASCAL` defines follow the same convention as the original: left
+**undefined** when a backend is found, never defined to False.
+
+`HAVE_METAL` is explicitly narrowed to AArch64 in the tool rather than
+inferred from the frameworks alone — Intel Macs carry both frameworks too,
+so their presence isn't itself an Apple Silicon signal.
+
+**Two non-Intel backends now sit behind `cblas.pas`**, which is no longer
+just the `h2pas` OpenBLAS binding the "External bindings" section
+describes:
+
+- **ArmPL** is wired in through the `CBLASLib` constant, *preferred over*
+  OpenBLAS when both are present, and additionally supplies `LAPACKE_*`
+  through `OneAPI.pas`'s own `LoadArmPLLAPACKEFunctions` (a
+  `GetArmPLHandle`/`ArmPLProc` loader mirroring the MKL one). ArmPL spells
+  those symbols `LAPACKE_*` exactly, so unlike the MKL loader the casing
+  needs no special handling. When ArmPL is absent these vars are simply
+  never assigned and stay nil, which is safe because `HAVE_LAPACKE` gates
+  every call site.
+- **Accelerate** is selected as `CBLASLib` on Darwin only when OpenBLAS
+  *isn't* present (it defers to OpenBLAS, unlike ArmPL which wins). Two
+  awkward details it forces, both handled at the `newVM.pas` call site
+  rather than hidden in the binding:
+  - Accelerate exposes **classic Fortran LAPACK only** — column-major,
+    pointer arguments, trailing underscore (`dgetrf_`/`dgetri_`/
+    `dgetrs_`), with no row-major `LAPACKE_*` C wrapper anywhere in the
+    macOS SDK. `LinearSolve`/`Invert`/`Det` call these three directly from
+    a nested `HAVE_ACCELERATE` guard *inside* their `PUREPASCAL` branch,
+    doing the row-major/column-major adaptation themselves; the
+    declarations stay a literal, unadapted mirror of the Fortran
+    signatures. They're loaded via their own `LoadLibrary` call,
+    independent of whatever `CBLASLib` resolved to, so they can't silently
+    depend on OpenBLAS having been chosen for the plain CBLAS symbols.
+  - **vForce and vDSP stand in for MKL VML and IPP**: `vvsin`/`vvcos`/
+    `vvtan`/`vvsinh`/`vvsqrt`/`vvexp`/`vvlog` cover the elementwise
+    transcendentals, and `vDSP_vsqD`/`vmulD`/`vrampD`/`vrvrsD`/`vsaddD`/
+    `vsdivD` cover `Sqr`/`mulObj` plus the IPP-only routines
+    (`linspace`/`FlipLR`/`AddScalar`/the `/` operator). Their calling
+    conventions differ from each other *and* from MKL's, so they're worth
+    checking against the header before extending: **vForce** takes output
+    pointer first, then input, then a **pointer** to the count (the
+    reverse of MKL's `vd*(n, x, y)`, with `n` by reference); **vDSP**
+    takes everything **by value**, including 8-byte strides and counts.
+    One asymmetry: `vDSP_vrvrsD` reverses a single array **in place** (no
+    separate src/dst the way `ippsFlip_64f` has), so `FlipLR`'s Accelerate
+    body copies the row into the result first and reverses it there.
+
+
 ### `newVMI.pas` (integer index array/matrix)
 
 `newVMI.pas` provides `TVMobjI`, an integer-valued companion to the four
@@ -822,11 +927,443 @@ real units since it operates purely on `TVMobjI`. Asserts if A has no
 non-zero elements, since `TVMobjI.Create` disallows a zero-length result
 — there is no "empty index list" representation in this type.
 
+### `newVMsparse.pas` (sparse double-real matrix and MKL sparse solvers)
+
+`newVMsparse.pas` provides `TVMSparseMtx`, a sparse double-precision real
+matrix, plus a direct (PARDISO) and an iterative (RCI ISS FGMRES) sparse
+solver over it. Like `newVMI.pas` it's a companion to the four-way family
+rather than a member of it, but for a different reason: `newVMI.pas` is
+excluded because BLAS/LAPACK/VML have no integer datatype, whereas this
+unit is excluded because **sparse solvers are MKL-exclusive** — there is
+no OpenBLAS/ArmPL/Accelerate equivalent for PARDISO or the RCI ISS
+routines, unlike the dense BLAS/LAPACK/VML calls the other units share.
+Two consequences follow from that, and they're the main thing to know
+before touching this file:
+
+- The whole unit is gated on `{$IFDEF HAVE_MKL}` end to end — its
+  `OneAPI.pas` bindings, its entry in `newVMTests.pas`'s `uses` clause,
+  the `TVMSparseTests` class, its implementation, and its `RegisterTest`
+  call.
+- **There is no `PUREPASCAL` fallback**, and deliberately so — unlike
+  every routine in `newVM.pas`/`newVMSingle.pas`/`newVMComplex.pas`/
+  `newVMComplexSingle.pas` (see the `newVMConfig.inc` section above).
+  Don't add `{$IFDEF PUREPASCAL}` bodies here by analogy with those
+  units: a hand-rolled sparse direct solver is a different order of
+  undertaking from `PurePascalLU`, and the unit simply doesn't exist on
+  a machine without MKL.
+
+Written for the `Delphi OOFEM/FEM4` port (most of that tree's `Examples/`
+`uses` it), but it has no dependency on it — it's a general-purpose
+sparse type for this repo.
+
+**Storage.** CSR (compressed sparse row), **0-based**, matching
+`newVM.pas`'s own row-major/0-based convention — deliberately *not*
+MtxVec's CSC, since CSR is what PARDISO and RCI FGMRES want natively and
+there's no transpose step at the solver boundary. The record's three
+parallel private arrays are `FRowPtr` (length `Rows+1`), `FColInd` and
+`FValues` (both length `NonZeros`), with public read-only `Rows`/`Cols`/
+`NonZeros` properties. Each row's entries are **sorted ascending by
+column index** — an invariant `TripletsToSparse` and `SparseAdd` both
+maintain and `ExtractUpperCSR` relies on; preserve it in anything new.
+Like `TVMobj`, this is a record wrapping dynamic arrays, so the same
+value-semantics caveat applies (plain assignment aliases the buffers),
+but note there is **no `CopyObj` equivalent** for it — `PardisoSolve`'s
+non-symmetric path deliberately aliases (`Asolve := A`) because it only
+ever reads from it.
+
+The unit also declares `TIntegerArray`/`TDoubleArray`/`TBooleanArray`/
+`PBooleanArray` — plain FPC dynamic-array aliases, typedef'd here purely
+so code ported from MtxVec's `Math387` or FEM4's
+`CXS.FEMLAP.MtxVecExtra.pas` needs no signature changes.
+
+**Construction.** `TripletsToSparse(Rows, Cols, RowIdx, ColIdx, Val)` is
+the *only* way to build a `TVMSparseMtx` — a bulk COO→CSR conversion,
+with duplicate `(row,col)` pairs **summed**. Summing isn't incidental: it
+is exactly how FEM assembly works, where the same global `(i,j)`
+legitimately accumulates a contribution from every element touching it.
+There is no incremental/insert-one-entry path, because every sparse
+matrix this repo builds is assembled in bulk once per (re-)assembly. The
+implementation is a counting sort into row buckets, then per row an
+insertion sort by column followed by a merge of adjacent equal columns —
+insertion sort is a deliberate choice, not an oversight, since FEM
+stencils are narrow enough that a general-purpose sort would buy nothing.
+
+**Operations** (all plain Pascal loops over the CSR arrays unless noted):
+
+- `SparseDiag(A)` extracts the diagonal into a dense `(Rows,1)` `TVMobj`.
+  Named `SparseDiag`, **not** `Diag`, to avoid colliding with
+  `newVM.pas`'s own `Diag` — which is the *opposite* operation (dense
+  column vector → diagonal matrix) — now that this unit `uses newVM`.
+- `SetDiagonal(var A, Diag)` overwrites `A`'s diagonal in place from a
+  dense vector; a direct port of FEM4's
+  `CXS.FEMLAP.MtxVecExtra.SetDiagonal`, walking CSR rather than MtxVec's
+  CSC. Used by the FEM4 port's penalty-method Dirichlet BC imposition.
+  Only overwrites diagonal entries that are already structurally present
+  — it cannot introduce one (see the missing-diagonal note below).
+- `SparseAdd(A, B)` is a standard two-cursor CSR row merge. Replaces
+  MtxVec's 3-argument sparse `.Add(A, B, nzHint)`; no non-zero hint is
+  needed since the merge sizes itself (allocate `A.NonZeros+B.NonZeros`
+  as an upper bound, `SetLength` down to the true count at the end — the
+  same trim-at-the-end pattern `TripletsToSparse` and `ExtractUpperCSR`
+  use). Used by transient/nonlinear FEM4 solves to combine mass and
+  stiffness into one effective system matrix each step.
+- `SparseMatMult(A, X)` is sparse-matrix × dense-vector, via the
+  Inspector-Executor Sparse BLAS (`mkl_sparse_d_create_csr` +
+  `mkl_sparse_d_mv`) — the same machinery `FGMRESSolve`'s own
+  `RCI_request=1` step uses internally. Replaces MtxVec's
+  `TSparseMtx.MulLeft`.
+
+**`PardisoSolve(A, B, SymmetricPosDef)`** — direct solve, single
+right-hand side (`B` and the result are `(N,1)` or `(1,N)`; a single RHS
+is the only shape FEM4 ever calls with).
+
+- `SymmetricPosDef=True` selects PARDISO `mtype=2` and passes the **upper
+  triangle only** (`ExtractUpperCSR`), as PARDISO requires for symmetric
+  types; `False` selects `mtype=11` (general unsymmetric) and passes the
+  full matrix.
+- `iparm[34] := 1` after `pardisoinit`, selecting zero-based indexing to
+  match this unit's CSR.
+- One-shot `phase=13` (analysis + numerical factorisation + solve
+  combined), then **always** a second call with `phase=-1` to release
+  PARDISO's internal memory tied to `pt`, regardless of outcome, before
+  the error code is examined. Nothing caches a factorisation across
+  repeated solves against the same sparsity pattern — simplicity over
+  speed, a deliberate trade worth revisiting only if profiling says so.
+- `B` is `CopyObj`'d first, since PARDISO may use `b` as working storage
+  and the caller's `B` must never be mutated.
+
+**`FGMRESSolve(A, B, UseILU0 = True, MaxIter = 500, Tol = 1e-8)`** — MKL
+RCI ISS FGMRES, optionally ILU0-preconditioned, driven by the standard
+reverse-communication loop (`dfgmres_init` → `dfgmres_check` →
+`dfgmres` → `dfgmres_get`), dispatching on `RCI_request`: `1` is a
+matrix-vector product (`mkl_sparse_d_mv`), `3` applies the
+preconditioner as two triangular solves (`mkl_sparse_d_trsv` against `L`
+then `U`). Several non-obvious details, all of which took a debugging
+pass to establish:
+
+- **`ipar`/`dpar` are Fortran-indexed in the docs, 0-based here** — MKL's
+  `ipar(5)` is `ipar[4]`, `dpar(1)` is `dpar[0]`, and so on; every
+  assignment in the source carries its Fortran index as a comment. Keep
+  that up if more are added, since an off-by-one here misconfigures the
+  solver silently rather than erroring.
+- **`ipar[11] := 1` (Fortran `ipar(12)`) must be set explicitly.** This
+  MKL version's `dfgmres_init` does *not* default it to 1, confirmed
+  empirically: omit the line and the loop is handed an actual
+  `RCI_request=4` (user-defined residual-norm check), which this
+  implementation deliberately treats as an error rather than
+  implementing.
+- **`dcsrilu0` is the legacy interface and wants 1-based `ia`/`ja`**, so
+  `FGMRESSolve` builds 1-based copies of `FRowPtr`/`FColInd` *solely* for
+  that one call; everything else in the unit stays 0-based.
+- The ILU0 factors come back packed into a single `L\U` buffer sharing
+  `A`'s own sparsity pattern, so one Inspector-Executor handle covers
+  both triangular solves — the two are distinguished by descriptor alone
+  (`L`: lower + `SPARSE_DIAG_UNIT`; `U`: upper + `SPARSE_DIAG_NON_UNIT`).
+- `restart := Min(150, n)`. The `tmp` workspace is MKL's documented
+  minimum **plus a generous fixed margin** (`64*(n+restart)`). The margin
+  is there because a rare, non-deterministic heap-corruption crash was
+  observed once at exactly the documented minimum and never reproduced
+  across dozens of reruns — consistent with a margin-dependent issue
+  rather than a clear logic bug. It's cheap at FEM scale; don't trim it
+  back to the exact formula.
+
+**The missing-diagonal check** (`FindMissingDiagonalRow`, run by
+`PardisoSolve`) is the most valuable thing in this unit to know about.
+Both PARDISO's factorisation and the `dcsrilu0` path require every row to
+carry an **explicitly stored** diagonal entry — a row structurally absent
+from the sparsity pattern, not merely one holding a zero value. Neither
+routine reports that cleanly: `dcsrilu0` at least raises a "no diagonal
+in CSR format" error (this caught the Ex16 bug), but PARDISO **segfaults
+deep inside its own closed-source METIS reordering step with no useful
+diagnostic at all** (the Ex35/ThermalEngine crash this check was added
+for — a 24822-row transient thermal matrix with at least one row never
+touched by any element's diagonal contribution). The up-front scan is
+`O(NonZeros)`, negligible against an `O(N^1.5)`-or-worse factorisation,
+and converts an opaque access violation into a named row index plus the
+likely assembly cause. If a sparse solve ever crashes with no Pascal
+stack, suspect this class of problem first.
+
+**Error handling deviates from the repo's `assert` convention, on
+purpose.** Shape/argument validation still uses the usual guard-clause
+`assert` with a unit-local `const s = 'Function Name : '` prefix, as
+everywhere else. But any non-zero MKL status or `info` code raises a
+plain `Exception` carrying the raw code, because those are runtime
+library failures rather than programmer errors, and `assert`s compile out
+under a build without `IncludeAssertionCode`. (The FEM4 code this
+replaces never checked a return code from its own `.Solve` calls at all,
+so this is a small correctness improvement, not a behaviour change to
+preserve.)
+
+**Bindings** live in `OneAPI.pas`, declared only in the `HAVE_MKL` branch
+(both the Unix `external` declarations and the Windows procedural-type/
+`LoadMKLFunctions` bindings — see "Cross-platform library binding"
+below): `pardisoinit`/`pardiso`, `dfgmres_init`/`dfgmres_check`/
+`dfgmres`/`dfgmres_get`, `dcsrilu0`, and the Inspector-Executor quartet
+`mkl_sparse_d_create_csr`/`mkl_sparse_d_mv`/`mkl_sparse_d_trsv`/
+`mkl_sparse_destroy`, plus the `TMKLMatrixDescr` record and the
+`SPARSE_*` enum-value constants. Four gotchas worth carrying forward:
+
+- **The legacy 3-array-CSR routines are not usable.** `mkl_dcsrgemv`/
+  `mkl_dcsrtrsv` (which this unit originally tried) are **not exported
+  under their plain names** by this MKL version — confirmed via
+  `dumpbin`, which shows only `mkl_internal_dcsrgemv`/
+  `mkl_cspblas_internal_*`, both explicitly internal. Intel moved the
+  functionality to the Inspector-Executor Sparse BLAS API, which *is*
+  still exported. Don't reintroduce the legacy names.
+- **The "3-array CSR" compatibility trick**: the Inspector-Executor API
+  wants separate `rows_start`/`rows_end` arrays, satisfied here by
+  passing two overlapping views into the same `FRowPtr`
+  (`@FRowPtr[0]` and `@FRowPtr[1]`) — the standard approach this API
+  documents for exactly this case, no extra allocation needed.
+- `TMKLMatrixDescr` (three packed 32-bit C enums) is passed **by value**,
+  the same by-value-record convention `lapacke_zlaset`/`claset` already
+  use — see "External bindings" below for why that's safe under `cdecl`
+  on Windows x64. `sparse_matrix_t` is an opaque MKL-owned handle, just
+  `Pointer` here.
+- All `MKL_INT` parameters are plain 32-bit `Integer`, matching the LP64
+  interface every other binding in the file already assumes.
+
+**Tests**: `TVMSparseTests` in `newVMTests.pas` (8 tests) — duplicate
+merging in `TripletsToSparse`, `SparseDiag`, `SetDiagonal`, `SparseAdd`,
+`PardisoSolve` in both symmetric and general modes, and `FGMRESSolve`
+with and without the ILU0 preconditioner. The solve tests assert the
+**residual** `A*X - B ≈ 0` row by row rather than hard-coded `X` values,
+since a known-value expectation rounded to fixed digits would be fragile
+where the residual is the actual contract.
+
+### GPU backends: `newVMCL.pas`/`OpenCLAPI.pas` and `newVMMetal.pas`/`MetalAPI.pas`
+
+Two further companion units put a `TVMobj`-shaped type on the GPU, both
+**single precision**, both GPU-resident: `TVMobjCL` (`newVMCL.pas`, via
+OpenCL + AMD's clFFT) and `TVMobjMTL` (`newVMMetal.pas`, via Apple's Metal
++ MetalPerformanceShadersGraph). They are **parallel, not layered** —
+`newVMMetal.pas` was added without touching `newVMCL.pas`, because OpenCL
+is deprecated on Apple platforms and was never found on the Darwin/AArch64
+dev machine, while Metal is that machine's real, always-present GPU API.
+Each is gated end to end on its own config define (`HAVE_OPENCL`,
+`HAVE_METAL`) — `uses` clause, unit, test class, `RegisterTest` call — so
+a machine without that backend never references the unit at all.
+
+Both follow `TVMobjS`'s object shape as closely as a GPU-buffer-backed
+type can: `Create(r,c)` (plus a `Create(r,c,Values)` convenience overload
+for test fixtures), default `Element[r,c]`, read-only `Rows`/`Cols`,
+`fillRandom`/`Id`/`linspace`/`Transpose`/`writeMatrix`, the same
+`+`/`-`/`*`/`/`/`=` class operators with the **same contract** (`*`
+between two GPU objects is **elementwise** — use `MatMultCL`/`MatMultMTL`
+explicitly for a real matrix product, exactly as everywhere else in this
+repo), and a `CopyObjCL`/`CopyObjMTL` matching `CopyObj`'s "genuinely
+independent copy" contract. `MaxDimCL`/`MaxDimMTL` track `newVM.pas`'s own
+`MaxDim` (currently 2097152), raised in step across every unit.
+
+**Scope is deliberately narrower than the four host units.** In: the
+object shape above, the four arithmetic operators, elementwise
+`Sin`/`Cos`/`Tan`/`Sinh`/`Sqr`/`Sqrt`/`Exp`/`Ln`, a matrix multiply, and
+`FFT`/`IFFT`. Explicitly **out**: `LinearSolve*`/`Invert*` (there is no
+GPU LAPACK to build on, and a numerically robust from-scratch GPU LU is a
+separate undertaking), and `Kron`/`Diag`/`Trace`/`Det`/`Flip*`/`Merge*`/
+`Reshape`/`Repmat`/`AddScalar`/`SubMatrix`/`DCT`/`DST` (straightforward in
+principle, simply not needed yet). The motivating use case for both is
+GPU-accelerated spectrum work for the `SDR_Radio` project, which needs FFT
+and elementwise/matrix arithmetic and nothing else. `MatMultCL`/
+`MatMultMTL` are **naive, non-tiled** kernels (one work-item per output
+element, a plain dot-product loop over K) — an intentional v1 choice, not
+an oversight.
+
+**Managed records — the one structural difference from every other
+`TVMobj*` type.** The host types get value semantics for free: `fData` is
+an FPC dynamic array, already reference-counted by the language. A
+`cl_mem` or `mtl_buffer` is just an opaque pointer with *explicit*
+reference counting, so a plain record holding one would alias on
+assignment like `TVMobjS` but **nothing would ever release the GPU
+buffer**, records having no destructor. Both units therefore use
+`{$modeswitch AdvancedRecords}` and implement
+`Initialize`/`Finalize`/`AddRef`/`Copy` class operators over a shared
+`FRefCount: PInteger`. Two things to know before touching them:
+
+- **`Copy` is not optional.** FPC does *not* fall back to a bitwise copy
+  plus `AddRef` for plain `:=` when a `Copy` operator exists — confirmed
+  empirically: removing `Copy` and keeping only `AddRef` produces a
+  use-after-free within the first few thousand iterations of a stress
+  loop.
+- **`Copy` must release `Dst`'s OLD reference before overwriting it.**
+  Its first version only ever added a reference to `Src`, so a reassigned
+  variable (e.g. a loop body's `B := A * 2.0;`) leaked one GPU buffer and
+  one refcount cell per iteration — found via a 20,000-iteration stress
+  test (process memory climbed by hundreds of MB and never came back)
+  and fixed, guarded against self-assignment so reassigning a variable to
+  itself can't transiently hit refcount zero and free a live buffer. The
+  identical bug was found and fixed separately in both units (see commits
+  `0c65878` and `1e51cc6`). The Pascal-side `FRefCount` is a single-level
+  scheme over a *single* GPU-level ownership (acquired once at `Create`,
+  released once at zero) — there is never a matching
+  `clRetainMemObject`/Metal retain call. The practical upshot: neither
+  type needs a manual `Free`/`Release` anywhere.
+
+**Where the two diverge, and why it isn't a mechanical port:**
+
+- **`Element[r,c]` is slow by design in `TVMobjCL`, but not in
+  `TVMobjMTL`.** Each OpenCL access is its own blocking
+  `clEnqueueReadBuffer`/`WriteBuffer` round trip — fine for tests and
+  debug inspection (all this repo's test convention needs), never for a
+  hot per-element loop. Apple Silicon's unified memory means
+  `MTLBufferContents` is a raw CPU-visible pointer into the very memory
+  the GPU uses, so `TVMobjMTL`'s `Element`/`fillRandom`/`ToDeviceMTL`/
+  `ToHost` are plain `Move`/pointer operations and that caveat does not
+  apply.
+- **Bulk transfer is the real bridge.** `ToDevice`/`ToHost` (OpenCL) and
+  `ToDeviceMTL`/`ToHost` (Metal) move a whole buffer in one transfer, to
+  and from `TVMobjS` — genuinely new relative to the host types, which
+  never needed one.
+- **One naming collision worth remembering**: the Metal upload function
+  is `ToDeviceMTL`, not `ToDevice`, because `ToDevice(const A: TVMobjS)`
+  already exists returning `TVMobjCL` and the two would differ only in
+  *return* type, which Pascal cannot overload on. Everything else
+  (`Sin`/`Cos`/…/`FFT`/`IFFT`/`ToHost`) reuses the same names as plain
+  `overload`s, disambiguated by argument type exactly as the five host
+  families already do.
+- **FFT is simpler on Metal.** clFFT only supports an in-place transform
+  (`CLFFT_INPLACE`), so `TVMobjCL`'s `FFT`/`IFFT` must `CopyObjCL` first
+  and transform the copy; MPSGraph takes separate input/output tensors,
+  so the Metal versions allocate a fresh result and dispatch straight
+  into it.
+
+**FFT layout and scaling (identical across both, and a real trap).**
+Neither GPU type has a complex sibling the way `newVM.pas` can hand off
+to `newVMComplex.pas`, so complex data — input *and* output — is a GPU
+object of `Cols = 2*N` floats, consecutive pairs being `(re,im)`. That is
+exactly clFFT's `CLFFT_COMPLEX_INTERLEAVED` and
+`MPSDataTypeComplexFloat32`'s own native layout, so no packing step
+exists on either side, and it matches what an SDR IQ epoch already looks
+like. **Neither needs a manual `/N`**: the forward transform is unscaled,
+and both clFFT's backward plan and MPSGraph's
+`MPSGraphFFTScalingModeSize` already apply `1/N`, so `IFFT(FFT(x)) = x`
+directly. This is the **opposite** of the FFTW convention the rest of this
+codebase's FFT/DCT/DST code uses (see "FFT/DCT/DST functions" above),
+which never auto-normalises either direction. An earlier `IFFT` added its
+own extra `/N` on that FFTW-shaped assumption; every round-trip mismatch
+was off by exactly a factor of N, and it was only caught once the
+round-trip test was strengthened to check *every* element rather than one
+that happened to be 0. If either unit ever grows an FFTW-backed DCT/DST,
+that scaling convention does not carry over.
+
+**clFFT plan caching** (`GFFTPlanCache`/`GetFFTPlan` in `newVMCL.pas`):
+plans are baked once per distinct N and reused, not baked and destroyed
+per call. Baking is a genuinely expensive driver-side operation (roughly
+1–4 ms even warm on this repo's test hardware, against tens of
+microseconds for the transform itself), so replanning every call made a
+single GPU FFT dozens to hundreds of times slower than the equivalent
+host FFTW call. This was diagnosed by `newVMCLfft8192bench.lpr` and fixed
+in commit `e982929` — see the "Benchmarks" section below and
+`perf/newVMCUDAvsCLFFTperformance.rtf`.
+
+**`OpenCLReady`/`OpenCLLastError`**: the OpenCL context, queue and kernel
+program are built once, lazily, by the first `TVMobjCL.Create`.
+`OpenCLReady` reports whether that succeeded and `OpenCLLastError` says
+why it didn't, so calling code (a status bar, say) can explain a CPU
+fallback rather than silently taking one — the same "probe once, degrade
+gracefully" pattern the `HAVE_*` defines establish at config time, just
+at runtime.
+
+#### `OpenCLAPI.pas`
+
+Hand-curated **runtime (`LoadLibrary`) bindings** for OpenCL core and
+clFFT — only the subset `newVMCL.pas` calls, not a wholesale header
+translation. Plays the role for `newVMCL.pas` that `OneAPI.pas` plays for
+the host units. Three findings from the standalone probe that preceded it
+(an AMD Radeon PRO W6600, device `gfx1032`), all worth not rediscovering:
+
+- **Static linkage fails here even though the DLL is present.**
+  `OpenCL.dll` lives in `C:\Windows\System32` (put there by the GPU
+  driver), so a plain `external 'OpenCL.dll'` *should* work. It doesn't:
+  a probe with static `external` declarations failed at **process
+  startup** with `STATUS_DLL_NOT_FOUND` (0xC0000135), even with
+  `clFFT.dll` beside the exe — while the same probe rewritten to use
+  `LoadLibrary`/`GetProcedureAddress` loaded and ran both libraries
+  correctly, including a full compute-kernel round trip and a real clFFT
+  transform. Root cause not pinned down (plausibly a Windows loader quirk
+  in resolving transitive MSVCP140/VCRUNTIME140/`api-ms-win-crt-*`
+  dependencies at static-import time); dynamic loading is already this
+  codebase's established answer for exactly this class of problem.
+- **`clfftInitSetupData` is not exported** by this machine's clFFT build
+  (confirmed via `dumpbin /exports` — genuinely absent, not a naming
+  mismatch), and calling through the resulting nil pointer crashed the
+  probe. It only fills in cosmetic version/debug fields anyway, and
+  `clfftSetup(nil)` is documented to work without it — so this binding
+  doesn't declare it at all.
+- **`clFFT` isn't on a standard search path**, so `LoadclFFT` tries the
+  bare name first (for a future deployment that puts it on `PATH` or
+  beside the exe) then falls back to known-good build/install locations —
+  the same pattern `uSDRplay.pas` uses for `sdrplay_api.dll`. On Unix the
+  fallback is a *name* rather than a path (`libclFFT.so.2`), since a real
+  Linux dev machine had only the newer SONAME with no `.so.0` symlink.
+
+#### `MetalAPI.pas`
+
+Hand-curated **Objective-C bindings** for Metal and
+MetalPerformanceShadersGraph. Unlike `OpenCLAPI.pas` these are **link-time
+`linkframework` directives, not dynamic loading** — both frameworks are
+always present at a fixed, versionless location on every real Mac, so
+there is no "might not be installed" case; and more fundamentally you
+*cannot* `dlopen` a framework and `GetProcedureAddress` your way to ObjC
+classes, since class lookup and message dispatch go through the
+Objective-C runtime, which needs the real Mach-O image loaded and
+registered.
+
+- **Mode**: `{$mode objfpc}` + `{$modeswitch objectivec1}`, not this
+  codebase's usual `mode Delphi` — FPC's objc class/protocol syntax is
+  ObjFPC-only. The *public interface* exposes only plain types
+  (`mtl_buffer = Pointer`, the same opaque-handle convention
+  `OpenCLAPI.pas` uses for `cl_mem`), never a raw `objcclass`, so
+  `newVMMetal.pas` stays in `mode Delphi` + `AdvancedRecords` exactly like
+  `newVMCL.pas` and no caller needs `objectivec1`.
+- **Reference counting is manual MRC, not ARC** — confirmed against
+  `objcbase.pp`, where `retain`/`release` are ordinary `message`-dispatched
+  methods. Cocoa's Fundamental Rule applies: `new…`/`alloc`/`copy…`
+  return a +1 reference this code owns; every other factory/accessor
+  returns an autoreleased object it must *not* release. Every dispatch/FFT
+  call wraps its transient objects in a fresh `NSAutoreleasePool`, since
+  there is no pool on the thread by default and these run once per SDR
+  epoch tick.
+- **The FPU-exception driver crash.** A plain FPC console program that
+  does nothing but call `MTLCreateSystemDefaultDevice()` crashes
+  deterministically with `EXC_BAD_INSTRUCTION` deep inside Apple's AGX
+  driver — while the identical call from clang-compiled Objective-C on
+  the same machine works. Cause: FPC's default AArch64 FPCR leaves
+  floating-point exception trapping armed in a way clang-generated code
+  does not, and the driver's float code never expected a caller with traps
+  enabled. **This is the same class of bug this repo already hit once**
+  (see git history: "Fix Windows EInvalidOp crash from MKL LAPACKE complex
+  solve calls"). Fix: `Math.SetExceptionMask` masking every FPU exception
+  *before* the first Metal/MPSGraph call of the process, done once from
+  `InitializeMetalContext`. If a GPU/native library ever crashes
+  inexplicably inside its own float code, check this first.
+- **DWARF3 breaks this unit.** FPC 3.2.4's DWARF3 generator hits a real
+  internal compiler error (`200609171`) on this unit's `objcclass`/
+  `objcprotocol` declarations, specifically when combined with `-gl` —
+  reproduced standalone (`-gw3` alone fine, `-gl` alone fine, together ICE
+  every time; `{$DEBUGINFO OFF}` does *not* suppress it). **That is why
+  `newVMtest.lpi`'s `DebugInfoType` is `dsDwarf2`, not the Lazarus default
+  `dsDwarf3`** — it costs nothing but a debug-format choice. If someone
+  switches the project back to DWARF3 and `MetalAPI.pas` suddenly won't
+  compile, this is the reason.
+- **MPSGraph FFT layout/scaling** was confirmed against a real 16-point
+  FFT of a pure bin-2 cosine (magnitude-8.0 peaks at bins 2 and 14,
+  matching `newVMCL.pas`'s own `TestFFTKnownValues` exactly) plus a full
+  round trip, before the unit was written — see the shared FFT notes
+  above.
+
+
 ### External bindings
 
-- `cblas.pas` — machine-generated (`h2pas`) BLAS declarations bound against
-  OpenBLAS, providing `CBLAS_ORDER`, `CBLAS_TRANSPOSE`, etc. and base
-  `cblas_*` function pointers/types.
+- `cblas.pas` — machine-generated (`h2pas`) BLAS declarations, originally
+  bound against OpenBLAS, providing `CBLAS_ORDER`, `CBLAS_TRANSPOSE`, etc.
+  and base `cblas_*` function pointers/types. It now also selects Arm
+  Performance Libraries or Apple Accelerate as the CBLAS backend where
+  those are what's present, and hand-adds Accelerate's Fortran LAPACK
+  (`dgetrf_`/`dgetri_`/`dgetrs_`) and its vForce/vDSP stand-ins for MKL
+  VML and IPP — see "The define set, as it stands now" under
+  `newVMConfig.inc` above for the selection rules and the calling
+  conventions, which differ from MKL's.
 - `OneAPI.pas` — hand-written bindings for LAPACKE (`lapacke_*`), Intel VML
   (`vmd*`), Intel IPP (`ipps*`), MKL memory management (`MKL_malloc` etc.),
   and MKL's VSL RNG (`vslNewStream`/`vdRngGaussian`/`vsRngGaussian`), plus the
@@ -834,6 +1371,11 @@ non-zero elements, since `TVMobjI.Create` disallows a zero-length result
   `MKL_Complex16`/`MKL_Complex8` — two contiguous IEEE-754 floats — since
   several routines reinterpret a complex buffer as a flat real array via
   pointer casts, e.g. `fillRandom` and `RealToComplex`/`GetRealPart`).
+  It additionally carries the sparse-solver bindings (PARDISO, RCI ISS
+  FGMRES, `dcsrilu0`, and the Inspector-Executor Sparse BLAS quartet) plus
+  `TMKLMatrixDescr` and the `SPARSE_*` constants — all declared only in
+  the `HAVE_MKL` branch, since `newVMsparse.pas` is their sole caller and
+  requires MKL unconditionally; see the `newVMsparse.pas` section above.
 - `fftw3.pas` — see the dedicated "FFT/DCT/DST functions" section above.
   Like `cblas.pas`, it resolves its library at runtime via
   `LoadLibrary`/`GetProcedureAddress` rather than a link-time `external`:
@@ -952,8 +1494,10 @@ column-major LAPACK. Keep new routines consistent with this.
 (`fpcunit`/`testregistry` — the `TestRegistry` unit already pulled into
 every `newVM*` unit's `uses` clause turned out to be exactly this
 framework). One `TTestCase` per type — `TVMobjTests`, `TVMobjSTests`,
-`TVMobjZTests`, `TVMobjCTests`, `TVMobjITests` — each registered via
-`RegisterTest` in the unit's `initialization` section. Coverage per
+`TVMobjZTests`, `TVMobjCTests`, `TVMobjITests`, plus three conditionally
+compiled ones (`TVMobjCLTests`, `TVMobjMTLTests`, `TVMSparseTests`, all
+described below) — each registered via `RegisterTest` in the unit's
+`initialization` section. Coverage per
 `TVMobj`/`TVMobjS`/`TVMobjZ`/`TVMobjC` type: construction and
 dimension-validation asserts, `Element[r,c]` get/set (including
 out-of-range and non-square addressing), `writeMatrix`, `fillRandom`
@@ -1000,6 +1544,36 @@ check). `TVMobjITests` covers the narrower subset that actually applies to
 no-non-zero-elements assertion path) — with no operator/MatMult/
 LinearSolve/Invert/VML coverage, since `TVMobjI` has no such members.
 
+**Three test cases are conditionally compiled** rather than always
+present, each gated on its config define across all four of its `uses`
+entry, class declaration, implementation, and `RegisterTest` call — so on
+a machine without that backend the suite never references the unit at
+all, and simply reports a smaller test count. This is the same "probe once
+at config time, degrade gracefully" contract `PUREPASCAL`/`HAVE_FFTW`
+already establish, chosen deliberately over registering tests that would
+need their own runtime skip-or-pass-vacuously logic.
+
+`TVMobjCLTests` (`HAVE_OPENCL`) and `TVMobjMTLTests` (`HAVE_METAL`) are
+the GPU pair, covering the same core-object-shape subset as
+`TVMobjSTests` — construction including the `Create(r,c,Values)` overload,
+`Element` get/set, `writeMatrix`, `fillRandom`, `Id`, `CopyObjCL`/
+`CopyObjMTL`, `Transpose`, `linspace`, every operator overload, the
+elementwise functions, `MatMultCL`/`MatMultMTL` — plus the two things
+only a GPU type has: the `ToDevice`/`ToHost` bridge to `TVMobjS`, and
+`FFT`/`IFFT`. No `LinearSolve`/`Invert`/`Kron`/`Diag`/`Det`/`Flip*`/etc,
+since neither unit implements them (see the GPU backends section above).
+
+`TVMSparseTests` (`HAVE_MKL`) is gated for a different reason than the two
+above — not an optional accelerator, but the fact that PARDISO/RCI FGMRES
+have no fallback of any kind (see the `newVMsparse.pas` section). Its 8
+tests cover `TripletsToSparse`'s duplicate merging,
+`SparseDiag`, `SetDiagonal`, `SparseAdd`, `PardisoSolve` in both
+symmetric-positive-definite and general modes, and `FGMRESSolve` with and
+without the ILU0 preconditioner. Unlike most known-value tests elsewhere
+in this suite, the four solve tests assert the **residual** `A*X - B ≈ 0`
+row by row rather than comparing `X` against hard-coded expected values,
+which would be fragile at any fixed number of digits.
+
 One reusable trick worth knowing: `fillRandom` seeds a fresh VSL stream
 with a hard-coded constant (777) on every call, so two same-sized
 `fillRandom` calls produce bit-identical data — several tests exploit this
@@ -1033,6 +1607,78 @@ project file, but that file does not currently exist in the repo — check
 before assuming it's present when the `.lpi` is the source of truth for
 project membership.
 
+### Benchmarks (`newVMbench.lpr`, `newVMCLbench.lpr`, `newVMCLfft8192bench.lpr`)
+
+Three standalone timing programs, separate from the correctness suite.
+All three build with **plain `fpc`, no `lazbuild`/`.lpi`** — the same
+approach `newvmconfigure.lpr` uses, since none needs an LCL/GUI
+dependency:
+
+```
+fpc -Fu. -Fi. newVMbench.lpr
+```
+
+- **`newVMbench.lpr`** — host only, all four `TVMobj*` types. Times
+  `MatMult`/`LinearSolve`/`Invert` at N = 10/100/1000, plus `FFT`/`IFFT`
+  (complex double and single, round-tripped and checked against the
+  original) and `EigDecompose`/`EigDecomposeS` (checked via `A*v =
+  lambda*v` for every eigenpair, the same verification
+  `TestEigDecomposeSatisfiesEigenEquation` uses). `EigDecompose` gets its
+  own shorter `NsEig` list (10/50/100, no 1000): `PurePascalEigHqr2` is
+  the same asymptotic O(N³) as LU-based `Invert` but with a materially
+  larger constant, so N=1000 under `PUREPASCAL` risks dwarfing every other
+  row for little insight.
+- **`newVMCLbench.lpr`** — host versus GPU, on the only two operations
+  both sides implement: complex `FFT`/`IFFT` and real matrix multiply.
+  Host is `TVMobjS`/`TVMobjC`, GPU is `TVMobjCL`. N runs 1024 → 16384 by
+  doublings, same input data on both sides, and every row reports a
+  correctness residual alongside the two timings so a suspiciously fast
+  GPU number can be told apart from a genuinely fast one. Builds and runs
+  without `HAVE_OPENCL`, printing a notice and leaving the GPU columns
+  blank.
+- **`newVMCLfft8192bench.lpr`** — a follow-up narrowed to N=8192 but with
+  much finer timing: it separates each side's very *first* `FFT`/`IFFT`
+  call from the average/min/max of 100 repeats.
+
+Two measurement subtleties documented in the programs themselves, both
+worth knowing before reading or extending a results table:
+
+- **`PUREPASCAL` versus library-backed is a compile-time choice, not a
+  runtime switch**, so getting both numbers means building `newVMbench`
+  **twice** against two different `newVMConfig.inc` contents and running
+  the two binaries separately. `PrintBackend` reports which defines the
+  binary was actually built with, so a table assembled from two runs stays
+  self-documenting. Note also that FFT/IFFT's backend is driven by
+  `HAVE_FFTW`, *independently* of `PUREPASCAL` — so the common
+  "`PUREPASCAL` forced on, FFTW still detected" build still times FFTW for
+  the FFT rows while everything else runs its plain-Pascal body.
+- **The GPU MatMult timing deliberately includes one readback.**
+  `MatMultCL` enqueues its kernel and returns without waiting (OpenCL
+  queues are asynchronous), so timing it alone would measure enqueue cost,
+  not execution. `newVMCLbench` therefore wraps `MatMultCL` *together
+  with* the following `ToHost` — whose `clEnqueueReadBuffer` is blocking
+  and, on `newVMCL.pas`'s single in-order queue, cannot complete before
+  the kernel does. That is the only way to observe real kernel time from
+  outside the unit, and a real caller pays for the readback anyway.
+  `FFT`/`IFFT` need no such wrapping, since they already `clFinish` before
+  returning.
+
+`newVMCLfft8192bench` earned its keep: `newVMCLbench`'s GPU FFT numbers
+were flat at ~190–380 ms across *every* N from 1024 to 16384 — not
+scaling with N the way an O(N log N) transform must. The repeat-versus-
+first-call split confirmed the cost was per-call clFFT plan baking rather
+than the transform, which is what motivated `newVMCL.pas`'s plan cache
+(commit `e982929`). Measurements live in
+`perf/newVMCUDAvsCLFFTperformance.rtf`.
+
+One asymmetry to expect in `newVMbench`'s complex results, which is
+correct rather than a bug: `LinearSolveZ`/`LinearSolveC` have **no
+Accelerate branch at all** — Apple's `zgetrs_`/`cgetrs_` crash with an
+access violation whenever a factored pivot has an exactly-zero imaginary
+part — so both always run their `PurePascalLU*` path in *either* build,
+and their two timings should come out essentially identical.
+
+
 ### `hirestimer.pas`
 
 Platform-specific high-resolution timer (`THighResTimer`), using
@@ -1041,8 +1687,10 @@ convenience wrapper (`Profiler.Start`/`Profiler.Stop`, both global
 singletons instantiated in the unit's `initialization` section). No
 longer referenced by `newVMtest.lpr` (now an FPCUnit console runner that
 doesn't time anything), but used by `demos/SpectralDiff` to time the
-spectral-differentiation call, specifically so demo projects don't need
-an external timing package (e.g. EpikTimer/`etpackage`) as a dependency.
+spectral-differentiation call, and by all three benchmark programs (see
+"Benchmarks" above) — specifically so neither the demos nor the benches
+need an external timing package (e.g. EpikTimer/`etpackage`) as a
+dependency.
 
 ### `demos/`
 
