@@ -112,6 +112,14 @@ Type
       Weighted: Boolean;
       Degree: Integer): TPolynomial; static;
 
+    { standard error of the regression from residuals R (and weights W if
+      Weighted) for a fit of NParams coefficients - see the Fit comment }
+
+    class function StdErrorOf(
+      const R, W: TVMobj;
+      Weighted: Boolean;
+      NParams: Integer): Double; static;
+
 
   public
 
@@ -150,6 +158,22 @@ Type
       const X, Y, W: TVMobj;
       Degree: Integer;
       out Residuals: TVMobj): TPolynomial; overload; static;
+
+    { ...and these two also return the standard error of the regression,
+      the residual standard error s - see the Fit comment for the formula
+      and the NaN at zero degrees of freedom }
+
+    class function Fit(
+      const X, Y: TVMobj;
+      Degree: Integer;
+      out Residuals: TVMobj;
+      out StdError: Double): TPolynomial; overload; static;
+
+    class function Fit(
+      const X, Y, W: TVMobj;
+      Degree: Integer;
+      out Residuals: TVMobj;
+      out StdError: Double): TPolynomial; overload; static;
 
     { residuals of this polynomial against data - what the two above return }
 
@@ -1343,6 +1367,21 @@ end;
   method usable on any polynomial; for a least-squares fit with an
   intercept the unweighted residuals sum to zero, which the tests use.
 
+  Fit(X, Y, Degree, out Residuals, out StdError) and its weighted twin
+  additionally return the standard error of the regression (residual
+  standard error, the s of most regression output - the single number
+  for the fit, NOT the standard error of each coefficient):
+
+      s = sqrt( sum r[i]^2 / (N - (Degree+1)) )
+
+  and, weighted, sqrt( sum W[i]*r[i]^2 / (N+ - (Degree+1)) ) where N+
+  counts the points with W[i] > 0 - a zero-weight point contributes
+  nothing to the sum and nothing to the degrees of freedom either, the
+  same convention as R's lm, which drops zero-weight observations. At
+  zero degrees of freedom (Degree = N-1, the interpolating fit) s is
+  0/0 and comes back as NaN rather than raising, so a caller can fit the
+  full-degree polynomial and simply ignore s; check it with IsNan.
+
   Library-backed (HAVE_LAPACKE): LAPACKE_dgels on the N x (d+1) Vandermonde
   design matrix [1, x, x^2, ..., x^d] - a QR factorisation of the design
   matrix itself, which is far better conditioned than forming the normal
@@ -1583,6 +1622,68 @@ class function TPolynomial.Fit(
 begin
   Result := Fit(X, Y, W, Degree);
   Residuals := Result.Residuals(X, Y);
+end;
+
+
+class function TPolynomial.StdErrorOf(
+  const R, W: TVMobj;
+  Weighted: Boolean;
+  NParams: Integer): Double;
+var
+  I, N, Dof: Integer;
+  RP, WP: PDouble;
+  SSR: Double;
+begin
+  N := R.Rows * R.Cols;
+  RP := R.DataPtr;
+  SSR := 0.0;
+  Dof := -NParams;
+
+  if Weighted then
+  begin
+    WP := W.DataPtr;
+
+    for I := 0 to N - 1 do
+      if WP[I] > 0 then
+      begin
+        SSR := SSR + WP[I] * Sqr(RP[I]);
+        Inc(Dof);
+      end;
+  end
+  else
+  begin
+    for I := 0 to N - 1 do
+      SSR := SSR + Sqr(RP[I]);
+
+    Dof := Dof + N;
+  end;
+
+  if Dof <= 0 then
+    Result := NaN
+  else
+    Result := Sqrt(SSR / Dof);
+end;
+
+
+class function TPolynomial.Fit(
+  const X, Y: TVMobj;
+  Degree: Integer;
+  out Residuals: TVMobj;
+  out StdError: Double): TPolynomial;
+begin
+  Result := Fit(X, Y, Degree, Residuals);
+  StdError := StdErrorOf(Residuals, Residuals, False, Degree + 1);   { W unused }
+end;
+
+
+class function TPolynomial.Fit(
+  const X, Y, W: TVMobj;
+  Degree: Integer;
+  out Residuals: TVMobj;
+  out StdError: Double): TPolynomial;
+begin
+  Result := Fit(X, Y, W, Degree, Residuals);
+  StdError := StdErrorOf(Residuals, W, True, Degree + 1);
 end;
 
 

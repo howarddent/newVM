@@ -1029,6 +1029,18 @@ matrix raises `EMathError`.
   wrappers: the matching fit, then the public `Residuals(X, Y)` method,
   which works on any polynomial. An intercept fit's unweighted residuals
   sum to zero, which `TestFitResidualsKnownValuesSumToZero` checks.
+- **Standard-error overloads** `Fit(X, Y, Degree, out Residuals, out
+  StdError)` and the weighted twin add the standard error of the
+  regression - the residual standard error `s = sqrt(SSR/(N-(d+1)))`,
+  one number for the fit, **not** per-coefficient standard errors
+  (those would need the covariance matrix, i.e. LMath's `V`, which
+  isn't computed). Weighted: `sqrt(sum w*r^2 / (N+ - (d+1)))` with `N+`
+  the points of positive weight, R's `lm` convention of dropping
+  zero-weight observations from both the sum and the degrees of
+  freedom. At zero degrees of freedom (the interpolating `Degree=N-1`
+  fit) it returns `NaN` rather than raising, so the full-degree fit
+  stays usable; callers test it with `IsNan`. Computed by a private
+  `StdErrorOf` over the residuals, after the residual-returning overload.
 - **`Evaluate(const X: TVMobj): TVMobj`** is the vector form of the
   scalar `Evaluate(X: Double)` (both marked `overload`): Horner's method
   on every element of `X`, returning a `TVMobj` of the same shape - any
@@ -1055,7 +1067,9 @@ matrix raises `EMathError`.
   weights raise), the residual-returning overloads (zero residuals on an
   exact fit with Y a column and X a row, the known -0.1/0.8/-1.3/0.6 line
   residuals summing to zero, a dropped point's raw -13/7 residual under
-  weights), and the `TVMobj` `Evaluate` overload (agrees
+  weights), the standard-error overloads (`sqrt(1.35)` for the line,
+  0 for the exact quadratic, `NaN` for the interpolating fit, `sqrt(2/7)`
+  weighted with a zero-weight point dropped), and the `TVMobj` `Evaluate` overload (agrees
   with the scalar one elementwise, keeps a 2x3 shape, zero polynomial). Verified both ways: 321/321 with
   `HAVE_LAPACKE` on, and again with it forced off in `newVMConfig.inc`
   so `Fit` ran the LMath-derived normal-equations path through

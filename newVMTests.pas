@@ -76,7 +76,7 @@ unit newVMTests;
 interface
 
 uses
-  Classes, SysUtils, fpcunit, testregistry,
+  Classes, SysUtils, Math, fpcunit, testregistry,
   OneAPI, newVM, newVMSingle, newVMComplex, newVMComplexSingle, newVMI, newPolymath
   {$IFDEF HAVE_OPENCL}, OpenCLAPI, newVMCL{$ENDIF}
   {$IFDEF HAVE_METAL}, MetalAPI, newVMMetal{$ENDIF}
@@ -623,6 +623,9 @@ type
     procedure TestFitResidualsZeroForExactFit;
     procedure TestFitResidualsKnownValuesSumToZero;
     procedure TestFitWeightedResidualsAreRaw;
+    procedure TestFitStdErrorKnownValue;
+    procedure TestFitStdErrorZeroAndNaN;
+    procedure TestFitWeightedStdErrorDropsZeroWeights;
     procedure TestEvaluateOnVectorMatchesScalar;
     procedure TestEvaluateOnMatrixKeepsShape;
   end;
@@ -5176,6 +5179,45 @@ begin
   AssertEquals('slope', 9/7, P[1], DblTol);
   AssertEquals('dropped point residual', -13/7, R[0, 2], DblTol);
   AssertEquals('r[0]', 1 - 9/7, R[0, 0], DblTol);
+end;
+
+procedure TPolynomialTests.TestFitStdErrorKnownValue;
+var X, Y, R: TVMobj; P: TPolynomial; SE: Double;
+begin
+  // line residuals -0.1, 0.8, -1.3, 0.6: SSR = 2.70, dof = 4-2 = 2,
+  // s = sqrt(1.35)
+  X := TVMobj.Create(1, 4, [0, 1, 2, 3]);
+  Y := TVMobj.Create(1, 4, [1, 3, 2, 5]);
+  P := TPolynomial.Fit(X, Y, 1, R, SE);
+  AssertEquals('slope', 1.1, P[1], DblTol);
+  AssertEquals('r[2]', -1.3, R[0, 2], DblTol);
+  AssertEquals('s', Sqrt(1.35), SE, DblTol);
+end;
+
+procedure TPolynomialTests.TestFitStdErrorZeroAndNaN;
+var X, Y, R: TVMobj; SE: Double;
+begin
+  // exact quadratic from 5 points: zero residuals, dof 2, s = 0
+  X := TVMobj.Create(1, 5, [-2, -1, 0, 1, 2]);
+  Y := TVMobj.Create(1, 5, [17, 6, 1, 2, 9]);
+  TPolynomial.Fit(X, Y, 2, R, SE);
+  AssertEquals('s exact', 0.0, SE, DblTol);
+  // interpolating fit: dof 0, s is NaN rather than an error
+  TPolynomial.Fit(X, Y, 4, R, SE);
+  AssertTrue('s NaN at zero dof', IsNan(SE));
+end;
+
+procedure TPolynomialTests.TestFitWeightedStdErrorDropsZeroWeights;
+var X, Y, W, R: TVMobj; P: TPolynomial; SE: Double;
+begin
+  // zero weight on (2,2): line 9/7 + 9/7 x, residuals -2/7, 3/7, (-13/7), -1/7
+  // sum w r^2 = 14/49 = 2/7 over the three live points, dof = 3-2 = 1
+  X := TVMobj.Create(1, 4, [0, 1, 2, 3]);
+  Y := TVMobj.Create(1, 4, [1, 3, 2, 5]);
+  W := TVMobj.Create(4, 1, [1, 1, 0, 1]);
+  P := TPolynomial.Fit(X, Y, W, 1, R, SE);
+  AssertEquals('slope', 9/7, P[1], DblTol);
+  AssertEquals('s weighted', Sqrt(2/7), SE, DblTol);
 end;
 
 procedure TPolynomialTests.TestEvaluateOnVectorMatchesScalar;
