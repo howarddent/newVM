@@ -113,3 +113,6 @@ Graphs/packagefiles.xml
 # gmsh post-processing output (.pos) written by the FEM4 examples - generated
 # results, several MB per time step; the .geo/.msh/.scr inputs stay tracked
 *.pos
+# ThermEx1's time-history output; the concrete_cp_*.csv material data in the
+# same folder are inputs and stay tracked, so this is by name, not *.csv
+Delphi OOFEM/FEM4/Development/Examples/Data/thermex1.csv
