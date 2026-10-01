@@ -1861,6 +1861,35 @@ packages. Compiled binaries and each demo's own `lib/` output are
   `TChart`/`TLineSeries`, computed with `TVMobj.linspace` plus the
   elementwise `Exp`/`Sin`/`Sqr`/`*` functions from `newVM.pas`. Default
   function is `y = exp(-0.1*x^2) * sin(3*x)`, 1000 points over `[-10,10]`.
+- **`newPoly`** — least-squares polynomial fitting with
+  `newPolymath.pas`'s `TPolynomial.Fit` (see its own section above),
+  shown on two `TVMPlot2D` components stacked in one form, the fit above
+  and the residuals underneath. A radio group picks degree 1, 2 or 3; a
+  fixed "true" polynomial of that degree (`TruePoly` - `1 + 2x`, then
+  `- 1.5x^2`, then `+ 0.8x^3`, each extending the last) is sampled at 50
+  evenly spaced x in [-3, 3], N(0, sigma) noise from a spin edit is
+  added, and a polynomial of the same degree is fitted back with the
+  `Fit(X, Y, Degree, out Residuals, out StdError)` overload, so the
+  residual plot and the standard error come from the one call. Upper
+  plot: noisy points as circles (`plsNone` + `pmsCircle`), true curve
+  dashed blue, fit solid red - all three on the same 50-point grid, a
+  cubic being smooth enough at that spacing that one `SetData` call
+  carries them (`SetData` needs one shared `X`). Lower plot: residuals
+  as circles against a dotted zero line. A memo lists true and fitted
+  coefficients and `s` against the generating sigma - with the right
+  degree `s` lands near sigma. "New data" redraws the noise with
+  `Math.RandG`, deliberately not `TVMobj.fillRandom`, whose fixed 777
+  seed would return the identical noise every click. Both plots are
+  created in code inside a client-aligned panel (fit plot `alTop` at
+  three fifths of the height, kept there by the panel's `OnResize`,
+  residual plot `alClient`), the same pattern as `Graphs/Plot2D`.
+  Requires `LazOpenGLContext` and `LCL`, with `OtherUnitFiles=
+  ../..;../../Graphs` for `uVMPlot2D`. One `.lfm` gotcha hit while
+  writing it: a hand-written `ChildSizing.ShrinkHorizontal =
+  crsScaleChildsToFit` on the `TRadioGroup` is not a valid enum name and
+  fails at form load with "Error reading rgDegree.ChildSizing..." -
+  caught only by screenshotting the running demo, not by the build;
+  `AutoFill` alone lays the buttons out fine.
 - **`SpectralDiff`** — Chebyshev spectral differentiation of
   `f(x) = exp(x)*sin(5x)` (the example function, from Trefethen's
   *Spectral Methods in MATLAB*) via `DCT1` (newVM.pas's FFTW-backed
