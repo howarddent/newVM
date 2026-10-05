@@ -222,6 +222,11 @@ type
     // all-at-once TVMobj vectors. See the header comment and
     // RecomputeBounds' own comment for the full contract.
     procedure PlotXY(X, Y: Double; PlotLine: Integer);
+    { Drops every series - SetData deliberately never shrinks the series
+      count (so it can't un-render a series PlotXY populated), so a caller
+      that re-plots a VARYING number of series must call this first, or a
+      slot the new SetData doesn't cover keeps showing its old data }
+    procedure ClearSeries;
   published
     property Title: string read FTitle write SetTitle;
     property XAxisTitle: string read FXAxisTitle write SetXAxisTitle;
@@ -679,16 +684,31 @@ end;
 // of whatever stale data (constructor placeholder or otherwise) already
 // occupied that series index, instead of starting it from scratch.
 procedure TVMPlot2D.EnsureUserDataStarted;
+begin
+  if FUserDataStarted then Exit;
+  ClearSeries;
+  FUserDataStarted := True;
+end;
+
+// Public: empties every series and resets the count, so the next SetData
+// starts from nothing. The need surfaced in demos/JetVent, whose Replot
+// passes a different number of series depending on the option chosen:
+// going from two series to one left slot 1's old flow line on screen,
+// because SetData's high-water-mark FSeriesCount (see its comment) is the
+// right behaviour for mixing SetData with PlotXY but the wrong one for a
+// wholesale re-plot. Also what EnsureUserDataStarted's first-call clear
+// of the constructor's placeholder data now calls.
+procedure TVMPlot2D.ClearSeries;
 var
   iser: Integer;
 begin
-  if FUserDataStarted then Exit;
   for iser := 0 to VMPlotMaxSeries - 1 do begin
     SetLength(FXData[iser], 0);
     SetLength(FYData[iser], 0);
   end;
   FSeriesCount := 0;
-  FUserDataStarted := True;
+  FHasData := False;
+  Invalidate;
 end;
 
 // Extracts X and up to VMPlotMaxSeries Y TVMobj vectors into plain Double

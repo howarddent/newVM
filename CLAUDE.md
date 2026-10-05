@@ -2047,6 +2047,14 @@ per-series grids.
   passed in wholesale - `FXData[iser] := Copy(XVals, 0, N)` (its own copy
   of `X`, not a shared reference) and a fresh `FYData[iser]`, discarding
   whatever was there before, marking `FUserDataStarted` (see `PlotXY`).
+- **`ClearSeries`** empties every series and resets the count. Needed
+  because `SetData` deliberately never shrinks the series count (a
+  high-water mark, so a `SetData` for series 0 can't un-render a series
+  `PlotXY` filled) - correct for mixing the two, wrong for a caller that
+  re-plots a varying number of series wholesale: `demos/JetVent` going
+  from two series to one left slot 1's old flow line on screen until
+  `Replot` called this first. `EnsureUserDataStarted`'s first-call clear
+  of the placeholder data is the same routine.
 - **Data, incremental**: `procedure PlotXY(X, Y: Double; PlotLine:
   Integer)` appends one `(X,Y)` point to series `PlotLine`, extending it
   by one - for building a series up over time (streaming/interactive

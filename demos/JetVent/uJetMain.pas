@@ -226,12 +226,12 @@ begin
       end;
     end;
 
+    // ClearSeries first: SetData never shrinks the series count, so a
+    // re-plot with fewer series than last time (the ratio plot after the
+    // flow plot, say) would otherwise leave the surplus old series showing
+    FPlot.ClearSeries;
     if n = 0 then
-    begin
-      memo.Lines.Add('Nothing selected.');
-      FPlot.SetSeriesStyle(0, clWhite, 1.0, plsNone, '');
-      FPlot.SetData(FX, [TVMobj.Create(1, NumPressures)]);
-    end
+      memo.Lines.Add('Nothing selected.')
     else
     begin
       SetLength(Series, n);
