@@ -21,8 +21,10 @@ unit uJetMain;
 
      Entrained flow and entrainment ratio have no calculated model (the
      original plotted the measured jet flow under the "calculated" label
-     for entrainment, and zero for the ratio); here those two options
-     draw the measured series only and the memo says so.
+     for entrainment, and zero for the ratio). On those two options the
+     Calculated check group is unticked and greyed out, its ticks
+     remembered and put back when an option with calculated data is
+     chosen again (SetGroupAvailability); the memo says so too.
 
      Dropped from the original: the TeeChart SVG export and cursor tool.
 
@@ -57,6 +59,9 @@ type
     FPlot: TVMPlot2D;
     FX: TVMobj;
     FCatheters: array[TJetCath] of TCatheter;
+    FSavedCalc: array[TJetCath] of Boolean;   // Calculated ticks while the group is greyed out
+    FUpdating: Boolean;                        // guards Replot against re-entry from programmatic unticks
+    procedure SetGroupAvailability(Group: TCheckGroup; var Saved: array of Boolean; Available: Boolean);
     procedure Replot;
   end;
 
@@ -115,6 +120,36 @@ begin
   Replot;
 end;
 
+{ Greys a check group out, unticked, when the current option has no data
+  of that kind, remembering the ticks; re-enables it with the ticks put
+  back once the option does. Idempotent: only acts on a change of state. }
+procedure TfmMain.SetGroupAvailability(Group: TCheckGroup; var Saved: array of Boolean; Available: Boolean);
+var
+  i: Integer;
+begin
+  if Available = Group.Enabled then Exit;
+  FUpdating := True;
+  try
+    if Available then
+    begin
+      for i := 0 to Group.Items.Count - 1 do
+        Group.Checked[i] := Saved[i];
+      Group.Enabled := True;
+    end
+    else
+    begin
+      for i := 0 to Group.Items.Count - 1 do
+      begin
+        Saved[i] := Group.Checked[i];
+        Group.Checked[i] := False;
+      end;
+      Group.Enabled := False;
+    end;
+  finally
+    FUpdating := False;
+  end;
+end;
+
 procedure TfmMain.Replot;
 var
   Option: TPlotOption;
@@ -167,7 +202,9 @@ var
   end;
 
 begin
+  if FUpdating then Exit;
   Option := TPlotOption(rgPlotOption.ItemIndex);
+  SetGroupAvailability(cgCalculated, FSavedCalc, not (Option in [poEntrain, poERatio]));
   memo.Lines.BeginUpdate;
   try
     memo.Clear;
@@ -184,7 +221,7 @@ begin
     end;
 
     if Option in [poEntrain, poERatio] then
-      memo.Lines.Add('No calculated model for entrainment - measured series only.');
+      memo.Lines.Add('No calculated model for entrainment - measured series only (Calculated greyed out).');
 
     SetLength(Series, 2 * (Ord(High(TJetCath)) + 1));
     n := 0;

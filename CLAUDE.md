@@ -1901,7 +1901,10 @@ packages. Compiled binaries and each demo's own `lib/` output are
     option computed `DP - 0.5 rho V^2/1 bar`, not a mass flow, and now is
     `rho_amb*Q` in g/s as its label said; and "calculated" entrainment
     plotted the measured jet flow (ratio: zero) - entrainment has no
-    model, so those two options draw measured series only and say so.
+    model, so those two options draw measured series only, grey out the
+    Calculated check group unticked (`SetGroupAvailability`, which
+    remembers the ticks and restores them on return; an `FUpdating`
+    flag stops the programmatic unticks re-entering `Replot`), and say so.
     The TeeChart SVG export and cursor tool are dropped.
   - **FPC gotchas**: `naca1135.pas` (Carmichael's public-domain NACA 1135
     unit, used for `Eq43`) had an unterminated `(*` comment that Delphi
