@@ -520,6 +520,21 @@ convention):
 - Marked `overload` throughout, same reason as `Sin`/`Cos`/etc: all four
   units' versions of these names are visible together in
   `newVMTests.pas`, and would otherwise just hide each other.
+- **Plans are cached, not rebuilt per call.** Every FFT/IFFT/R2C/C2R/
+  DCT/DST wrapper in all four units gets its plan from `fftw3.pas`'s
+  `CachedPlanD`/`CachedPlanF`: built the first time a (transform, length,
+  r2r kind, buffer alignment class) combination is seen, then only
+  executed - so a new plan is made exactly when e.g. a spectrum display's
+  epoch size changes. One lock per FFTW *library* (not per unit) guards
+  lookup and planning, since the planner isn't thread-safe and
+  `newVM.pas`/`newVMComplex.pas` share libfftw3; executing a cached plan
+  needs no lock. Plans are keyed on `fftw_alignment_of` of the caller's
+  buffers rather than built with `FFTW_UNALIGNED` - measured: UNALIGNED
+  disables FFTW's SIMD kernels and executes 2-3x slower, far more than
+  the few us an ESTIMATE re-plan costs. (`newVM.pas`'s DCT/DST had an
+  earlier unit-local cache using UNALIGNED; it was replaced by this.)
+  Cached plans are out-of-place only - never call them with the same
+  buffer as input and output.
 
 Ported the original raw-FFTW3 spectral-differentiation demo
 (`/home/howard/projects/Lazarus/fftw3`) to `DCT1` for

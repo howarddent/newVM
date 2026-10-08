@@ -2383,10 +2383,8 @@ begin
   if A.Cols = 1 then result := TVMobjZ.Create(nc, 1) else result := TVMobjZ.Create(1, nc);
 {$IFDEF HAVE_FFTW}
   assert(Assigned(fftw_plan_dft_r2c_1d), s+'FFTW3 (double) library not loaded');
-  plan := fftw_plan_dft_r2c_1d(n, A.DataPtr, PComplex16(@result.FData[0]), FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
-  assert(plan<>nil, s+'fftw_plan_dft_r2c_1d failed');
+  plan := CachedPlanD(ftR2C, n, A.DataPtr, PComplex16(@result.FData[0]));   // planned once per n - see fftw3.pas, PLAN CACHE
   fftw_execute_dft_r2c(plan, A.DataPtr, PComplex16(@result.FData[0]));
-  fftw_destroy_plan(plan);
 {$ELSE}
   //Only the nc needed half-spectrum bins are computed directly (A's imaginary
   //part is implicitly 0 - a real vector treated as complex).
@@ -2425,10 +2423,8 @@ begin
   if A.Cols = 1 then result := TVMobj.Create(N, 1) else result := TVMobj.Create(1, N);
 {$IFDEF HAVE_FFTW}
   assert(Assigned(fftw_plan_dft_c2r_1d), s+'FFTW3 (double) library not loaded');
-  plan := fftw_plan_dft_c2r_1d(N, PComplex16(@A.FData[0]), result.DataPtr, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
-  assert(plan<>nil, s+'fftw_plan_dft_c2r_1d failed');
+  plan := CachedPlanD(ftC2R, N, PComplex16(@A.FData[0]), result.DataPtr);
   fftw_execute_dft_c2r(plan, PComplex16(@A.FData[0]), result.DataPtr);
-  fftw_destroy_plan(plan);
   assert(Assigned(cblas_dscal), s+'OpenBLAS not available on this machine - FFT_C2R normalization has no PUREPASCAL fallback');
   //Divide via an explicit Double intermediate (Nd), not "1.0/N" directly -
   //this FPC/AArch64 target silently computes a literal-over-Integer division
@@ -2467,10 +2463,8 @@ begin
   result := TVMobjZ.Create(A.Rows, A.Cols);
 {$IFDEF HAVE_FFTW}
   assert(Assigned(fftw_plan_dft_1d), s+'FFTW3 (double) library not loaded');
-  plan := fftw_plan_dft_1d(n, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]), FFTW_FORWARD, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
-  assert(plan<>nil, s+'fftw_plan_dft_1d failed');
+  plan := CachedPlanD(ftDFTForward, n, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]));
   fftw_execute_dft(plan, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]));
-  fftw_destroy_plan(plan);
 {$ELSE}
   PPDirectDFT(n, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]), True);
 {$ENDIF}
@@ -2491,10 +2485,8 @@ begin
   result := TVMobjZ.Create(A.Rows, A.Cols);
 {$IFDEF HAVE_FFTW}
   assert(Assigned(fftw_plan_dft_1d), s+'FFTW3 (double) library not loaded');
-  plan := fftw_plan_dft_1d(n, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]), FFTW_BACKWARD, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
-  assert(plan<>nil, s+'fftw_plan_dft_1d failed');
+  plan := CachedPlanD(ftDFTBackward, n, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]));
   fftw_execute_dft(plan, PComplex16(@A.FData[0]), PComplex16(@result.FData[0]));
-  fftw_destroy_plan(plan);
   assert(Assigned(cblas_zdscal), s+'OpenBLAS not available on this machine - IFFT normalization has no PUREPASCAL fallback');
   Nd := n;  //see FFT_C2R's own comment above: avoid "1.0/n" (Integer) directly
   cblas_zdscal(n, 1.0/Nd, @result.FData[0], 1);  //normalize, matching IFFT(FFT(x)) = x

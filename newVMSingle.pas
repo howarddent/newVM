@@ -1379,10 +1379,8 @@ begin
   result := TVMobjS.Create(A.Rows, A.Cols);
 {$IFDEF HAVE_FFTW}
   assert(Assigned(fftwf_plan_r2r_1d), s+'FFTW3 (single) library not loaded');
-  plan := fftwf_plan_r2r_1d(n, A.DataPtr, result.DataPtr, kind, FFTW_ESTIMATE or FFTW_PRESERVE_INPUT);
-  assert(plan<>nil, s+'fftwf_plan_r2r_1d failed');
+  plan := CachedPlanF(ftR2R, n, A.DataPtr, result.DataPtr, kind);   // planned once per (n, kind) - see fftw3.pas, PLAN CACHE
   fftwf_execute_r2r(plan, A.DataPtr, result.DataPtr);
-  fftwf_destroy_plan(plan);
 {$ELSE}
   PPr2rTransformS(n, A.DataPtr, result.DataPtr, kind);
 {$ENDIF}
