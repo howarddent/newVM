@@ -3,7 +3,7 @@ unit uDABScanner;
 {*******************************************************************************
 
      TDABScanner - steps a TSDRRFSource through the Band III DAB blocks
-     used in the UK (5A..13F), and on each one runs a TDABFICDecoder
+     used in the UK (5A..13F), and on each one runs a TDABDecoder
      (uDABDecoder.pas) on the live IQ stream long enough to say whether
      there is an ensemble there, what it is called, which services it
      carries, and how well it is being received. A non-visual component
@@ -218,7 +218,7 @@ end;
 function TDABScanThread.ScanChannel(const Ch: TDABChannel; HintPpm: Double;
   HavePpm: Boolean; out R: TDABScanResult): Boolean;
 var
-  Dec: TDABFICDecoder;
+  Dec: TDABDecoder;
   Cursor: TSDRStreamCursor;
   IQ: TVMobjC;
   Consumed: Int64;
@@ -247,7 +247,7 @@ begin
   Sleep(SettleMs);
   Cursor := FOwner.FSource.NewStreamCursor;
 
-  Dec := TDABFICDecoder.Create;
+  Dec := TDABDecoder.Create;
   try
     if HavePpm then Dec.SetFrequencyHint(HintPpm * 1e-6 * Ch.FreqHz);
     Consumed := 0;

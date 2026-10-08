@@ -90,7 +90,18 @@ unit uSDRMain;
      under one titled box instead of scattered loose among the spectrum-
      display controls that fill the rest of the panel; their own
      SetBounds coordinates are relative to the group box's own client
-     area, not the panel's.
+     area, not the panel's. Below the Listen/mode row they sit one level
+     further down, in ListenPanel - the FM/AM pane - which
+     ApplyListenModeVisibility swaps for DABPanel when DAB is selected.
+
+     DAB (ModeCombo's third entry): its own pane, holding the scan
+     button (uDABScanForm.pas) and Station Select - the stations from the
+     last scan (uDABStations.pas, kept in dab_stations.ini beside the
+     settings file), scanning first if there has never been one, with the
+     selected station's details in a memo below the list. There is no
+     DAB audio yet; selecting a station tunes to its multiplex.
+     Selecting it applies DAB's front-end defaults (ApplyDABDefaults:
+     2.048 Msps, epoch 2048, Bias-T, SDRplay gains, Band III tuning).
 
 *******************************************************************************}
 
@@ -100,9 +111,9 @@ interface
 
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
-  StdCtrls, ComCtrls, Spin, IniFiles, LazLogger,
+  StdCtrls, ComCtrls, Spin, IniFiles, LazLogger, Grids,
   uSDRDevice, uSDRRFSource, uVMPlotSDRSpectrum, uFreqKeypad, uFMReceiver,
-  uAMReceiver, uDABDecoder, uDABScanForm;
+  uAMReceiver, uDABDecoder, uDABScanner, uDABScanForm, uDABStations, uDABReceiver;
 
 type
 
@@ -179,8 +190,22 @@ type
     FFreqRetryTimer: TTimer;
     FEdgePanTimer: TTimer;
     FRDSTimer: TTimer;
+    ListenPanel: TPanel;
+    DABPanel: TPanel;
     DABScanButton: TButton;
+    StationSelectButton: TButton;
+    StationCombo: TComboBox;
+    StationMemo: TMemo;
+    DABListenCheckBox: TCheckBox;
+    DABVolumeLabel: TLabel;
+    DABVolumeTrackBar: TTrackBar;
+    DABStatusLabel: TLabel;
+    FDABReceiver: TDABReceiver;
+    FSelectedStation: Integer;   // index into FStations, -1 none
     FDABScanForm: TDABScanForm;
+    FStations: TDABStationList;
+    FShowStationsAfterScan: Boolean;
+    FFillingStationCombo: Boolean;
     FEdgePanDirection: Integer;
     FShutdownDone: Boolean;
 
@@ -211,7 +236,21 @@ type
     procedure EdgePanTimerTick(Sender: TObject);
     procedure RDSTimerTick(Sender: TObject);
     procedure DABScanButtonClick(Sender: TObject);
+    procedure EnsureDABScanForm;
+    procedure DABScanFinished(Sender: TObject);
+    function StationsFileName: string;
+    procedure StationSelectButtonClick(Sender: TObject);
+    procedure ShowStationList;
+    procedure StationComboChange(Sender: TObject);
+    procedure SelectStation(Index: Integer);
+    procedure ShowStationInfo(Index: Integer);
+    procedure DABListenCheckBoxChange(Sender: TObject);
+    procedure DABVolumeTrackBarChange(Sender: TObject);
+    procedure UpdateDABStatus;
     function PrepareForDABScan(out Msg: string): Boolean;
+    function IsDABMode: Boolean;
+    function SelectDABStream(out Msg: string): Boolean;
+    procedure ApplyDABDefaults;
     function RunFrequencyKeypad(MinHz, MaxHz: Double; out ResultHz: Double): Boolean;
     procedure UpdatePeakThreshold;
     procedure ReportError(const Where: string);
@@ -304,6 +343,10 @@ begin
   FAMReceiver := TAMBroadcastReceiver.Create(Self);
   FAMReceiver.Source := FRFSource;
 
+  FDABReceiver := TDABReceiver.Create(Self);
+  FDABReceiver.Source := FRFSource;
+  FSelectedStation := -1;
+
   // All receiver controls (Listen/Mode/Frequency/Bandwidth/Synchronous/
   // Volume) live inside their own titled group box rather than loose in
   // ControlPanel - visually separates "how to receive" from the
@@ -322,6 +365,9 @@ begin
   ReceiverGroupBox.Parent := ControlPanel;
   ReceiverGroupBox.SetBounds(860, 10, 420, 315);
   ReceiverGroupBox.Caption := 'Receiver';
+  // Nothing in here can do anything without a radio - disabled (and every
+  // child with it) until ConnectButtonClick has one open.
+  ReceiverGroupBox.Enabled := False;
 
   ListenCheckBox := TCheckBox.Create(Self);
   ListenCheckBox.Parent := ReceiverGroupBox;
@@ -335,27 +381,107 @@ begin
   ModeCombo.Style := csDropDownList;
   ModeCombo.Items.Add('FM');
   ModeCombo.Items.Add('AM');
+  ModeCombo.Items.Add('DAB');
   ModeCombo.ItemIndex := 0;
   ModeCombo.OnChange := @ModeComboChange;
 
-  // DAB is a separate window (uDABScanForm.pas) rather than a third
-  // Mode: it needs the whole capture at 2.048 Msps and steps the front
-  // end itself, which the FM/AM receivers' "tune within the span" model
-  // doesn't fit.
+  // Everything under the Listen/mode row lives in one of two panes, and
+  // ApplyListenModeVisibility shows exactly one: ListenPane for FM and AM
+  // (which share it, toggling their own mode-specific controls inside),
+  // DABPanel for DAB. Both fill the same space; coordinates of the
+  // controls inside are relative to the pane, not the group box.
+  ListenPanel := TPanel.Create(Self);
+  ListenPanel.Parent := ReceiverGroupBox;
+  ListenPanel.SetBounds(0, 48, 416, 245);
+  ListenPanel.BevelOuter := bvNone;
+
+  // DAB: no software tuning within the capture as FM/AM do - a multiplex
+  // fills 1.536 MHz of a 2.048 Msps capture, and the scan steps the front
+  // end itself (uDABScanner.pas). Selecting DAB sets the front end up for
+  // it (ApplyDABDefaults); the scan window does the rest.
+  DABPanel := TPanel.Create(Self);
+  DABPanel.Parent := ReceiverGroupBox;
+  DABPanel.SetBounds(0, 48, 416, 245);
+  DABPanel.BevelOuter := bvNone;
+  DABPanel.Visible := False;
+
   DABScanButton := TButton.Create(Self);
-  DABScanButton.Parent := ReceiverGroupBox;
-  DABScanButton.SetBounds(200, 17, 110, 25);
+  DABScanButton.Parent := DABPanel;
+  DABScanButton.SetBounds(10, 10, 110, 25);
   DABScanButton.Caption := 'DAB Scan...';
   DABScanButton.OnClick := @DABScanButtonClick;
 
+  // Station Select: the stations from the last scan (scanning first if
+  // there has never been one) in a drop-down showing the current choice,
+  // with the chosen station's details in the memo underneath and Listen to
+  // play it. Everything below the buttons stays hidden until there is a
+  // list to show.
+  StationSelectButton := TButton.Create(Self);
+  StationSelectButton.Parent := DABPanel;
+  StationSelectButton.SetBounds(130, 10, 110, 25);
+  StationSelectButton.Caption := 'Station Select';
+  StationSelectButton.OnClick := @StationSelectButtonClick;
+
+  // Disabled until a station is selected - there is nothing to play before.
+  DABListenCheckBox := TCheckBox.Create(Self);
+  DABListenCheckBox.Parent := DABPanel;
+  DABListenCheckBox.SetBounds(255, 13, 90, 19);
+  DABListenCheckBox.Caption := 'Listen';
+  DABListenCheckBox.Enabled := False;
+  DABListenCheckBox.OnChange := @DABListenCheckBoxChange;
+
+  StationCombo := TComboBox.Create(Self);
+  StationCombo.Parent := DABPanel;
+  StationCombo.SetBounds(10, 42, 396, 23);
+  StationCombo.Style := csDropDownList;
+  StationCombo.DropDownCount := 20;
+  StationCombo.OnChange := @StationComboChange;
+  StationCombo.Visible := False;
+
+  StationMemo := TMemo.Create(Self);
+  StationMemo.Parent := DABPanel;
+  StationMemo.SetBounds(10, 70, 396, 104);
+  StationMemo.ReadOnly := True;
+  StationMemo.ScrollBars := ssAutoVertical;
+  StationMemo.WordWrap := True;
+  StationMemo.Visible := False;
+
+  // The FM/AM volume slider lives in the other pane; DAB has its own,
+  // kept in step with it (VolumeTrackBarChange/DABVolumeTrackBarChange) so
+  // there is still one volume setting.
+  DABVolumeLabel := TLabel.Create(Self);
+  DABVolumeLabel.Parent := DABPanel;
+  DABVolumeLabel.SetBounds(10, 180, 150, 15);
+  DABVolumeLabel.Caption := 'Volume: 70%';
+
+  DABVolumeTrackBar := TTrackBar.Create(Self);
+  DABVolumeTrackBar.Parent := DABPanel;
+  DABVolumeTrackBar.SetBounds(10, 196, 150, 30);
+  DABVolumeTrackBar.Min := 0;
+  DABVolumeTrackBar.Max := 100;
+  DABVolumeTrackBar.Position := 70;
+  DABVolumeTrackBar.Frequency := 10;
+  DABVolumeTrackBar.OnChange := @DABVolumeTrackBarChange;
+
+  // Live reception while listening - refreshed by FRDSTimer.
+  DABStatusLabel := TLabel.Create(Self);
+  DABStatusLabel.Parent := DABPanel;
+  DABStatusLabel.AutoSize := False;
+  DABStatusLabel.WordWrap := True;
+  DABStatusLabel.SetBounds(170, 180, 236, 60);
+  DABStatusLabel.Caption := '';
+
+  FStations := TDABStationList.Create;
+  FStations.LoadFromFile(StationsFileName);
+
   ListenFreqLabel := TLabel.Create(Self);
-  ListenFreqLabel.Parent := ReceiverGroupBox;
-  ListenFreqLabel.SetBounds(10, 62, 95, 15);
+  ListenFreqLabel.Parent := ListenPanel;
+  ListenFreqLabel.SetBounds(10, 14, 95, 15);
   ListenFreqLabel.Caption := 'Freq (MHz):';
 
   ListenFreqEdit := TFloatSpinEdit.Create(Self);
-  ListenFreqEdit.Parent := ReceiverGroupBox;
-  ListenFreqEdit.SetBounds(110, 58, 100, 23);
+  ListenFreqEdit.Parent := ListenPanel;
+  ListenFreqEdit.SetBounds(110, 10, 100, 23);
   ListenFreqEdit.DecimalPlaces := 3;
   ListenFreqEdit.Increment := 0.1;
   ListenFreqEdit.MinValue := 0;
@@ -364,20 +490,20 @@ begin
   ListenFreqEdit.OnEditingDone := @ListenFreqEditEditingDone;
 
   ListenKeypadButton := TButton.Create(Self);
-  ListenKeypadButton.Parent := ReceiverGroupBox;
-  ListenKeypadButton.SetBounds(220, 57, 100, 25);
+  ListenKeypadButton.Parent := ListenPanel;
+  ListenKeypadButton.SetBounds(220, 9, 100, 25);
   ListenKeypadButton.Caption := 'Keypad...';
   ListenKeypadButton.OnClick := @ListenKeypadButtonClick;
 
   // AM-only (ApplyListenModeVisibility hides these whenever FM is
   // selected) - see this unit's own header comment (LISTEN).
   BandwidthLabel := TLabel.Create(Self);
-  BandwidthLabel.Parent := ReceiverGroupBox;
-  BandwidthLabel.SetBounds(10, 100, 220, 15);
+  BandwidthLabel.Parent := ListenPanel;
+  BandwidthLabel.SetBounds(10, 52, 220, 15);
 
   BandwidthTrackBar := TTrackBar.Create(Self);
-  BandwidthTrackBar.Parent := ReceiverGroupBox;
-  BandwidthTrackBar.SetBounds(10, 118, 220, 30);
+  BandwidthTrackBar.Parent := ListenPanel;
+  BandwidthTrackBar.SetBounds(10, 70, 220, 30);
   // Position/10 = kHz, 0.1kHz steps - same "Position/10.0" convention
   // YGainTrackBar already uses for its own fractional control.
   BandwidthTrackBar.Min := Round(MinAMBandwidthHz / 100);
@@ -387,8 +513,8 @@ begin
   BandwidthTrackBar.OnChange := @BandwidthTrackBarChange;
 
   SynchronousCheckBox := TCheckBox.Create(Self);
-  SynchronousCheckBox.Parent := ReceiverGroupBox;
-  SynchronousCheckBox.SetBounds(240, 122, 140, 19);
+  SynchronousCheckBox.Parent := ListenPanel;
+  SynchronousCheckBox.SetBounds(240, 74, 140, 19);
   SynchronousCheckBox.Caption := 'Synchronous';
   SynchronousCheckBox.OnChange := @SynchronousCheckBoxChange;
 
@@ -402,20 +528,20 @@ begin
   // than always-on: tuned against one reception scenario, and a plausible
   // source of new artifacts in another).
   ClickBlankerCheckBox := TCheckBox.Create(Self);
-  ClickBlankerCheckBox.Parent := ReceiverGroupBox;
-  ClickBlankerCheckBox.SetBounds(10, 100, 220, 19);
+  ClickBlankerCheckBox.Parent := ListenPanel;
+  ClickBlankerCheckBox.SetBounds(10, 52, 220, 19);
   ClickBlankerCheckBox.Caption := 'Click Blanker';
   ClickBlankerCheckBox.Checked := True;
   ClickBlankerCheckBox.OnChange := @ClickBlankerCheckBoxChange;
 
   VolumeLabel := TLabel.Create(Self);
-  VolumeLabel.Parent := ReceiverGroupBox;
-  VolumeLabel.SetBounds(10, 150, 150, 15);
+  VolumeLabel.Parent := ListenPanel;
+  VolumeLabel.SetBounds(10, 102, 150, 15);
   VolumeLabel.Caption := 'Volume: 70%';
 
   VolumeTrackBar := TTrackBar.Create(Self);
-  VolumeTrackBar.Parent := ReceiverGroupBox;
-  VolumeTrackBar.SetBounds(10, 168, 220, 30);
+  VolumeTrackBar.Parent := ListenPanel;
+  VolumeTrackBar.SetBounds(10, 120, 220, 30);
   VolumeTrackBar.Min := 0;
   VolumeTrackBar.Max := 100;
   VolumeTrackBar.Position := 70;
@@ -429,17 +555,17 @@ begin
   // and would otherwise grow the label straight out through the side of
   // the group box.
   RDSStationLabel := TLabel.Create(Self);
-  RDSStationLabel.Parent := ReceiverGroupBox;
+  RDSStationLabel.Parent := ListenPanel;
   RDSStationLabel.AutoSize := False;
-  RDSStationLabel.SetBounds(10, 226, 400, 16);
+  RDSStationLabel.SetBounds(10, 178, 400, 16);
   RDSStationLabel.Font.Style := [fsBold];
   RDSStationLabel.Caption := 'RDS: waiting';
 
   RDSTextLabel := TLabel.Create(Self);
-  RDSTextLabel.Parent := ReceiverGroupBox;
+  RDSTextLabel.Parent := ListenPanel;
   RDSTextLabel.AutoSize := False;
   RDSTextLabel.ShowHint := True;   // the hint carries text too long to fit
-  RDSTextLabel.SetBounds(10, 245, 400, 16);
+  RDSTextLabel.SetBounds(10, 197, 400, 16);
   RDSTextLabel.Caption := '';
 
   BandwidthTrackBarChange(Self);   // sets BandwidthLabel's initial text
@@ -471,6 +597,7 @@ end;
 procedure TForm1.FormDestroy(Sender: TObject);
 begin
   ShutdownAll;
+  FreeAndNil(FStations);
 end;
 
 { Ordered shutdown: stop the demodulators, then release the device, then
@@ -558,6 +685,12 @@ begin
     if Assigned(FAMReceiver) then FAMReceiver.Active := False;
   except
     on E: Exception do Failed('am_receiver', E);
+  end;
+
+  try
+    if Assigned(FDABReceiver) then FDABReceiver.Active := False;
+  except
+    on E: Exception do Failed('dab_receiver', E);
   end;
 
   // 3. The analyser is the other consumer of the stream, and owns the GL
@@ -1178,6 +1311,7 @@ begin
     GainStage2CheckBox.Visible := False;
     BiasTCheckBox.Visible := False;
     RateCombo.Items.Clear;
+    ReceiverGroupBox.Enabled := False;
     Caption := 'newVM SDR Spectrum Analyser';
     StatusLabel.Caption := 'Not connected';
     Exit;
@@ -1212,7 +1346,12 @@ begin
 
   ConnectButton.Caption := 'Disconnect';
   StartStopButton.Enabled := True;
+  ReceiverGroupBox.Enabled := True;
   StatusLabel.Caption := 'Connected (' + FRFSource.Capabilities.DeviceName + ', idle)';
+
+  // After the remembered front end has been restored, so DAB's own
+  // settings win while DAB is the selected receiver.
+  if IsDABMode then ApplyDABDefaults;
 end;
 
 // (CenterFreqHz -+ SampleRateHz/2), in MHz - recomputed after every
@@ -1262,6 +1401,11 @@ begin
     FAnalyser.Active := False;
     FReceiver.Active := False;
     FAMReceiver.Active := False;
+    // Only untick DAB Listen if it was really playing: Listen itself can
+    // land here (restarting the stream at 2.048 Msps) before it has
+    // started the receiver, and must not be unticked from under itself.
+    if FDABReceiver.Active then DABListenCheckBox.Checked := False;
+    FDABReceiver.Active := False;
     ListenCheckBox.Checked := False;
     FEdgePanTimer.Enabled := False;
     FEdgePanDirection := 0;
@@ -1477,27 +1621,260 @@ end;
 procedure TForm1.RDSTimerTick(Sender: TObject);
 begin
   UpdateRDSDisplay;
+  UpdateDABStatus;
+end;
+
+procedure TForm1.EnsureDABScanForm;
+begin
+  if Assigned(FDABScanForm) then Exit;
+  FDABScanForm := TDABScanForm.CreateFor(Self, FRFSource);
+  FDABScanForm.OnPrepare := @PrepareForDABScan;
+  FDABScanForm.OnScanFinished := @DABScanFinished;
 end;
 
 procedure TForm1.DABScanButtonClick(Sender: TObject);
 begin
-  if not Assigned(FDABScanForm) then begin
-    FDABScanForm := TDABScanForm.CreateFor(Self, FRFSource);
-    FDABScanForm.OnPrepare := @PrepareForDABScan;
-  end;
+  EnsureDABScanForm;
   FDABScanForm.Show;
   FDABScanForm.BringToFront;
 end;
 
-// Puts the radio into the state a DAB scan needs: connected, streaming,
-// at 2.048 Msps. Goes through the same Start/Stop handler as the button
-// (so the rate combo, status line and analyser all stay consistent), and
-// switches Listen off - the scan retunes the front end under it, so the
-// FM/AM receiver would only be playing noise.
-function TForm1.PrepareForDABScan(out Msg: string): Boolean;
+function TForm1.StationsFileName: string;
+begin
+  Result := ExtractFilePath(SettingsFileName) + 'dab_stations.ini';
+end;
+
+// Every scan, from either button, ends here: its results are merged into
+// the station list (only the blocks it visited are replaced - see
+// uDABStations.pas) and saved. Not during shutdown, when the scan is
+// being stopped only so the source can be torn down.
+procedure TForm1.DABScanFinished(Sender: TObject);
+var
+  Results: array of TDABScanResult;
+  i: Integer;
+begin
+  if FShutdownDone then Exit;
+  SetLength(Results, FDABScanForm.Scanner.ResultCount);
+  for i := 0 to High(Results) do Results[i] := FDABScanForm.Scanner.Results[i];
+  FStations.MergeScan(Results);
+  try
+    FStations.SaveToFile(StationsFileName);
+  except
+    on E: Exception do StatusLabel.Caption := 'Could not save DAB stations: ' + E.Message;
+  end;
+  if FShowStationsAfterScan or StationCombo.Visible then ShowStationList;
+  FShowStationsAfterScan := False;
+end;
+
+// No scan ever run: run one (in the scan window, so its progress shows)
+// and come back to the list when it finishes. Otherwise straight to the
+// list from the last scan - rescanning is the DAB Scan button's job.
+procedure TForm1.StationSelectButtonClick(Sender: TObject);
+begin
+  if FStations.HasScanned then begin
+    ShowStationList;
+    Exit;
+  end;
+  EnsureDABScanForm;
+  FDABScanForm.Show;
+  FDABScanForm.BringToFront;
+  FShowStationsAfterScan := True;
+  FDABScanForm.StartFullScan;
+  // If it couldn't start, the scan window says why; don't leave a list
+  // pending on a scan that isn't happening.
+  if not FDABScanForm.Scanner.Scanning then FShowStationsAfterScan := False;
+end;
+
+// Fills the drop-down from the station list, keeping the current station
+// selected if it is still in it (a rescan rebuilds the list, and its
+// order, from scratch).
+procedure TForm1.ShowStationList;
+var
+  i, Keep: Integer;
+  KeepSId: LongWord;
+  KeepHz: QWord;
+begin
+  KeepSId := 0; KeepHz := 0;
+  if (FSelectedStation >= 0) and (FSelectedStation < FStations.Count) then begin
+    KeepSId := FStations[FSelectedStation].SId;
+    KeepHz := FStations[FSelectedStation].FreqHz;
+  end;
+  FFillingStationCombo := True;
+  try
+    StationCombo.Items.BeginUpdate;
+    try
+      StationCombo.Items.Clear;
+      Keep := -1;
+      for i := 0 to FStations.Count - 1 do begin
+        StationCombo.Items.Add(Format('%s  -  %s (%s)',
+          [FStations.DisplayName(i), FStations[i].EnsembleLabel, FStations[i].BlockName]));
+        if (FStations[i].SId = KeepSId) and (FStations[i].FreqHz = KeepHz) then Keep := i;
+      end;
+    finally
+      StationCombo.Items.EndUpdate;
+    end;
+    StationCombo.ItemIndex := Keep;
+    FSelectedStation := Keep;
+    StationCombo.Visible := True;
+    StationMemo.Visible := True;
+    DABListenCheckBox.Enabled := Keep >= 0;
+    if Keep >= 0 then
+      ShowStationInfo(Keep)
+    else if FStations.Count = 0 then
+      StationMemo.Text := 'The last scan found no stations. Check the aerial (and Bias-T, ' +
+        'if it is an active one), then use DAB Scan... to scan again.'
+    else
+      StationMemo.Text := Format('%d stations - choose one from the list above.', [FStations.Count]);
+  finally
+    FFillingStationCombo := False;
+  end;
+end;
+
+procedure TForm1.StationComboChange(Sender: TObject);
+begin
+  if FFillingStationCombo then Exit;
+  SelectStation(StationCombo.ItemIndex);
+end;
+
+// Shows the station's details, tunes the radio to its multiplex, and -
+// if Listen is on - switches the receiver to it. Listen becomes
+// available once there is a station to play.
+procedure TForm1.SelectStation(Index: Integer);
+begin
+  if (Index < 0) or (Index >= FStations.Count) then Exit;
+  FSelectedStation := Index;
+  ShowStationInfo(Index);
+  DABListenCheckBox.Enabled := True;
+  if FRFSource.IsOpen and (Round(FreqEdit.Value * 1e6) <> FStations[Index].FreqHz) then begin
+    FreqEdit.Value := FStations[Index].FreqHz / 1e6;
+    CommitFrequencyHz(FStations[Index].FreqHz);
+  end;
+  FDABReceiver.ServiceId := FStations[Index].SId;
+end;
+
+// Listen: make sure the radio is streaming at 2.048 Msps on the station's
+// block (PrepareForDABScan does the first part, exactly as for a scan),
+// then start the receiver. Any FM/AM listening was already switched off
+// when DAB was selected.
+procedure TForm1.DABListenCheckBoxChange(Sender: TObject);
+var
+  Msg: string;
+begin
+  if not DABListenCheckBox.Checked then begin
+    FDABReceiver.Active := False;
+    DABStatusLabel.Caption := '';
+    Exit;
+  end;
+  if (FSelectedStation < 0) or (FSelectedStation >= FStations.Count) then begin
+    DABListenCheckBox.Checked := False;
+    Exit;
+  end;
+  if Assigned(FDABScanForm) and FDABScanForm.Scanner.Scanning then begin
+    DABStatusLabel.Caption := 'Wait for the scan to finish.';
+    DABListenCheckBox.Checked := False;
+    Exit;
+  end;
+  if not PrepareForDABScan(Msg) then begin
+    DABStatusLabel.Caption := 'Cannot listen: ' + Msg;
+    DABListenCheckBox.Checked := False;
+    Exit;
+  end;
+  if FRFSource.CenterFreqHz <> FStations[FSelectedStation].FreqHz then begin
+    FreqEdit.Value := FStations[FSelectedStation].FreqHz / 1e6;
+    CommitFrequencyHz(FStations[FSelectedStation].FreqHz);
+  end;
+  FDABReceiver.Volume := DABVolumeTrackBar.Position / 100.0;
+  FDABReceiver.ServiceId := FStations[FSelectedStation].SId;
+  FDABReceiver.Active := True;
+  UpdateDABStatus;
+end;
+
+procedure TForm1.DABVolumeTrackBarChange(Sender: TObject);
+begin
+  FDABReceiver.Volume := DABVolumeTrackBar.Position / 100.0;
+  DABVolumeLabel.Caption := Format('Volume: %d%%', [DABVolumeTrackBar.Position]);
+  if VolumeTrackBar.Position <> DABVolumeTrackBar.Position then
+    VolumeTrackBar.Position := DABVolumeTrackBar.Position;
+end;
+
+// What the receiver is doing and how well, once a second while listening.
+// "Errors" is the share of received bits the error correction had to fix
+// (see TDABDecoder.MSCChannelBER): DAB+ stations generally stop decoding
+// above roughly 5%, the older MP2 ones degrade more gradually.
+procedure TForm1.UpdateDABStatus;
+var
+  S: TDABReceiverStatus;
+  T: string;
+begin
+  if not FDABReceiver.Active then Exit;
+  S := FDABReceiver.Status;
+  T := S.State;
+  if S.FormatText <> '' then T := T + ': ' + S.FormatText;
+  if S.BitrateKbps > 0 then T := T + Format(', %d kbit/s', [S.BitrateKbps]);
+  if not IsNan(S.SNRdB) then T := T + LineEnding + Format('SNR %.1f dB, FIC %.0f%%', [S.SNRdB, S.FICOkPercent]);
+  if not IsNan(S.ChannelBER) then T := T + Format(', errors %.1f%%', [100 * S.ChannelBER]);
+  if S.AUsOk + S.AUsBad > 0 then
+    T := T + LineEnding + Format('Audio frames good: %.0f%%', [100.0 * S.AUsOk / (S.AUsOk + S.AUsBad)]);
+  if S.LastError <> '' then T := T + LineEnding + S.LastError;
+  DABStatusLabel.Caption := T;
+end;
+
+procedure TForm1.ShowStationInfo(Index: Integer);
+var
+  St: TDABStation;
+  Codec, Quality, SubCh, EnsId: string;
+
+  function DB(V: Double): string;
+  begin
+    if IsNan(V) then Result := '-' else Result := Format('%.1f dB', [V]);
+  end;
+
+begin
+  St := FStations[Index];
+  if St.AudioType = 'DAB+' then Codec := 'DAB+ (HE-AAC)'
+  else if St.AudioType = 'DAB' then Codec := 'DAB (MP2)'
+  else Codec := 'unknown';
+  Quality := Format('SNR %s, MER %s, FIC %.0f%% error-free',
+    [DB(St.SNRdB), DB(St.MERdB), St.FICOkPercent]);
+
+  SubCh := '';
+  if St.SubChId >= 0 then SubCh := Format(', sub-channel %d', [St.SubChId]);
+  EnsId := '';
+  if St.EId >= 0 then EnsId := Format('   (ID %.4X)', [St.EId]);
+
+  StationMemo.Lines.BeginUpdate;
+  try
+    StationMemo.Lines.Clear;
+    StationMemo.Lines.Add('Station: ' + FStations.DisplayName(Index) +
+      Format('   (service ID %.4X)', [St.SId]));
+    StationMemo.Lines.Add('Audio: ' + Codec + SubCh);
+    StationMemo.Lines.Add('Ensemble: ' + St.EnsembleLabel + EnsId);
+    StationMemo.Lines.Add(Format('Block: %s, %.3f MHz', [St.BlockName, St.FreqHz / 1e6]));
+    StationMemo.Lines.Add('Reception at scan: ' + Quality);
+    if St.ScannedAt > 0 then
+      StationMemo.Lines.Add('Scanned: ' + FormatDateTime('yyyy-mm-dd hh:nn', St.ScannedAt));
+  finally
+    StationMemo.Lines.EndUpdate;
+  end;
+  StationMemo.SelStart := 0;
+end;
+
+function TForm1.IsDABMode: Boolean;
+begin
+  Result := ModeCombo.Text = 'DAB';
+end;
+
+// Selects the 2.048 Msps rate DAB needs (uDABDecoder.pas) and, if the
+// radio is already streaming at some other rate, restarts it - the rate
+// can only change while stopped. Not streaming is left not streaming;
+// the next Start picks the rate up from RateCombo. Goes through
+// StartStopButtonClick both ways so the combos, status line and
+// analyser stay consistent with a manual stop/start.
+function TForm1.SelectDABStream(out Msg: string): Boolean;
 var
   i, RateIdx: Integer;
   Caps: TSDRCapabilities;
+  WasStreaming: Boolean;
 begin
   Result := False;
   Msg := '';
@@ -1513,12 +1890,82 @@ begin
     Msg := Caps.DeviceName + ' offers no 2.048 Msps sample rate';
     Exit;
   end;
-
-  ListenCheckBox.Checked := False;
-  if FRFSource.IsStreaming and (Round(FRFSource.SampleRateHz) <> DABSampleRateHz) then
+  WasStreaming := FRFSource.IsStreaming;
+  if WasStreaming and (Round(FRFSource.SampleRateHz) <> DABSampleRateHz) then
     StartStopButtonClick(Self);   // stop, so the rate can change
+  RateCombo.ItemIndex := RateIdx;
+  if WasStreaming and not FRFSource.IsStreaming then begin
+    StartStopButtonClick(Self);
+    if not FRFSource.IsStreaming then begin
+      Msg := 'could not restart streaming: ' + FRFSource.LastError;
+      Exit;
+    end;
+  end;
+  Result := True;
+end;
+
+{ The front-end settings DAB wants, applied when DAB is selected (and
+  again on connecting while DAB is selected, since the rate list and
+  gain controls only exist once a radio is open):
+
+    - 2.048 Msps (see SelectDABStream).
+    - Epoch 2048: one FFT bin per DAB carrier (1 kHz), so the spectrum
+      shows a multiplex's 1536 carriers at their natural resolution.
+    - Bias-T on: the active aerial this was developed against delivers
+      nothing on Band III without it. Harmless on a passive aerial with a
+      DC block; turn it off by hand otherwise.
+    - SDRplay only: IF gain reduction 40 dB, LNA state 3. Found by
+      measurement against the national multiplexes - less reduction
+      clipped the ADC, more lost the weaker local ones. Other radios'
+      gain scales differ, so their gains are left as they are.
+    - If the local oscillator is outside Band III, 12B (BBC National,
+      225.648 MHz), so the spectrum shows a multiplex straight away.
+
+  Each assignment fires the control's own OnChange, which is what pushes
+  it at the hardware - same as LoadSettings/ApplyDeviceCapabilities. }
+procedure TForm1.ApplyDABDefaults;
+var
+  Msg: string;
+  i: Integer;
+begin
+  i := EpochCombo.Items.IndexOf('2048');
+  if i >= 0 then begin
+    EpochCombo.ItemIndex := i;
+    EpochComboChange(Self);
+  end;
+
+  if not FRFSource.IsOpen then Exit;
+
+  if BiasTCheckBox.Visible then BiasTCheckBox.Checked := True;
+  if Pos('SDRplay', FRFSource.Capabilities.DeviceName) = 1 then begin
+    if GainStage0TrackBar.Visible then GainStage0TrackBar.Position := 40;
+    if GainStage1TrackBar.Visible and (3 <= GainStage1TrackBar.Max) then GainStage1TrackBar.Position := 3;
+  end;
+
+  if (FreqEdit.Value < 174.0) or (FreqEdit.Value > 240.0) then begin
+    FreqEdit.Value := 225.648;
+    CommitFrequencyHz(Round(FreqEdit.Value * 1e6));
+  end;
+
+  if not SelectDABStream(Msg) then
+    StatusLabel.Caption := 'DAB: ' + Msg;
+end;
+
+// Puts the radio into the state a DAB scan needs: connected, streaming,
+// at 2.048 Msps. Gains and Bias-T are NOT re-applied here - ApplyDABDefaults
+// set them when DAB was selected, and anything changed by hand since then
+// is the user's choice. Switches Listen off - the scan retunes the front
+// end under it.
+function TForm1.PrepareForDABScan(out Msg: string): Boolean;
+begin
+  Result := False;
+  ListenCheckBox.Checked := False;
+  // A scan retunes the front end from block to block; DAB listening goes
+  // off for it. (Listen itself also comes through here, with the receiver
+  // not yet started, so this is a no-op then.)
+  if FDABReceiver.Active then DABListenCheckBox.Checked := False;
+  if not SelectDABStream(Msg) then Exit;
   if not FRFSource.IsStreaming then begin
-    RateCombo.ItemIndex := RateIdx;
     StartStopButtonClick(Self);
     if not FRFSource.IsStreaming then begin
       Msg := 'could not start streaming: ' + FRFSource.LastError;
@@ -1721,6 +2168,11 @@ procedure TForm1.ApplyListenModeVisibility;
 var
   IsAM: Boolean;
 begin
+  // DAB has its own pane, and nothing to listen to yet.
+  ListenPanel.Visible := not IsDABMode;
+  DABPanel.Visible := IsDABMode;
+  ListenCheckBox.Visible := not IsDABMode;
+
   IsAM := ModeCombo.Text = 'AM';
   BandwidthLabel.Visible := IsAM;
   BandwidthTrackBar.Visible := IsAM;
@@ -1741,7 +2193,11 @@ end;
 // slider itself is labelled in.
 procedure TForm1.UpdateCursorBandwidth;
 begin
-  if ModeCombo.Text = 'AM' then
+  // DAB isn't tuned by the cursor (the cursor is the FM/AM listen
+  // frequency), so it gets no shaded band rather than a misleading one.
+  if IsDABMode then
+    FAnalyser.SpectrumCursorBandwidth := 0
+  else if ModeCombo.Text = 'AM' then
     FAnalyser.SpectrumCursorBandwidth := (BandwidthTrackBar.Position * 100 * 2) / 1e6
   else
     FAnalyser.SpectrumCursorBandwidth := 0.2;
@@ -1754,6 +2210,7 @@ end;
 // having already stopped the other one first (both call sites do).
 procedure TForm1.StartSelectedReceiver;
 begin
+  if IsDABMode then Exit;   // no DAB audio yet
   if ModeCombo.Text = 'AM' then begin
     // BandwidthTrackBarChange already keeps FAMReceiver.BandwidthHz in
     // sync live (see that handler's own comment) regardless of when it
@@ -1789,6 +2246,14 @@ end;
 // see this unit's own header comment, LISTEN).
 procedure TForm1.ModeComboChange(Sender: TObject);
 begin
+  if IsDABMode then begin
+    ListenCheckBox.Checked := False;   // stops whichever receiver was playing
+    ApplyListenModeVisibility;
+    UpdateCursorBandwidth;
+    ApplyDABDefaults;
+    Exit;
+  end;
+  DABListenCheckBox.Checked := False;   // leaving DAB
   ApplyListenModeVisibility;
   UpdateCursorBandwidth;
   if ListenCheckBox.Checked then begin
@@ -1846,6 +2311,8 @@ begin
   FReceiver.Volume := VolumeTrackBar.Position / 100.0;
   FAMReceiver.Volume := VolumeTrackBar.Position / 100.0;
   VolumeLabel.Caption := Format('Volume: %d%%', [VolumeTrackBar.Position]);
+  if Assigned(DABVolumeTrackBar) and (DABVolumeTrackBar.Position <> VolumeTrackBar.Position) then
+    DABVolumeTrackBar.Position := VolumeTrackBar.Position;
 end;
 
 end.

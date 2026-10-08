@@ -156,6 +156,7 @@ type
       {$ENDIF}
     {$ENDIF}
     FUnderrunCount: Integer;
+    FCompensationCount: Integer;
   public
     constructor Create(BufferCount: Integer = 16);
     destructor Destroy; override;
@@ -176,6 +177,11 @@ type
     // property could meaningfully count (see this unit's own header
     // comment, macOS BACKEND, for why).
     property UnderrunCount: Integer read FUnderrunCount;
+    // Diagnostic: how many QueueStereo calls the drift compensation padded
+    // or truncated (ALSA backend; always 0 elsewhere). Each one is a small
+    // splice in the audio - steady growth means the producer's cadence is
+    // swinging the buffer past the dead-band, not just slow clock drift.
+    property CompensationCount: Integer read FCompensationCount;
   end;
 
 implementation
@@ -670,6 +676,7 @@ begin
         if Adjust < -MaxAdjustFrames then Adjust := -MaxAdjustFrames;
         WriteN := N + Adjust;
         if WriteN < 1 then WriteN := 1;
+        if Adjust <> 0 then Inc(FCompensationCount);
       end;
     end;
   end;

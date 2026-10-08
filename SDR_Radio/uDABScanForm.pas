@@ -40,6 +40,7 @@ type
   private
     FScanner: TDABScanner;
     FOnPrepare: TDABPrepareEvent;
+    FOnScanFinished: TNotifyEvent;
     FTopPanel: TPanel;
     FScanButton: TButton;
     FBlockCombo: TComboBox;
@@ -57,7 +58,13 @@ type
   public
     constructor CreateFor(AOwner: TComponent; ASource: TSDRRFSource);
     procedure StopScan;
+    // Scans every block, as if "All blocks" were chosen and Scan pressed.
+    procedure StartFullScan;
+    property Scanner: TDABScanner read FScanner;
     property OnPrepare: TDABPrepareEvent read FOnPrepare write FOnPrepare;
+    // After every scan, complete or stopped part way - Scanner.Results
+    // holds the blocks it did visit.
+    property OnScanFinished: TNotifyEvent read FOnScanFinished write FOnScanFinished;
   end;
 
 implementation
@@ -148,6 +155,13 @@ end;
 procedure TDABScanForm.StopScan;
 begin
   FScanner.Stop;
+end;
+
+procedure TDABScanForm.StartFullScan;
+begin
+  if FScanner.Scanning then Exit;
+  FBlockCombo.ItemIndex := 0;
+  ScanButtonClick(Self);
 end;
 
 procedure TDABScanForm.FormCloseQuery(Sender: TObject; var CanClose: Boolean);
@@ -270,6 +284,7 @@ begin
     FProgress.Position := FProgress.Max;
     FStatusLabel.Caption := 'Scan complete - ' + Summary;
   end;
+  if Assigned(FOnScanFinished) then FOnScanFinished(Self);
 end;
 
 end.

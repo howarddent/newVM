@@ -2,7 +2,7 @@ unit uDABDecoder;
 
 {*******************************************************************************
 
-     TDABFICDecoder - DAB (Eureka-147, ETSI EN 300 401) transmission mode I
+     TDABDecoder - DAB (Eureka-147, ETSI EN 300 401) transmission mode I
      receiver, as far as the Fast Information Channel: enough to say which
      ensemble a multiplex is, which services it carries, and how well it
      is being received. No audio yet - the Main Service Channel, where the
@@ -88,14 +88,20 @@ unit uDABDecoder;
      National) - all 360 FIBs over 3 s CRC-clean on both - and then
      ported here line for line.
 
+     FFTs go through FFTW via fftw3.pas's plan cache: one 2048-point
+     forward and one inverse plan, built on first use and only executed
+     after that - safe from this decoder's worker thread, since cached-plan
+     execution is thread-safe and planning is serialised there.
+
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
+{$I ../newVMConfig.inc}
 
 interface
 
 uses
-  SysUtils, Math, OneAPI, newVMComplexSingle;
+  SysUtils, Math, OneAPI, {$IFDEF HAVE_FFTW}fftw3,{$ENDIF} newVMComplexSingle;
 
 const
   DABSampleRateHz = 2048000;
@@ -114,8 +120,24 @@ type
   end;
   TDABCplxArray = array of TDABCplx;
 
-  { TDABFICDecoder }
-  TDABFICDecoder = class
+  // One entry of FIG 0/1 (sub-channel organisation). StartCU/SizeCU are in
+  // capacity units of 64 bits within each 55296-bit CIF.
+  TDABSubChannel = record
+    Valid: Boolean;
+    StartCU, SizeCU: Integer;
+    BitrateKbps: Integer;
+    ShortForm: Boolean;      // True: UEP (table index); False: EEP
+    UEPIndex: Integer;       // short form
+    EEPOptionB: Boolean;     // long form: False = EEP-A, True = EEP-B
+    ProtLevel: Integer;      // UEP 1..5, EEP 1..4
+  end;
+
+  // One logical frame (24 ms) of the selected sub-channel, after time
+  // de-interleaving, Viterbi and energy dispersal: BitrateKbps*3 bytes.
+  TDABLogicalFrameEvent = procedure(Sender: TObject; const Data: TBytes) of object;
+
+  { TDABDecoder }
+  TDABDecoder = class
   private
     // Sample buffer: FBuf[0] is absolute sample FBufStart.
     FBuf: array of TComplex8;
@@ -125,6 +147,7 @@ type
     FSynced: Boolean;
     FNextNull: Int64;       // expected absolute position of the next null symbol
     FLostCount: Integer;
+    FGuardAdvance: Integer;  // how far before the end of the guard each FFT window starts
     FFreqHz: Double;        // current frequency correction (the measured offset)
     FFreqHintHz: Double;
     FHasFreqHint: Boolean;
@@ -141,20 +164,38 @@ type
     FServices: TDABServiceArray;
     FLastChangeFrame: Integer;
 
+    // sub-channels (FIG 0/1) and the selected one's MSC state
+    FSubChannels: array[0..63] of TDABSubChannel;
+    FMSCSubCh: Integer;              // -1: FIC only
+    FMSCActive: TDABSubChannel;      // the parameters FMSCPuncture was built for
+    FMSCPuncture: array of Boolean;  // mother-code positions actually transmitted
+    FMSCInfoBits: Integer;           // 24 * bitrate
+    FMSCBits: Integer;               // SizeCU * 64
+    FMSCPRBS: array of Byte;
+    FTI: array[0..15] of array of Single;   // time de-interleaver: last 16 CIFs
+    FTISlot: Integer;
+    FTIFill: Integer;
+    FLogicalFrames: Int64;
+    FOnLogicalFrame: TDABLogicalFrameEvent;
+    FMSCBitErrors, FMSCBitsChecked: Int64;
+
     // scratch
     FWin: TDABCplxArray;
-    FSym: array[0..3] of TDABCplxArray;
+    FSym: array[0..75] of TDABCplxArray;
 
     function Sample(Abs: Int64): TComplex8; inline;
     procedure Discard(UpTo: Int64);
     function FindNull(From: Int64; Count: Integer; out Depth: Double): Int64;
     function CPCorrelation(SymStart: Int64; NumSym: Integer): TDABCplx;
     procedure LoadWindow(Start: Int64; var W: TDABCplxArray);
-    function PRSPeak(NullPos: Int64; out Ratio: Double): Integer;
+    function PRSPeak(NullPos: Int64; out Ratio: Double; out Spread: Integer): Integer;
     function CoarseCarrierOffset(NullPos: Int64): Integer;
     function TryAcquire: Boolean;
     function TryDecodeFrame: Boolean;
     procedure DecodeFIC(const Soft: array of Single);
+    function PrepareMSC: Boolean;
+    procedure DecodeMSC;
+    function GetSubChannel(Id: Integer): TDABSubChannel;
     procedure ParseFIB(const Fib: array of Byte);
     function FindService(SId: LongWord; AddIfMissing: Boolean): Integer;
     procedure Changed;
@@ -173,6 +214,12 @@ type
     // narrows the whole-carrier search so a weak signal can't lock to a
     // wrong shift. Optional.
     procedure SetFrequencyHint(Hz: Double);
+    // Starts decoding the Main Service Channel for one sub-channel (a
+    // station's TDABService.SubChId), delivering its logical frames
+    // through OnLogicalFrame. Takes effect once FIG 0/1 has described the
+    // sub-channel; until then (and with Id = -1) only the FIC is decoded,
+    // which costs a fraction of the CPU - 4 OFDM symbols per frame, not 76.
+    procedure SelectSubChannel(Id: Integer);
 
     property Synced: Boolean read FSynced;
     property FramesDecoded: Integer read FFrames;
@@ -189,10 +236,25 @@ type
     // Frame number of the last time anything in the ensemble/service
     // list changed - lets a caller tell when the list has settled.
     property LastChangeFrame: Integer read FLastChangeFrame;
+    property SubChannels[Id: Integer]: TDABSubChannel read GetSubChannel;
+    property SelectedSubChannel: Integer read FMSCSubCh;
+    property LogicalFrames: Int64 read FLogicalFrames;
+    // Channel bit error rate of the selected sub-channel, before Viterbi:
+    // the decoded bits re-encoded and compared with the received hard
+    // decisions. A direct measure of how hard the error correction is
+    // working - near 0 on a clean signal, and decoding fails well before
+    // it reaches 0.1 at the common protection levels.
+    function MSCChannelBER: Double;
+    property OnLogicalFrame: TDABLogicalFrameEvent read FOnLogicalFrame write FOnLogicalFrame;
   end;
 
+// Bit rate (kbit/s) of a sub-channel's protection settings, 0 if invalid.
+function DABSubChannelBitrate(const S: TDABSubChannel): Integer;
+
 // The FFT this unit uses, exposed for the next stage (MSC/audio) and for
-// tests. In place, N = 2048 only.
+// tests. In place, N = 2048 only. FFTW through fftw3.pas's plan cache
+// (planned once, on first use, then only executed); a plain radix-2
+// transform when FFTW isn't available.
 procedure DABFFT(var A: TDABCplxArray; Inverse: Boolean);
 
 implementation
@@ -209,7 +271,8 @@ const
   FIC_INFO_BITS = 768;
   FIC_MOTHER_BITS = 4 * (FIC_INFO_BITS + 6);
 
-  // How far into the guard interval each FFT window starts.
+  // Minimum distance of an FFT window start from the end of the guard
+  // (see TryDecodeFrame for how the actual position is chosen).
   GUARD_ADVANCE = 16;
   // Null search half-width around where the next null is expected, once synced.
   TRACK_SEARCH = 600;
@@ -237,6 +300,73 @@ const
     (513,0,3),(545,3,3),(577,2,3),(609,1,0),(641,0,3),(673,3,0),(705,2,1),(737,1,1));
 
   CONV_POLYS: array[0..3] of Byte = ($5B, $79, $65, $5B);   // 133, 171, 145, 133 octal
+
+  MSC_CIF_BITS = 55296;          // 864 CUs of 64 bits
+  MSC_SYMBOLS_PER_CIF = 18;
+  MSC_FIRST_SYMBOL = 4;          // 0 = PRS, 1..3 = FIC
+  // Time interleaving delay map (EN 300 401 clause 12): bit i of a CIF
+  // comes from the CIF this many places along the 16-CIF ring.
+  TI_MAP: array[0..15] of Integer = (0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15);
+
+  // UEP sub-channel sizes, EN 300 401 table 6, indexed by FIG 0/1's
+  // short-form table index: (size in CUs, protection level, kbit/s).
+  UEP_SIZES: array[0..63, 0..2] of SmallInt = (
+    (16,5,32), (21,4,32), (24,3,32), (29,2,32), (35,1,32),
+    (24,5,48), (29,4,48), (35,3,48), (42,2,48), (52,1,48),
+    (29,5,56), (35,4,56), (42,3,56), (52,2,56),
+    (32,5,64), (42,4,64), (48,3,64), (58,2,64), (70,1,64),
+    (40,5,80), (52,4,80), (58,3,80), (70,2,80), (84,1,80),
+    (48,5,96), (58,4,96), (70,3,96), (84,2,96), (104,1,96),
+    (58,5,112), (70,4,112), (84,3,112), (104,2,112),
+    (64,5,128), (84,4,128), (96,3,128), (116,2,128), (140,1,128),
+    (80,5,160), (104,4,160), (116,3,160), (140,2,160), (168,1,160),
+    (96,5,192), (116,4,192), (140,3,192), (168,2,192), (208,1,192),
+    (116,5,224), (140,4,224), (168,3,224), (208,2,224), (232,1,224),
+    (128,5,256), (168,4,256), (192,3,256), (232,2,256), (280,1,256),
+    (160,5,320), (208,4,320), (280,2,320),
+    (192,5,384), (280,3,384), (416,1,384));
+
+  // UEP puncturing, EN 300 401 table 8: (kbit/s, level, L1..L4, PI1..PI4).
+  // Checked at start-up (CheckUEPTables) against table 6 - see there.
+  UEP_PROFILES: array[0..63, 0..9] of SmallInt = (
+    (32,5, 3,4,17,0, 5,3,2,0),    (32,4, 3,3,18,0, 11,6,5,0),
+    (32,3, 3,4,14,3, 15,9,6,8),   (32,2, 3,4,14,3, 22,13,8,13),
+    (32,1, 3,5,13,3, 24,17,12,17),
+    (48,5, 4,3,26,3, 5,4,2,3),    (48,4, 3,4,26,3, 9,6,4,6),
+    (48,3, 3,4,26,3, 15,10,6,9),  (48,2, 3,4,26,3, 24,14,8,15),
+    (48,1, 3,5,25,3, 24,18,13,18),
+    (56,5, 6,10,23,3, 5,4,2,3),   (56,4, 6,10,23,3, 9,6,4,5),
+    (56,3, 6,12,21,3, 16,7,6,9),  (56,2, 6,10,23,3, 23,13,8,13),
+    (64,5, 6,9,31,2, 5,3,2,3),    (64,4, 6,9,33,0, 11,6,5,0),
+    (64,3, 6,12,27,3, 16,8,6,9),  (64,2, 6,10,29,3, 23,13,8,13),
+    (64,1, 6,11,28,3, 24,18,12,18),
+    (80,5, 6,10,41,3, 6,3,2,3),   (80,4, 6,10,41,3, 11,6,5,6),
+    (80,3, 6,11,40,3, 16,8,6,7),  (80,2, 6,10,41,3, 23,13,8,13),
+    (80,1, 6,10,41,3, 24,17,12,18),
+    (96,5, 7,9,53,3, 5,4,2,4),    (96,4, 7,10,52,3, 9,6,4,6),
+    (96,3, 6,12,51,3, 16,9,6,10), (96,2, 6,10,53,3, 22,12,9,12),
+    (96,1, 6,13,50,3, 24,18,13,19),
+    (112,5, 14,17,50,3, 5,4,2,5), (112,4, 11,21,49,3, 9,6,4,8),
+    (112,3, 11,23,47,3, 16,8,6,9), (112,2, 11,21,49,3, 23,12,9,14),
+    (128,5, 12,19,62,3, 5,3,2,4), (128,4, 11,21,61,3, 11,6,5,7),
+    (128,3, 11,22,60,3, 16,9,6,10), (128,2, 11,21,61,3, 22,12,9,14),
+    (128,1, 11,20,62,3, 24,17,13,19),
+    (160,5, 11,19,87,3, 5,4,2,4), (160,4, 11,23,83,3, 11,6,5,9),
+    (160,3, 11,24,82,3, 16,8,6,11), (160,2, 11,21,85,3, 22,11,9,13),
+    (160,1, 11,22,84,3, 24,18,12,19),
+    (192,5, 11,20,110,3, 6,4,2,5), (192,4, 11,22,108,3, 10,6,4,9),
+    (192,3, 11,24,106,3, 16,10,6,11), (192,2, 11,20,110,3, 22,13,9,13),
+    (192,1, 11,21,109,3, 24,20,13,24),
+    (224,5, 12,22,131,3, 8,6,2,6), (224,4, 12,26,127,3, 12,8,4,11),
+    (224,3, 11,20,134,3, 16,10,7,9), (224,2, 11,22,132,3, 24,16,10,15),
+    (224,1, 11,24,130,3, 24,20,12,20),
+    (256,5, 11,24,154,3, 6,5,2,5), (256,4, 11,24,154,3, 12,9,5,10),
+    (256,3, 11,27,151,3, 16,10,7,10), (256,2, 11,22,156,3, 24,14,10,13),
+    (256,1, 11,26,152,3, 24,19,14,18),
+    (320,5, 11,26,200,3, 8,5,2,6), (320,4, 11,25,201,3, 13,9,5,10),
+    (320,2, 11,26,200,3, 24,17,9,17),
+    (384,5, 11,27,247,3, 8,6,2,7), (384,3, 11,24,250,3, 16,9,7,10),
+    (384,1, 12,28,245,3, 24,20,14,23));
 
 var
   PRS: TDABCplxArray;                       // by FFT bin
@@ -369,6 +499,29 @@ end;
 
 { ---- FFT ---- }
 
+{$IFDEF HAVE_FFTW}
+// TDABCplx is two Doubles, bit-identical to TComplex16, so the arrays go
+// straight to FFTW. Cached plans are out-of-place only (see fftw3.pas),
+// hence the scratch output copied back.
+procedure DABFFT(var A: TDABCplxArray; Inverse: Boolean);
+var
+  Tmp: TDABCplxArray;
+  i: Integer;
+begin
+  assert(Length(A) = T_U, 'DABFFT : length must be 2048');
+  SetLength(Tmp, T_U);
+  if Inverse then begin
+    fftw_execute_dft(CachedPlanD(ftDFTBackward, T_U, @A[0], @Tmp[0]), PComplex16(@A[0]), PComplex16(@Tmp[0]));
+    for i := 0 to T_U - 1 do begin
+      A[i].re := Tmp[i].re / T_U;
+      A[i].im := Tmp[i].im / T_U;
+    end;
+  end else begin
+    fftw_execute_dft(CachedPlanD(ftDFTForward, T_U, @A[0], @Tmp[0]), PComplex16(@A[0]), PComplex16(@Tmp[0]));
+    A := Tmp;
+  end;
+end;
+{$ELSE}
 procedure DABFFT(var A: TDABCplxArray; Inverse: Boolean);
 var
   i, j, len, half, step, k: Integer;
@@ -406,6 +559,7 @@ begin
       A[i].im := A[i].im / T_U;
     end;
 end;
+{$ENDIF}
 
 { ---- CRC ---- }
 
@@ -491,25 +645,122 @@ begin
   Result := TrimRight(Result);
 end;
 
-{ ---- TDABFICDecoder ---- }
+{ ---- MSC protection ---- }
 
-constructor TDABFICDecoder.Create;
+function UEPProfileIndex(Kbps, Level: Integer): Integer;
+var
+  i: Integer;
+begin
+  for i := 0 to High(UEP_PROFILES) do
+    if (UEP_PROFILES[i, 0] = Kbps) and (UEP_PROFILES[i, 1] = Level) then Exit(i);
+  Result := -1;
+end;
+
+function DABSubChannelBitrate(const S: TDABSubChannel): Integer;
+const
+  EEPA: array[1..4] of Integer = (12, 8, 6, 4);     // CUs per 8 kbit/s
+  EEPB: array[1..4] of Integer = (27, 21, 18, 15);  // CUs per 32 kbit/s
+begin
+  Result := 0;
+  if not S.Valid then Exit;
+  if S.ShortForm then
+    Result := UEP_SIZES[S.UEPIndex, 2]
+  else if (S.ProtLevel >= 1) and (S.ProtLevel <= 4) then begin
+    if S.EEPOptionB then Result := S.SizeCU div EEPB[S.ProtLevel] * 32
+    else Result := S.SizeCU div EEPA[S.ProtLevel] * 8;
+  end;
+end;
+
+// The (L, PI) block sequence for a sub-channel - EN 300 401 clause 11:
+// table 8 for UEP, the EEP-A/EEP-B formulas for EEP. Each L block is 128
+// mother-code bits punctured by PI repeated four times. Returns False for
+// protection settings this receiver doesn't recognise.
+function SubChannelBlocks(const S: TDABSubChannel; out L, PI: array of Integer): Boolean;
+var
+  n, k, i: Integer;
+begin
+  Result := False;
+  for i := 0 to 3 do begin L[i] := 0; PI[i] := 1; end;
+  if not S.Valid then Exit;
+  if S.ShortForm then begin
+    k := UEPProfileIndex(UEP_SIZES[S.UEPIndex, 2], UEP_SIZES[S.UEPIndex, 1]);
+    if k < 0 then Exit;
+    for i := 0 to 3 do begin
+      L[i] := UEP_PROFILES[k, 2 + i];
+      PI[i] := Max(UEP_PROFILES[k, 6 + i], 1);
+    end;
+  end else if S.EEPOptionB then begin
+    n := DABSubChannelBitrate(S) div 32;
+    if n < 1 then Exit;
+    L[0] := 24 * n - 3; L[1] := 3;
+    case S.ProtLevel of
+      1: begin PI[0] := 10; PI[1] := 9; end;
+      2: begin PI[0] := 6;  PI[1] := 5; end;
+      3: begin PI[0] := 4;  PI[1] := 3; end;
+      4: begin PI[0] := 2;  PI[1] := 1; end;
+    else Exit;
+    end;
+  end else begin
+    n := DABSubChannelBitrate(S) div 8;
+    if n < 1 then Exit;
+    case S.ProtLevel of
+      1: begin L[0] := 6 * n - 3; L[1] := 3; PI[0] := 24; PI[1] := 23; end;
+      2: if n = 1 then begin L[0] := 5; L[1] := 1; PI[0] := 13; PI[1] := 12; end
+         else begin L[0] := 2 * n - 3; L[1] := 4 * n + 3; PI[0] := 14; PI[1] := 13; end;
+      3: begin L[0] := 6 * n - 3; L[1] := 3; PI[0] := 8; PI[1] := 7; end;
+      4: begin L[0] := 4 * n - 3; L[1] := 2 * n + 3; PI[0] := 3; PI[1] := 2; end;
+    else Exit;
+    end;
+  end;
+  Result := True;
+end;
+
+// Table 6 and table 8 have to agree: for every UEP size entry, the info
+// bits per CIF are 24 x the bit rate, and the punctured bits fill the
+// sub-channel's CUs less 0..8 padding bits (table 8's own padding column).
+// A wrong number in either table breaks exactly this - which is how a bad
+// PI2 for 80 kbit/s level 1 (7 instead of 17, 400 bits short) was caught
+// in the copy this was checked against.
+procedure CheckUEPTables;
+var
+  i, j, k, Info, Coded: Integer;
+begin
+  for i := 0 to 63 do begin
+    k := UEPProfileIndex(UEP_SIZES[i, 2], UEP_SIZES[i, 1]);
+    assert(k >= 0, 'uDABDecoder: no UEP profile for table-6 entry ' + IntToStr(i));
+    Info := 0; Coded := 12;
+    for j := 0 to 3 do begin
+      Info := Info + 32 * UEP_PROFILES[k, 2 + j];
+      if UEP_PROFILES[k, 2 + j] > 0 then
+        Coded := Coded + 4 * UEP_PROFILES[k, 2 + j] * (8 + UEP_PROFILES[k, 6 + j]);
+    end;
+    assert(Info = 24 * UEP_SIZES[i, 2], 'uDABDecoder: UEP info bits wrong, entry ' + IntToStr(i));
+    assert((Coded <= 64 * UEP_SIZES[i, 0]) and (Coded >= 64 * UEP_SIZES[i, 0] - 8),
+      'uDABDecoder: UEP coded bits wrong, entry ' + IntToStr(i));
+  end;
+end;
+
+{ ---- TDABDecoder ---- }
+
+constructor TDABDecoder.Create;
 var
   i: Integer;
 begin
   inherited Create;
   SetLength(FWin, T_U);
-  for i := 0 to 3 do SetLength(FSym[i], T_U);
+  for i := 0 to High(FSym) do SetLength(FSym[i], T_U);
+  FMSCSubCh := -1;
   Reset;
 end;
 
-procedure TDABFICDecoder.Reset;
+procedure TDABDecoder.Reset;
 begin
   FBufLen := 0;
   FBufStart := 0;
   SetLength(FBuf, 0);
   FSynced := False;
   FLostCount := 0;
+  FGuardAdvance := GUARD_ADVANCE;
   FFreqHz := 0;
   FFrames := 0;
   FFibTotal := 0;
@@ -521,24 +772,205 @@ begin
   FEnsembleLabel := '';
   SetLength(FServices, 0);
   FLastChangeFrame := 0;
+  FillChar(FSubChannels, SizeOf(FSubChannels), 0);
+  FMSCActive.Valid := False;
+  FTIFill := 0;
+  FLogicalFrames := 0;
+  FMSCBitErrors := 0;
+  FMSCBitsChecked := 0;
 end;
 
-procedure TDABFICDecoder.SetFrequencyHint(Hz: Double);
+procedure TDABDecoder.SelectSubChannel(Id: Integer);
+begin
+  if (Id < -1) or (Id > 63) then Id := -1;
+  FMSCSubCh := Id;
+  FMSCActive.Valid := False;   // PrepareMSC rebuilds for the new one
+  FTIFill := 0;
+end;
+
+function TDABDecoder.MSCChannelBER: Double;
+begin
+  if FMSCBitsChecked = 0 then Exit(NaN);
+  Result := FMSCBitErrors / FMSCBitsChecked;
+end;
+
+function TDABDecoder.GetSubChannel(Id: Integer): TDABSubChannel;
+begin
+  if (Id < 0) or (Id > 63) then Result := Default(TDABSubChannel)
+  else Result := FSubChannels[Id];
+end;
+
+// (Re)builds the de-puncturing pattern, PRBS and de-interleaver for the
+// selected sub-channel whenever its FIG 0/1 description is new or has
+// changed (a multiplex can reconfigure). False if there is nothing
+// decodable selected yet.
+function TDABDecoder.PrepareMSC: Boolean;
+var
+  S: TDABSubChannel;
+  L, PI: array[0..3] of Integer;
+  i, j, rep_, m, Lfsr, b: Integer;
+  Vec: string;
+begin
+  Result := False;
+  if FMSCSubCh < 0 then Exit;
+  S := FSubChannels[FMSCSubCh];
+  if not S.Valid then Exit;
+  if FMSCActive.Valid and CompareMem(@S, @FMSCActive, SizeOf(S)) then Exit(True);
+  if not SubChannelBlocks(S, L, PI) then Exit;
+
+  FMSCInfoBits := 24 * DABSubChannelBitrate(S);
+  FMSCBits := 64 * S.SizeCU;
+  if (FMSCInfoBits <= 0) or (S.StartCU + S.SizeCU > 864) then Exit;
+
+  SetLength(FMSCPuncture, 4 * (FMSCInfoBits + 6));
+  m := 0;
+  for i := 0 to 3 do begin
+    if L[i] = 0 then Continue;
+    Vec := PunctureVector(PI[i]);
+    for j := 1 to L[i] do
+      for rep_ := 1 to 4 do
+        for b := 1 to 32 do begin
+          FMSCPuncture[m] := Vec[b] = '1';
+          Inc(m);
+        end;
+  end;
+  Vec := '110011001100110011001100';
+  for b := 1 to 24 do begin
+    FMSCPuncture[m] := Vec[b] = '1';
+    Inc(m);
+  end;
+  if m <> Length(FMSCPuncture) then Exit;   // tables disagree with the bit rate
+
+  SetLength(FMSCPRBS, FMSCInfoBits);
+  Lfsr := $1FF;
+  for i := 0 to FMSCInfoBits - 1 do begin
+    b := ((Lfsr shr 8) xor (Lfsr shr 4)) and 1;
+    FMSCPRBS[i] := b;
+    Lfsr := ((Lfsr shl 1) or b) and $1FF;
+  end;
+
+  for i := 0 to 15 do SetLength(FTI[i], FMSCBits);
+  FTISlot := 0;
+  FTIFill := 0;
+  FMSCActive := S;
+  Result := True;
+end;
+
+// The selected sub-channel's share of each of this frame's four CIFs:
+// soft bits straight from the differential demodulation of the symbols
+// it occupies, into the time de-interleaver, and - once 16 CIFs are in
+// it - out as a logical frame through de-puncturing, Viterbi and energy
+// dispersal.
+procedure TDABDecoder.DecodeMSC;
+var
+  k, i, g, l, bit, n, b, j, Last, St, Bt, o, t: Integer;
+  SymScale: array[0..75] of Double;
+  Soft, Mother: array of Single;
+  z1, z0: TDABCplx;
+  d: Double;
+  Bits: TBytes;
+  Frame: TBytes;
+begin
+  if not PrepareMSC then Exit;
+
+  // Per-symbol mean |differential| - the same normalisation the FIC uses,
+  // so the Viterbi sees comparable soft values from every symbol.
+  for l := 0 to 75 do SymScale[l] := 0;
+  Last := -1;
+  SetLength(Soft, FMSCBits);
+  SetLength(Mother, Length(FMSCPuncture));
+
+  for k := 0 to 3 do begin
+    for i := 0 to FMSCBits - 1 do begin
+      g := FMSCActive.StartCU * 64 + i;
+      l := MSC_FIRST_SYMBOL + k * MSC_SYMBOLS_PER_CIF + g div (2 * NUM_CARRIERS);
+      bit := g mod (2 * NUM_CARRIERS);
+      if l <> Last then begin
+        if SymScale[l] = 0 then begin
+          d := 0;
+          for n := 0 to NUM_CARRIERS - 1 do begin
+            b := Deint[n];
+            z1 := FSym[l][b]; z0 := FSym[l - 1][b];
+            d := d + Sqrt(Sqr(z1.re * z0.re + z1.im * z0.im) + Sqr(z1.im * z0.re - z1.re * z0.im));
+          end;
+          SymScale[l] := Max(d / NUM_CARRIERS, 1e-30);
+        end;
+        Last := l;
+      end;
+      if bit < NUM_CARRIERS then begin
+        b := Deint[bit];
+        z1 := FSym[l][b]; z0 := FSym[l - 1][b];
+        Soft[i] := (z1.re * z0.re + z1.im * z0.im) / SymScale[l];
+      end else begin
+        b := Deint[bit - NUM_CARRIERS];
+        z1 := FSym[l][b]; z0 := FSym[l - 1][b];
+        Soft[i] := (z1.im * z0.re - z1.re * z0.im) / SymScale[l];
+      end;
+    end;
+
+    // Time de-interleave: bit i of the output comes from the CIF TI_MAP
+    // places along the ring from the one just stored.
+    Move(Soft[0], FTI[FTISlot][0], FMSCBits * SizeOf(Single));
+    for i := 0 to FMSCBits - 1 do
+      Soft[i] := FTI[(FTISlot + TI_MAP[i and 15]) and 15][i];
+    FTISlot := (FTISlot + 1) and 15;
+    if FTIFill < 16 then begin
+      Inc(FTIFill);
+      Continue;   // ring not yet full: nothing valid to output
+    end;
+
+    j := 0;
+    for i := 0 to High(Mother) do
+      if FMSCPuncture[i] then begin
+        Mother[i] := Soft[j];
+        Inc(j);
+      end else
+        Mother[i] := 0;
+    Viterbi(Mother, FMSCInfoBits, Bits);
+
+    // Re-encode and compare, for MSCChannelBER.
+    St := 0;
+    for t := 0 to FMSCInfoBits + 5 do begin
+      if t < FMSCInfoBits then Bt := Bits[t] else Bt := 0;
+      o := ConvOut[St, Bt];
+      for n := 0 to 3 do
+        if FMSCPuncture[4 * t + n] then begin
+          Inc(FMSCBitsChecked);
+          if ((o shr n) and 1) <> Ord(Mother[4 * t + n] < 0) then Inc(FMSCBitErrors);
+        end;
+      St := ((Bt shl 6) or St) shr 1;
+    end;
+
+    SetLength(Frame, FMSCInfoBits div 8);
+    for i := 0 to High(Frame) do begin
+      b := 0;
+      for n := 0 to 7 do
+        b := (b shl 1) or (Bits[i * 8 + n] xor FMSCPRBS[i * 8 + n]);
+      Frame[i] := b;
+    end;
+    Inc(FLogicalFrames);
+    if Assigned(FOnLogicalFrame) then FOnLogicalFrame(Self, Frame);
+  end;
+end;
+
+
+
+procedure TDABDecoder.SetFrequencyHint(Hz: Double);
 begin
   FFreqHintHz := Hz;
   FHasFreqHint := True;
 end;
 
-function TDABFICDecoder.Sample(Abs: Int64): TComplex8;
+function TDABDecoder.Sample(Abs: Int64): TComplex8;
 begin
   Result := FBuf[Abs - FBufStart];
 end;
 
-procedure TDABFICDecoder.AddSamples(const IQ: TVMobjC);
+procedure TDABDecoder.AddSamples(const IQ: TVMobjC);
 var
   N, i: Integer;
 begin
-  assert(IQ.Rows = 1, 'TDABFICDecoder.AddSamples : IQ must be a (1,N) row vector');
+  assert(IQ.Rows = 1, 'TDABDecoder.AddSamples : IQ must be a (1,N) row vector');
   N := IQ.Cols;
   if FBufLen + N > Length(FBuf) then
     SetLength(FBuf, Max(2 * Length(FBuf), FBufLen + N));
@@ -547,7 +979,7 @@ begin
   Inc(FBufLen, N);
 end;
 
-procedure TDABFICDecoder.Discard(UpTo: Int64);
+procedure TDABDecoder.Discard(UpTo: Int64);
 var
   Drop: Integer;
 begin
@@ -566,7 +998,7 @@ end;
 // Position (absolute) of the T_NULL-long window with least power whose
 // start lies in [From, From+Count). Depth is that window's power over
 // the average window's - well under 1 for a real null.
-function TDABFICDecoder.FindNull(From: Int64; Count: Integer; out Depth: Double): Int64;
+function TDABDecoder.FindNull(From: Int64; Count: Integer; out Depth: Double): Int64;
 var
   i: Integer;
   Sum, Best, Total: Double;
@@ -593,7 +1025,7 @@ end;
 
 // Sum over NumSym consecutive symbols (the first starting, guard
 // included, at SymStart) of guard * conj(the tail it copies).
-function TDABFICDecoder.CPCorrelation(SymStart: Int64; NumSym: Integer): TDABCplx;
+function TDABDecoder.CPCorrelation(SymStart: Int64; NumSym: Integer): TDABCplx;
 var
   l, i: Integer;
   a, b: TComplex8;
@@ -614,7 +1046,7 @@ end;
 // T_U samples from Start, frequency-corrected by FFreqHz against
 // absolute sample index (so every window shares one continuous
 // correction phase), forward FFT'd.
-procedure TDABFICDecoder.LoadWindow(Start: Int64; var W: TDABCplxArray);
+procedure TDABDecoder.LoadWindow(Start: Int64; var W: TDABCplxArray);
 var
   i: Integer;
   c: TComplex8;
@@ -635,14 +1067,24 @@ begin
   DABFFT(W, False);
 end;
 
-// Channel impulse response peak from the PRS that follows the null at
-// NullPos: returns the signed timing offset (true PRS start =
-// NullPos + T_NULL + result) and the peak's power over the mean.
-function TDABFICDecoder.PRSPeak(NullPos: Int64; out Ratio: Double): Integer;
+// Channel impulse response from the PRS that follows the null at
+// NullPos. Returns the signed offset of the EARLIEST significant path
+// (within 10 dB of the strongest) - the true symbol start is NullPos +
+// T_NULL + result - and in Spread how much later the latest significant
+// path arrives. Ratio is the strongest path's power over the mean, the
+// is-this-really-a-PRS test.
+//
+// Earliest rather than strongest, because in a single-frequency network
+// the strongest signal is often not the first to arrive: the FFT window
+// has to start after the latest path's symbol has begun and end before
+// the earliest path's next one does, and anchoring on a later, stronger
+// path would push the window past the guard and into the next symbol.
+function TDABDecoder.PRSPeak(NullPos: Int64; out Ratio: Double; out Spread: Integer): Integer;
 var
-  i, Best: Integer;
+  i, Best, d, Earliest, Latest: Integer;
   Pw, BestPw, Total: Double;
   t: TDABCplx;
+  P: array of Double;
 begin
   LoadWindow(NullPos + T_NULL + T_G, FWin);
   for i := 0 to T_U - 1 do begin
@@ -651,20 +1093,31 @@ begin
     FWin[i].im := t.im * PRS[i].re - t.re * PRS[i].im;
   end;
   DABFFT(FWin, True);
+  SetLength(P, T_U);
   Best := 0; BestPw := -1; Total := 0;
   for i := 0 to T_U - 1 do begin
     Pw := Sqr(FWin[i].re) + Sqr(FWin[i].im);
+    P[i] := Pw;
     Total := Total + Pw;
     if Pw > BestPw then begin BestPw := Pw; Best := i; end;
   end;
   if Total > 0 then Ratio := BestPw / (Total / T_U) else Ratio := 0;
   if Best > T_U div 2 then Best := Best - T_U;
-  Result := Best;
+
+  // Significant paths within one guard interval either side of the peak.
+  Earliest := Best; Latest := Best;
+  for d := -T_G to T_G do
+    if P[(Best + d + T_U) mod T_U] >= BestPw * 0.1 then begin
+      if Best + d < Earliest then Earliest := Best + d;
+      if Best + d > Latest then Latest := Best + d;
+    end;
+  Spread := Latest - Earliest;
+  Result := Earliest;
 end;
 
 // Whole-carrier frequency offset: shift s maximising
 // |sum_k D_rx[k+s] conj(D_prs[k])|, D[k] = Z[k+1] conj(Z[k]).
-function TDABFICDecoder.CoarseCarrierOffset(NullPos: Int64): Integer;
+function TDABDecoder.CoarseCarrierOffset(NullPos: Int64): Integer;
 var
   s, i, b, bs, Lo, Hi, Centre: Integer;
   Acc: TDABCplx;
@@ -699,12 +1152,12 @@ end;
 
 // First lock: needs a frame's worth of null search plus the whole frame
 // that follows the null (for the cyclic-prefix frequency estimate).
-function TDABFICDecoder.TryAcquire: Boolean;
+function TDABDecoder.TryAcquire: Boolean;
 var
   NullPos: Int64;
   Depth, Ratio: Double;
   Cp: TDABCplx;
-  Pk: Integer;
+  Pk, Spread: Integer;
 begin
   Result := False;
   if FBufLen < T_F + T_NULL + T_F then Exit;
@@ -719,7 +1172,7 @@ begin
   Cp := CPCorrelation(NullPos + T_NULL, 76);
   FFreqHz := -ArcTan2(Cp.im, Cp.re) * DABSampleRateHz / (2 * System.Pi * T_U);
   FFreqHz := FFreqHz + 1000.0 * CoarseCarrierOffset(NullPos);
-  Pk := PRSPeak(NullPos, Ratio);
+  Pk := PRSPeak(NullPos, Ratio, Spread);
   if Ratio < MIN_PRS_RATIO then begin
     Discard(NullPos + T_NULL);
     Exit;
@@ -731,11 +1184,11 @@ begin
   Result := True;
 end;
 
-function TDABFICDecoder.TryDecodeFrame: Boolean;
+function TDABDecoder.TryDecodeFrame: Boolean;
 var
   NullPos, Sym0: Int64;
   Depth, Ratio, PNull, PSym, Snr, Scale, Resid: Double;
-  Pk, l, n, b, i: Integer;
+  Pk, l, n, b, i, NSym, Spread: Integer;
   c: TComplex8;
   d, z1, z0: TDABCplx;
   Soft: array of Single;
@@ -743,10 +1196,13 @@ var
   Cp: TDABCplx;
 begin
   Result := False;
-  // Need: search window around the expected null, plus null + 4 symbols.
-  if FBufStart + FBufLen < FNextNull + TRACK_SEARCH + T_NULL + 4 * T_S + T_U then Exit;
+  // All 76 symbols when a sub-channel's MSC is wanted, otherwise just the
+  // PRS and the three FIC symbols.
+  if (FMSCSubCh >= 0) and FSubChannels[FMSCSubCh].Valid then NSym := 76 else NSym := 4;
+  // Need: search window around the expected null, plus null + NSym symbols.
+  if FBufStart + FBufLen < FNextNull + TRACK_SEARCH + T_NULL + Int64(NSym) * T_S + T_U then Exit;
   NullPos := FindNull(Max(FBufStart, FNextNull - TRACK_SEARCH), 2 * TRACK_SEARCH, Depth);
-  Pk := PRSPeak(NullPos, Ratio);
+  Pk := PRSPeak(NullPos, Ratio, Spread);
   // Only the PRS peak decides whether lock still holds: Depth here is
   // measured against windows that nearly all overlap the null itself, so
   // it says nothing (unlike in TryAcquire, where the search spans a frame).
@@ -759,8 +1215,18 @@ begin
     end;
     Pk := 0;
     NullPos := FNextNull;
-  end else
+  end else begin
     FLostCount := 0;
+    // Centre the FFT window in the span every path's guard covers - from
+    // the latest path's symbol start to the earliest path's guard end -
+    // for the most margin against timing jitter either way. Paths spread
+    // wider than the guard leave no clean span; then just start late in
+    // the guard, which favours the earlier (usually nearer) transmitter.
+    if Spread < T_G - 2 * GUARD_ADVANCE then
+      FGuardAdvance := (T_G - Spread) div 2
+    else
+      FGuardAdvance := GUARD_ADVANCE;
+  end;
   Sym0 := NullPos + T_NULL + Pk;
 
   // Track the fractional frequency from the four symbols being decoded.
@@ -772,8 +1238,8 @@ begin
   if Resid < -500 then Resid := Resid + 1000;
   FFreqHz := FFreqHz + FREQ_TRACK_GAIN * Resid;
 
-  for l := 0 to 3 do
-    LoadWindow(Sym0 + Int64(l) * T_S + T_G - GUARD_ADVANCE, FSym[l]);
+  for l := 0 to NSym - 1 do
+    LoadWindow(Sym0 + Int64(l) * T_S + T_G - FGuardAdvance, FSym[l]);
 
   // Null-based SNR.
   PNull := 0;
@@ -820,13 +1286,14 @@ begin
   FSNRSum := FSNRSum + Snr;
   if MerErr > 0 then FMERSum := FMERSum + MerSig / MerErr else FMERSum := FMERSum + 1e6;
   DecodeFIC(Soft);
+  if NSym = 76 then DecodeMSC;
 
   FNextNull := Sym0 - T_NULL + T_F;
   Discard(FNextNull - TRACK_SEARCH);
   Result := True;
 end;
 
-procedure TDABFICDecoder.DecodeFIC(const Soft: array of Single);
+procedure TDABDecoder.DecodeFIC(const Soft: array of Single);
 var
   blk, i, j, f: Integer;
   Mother: array[0..FIC_MOTHER_BITS - 1] of Single;
@@ -858,7 +1325,7 @@ begin
   end;
 end;
 
-function TDABFICDecoder.FindService(SId: LongWord; AddIfMissing: Boolean): Integer;
+function TDABDecoder.FindService(SId: LongWord; AddIfMissing: Boolean): Integer;
 var
   i: Integer;
 begin
@@ -875,15 +1342,16 @@ begin
   Changed;
 end;
 
-procedure TDABFICDecoder.Changed;
+procedure TDABDecoder.Changed;
 begin
   FLastChangeFrame := FFrames;
 end;
 
-procedure TDABFICDecoder.ParseFIB(const Fib: array of Byte);
+procedure TDABDecoder.ParseFIB(const Fib: array of Byte);
 var
-  i, Typ, Len, Ext, j, nc, c, Idx, Charset: Integer;
+  i, Typ, Len, Ext, j, nc, c, Idx, Charset, SubId: Integer;
   PD: Boolean;
+  Sc: TDABSubChannel;
   SId: LongWord;
   Lbl, Asc: string;
 begin
@@ -899,7 +1367,36 @@ begin
       0: begin
         Ext := Fib[j] and 31;
         PD := (Fib[j] and $20) <> 0;
-        if (Ext = 0) and (Len >= 5) then begin
+        if Ext = 1 then begin
+          // Sub-channel organisation: 3 bytes (short form, UEP) or 4
+          // (long form, EEP) per sub-channel.
+          c := j + 1;
+          while c + 3 <= j + Len do begin
+            Sc := Default(TDABSubChannel);
+            Sc.Valid := True;
+            SubId := Fib[c] shr 2;
+            Sc.StartCU := ((Fib[c] and 3) shl 8) or Fib[c + 1];
+            if (Fib[c + 2] and $80) = 0 then begin
+              Sc.ShortForm := True;
+              Sc.UEPIndex := Fib[c + 2] and 63;
+              Sc.SizeCU := UEP_SIZES[Sc.UEPIndex, 0];
+              Sc.ProtLevel := UEP_SIZES[Sc.UEPIndex, 1];
+              Inc(c, 3);
+            end else begin
+              if c + 4 > j + Len then Break;
+              Sc.EEPOptionB := ((Fib[c + 2] shr 4) and 7) = 1;
+              Sc.ProtLevel := ((Fib[c + 2] shr 2) and 3) + 1;
+              Sc.SizeCU := ((Fib[c + 2] and 3) shl 8) or Fib[c + 3];
+              if ((Fib[c + 2] shr 4) and 7) > 1 then Sc.Valid := False;   // reserved option
+              Inc(c, 4);
+            end;
+            Sc.BitrateKbps := DABSubChannelBitrate(Sc);
+            if not CompareMem(@Sc, @FSubChannels[SubId], SizeOf(Sc)) then begin
+              FSubChannels[SubId] := Sc;
+              Changed;
+            end;
+          end;
+        end else if (Ext = 0) and (Len >= 5) then begin
           if FEId <> (Fib[j + 1] shl 8 or Fib[j + 2]) then begin
             FEId := Fib[j + 1] shl 8 or Fib[j + 2];
             Changed;
@@ -949,7 +1446,7 @@ begin
   end;
 end;
 
-function TDABFICDecoder.Process: Boolean;
+function TDABDecoder.Process: Boolean;
 begin
   Result := False;
   // Every TryAcquire with enough data consumes some of it (lock or not),
@@ -966,19 +1463,19 @@ begin
   until False;
 end;
 
-function TDABFICDecoder.GetSNRdB: Double;
+function TDABDecoder.GetSNRdB: Double;
 begin
   if FFrames = 0 then Exit(NaN);
   Result := 10 * Log10(FSNRSum / FFrames);
 end;
 
-function TDABFICDecoder.GetMERdB: Double;
+function TDABDecoder.GetMERdB: Double;
 begin
   if FFrames = 0 then Exit(NaN);
   Result := 10 * Log10(FMERSum / FFrames);
 end;
 
-function TDABFICDecoder.GetFICOkPercent: Double;
+function TDABDecoder.GetFICOkPercent: Double;
 begin
   if FFibTotal = 0 then Exit(0);
   Result := 100.0 * FFibOk / FFibTotal;
@@ -986,4 +1483,5 @@ end;
 
 initialization
   BuildTables;
+  CheckUEPTables;
 end.
