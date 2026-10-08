@@ -33,8 +33,8 @@ Merge "thermex1_024.pos";
 // its own range and the cooling becomes invisible.
 For i In {0:PostProcessing.NbViews-1}
   View[i].RangeType = 2;   // custom
-  View[i].CustomMin = 29.7395258791;
-  View[i].CustomMax = 37.2623755799;
+  View[i].CustomMin = 29.7362899272;
+  View[i].CustomMax = 37.2700134087;
   View[i].Visible = 0;
   View[i].Clip = 1;        // clipping plane 0, below
 EndFor
