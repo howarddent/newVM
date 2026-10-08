@@ -2091,20 +2091,24 @@ OpenGL in Lazarus, requiring no GLScene dependency at all. Leave
 `OpenGLAdapter.pas` alone rather than trying to wire it in.
 
 - **`Plot2D`** — demonstrates `uVMPlot2D.pas`'s `TVMPlot2D` component (see
-  the dedicated section below) by plotting two related series over the
-  same `x`: `y = exp(-0.1*x^2) * sin(3*x)` (same base function as
-  `demos/FunctionPlot`) and its cosine-phase sibling
-  `exp(-0.1*x^2) * cos(3*x)`, styled as a solid red line and a dashed blue
-  line respectively (`TForm1.FormCreate`, `uplot2dmain.pas`). The form
-  itself has no `TOpenGLControl` in its `.lfm` at all - `TVMPlot2D` is
-  created and `Parent`ed to the form entirely in code, the same way any
-  LCL component can be added to a form at runtime without a design-time
-  package installed. All the OpenGL rendering logic that used to live
-  directly in this demo's form unit (auto-fitted `glOrtho` projection,
-  GL-texture-cached title/tick text, the two-pass data/chrome paint
-  handler) has moved into the component; this unit now only builds the
-  `TVMobj` data and sets a few properties.
-
+  the dedicated section below) with three plots, each a `TVMPlot2D`
+  created and `Parent`ed in code (the form's `.lfm` holds no controls at
+  all): **lines** on the top half - `y = exp(-0.1*x^2) * sin(3*x)` (same
+  base function as `demos/FunctionPlot`) solid red and its cosine-phase
+  sibling dashed blue; **bars** bottom left - a histogram of 2000 N(0,1)
+  samples (`Math.RandG`) in 24 bins over [-4, 4] via `SetSeriesBar` +
+  `SetData` on the bin centres, with the expected count per bin
+  (`N * binwidth * pdf(x)`) as a red curve added point by point with
+  `PlotXY` on its own 200-point grid, so the plot shows both ways of
+  getting data in; **whiskers** bottom right - a box plot of 8 groups of
+  40 samples with drifting centre and growing spread (box = quartiles by
+  linear interpolation, R type 7; whiskers = min/max; medians as a line
+  with diamond markers via `SetData`, then `SetWhiskerData` for series 1;
+  groups labelled with `SetXTickLabels`; legend `lcBottomLeft`, the only
+  clear corner). `RandSeed` is fixed, so every run draws the same
+  samples. `FormResize` keeps the top plot at half the height and the
+  bar plot at half the width. `--snapshot=<prefix>` saves
+  `<prefix>_lines/_bars/_whiskers.png` via `SaveToPNG` and exits.
 ### `Graphs/uVMPlot2D.pas` (`TVMPlot2D` component)
 
 A reusable `TOpenGLControl`-descended LCL component - not tied to the
@@ -2420,7 +2424,14 @@ lazbuild --lazarusdir=<path> --add-package-link Graphs/newvmgraphs.lpk
 lazbuild --lazarusdir=<path> --add-package newVMGraphs --build-ide=
 ```
 (equivalently: open `Graphs/newvmgraphs.lpk` in the IDE's Package Editor
-and use Install). Once the package link and install-list entry already
+and use Install). **Rebuild with `--ws=gtk2`** (`lazbuild --lazarusdir=<path> --ws=gtk2
+--build-ide=`, last done 2026-10-08 for the bar/whisker additions): this
+`lazbuild` now defaults to GTK3, and the IDE has always been GTK2 - a GTK3
+IDE would also hit the GTK3 `TOpenGLControl` problem (see
+`demos/CanterburyRain`). The IDE only picks up component changes when it
+is rebuilt; until then new published properties (`PlotType`, `BarWidth`,
+`LegendCorner`) are missing from its Object Inspector even though every
+program compiles the component from source. Once the package link and install-list entry already
 exist (as they do after the first install), picking up a *newly added*
 component - as when `TVMPlot3D` joined `TVMPlot2D` here - only needs the
 second `--build-ide=` line rerun, not `--add-package-link`/`--add-package`
