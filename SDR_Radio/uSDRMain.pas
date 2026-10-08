@@ -174,13 +174,11 @@ type
     ClickBlankerCheckBox: TCheckBox;
     VolumeLabel: TLabel;
     VolumeTrackBar: TTrackBar;
-    AudioStatsLabel: TLabel;
     RDSStationLabel: TLabel;
     RDSTextLabel: TLabel;
-    RDSStatsLabel: TLabel;
     FFreqRetryTimer: TTimer;
     FEdgePanTimer: TTimer;
-    FAudioStatsTimer: TTimer;
+    FRDSTimer: TTimer;
     FEdgePanDirection: Integer;
     FShutdownDone: Boolean;
 
@@ -209,7 +207,7 @@ type
     procedure ApplyFrequencyChangedUI;
     procedure FreqRetryTimerTick(Sender: TObject);
     procedure EdgePanTimerTick(Sender: TObject);
-    procedure AudioStatsTimerTick(Sender: TObject);
+    procedure RDSTimerTick(Sender: TObject);
     function RunFrequencyKeypad(MinHz, MaxHz: Double; out ResultHz: Double): Boolean;
     procedure UpdatePeakThreshold;
     procedure ReportError(const Where: string);
@@ -274,18 +272,11 @@ begin
   FEdgePanTimer.OnTimer := @EdgePanTimerTick;
   FEdgePanDirection := 0;
 
-  // Periodic readout of the audio pipeline's own diagnostic counters
-  // (TWaveOutPlayer.UnderrunCount via AudioUnderrunCount, and - FM only -
-  // TBasebandQueue.DropCount via AudioDropCount) - added specifically so
-  // an audible click can be attributed to a real ALSA xrun versus a
-  // dropped baseband epoch (FAcquireThread/FDemodThread falling behind)
-  // versus neither (some other cause entirely), rather than guessing.
-  // 1s is coarse enough not to matter for a slowly-incrementing counter
-  // but frequent enough to correlate with what was just heard.
-  FAudioStatsTimer := TTimer.Create(Self);
-  FAudioStatsTimer.Interval := 1000;
-  FAudioStatsTimer.Enabled := True;
-  FAudioStatsTimer.OnTimer := @AudioStatsTimerTick;
+  // Refreshes the RDS station name and radiotext once a second.
+  FRDSTimer := TTimer.Create(Self);
+  FRDSTimer.Interval := 1000;
+  FRDSTimer.Enabled := True;
+  FRDSTimer.OnTimer := @RDSTimerTick;
 
   FAnalyser := TSDRSpectrumAnalyser.Create(Self);
   FAnalyser.Parent := Self;
@@ -405,12 +396,12 @@ begin
 
   VolumeLabel := TLabel.Create(Self);
   VolumeLabel.Parent := ReceiverGroupBox;
-  VolumeLabel.SetBounds(10, 160, 150, 15);
+  VolumeLabel.SetBounds(10, 150, 150, 15);
   VolumeLabel.Caption := 'Volume: 70%';
 
   VolumeTrackBar := TTrackBar.Create(Self);
   VolumeTrackBar.Parent := ReceiverGroupBox;
-  VolumeTrackBar.SetBounds(10, 178, 220, 30);
+  VolumeTrackBar.SetBounds(10, 168, 220, 30);
   VolumeTrackBar.Min := 0;
   VolumeTrackBar.Max := 100;
   VolumeTrackBar.Position := 70;
@@ -419,22 +410,14 @@ begin
   FReceiver.Volume := 0.7;
   FAMReceiver.Volume := 0.7;
 
-  // See FAudioStatsTimer's own comment (above) for what this reports.
-  AudioStatsLabel := TLabel.Create(Self);
-  AudioStatsLabel.Parent := ReceiverGroupBox;
-  AudioStatsLabel.AutoSize := True;   // 5 growing counters - don't clip
-  AudioStatsLabel.ShowHint := True;   // hint carries the latest exception message, if any - see AudioStatsTimerTick
-  AudioStatsLabel.SetBounds(10, 214, 400, 15);
-  AudioStatsLabel.Caption := 'Audio: ring 0, acq-skip 0, drops 0, underruns 0, errors 0, dc-jump 0, clicks 0';
-
-  // RDS - FM only, so ApplyListenModeVisibility hides all three in AM.
+  // RDS - FM only, so ApplyListenModeVisibility hides both in AM.
   // AutoSize is off and the width fixed: radiotext runs to 64 characters
   // and would otherwise grow the label straight out through the side of
   // the group box.
   RDSStationLabel := TLabel.Create(Self);
   RDSStationLabel.Parent := ReceiverGroupBox;
   RDSStationLabel.AutoSize := False;
-  RDSStationLabel.SetBounds(10, 234, 400, 16);
+  RDSStationLabel.SetBounds(10, 226, 400, 16);
   RDSStationLabel.Font.Style := [fsBold];
   RDSStationLabel.Caption := 'RDS: waiting';
 
@@ -442,14 +425,8 @@ begin
   RDSTextLabel.Parent := ReceiverGroupBox;
   RDSTextLabel.AutoSize := False;
   RDSTextLabel.ShowHint := True;   // the hint carries text too long to fit
-  RDSTextLabel.SetBounds(10, 253, 400, 16);
+  RDSTextLabel.SetBounds(10, 245, 400, 16);
   RDSTextLabel.Caption := '';
-
-  RDSStatsLabel := TLabel.Create(Self);
-  RDSStatsLabel.Parent := ReceiverGroupBox;
-  RDSStatsLabel.AutoSize := False;
-  RDSStatsLabel.SetBounds(10, 272, 400, 16);
-  RDSStatsLabel.Caption := '';
 
   BandwidthTrackBarChange(Self);   // sets BandwidthLabel's initial text
   ApplyListenModeVisibility;
@@ -501,9 +478,9 @@ end;
   success, so each stage below runs in its own try/except and the ones
   after it run regardless.
 
-  SECOND, THE TIMERS GO OFF FIRST. FAudioStatsTimer fires every second
-  and dereferences FReceiver, FAMReceiver and FRFSource unconditionally
-  (see AudioStatsTimerTick); FEdgePanTimer and FFreqRetryTimer likewise
+  SECOND, THE TIMERS GO OFF FIRST. FRDSTimer fires every second
+  and dereferences FReceiver unconditionally
+  (see RDSTimerTick); FEdgePanTimer and FFreqRetryTimer likewise
   reach into the source. Left running, any of them can land in the middle
   of the teardown below and fault on a half-freed object - which is
   precisely the kind of fault that appears on one platform and not
@@ -532,7 +509,7 @@ begin
 
   // 0. Nothing may fire into a half-torn-down object - see above.
   try
-    if Assigned(FAudioStatsTimer) then FAudioStatsTimer.Enabled := False;
+    if Assigned(FRDSTimer) then FRDSTimer.Enabled := False;
     if Assigned(FEdgePanTimer) then FEdgePanTimer.Enabled := False;
     if Assigned(FFreqRetryTimer) then FFreqRetryTimer.Enabled := False;
     FEdgePanDirection := 0;
@@ -1451,67 +1428,6 @@ begin
   RFSourceFrequencyChanged(Self);   // re-checks ModalLevel; re-arms itself if still modal
 end;
 
-// See FAudioStatsTimer's own comment (FormCreate) for why this exists.
-// Four counters, ordered upstream-to-downstream along the signal path, so
-// whichever one is actually incrementing pinpoints the stage at fault:
-//   ring      - TSDRRFSource.DeviceOverflowBytes (uSDRDevice.pas's
-//               TSDRRingBuffer, the device-level USB-callback buffer)
-//               overwriting itself because FPollThread isn't draining it
-//               fast enough - a real IQ discontinuity before ANY of this
-//               app's own DSP ever sees the data. Independent of which
-//               receiver (if any) is active.
-//   acq-skip  - TFMBroadcastReceiver/TAMBroadcastReceiver's own
-//               AudioAcquireSkipCount: THIS receiver's own FSourceCursor
-//               fell behind FStreamRing's capacity and had to jump
-//               forward - a real IQ discontinuity one stage later than
-//               "ring". Deliberately NOT TSDRRFSource.StreamSkipCount
-//               (the aggregate across every consumer, spectrum analyser
-//               included) - confirmed by testing that the spectrum
-//               analyser's own cursor skips constantly by design (it
-//               only ever wants the newest snapshot, not a continuous
-//               stream) even with Listen off and no receiver acquiring
-//               anything at all, which made the aggregate number
-//               useless for attributing an audio click specifically -
-//               see TSDRRFSource.pas's own TryReadEpoch 4-arg overload.
-//   drops     - FM only (uAMReceiver.pas has no equivalent hand-off queue -
-//               see its own header comment for why AM needs only one
-//               thread) - TFMBroadcastReceiver.AudioDropCount,
-//               FDemodThread falling behind FAcquireThread.
-//   underruns - TWaveOutPlayer.UnderrunCount, the ALSA output ring itself
-//               genuinely starving.
-//   errors    - TFMBroadcastReceiver/TAMBroadcastReceiver.AudioErrorCount:
-//               total exceptions caught and swallowed inside per-epoch DSP
-//               processing (TFMAcquireThread/TFMDemodThread/TAMDSPThread's
-//               own Execute methods) - each one is a silently dropped or
-//               corrupted epoch that none of the four counters above can
-//               see, since it happens INSIDE processing, not at an I/O
-//               boundary. The most recent exception's own message is set
-//               as this label's Hint (hover to read it) rather than
-//               crammed into the caption itself.
-//   dc-jump   - uSDRDevice.pas's DCCorrectionJumpCount: how many times
-//               CorrectIQEpoch's blind, independently-recomputed-every-
-//               epoch DC-offset estimate has jumped by more than
-//               DCJumpThreshold from the previous epoch's own estimate.
-//               Unlike every counter above, this ISN'T a dropped/skipped/
-//               corrupted epoch - every sample is present and accounted
-//               for - it's a genuine discontinuity CorrectIQEpoch itself
-//               introduces into otherwise-intact data, the one candidate
-//               left once ring/acq-skip/drops/underruns/errors are all
-//               confirmed clean. Global (not per-receiver), since
-//               CorrectIQEpoch runs once per TryReadEpoch regardless of
-//               which receiver is listening.
-//   clicks    - FM only (envelope/synchronous AM detection isn't a polar
-//               discriminator and has no equivalent phase-wrap failure
-//               mode) - TFMBroadcastReceiver.AudioClickCount, confirmed
-//               FM click-noise events TFMDemodulator's own impulse
-//               blanker has suppressed (see that class's own Process
-//               comment, uDSPBlocks.pas) - a climbing count here IS the
-//               originally-reported audible clicking, now caught and
-//               silenced rather than heard.
-// "ring"/"dc-jump" always come straight from FRFSource/uSDRDevice, active
-// receiver or not; "acq-skip"/"drops"/"underruns"/"errors"/"clicks" only
-// exist once a receiver is Active (StartSelectedReceiver guarantees at
-// most one of FReceiver/FAMReceiver ever is), so they read 0 otherwise.
 { Station name, programme type and radiotext, as the RDS decoder has them
   - see uRDSDecoder.pas.
 
@@ -1539,32 +1455,11 @@ begin
   RDSTextLabel.Caption := RT;
   RDSTextLabel.Hint := RT;   // in full, for text wider than the label
 
-  // Level and quality are always shown, groups only once there are any -
-  // see TRDSDecoder.SubcarrierLevel for what the pair of them separates.
-  RDSStatsLabel.Caption := Format('mpx %.3f, pilot %.3f, 57k %.4f, lock %.2f, PI %s, %d grp, %d err',
-    [MPX, Pilot, Level, Quality, PIText, Groups, BlockErrors]);
 end;
 
-procedure TForm1.AudioStatsTimerTick(Sender: TObject);
+procedure TForm1.RDSTimerTick(Sender: TObject);
 begin
   UpdateRDSDisplay;
-
-  if FReceiver.Active then begin
-    AudioStatsLabel.Caption := Format('Audio: ring %d, acq-skip %d, drops %d, underruns %d, errors %d, dc-jump %d, clicks %d',
-      [FRFSource.DeviceOverflowBytes, FReceiver.AudioAcquireSkipCount,
-       FReceiver.AudioDropCount, FReceiver.AudioUnderrunCount, FReceiver.AudioErrorCount,
-       DCCorrectionJumpCount, FReceiver.AudioClickCount]);
-    AudioStatsLabel.Hint := FReceiver.LastError;
-  end else if FAMReceiver.Active then begin
-    AudioStatsLabel.Caption := Format('Audio: ring %d, acq-skip %d, drops -, underruns %d, errors %d, dc-jump %d, clicks -',
-      [FRFSource.DeviceOverflowBytes, FAMReceiver.AudioAcquireSkipCount,
-       FAMReceiver.AudioUnderrunCount, FAMReceiver.AudioErrorCount, DCCorrectionJumpCount]);
-    AudioStatsLabel.Hint := FAMReceiver.LastError;
-  end else begin
-    AudioStatsLabel.Caption := Format('Audio: ring %d, acq-skip 0, drops 0, underruns 0, errors 0, dc-jump %d, clicks 0',
-      [FRFSource.DeviceOverflowBytes, DCCorrectionJumpCount]);
-    AudioStatsLabel.Hint := '';
-  end;
 end;
 
 procedure TForm1.ApplyFrequencyChangedUI;
@@ -1768,7 +1663,6 @@ begin
   // RDS rides on the FM multiplex - there is no such thing on AM.
   RDSStationLabel.Visible := not IsAM;
   RDSTextLabel.Visible := not IsAM;
-  RDSStatsLabel.Visible := not IsAM;
 end;
 
 // Reflects whichever receiver's own channel bandwidth is currently
