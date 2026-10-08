@@ -5,7 +5,8 @@
 #
 #   ukplaces.inc   every populated place in the UK and Ireland with a
 #                  population over 50,000, alphabetical: name, country,
-#                  latitude, longitude, population
+#                  latitude, longitude, population, and British National
+#                  Grid easting/northing (bng.py) for the county map
 #   ukoutline.inc  coastline/border rings of the United Kingdom, Ireland
 #                  and the Isle of Man for the outline map
 #
@@ -26,6 +27,8 @@
 # Usage: python3 make_location_data.py <download dir>
 # ---------------------------------------------------------------------------
 import sys, os, csv, json
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from bng import to_bng
 
 src = sys.argv[1]
 here = os.path.dirname(os.path.abspath(__file__))
@@ -54,8 +57,11 @@ with open(os.path.join(here, 'ukplaces.inc'), 'w', encoding='utf-8') as fh:
     fh.write('// UK and Ireland places with population over %d, alphabetical.\n' % MIN_POP)
     fh.write('const\n  PlaceCount = %d;\n' % len(places))
     fh.write('  Places: array[0..PlaceCount - 1] of TPlace = (\n')
-    rows = ['    (Name: %s; Country: %s; Lat: %.5f; Lon: %.5f; Population: %d)'
-            % (pas(n), pas(c), la, lo, po) for n, c, la, lo, po in places]
+    rows = []
+    for n, c, la, lo, po in places:
+        e, nn = to_bng(la, lo)
+        rows.append('    (Name: %s; Country: %s; Lat: %.5f; Lon: %.5f; Population: %d; East: %.0f; North: %.0f)'
+                    % (pas(n), pas(c), la, lo, po, e, nn))
     fh.write(',\n'.join(rows) + '\n  );\n')
 
 g = json.load(open(os.path.join(src, 'ne_50m_admin_0_countries.geojson'), encoding='utf-8'))

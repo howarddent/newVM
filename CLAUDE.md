@@ -2001,7 +2001,51 @@ packages. Compiled binaries and each demo's own `lib/` output are
   Canterbury is there on its own figure, 55,087) and Natural Earth 1:50m
   admin-0 countries (public domain, 26 rings, 1290 points, unsimplified);
   rerun the script on fresh downloads to update them. The map has the
-  same `RenderScene`/`SaveToPNG` split as `TVMPlot2D`. **Rainfall**: monthly totals as bars
+  same `RenderScene`/`SaveToPNG` split as `TVMPlot2D`.
+  **County rainfall map** (third tab, `uCountyMap.TCountyMapView` +
+  `uCountyRain`): the 218 UK "counties and unitary authorities" (ONS
+  December 2024 BUC boundaries, OGL - there is no official UK-wide
+  ceremonial-county layer) coloured by rainfall over the latest 12
+  published months, from the **Met Office**, not Open-Meteo: HadUK-Grid
+  12 km monthly grids, downloaded from the Hadley Centre's provisional
+  pages (`hadleyserver.metoffice.gov.uk/hadobs/hadukgrid/data/<yyyy>/
+  rainfall_hadukgrid_uk_12km_mon_<yyyymm>.nc`, ~190 kB each, no login -
+  the CEDA archive now needs one) when the tab is first opened, cached
+  under `GetAppConfigDir/hadukgrid` (months older than four re-used,
+  newer ones re-fetched since provisional data can be revised). A radio
+  group switches between the 12-month total (ColorBrewer YlGnBu,
+  data-driven range in 100 mm steps) and the anomaly against each
+  county's own 1991-2020 average for the same calendar months (% of
+  average; white at 100 %, blues wetter, browns drier, symmetric range in
+  10 % steps); a `TPaintBox` colour bar beside it uses the same
+  `CountyColour`. Clicking a county shows its figures; the selected
+  place's county is outlined and the place is a red dot (places now carry
+  BNG `East`/`North`, computed by `bng.py` - Helmert + Airy transverse
+  Mercator, within 3 m of the ONS label points); a memo ranks all
+  counties by the current mode. While this tab is showing, the location panel's
+  town map is hidden (`UpdateRightPanel`, from `pcMain.OnChange`) and an
+  alphabetical county drop-down shown in its place, kept in step with
+  clicks on the county map and with the town selection (a town selects
+  its county; one in Ireland clears it). Data pipeline: `make_county_data.py`
+  (needs `libnetcdf` via ctypes) writes `countydata.inc` - boundaries in
+  BNG, the HadUK-Grid cells whose centres fall in each county (48 small
+  areas, e.g. London boroughs, have none and use the cell nearest their
+  ONS label point, flagged `*`), each county's 1991-2020 monthly averages
+  from the Met Office's open ArcGIS layer
+  `Monthly_Precipitation_Observations_1991_2020_12km` (1707 cells,
+  matching the netCDF land cells exactly), and Ireland/Man in BNG as grey
+  context. At run time the grids are read through **`libnetcdf`, bound
+  dynamically** (`dynlibs`; netCDF-4 is HDF5 underneath, no hand
+  parsing) - without it the tab says so. Filling concave counties with
+  holes: per county, triangle fans of every ring into the **stencil
+  buffer with `GL_INVERT`** (even-odd rule), then one bounding-box quad
+  where the stencil is set, zeroing it again (`StencilBits := 8` in the
+  constructor). Check: the UK 1991-2020 annual mean from the cells is
+  1161 mm against the Met Office's published ~1163 mm. Expect the Met
+  Office county figure and the Open-Meteo point series on the other tabs
+  to differ (Kent 656 mm, 90 % of average, vs the Canterbury ERA5 point
+  697 mm, 103 %): different datasets, an area against a point.
+  **Rainfall**: monthly totals as bars
   (`pstBar`), the 1991-2020 average for each calendar month as a red line
   with markers, and the 1991-2020 mean of all months as a dotted line;
   the table lists each month against its average (and any missing days),

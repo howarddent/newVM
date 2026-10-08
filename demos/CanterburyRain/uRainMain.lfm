@@ -19,6 +19,7 @@ object Form1: TForm1
     Align = alClient
     TabIndex = 0
     TabOrder = 0
+    OnChange = pcMainChange
     object tabRain: TTabSheet
       Caption = 'Rainfall'
       ClientHeight = 796
@@ -73,6 +74,104 @@ object Form1: TForm1
         WordWrap = False
       end
     end
+    object tabCounty: TTabSheet
+      Caption = 'County rainfall map'
+      ClientHeight = 796
+      ClientWidth = 1092
+      object pnlCountyMap: TPanel
+        Left = 0
+        Height = 796
+        Top = 0
+        Width = 752
+        Align = alClient
+        BevelOuter = bvNone
+        TabOrder = 0
+      end
+      object pnlCountySide: TPanel
+        Left = 722
+        Height = 796
+        Top = 0
+        Width = 370
+        Align = alRight
+        BevelOuter = bvNone
+        ClientHeight = 796
+        ClientWidth = 370
+        TabOrder = 1
+        object lblCountyTitle: TLabel
+          Left = 6
+          Height = 15
+          Top = 6
+          Width = 328
+          Align = alTop
+          BorderSpacing.Left = 6
+          BorderSpacing.Top = 6
+          BorderSpacing.Right = 6
+          Caption = 'Rainfall by county, last 12 months'
+          Font.Style = [fsBold]
+          ParentFont = False
+          WordWrap = True
+        end
+        object rgCountyMode: TRadioGroup
+          Left = 6
+          Height = 70
+          Top = 27
+          Width = 328
+          Align = alTop
+          AutoFill = True
+          BorderSpacing.Left = 6
+          BorderSpacing.Top = 6
+          BorderSpacing.Right = 6
+          Caption = 'Show'
+          ItemIndex = 0
+          Items.Strings = (
+            'Total rainfall'
+            'Anomaly against the 1991-2020 average'
+          )
+          TabOrder = 0
+          OnClick = rgCountyModeClick
+        end
+        object pbCountyLegend: TPaintBox
+          Left = 6
+          Height = 230
+          Top = 103
+          Width = 328
+          Align = alTop
+          BorderSpacing.Left = 6
+          BorderSpacing.Top = 6
+          BorderSpacing.Right = 6
+          OnPaint = pbCountyLegendPaint
+        end
+        object lblCountyInfo: TLabel
+          Left = 6
+          Height = 15
+          Top = 339
+          Width = 328
+          Align = alTop
+          BorderSpacing.Left = 6
+          BorderSpacing.Top = 6
+          BorderSpacing.Right = 6
+          Caption = 'Click a county for its figures.'
+          WordWrap = True
+        end
+        object memCounty: TMemo
+          Left = 6
+          Height = 420
+          Top = 360
+          Width = 328
+          Align = alClient
+          BorderSpacing.Left = 6
+          BorderSpacing.Top = 6
+          BorderSpacing.Right = 6
+          BorderSpacing.Bottom = 6
+          Font.Name = 'Monospace'
+          ParentFont = False
+          ReadOnly = True
+          ScrollBars = ssAutoBoth
+          TabOrder = 1
+          WordWrap = False
+        end
+      end
+    end
   end
   object pnlRight: TPanel
     Left = 1100
@@ -122,6 +221,47 @@ object Form1: TForm1
       BorderSpacing.Right = 8
       Caption = ''
       WordWrap = True
+    end
+    object pnlCountyPick: TPanel
+      Left = 0
+      Height = 60
+      Top = 113
+      Width = 320
+      Align = alTop
+      AutoSize = True
+      BevelOuter = bvNone
+      ClientHeight = 60
+      ClientWidth = 320
+      TabOrder = 2
+      Visible = False
+      object lblCounty: TLabel
+        Left = 8
+        Height = 15
+        Top = 10
+        Width = 304
+        Align = alTop
+        BorderSpacing.Left = 8
+        BorderSpacing.Top = 10
+        BorderSpacing.Right = 8
+        Caption = 'County (for the county rainfall map)'
+        WordWrap = True
+      end
+      object cbCounty: TComboBox
+        Left = 8
+        Height = 27
+        Top = 29
+        Width = 304
+        Align = alTop
+        BorderSpacing.Left = 8
+        BorderSpacing.Top = 4
+        BorderSpacing.Right = 8
+        BorderSpacing.Bottom = 4
+        DropDownCount = 30
+        ItemHeight = 0
+        Style = csDropDownList
+        TabOrder = 0
+        OnChange = cbCountyChange
+      end
     end
     object pnlMap: TPanel
       Left = 8

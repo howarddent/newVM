@@ -35,10 +35,27 @@ unit uRainMain;
      repeats it. "Save chart..." writes the chart on the visible tab as a
      PNG (TVMPlot2D.SaveToPNG).
 
+     COUNTY RAINFALL MAP - a third tab: an OpenGL map of the 218 UK
+     counties and unitary authorities (uCountyMap.TCountyMapView, ONS
+     boundaries) coloured by rainfall over the latest 12 published months
+     from the Met Office's HadUK-Grid (uCountyRain - downloaded when the
+     tab is first opened, then with "Fetch again"). A radio group switches
+     between the 12-month total (sequential yellow-green-blue scale) and
+     the anomaly against each county's own 1991-2020 average for the same
+     months (white = average, blues wetter, browns drier, in % of the
+     average), with a matching colour bar beside it. Clicking a county
+     shows its figures; the selected place's county is outlined and the
+     place itself shown as a red dot; a table lists every county. While
+     this tab is showing, the location panel's town map (no use here) is
+     replaced by an alphabetical drop-down of the counties, kept in step
+     with clicks on the county map.
+
      COMMAND LINE: --snapshot=<file.png> fetches the data, saves the
      rainfall chart to that file, the temperature chart to
-     <file>_temperature.png, the map to <file>_map.png and the window's
-     layout (GL areas blank) to <file>_window.bmp, prints the
+     <file>_temperature.png, the map to <file>_map.png, the county map
+     in both modes to <file>_county_total.png / _county_anomaly.png and
+     the window's layout to <file>_window.bmp (and with the county tab
+     showing, <file>_window_county.bmp), prints the
      status and both tables and exits -
      for checking the rendering without a screen capture (which Wayland
      desktops generally refuse). --offline skips the download and uses the
@@ -51,9 +68,9 @@ unit uRainMain;
 interface
 
 uses
-  Classes, SysUtils, Math, DateUtils, Forms, Controls, Graphics, Dialogs,
+  Classes, SysUtils, Math, StrUtils, DateUtils, Forms, Controls, Graphics, Dialogs,
   ExtCtrls, StdCtrls, ComCtrls,
-  newVM, uVMPlot2D, uWeatherData, uPlaces, uUKMap;
+  newVM, uVMPlot2D, uWeatherData, uPlaces, uUKMap, uCountyRain, uCountyMap;
 
 type
 
@@ -63,6 +80,9 @@ type
     btnRefresh: TButton;
     btnSave: TButton;
     cbLocation: TComboBox;
+    cbCounty: TComboBox;
+    lblCounty: TLabel;
+    pnlCountyPick: TPanel;
     lblAttribution: TLabel;
     lblLocation: TLabel;
     lblPlaceInfo: TLabel;
@@ -78,9 +98,21 @@ type
     pnlTempPlot: TPanel;
     tabRain: TTabSheet;
     tabTemp: TTabSheet;
+    tabCounty: TTabSheet;
+    pnlCountyMap: TPanel;
+    pnlCountySide: TPanel;
+    lblCountyTitle: TLabel;
+    rgCountyMode: TRadioGroup;
+    pbCountyLegend: TPaintBox;
+    lblCountyInfo: TLabel;
+    memCounty: TMemo;
     procedure btnRefreshClick(Sender: TObject);
+    procedure pcMainChange(Sender: TObject);
+    procedure rgCountyModeClick(Sender: TObject);
+    procedure pbCountyLegendPaint(Sender: TObject);
     procedure btnSaveClick(Sender: TObject);
     procedure cbLocationChange(Sender: TObject);
+    procedure cbCountyChange(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure FormShow(Sender: TObject);
   private
@@ -90,6 +122,19 @@ type
     FPlace: Integer;      // index into uPlaces.Places
     FLoadedOnce: Boolean;
     FSnapshot: string;    // --snapshot=<file>: save both charts, then exit
+    FCountyMap: TCountyMapView;
+    FCounty: TCountyRainSummary;
+    FCountyLoaded: Boolean;          // a load has been attempted
+    FCountyOK: Boolean;              // and succeeded
+    FCountySel: Integer;             // selected county, or -1
+    FCountyLo, FCountyHi: Double;    // colour range in use
+    function LoadCountyData: Boolean;
+    procedure CountyLoadAsync(Data: PtrInt);
+    procedure ShowCounty;
+    procedure ShowCountyInfo;
+    procedure CountySelected(Sender: TObject; County: Integer);
+    function CountyValue(c: Integer): Double;
+    procedure UpdateRightPanel;
     procedure LoadData(Data: PtrInt);
     procedure SelectPlace(Index: Integer);
     procedure MapSelectPlace(Sender: TObject; Index: Integer);
@@ -168,6 +213,21 @@ begin
   FMap.Align := alClient;
   FMap.Selected := FPlace;
   FMap.OnSelectPlace := @MapSelectPlace;
+
+  FCountyMap := TCountyMapView.Create(Self);
+  FCountyMap.Parent := pnlCountyMap;
+  FCountyMap.Align := alClient;
+  FCountyMap.OnSelectCounty := @CountySelected;
+  FCountyMap.SetPlace(Places[FPlace].East, Places[FPlace].North);
+  FCountySel := CountyAt(Places[FPlace].East, Places[FPlace].North);
+  FCountyMap.Selected := FCountySel;
+  cbCounty.Items.BeginUpdate;
+  try
+    for i := 0 to CountyCount - 1 do cbCounty.Items.Add(CountyName[i]);   // already alphabetical
+  finally
+    cbCounty.Items.EndUpdate;
+  end;
+  cbCounty.ItemIndex := FCountySel;
   ShowPlaceInfo;
 
   pcMain.ActivePage := tabRain;
@@ -196,6 +256,11 @@ begin
   FPlace := Index;
   if cbLocation.ItemIndex <> Index then cbLocation.ItemIndex := Index;
   FMap.Selected := Index;
+  FCountyMap.SetPlace(Places[Index].East, Places[Index].North);
+  FCountySel := CountyAt(Places[Index].East, Places[Index].North);   // -1 outside the UK
+  FCountyMap.Selected := FCountySel;
+  cbCounty.ItemIndex := FCountySel;
+  ShowCountyInfo;
   ShowPlaceInfo;
   LoadData(0);
 end;
@@ -217,6 +282,19 @@ end;
 procedure TForm1.btnRefreshClick(Sender: TObject);
 begin
   LoadData(0);
+  if FCountyLoaded then LoadCountyData;
+end;
+
+procedure TForm1.pcMainChange(Sender: TObject);
+begin
+  UpdateRightPanel;
+  if (pcMain.ActivePage = tabCounty) and not FCountyLoaded then
+    Application.QueueAsyncCall(@CountyLoadAsync, 0);
+end;
+
+procedure TForm1.CountyLoadAsync(Data: PtrInt);
+begin
+  LoadCountyData;
 end;
 
 procedure TForm1.btnSaveClick(Sender: TObject);
@@ -224,6 +302,16 @@ var
   Plot: TVMPlot2D;
   What: string;
 begin
+  if pcMain.ActivePage = tabCounty then begin
+    dlgSave.FileName := 'uk_county_rainfall_' + IfThen(rgCountyMode.ItemIndex = 1, 'anomaly', 'total')
+      + '_' + FormatDateTime('yyyy-mm-dd', Date) + '.png';
+    if not dlgSave.Execute then Exit;
+    if FCountyMap.SaveToPNG(dlgSave.FileName) then
+      lblStatus.Caption := 'Map saved to ' + dlgSave.FileName
+    else
+      lblStatus.Caption := 'Could not save the map';
+    Exit;
+  end;
   if pcMain.ActivePage = tabTemp then begin
     Plot := FTempPlot;
     What := 'temperature';
@@ -261,6 +349,7 @@ end;
 
 procedure TForm1.LoadData(Data: PtrInt);
 var
+  i: Integer;
   S: TWeatherSummary;
   Err: string;
   ok: Boolean;
@@ -311,6 +400,31 @@ begin
     else
       ExitCode := 1;
     WriteLn(lblStatus.Caption);
+    if LoadCountyData then begin
+      pcMain.ActivePage := tabCounty;
+      UpdateRightPanel;
+      for i := 0 to 1 do begin
+        rgCountyMode.ItemIndex := i;
+        ShowCounty;
+        Application.ProcessMessages;
+        if FCountyMap.SaveToPNG(ChangeFileExt(FSnapshot, '') + '_county_'
+          + IfThen(i = 1, 'anomaly', 'total') + ExtractFileExt(FSnapshot)) then
+          WriteLn('county map saved (', IfThen(i = 1, 'anomaly', 'total'), ')')
+        else
+          ExitCode := 1;
+        WriteLn(lblCountyInfo.Caption);
+        WriteLn(Copy(memCounty.Lines.Text, 1, 1500));
+      end;
+      with GetFormImage do
+        try
+          SaveToFile(ChangeFileExt(FSnapshot, '') + '_window_county.bmp');
+        finally
+          Free;
+        end;
+    end else begin
+      WriteLn(StdErr, lblStatus.Caption);
+      ExitCode := 1;
+    end;
     WriteLn(memRain.Lines.Text);
     WriteLn(memTemp.Lines.Text);
     Application.Terminate;
@@ -477,6 +591,239 @@ begin
   else
     lblStatus.Caption := Format('%s: data downloaded %s from Open-Meteo',
       [S.SiteName, FormatDateTime('dd mmm yyyy hh:nn', S.FetchedAt)]);
+end;
+
+
+{ ---- county rainfall map -------------------------------------------------- }
+
+// Downloads/reads the Met Office grids and shows them. True on success.
+function TForm1.LoadCountyData: Boolean;
+var
+  Err: string;
+begin
+  FCountyLoaded := True;
+  lblStatus.Caption := 'Fetching Met Office HadUK-Grid rainfall for the county map ...';
+  Screen.Cursor := crHourGlass;
+  Application.ProcessMessages;
+  try
+    FCountyOK := GetCountyRain(FCounty, Err, WeatherForceOffline);
+  finally
+    Screen.Cursor := crDefault;
+  end;
+  result := FCountyOK;
+  if not FCountyOK then begin
+    lblStatus.Caption := 'County map: ' + Err;
+    memCounty.Lines.Text := Err;
+    Exit;
+  end;
+  lblCountyTitle.Caption := Format('Rainfall by county, %s to %s',
+    [FormatDateTime('mmm yyyy', FCounty.FirstMonth), FormatDateTime('mmm yyyy', FCounty.LastMonth)]);
+  if FCounty.Offline then
+    lblStatus.Caption := 'County map: OFFLINE - Met Office grids from the local cache'
+  else
+    lblStatus.Caption := Format('County map: Met Office HadUK-Grid, %s to %s (%d of 12 months from the cache)',
+      [FormatDateTime('mmm yyyy', FCounty.FirstMonth), FormatDateTime('mmm yyyy', FCounty.LastMonth),
+       FCounty.CachedMonths]);
+  ShowCounty;
+end;
+
+// The value shown for county c: the 12-month total (mm) or its anomaly
+// (% of the county's 1991-2020 average for the same months).
+function TForm1.CountyValue(c: Integer): Double;
+begin
+  if rgCountyMode.ItemIndex = 1 then
+    result := 100 * (FCounty.Total[c] / FCounty.Normal[c] - 1)
+  else
+    result := FCounty.Total[c];
+end;
+
+procedure TForm1.ShowCounty;
+var
+  V: TCountyValues;
+  c, i, j, t: Integer;
+  lo, hi: Double;
+  Order: array[0..CountyCount - 1] of Integer;
+  Anom: Boolean;
+begin
+  if not FCountyOK then Exit;
+  Anom := rgCountyMode.ItemIndex = 1;
+  lo := Infinity;
+  hi := -Infinity;
+  for c := 0 to CountyCount - 1 do begin
+    V[c] := CountyValue(c);
+    if not IsNan(V[c]) then begin
+      lo := Min(lo, V[c]);
+      hi := Max(hi, V[c]);
+    end;
+  end;
+  if Anom then begin
+    // symmetric about 0 (white = the county's own average), in steps of 10 %
+    FCountyHi := Max(20, 10 * Ceil(Max(Abs(lo), Abs(hi)) / 10));
+    FCountyLo := -FCountyHi;
+    FCountyMap.SetValues(V, cmAnomaly, FCountyLo, FCountyHi);
+  end else begin
+    FCountyLo := 100 * Floor(lo / 100);
+    FCountyHi := 100 * Ceil(hi / 100);
+    FCountyMap.SetValues(V, cmTotal, FCountyLo, FCountyHi);
+  end;
+  pbCountyLegend.Invalidate;
+
+  // table, largest first
+  for c := 0 to CountyCount - 1 do Order[c] := c;
+  for i := 1 to CountyCount - 1 do begin
+    t := Order[i];
+    j := i - 1;
+    while (j >= 0) and (V[Order[j]] < V[t]) do begin
+      Order[j + 1] := Order[j];
+      Dec(j);
+    end;
+    Order[j + 1] := t;
+  end;
+  memCounty.Lines.BeginUpdate;
+  try
+    memCounty.Lines.Clear;
+    memCounty.Lines.Add(Format('%-22s %5s %5s %6s', ['county', 'total', '91-20', 'anom']));
+    memCounty.Lines.Add(Format('%-22s %5s %5s %6s', ['', 'mm', 'mm', '%']));
+    memCounty.Lines.Add(Format('%-22s %5.0f %5.0f %s%%',
+      ['UK (12 km cells)', FCounty.UKTotal, FCounty.UKNormal,
+       Signed(100 * (FCounty.UKTotal / FCounty.UKNormal - 1), 5)]));
+    for i := 0 to CountyCount - 1 do begin
+      c := Order[i];
+      memCounty.Lines.Add(Format('%-22s %5.0f %5.0f %s%%%s',
+        [Copy(CountyName[c], 1, 22), FCounty.Total[c], FCounty.Normal[c],
+         Signed(100 * (FCounty.Total[c] / FCounty.Normal[c] - 1), 5),
+         IfThen(CountySingleCell[c], ' *', '')]));
+    end;
+    memCounty.Lines.Add('');
+    memCounty.Lines.Add('* small area: the single 12 km cell nearest it');
+    memCounty.Lines.Add('Rainfall: Met Office HadUK-Grid 12 km (provisional), Crown copyright, OGL.');
+    memCounty.Lines.Add('Boundaries: ONS Counties and Unitary Authorities Dec 2024, OGL.');
+  finally
+    memCounty.Lines.EndUpdate;
+  end;
+  ShowCountyInfo;
+end;
+
+procedure TForm1.ShowCountyInfo;
+var
+  c: Integer;
+  d: Double;
+begin
+  c := FCountySel;
+  if not FCountyOK then Exit;
+  if c < 0 then begin
+    lblCountyInfo.Caption := 'Click a county for its figures. (The selected place is outside the UK.)';
+    Exit;
+  end;
+  d := FCounty.Total[c] - FCounty.Normal[c];
+  lblCountyInfo.Caption := Format('%s (%s)'#10'%s to %s: %.0f mm'#10
+    + '1991-2020 average for those months: %.0f mm'#10'%s mm, %s%% of average%s',
+    [CountyName[c], CountyCode[c],
+     FormatDateTime('mmm yyyy', FCounty.FirstMonth), FormatDateTime('mmm yyyy', FCounty.LastMonth),
+     FCounty.Total[c], FCounty.Normal[c],
+     IfThen(d >= 0, '+', '') + FormatFloat('0', d),
+     FormatFloat('0', 100 * FCounty.Total[c] / FCounty.Normal[c]),
+     IfThen(CountySingleCell[c], #10'(small area: the single 12 km grid cell nearest it)', '')]);
+end;
+
+procedure TForm1.CountySelected(Sender: TObject; County: Integer);
+begin
+  FCountySel := County;
+  cbCounty.ItemIndex := County;
+  ShowCountyInfo;
+end;
+
+procedure TForm1.cbCountyChange(Sender: TObject);
+begin
+  FCountySel := cbCounty.ItemIndex;
+  FCountyMap.Selected := FCountySel;
+  ShowCountyInfo;
+end;
+
+// The location panel's town map is no use on the county tab: there it is
+// hidden and the county drop-down shown in its place.
+procedure TForm1.UpdateRightPanel;
+var
+  OnCounty: Boolean;
+begin
+  OnCounty := pcMain.ActivePage = tabCounty;
+  pnlRight.DisableAlign;
+  try
+    pnlMap.Visible := not OnCounty;
+    pnlCountyPick.Visible := OnCounty;
+    if OnCounty then begin
+      pnlCountyPick.Top := lblPlaceInfo.Top + lblPlaceInfo.Height + 1;   // keep it under the place details
+      lblAttribution.Caption := 'Counties: ONS Counties and Unitary Authorities (OGL). '
+        + 'Rainfall: Met Office HadUK-Grid (OGL). Click a county on the map to choose it.';
+    end else
+      lblAttribution.Caption := 'Places: GeoNames (CC-BY 4.0). Outline: Natural Earth. '
+        + 'Click a dot to choose a place.';
+  finally
+    pnlRight.EnableAlign;
+  end;
+end;
+
+procedure TForm1.rgCountyModeClick(Sender: TObject);
+begin
+  ShowCounty;
+end;
+
+// Vertical colour bar for the current mode, with tick labels.
+procedure TForm1.pbCountyLegendPaint(Sender: TObject);
+const
+  BarX = 12;
+  BarW = 26;
+  Top0 = 24;
+var
+  cv: TCanvas;
+  BarH, y, i, n: Integer;
+  v, step: Double;
+  Anom: Boolean;
+  lab: string;
+begin
+  cv := pbCountyLegend.Canvas;
+  cv.Brush.Color := clForm;
+  cv.FillRect(0, 0, pbCountyLegend.Width, pbCountyLegend.Height);
+  if not FCountyOK then Exit;
+  Anom := rgCountyMode.ItemIndex = 1;
+  BarH := pbCountyLegend.Height - Top0 - 12;
+  cv.Font.Color := clWindowText;
+  if Anom then
+    cv.TextOut(BarX, 2, '% of the county''s 1991-2020 average')
+  else
+    cv.TextOut(BarX, 2, 'total over 12 months, mm');
+  for y := 0 to BarH - 1 do begin
+    v := FCountyHi - (FCountyHi - FCountyLo) * y / (BarH - 1);
+    cv.Pen.Color := CountyColour(TCountyColourMode(Ord(Anom)), v, FCountyLo, FCountyHi);
+    cv.Line(BarX, Top0 + y, BarX + BarW, Top0 + y);
+  end;
+  cv.Brush.Style := bsClear;
+  cv.Pen.Color := clBlack;
+  cv.Rectangle(BarX, Top0, BarX + BarW, Top0 + BarH);
+  // ticks: 5 for the anomaly (-R, -R/2, 0, R/2, R), round steps for totals
+  if Anom then begin
+    n := 4;
+    step := (FCountyHi - FCountyLo) / n;
+  end else begin
+    step := 100;
+    while (FCountyHi - FCountyLo) / step > 8 do
+      if (FCountyHi - FCountyLo) / (step * 2.5) <= 8 then step := step * 2.5 else step := step * 2;
+    n := Round((FCountyHi - FCountyLo) / step);
+  end;
+  for i := 0 to n do begin
+    v := FCountyLo + i * step;
+    y := Top0 + Round((FCountyHi - v) / (FCountyHi - FCountyLo) * (BarH - 1));
+    cv.Line(BarX + BarW, y, BarX + BarW + 5, y);
+    if Anom then begin
+      lab := FormatFloat('0', 100 + v) + '%';
+      if v > 0 then lab := lab + '  (' + FormatFloat('0', v) + '% wetter)'
+      else if v < 0 then lab := lab + '  (' + FormatFloat('0', -v) + '% drier)'
+      else lab := lab + '  = average';
+    end else
+      lab := FormatFloat('0', v);
+    cv.TextOut(BarX + BarW + 9, y - cv.TextHeight(lab) div 2, lab);
+  end;
+  cv.Brush.Style := bsSolid;
 end;
 
 end.

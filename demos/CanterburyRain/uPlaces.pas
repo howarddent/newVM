@@ -22,6 +22,7 @@ type
     Country: string;     // England, Scotland, Wales, Northern Ireland, Ireland
     Lat, Lon: Double;    // degrees
     Population: Integer; // GeoNames' figure
+    East, North: Double; // British National Grid, m (for the county map)
   end;
 
 {$I ukplaces.inc}
