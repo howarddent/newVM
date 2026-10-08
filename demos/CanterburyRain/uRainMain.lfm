@@ -1,0 +1,200 @@
+object Form1: TForm1
+  Left = 300
+  Height = 860
+  Top = 100
+  Width = 1420
+  Caption = 'UK and Ireland weather - last 12 months (newVM demo)'
+  ClientHeight = 860
+  ClientWidth = 1420
+  Position = poScreenCenter
+  LCLVersion = '4.99.0.0'
+  OnCreate = FormCreate
+  OnShow = FormShow
+  object pcMain: TPageControl
+    Left = 0
+    Height = 824
+    Top = 0
+    Width = 1100
+    ActivePage = tabRain
+    Align = alClient
+    TabIndex = 0
+    TabOrder = 0
+    object tabRain: TTabSheet
+      Caption = 'Rainfall'
+      ClientHeight = 796
+      ClientWidth = 1092
+      object pnlRainPlot: TPanel
+        Left = 0
+        Height = 566
+        Top = 0
+        Width = 1092
+        Align = alClient
+        BevelOuter = bvNone
+        TabOrder = 0
+      end
+      object memRain: TMemo
+        Left = 0
+        Height = 230
+        Top = 566
+        Width = 1092
+        Align = alBottom
+        Font.Name = 'Monospace'
+        ParentFont = False
+        ReadOnly = True
+        ScrollBars = ssAutoBoth
+        TabOrder = 1
+        WordWrap = False
+      end
+    end
+    object tabTemp: TTabSheet
+      Caption = 'Temperature'
+      ClientHeight = 796
+      ClientWidth = 1092
+      object pnlTempPlot: TPanel
+        Left = 0
+        Height = 566
+        Top = 0
+        Width = 1092
+        Align = alClient
+        BevelOuter = bvNone
+        TabOrder = 0
+      end
+      object memTemp: TMemo
+        Left = 0
+        Height = 230
+        Top = 566
+        Width = 1092
+        Align = alBottom
+        Font.Name = 'Monospace'
+        ParentFont = False
+        ReadOnly = True
+        ScrollBars = ssAutoBoth
+        TabOrder = 1
+        WordWrap = False
+      end
+    end
+  end
+  object pnlRight: TPanel
+    Left = 1100
+    Height = 824
+    Top = 0
+    Width = 320
+    Align = alRight
+    BevelOuter = bvNone
+    ClientHeight = 824
+    ClientWidth = 320
+    TabOrder = 2
+    object lblLocation: TLabel
+      Left = 8
+      Height = 15
+      Top = 8
+      Width = 304
+      Align = alTop
+      BorderSpacing.Left = 8
+      BorderSpacing.Top = 8
+      BorderSpacing.Right = 8
+      Caption = 'Location - every place in the UK and Ireland with a population over 50,000'
+      WordWrap = True
+    end
+    object cbLocation: TComboBox
+      Left = 8
+      Height = 27
+      Top = 27
+      Width = 304
+      Align = alTop
+      BorderSpacing.Left = 8
+      BorderSpacing.Top = 4
+      BorderSpacing.Right = 8
+      DropDownCount = 30
+      ItemHeight = 0
+      Style = csDropDownList
+      TabOrder = 0
+      OnChange = cbLocationChange
+    end
+    object lblPlaceInfo: TLabel
+      Left = 8
+      Height = 51
+      Top = 62
+      Width = 304
+      Align = alTop
+      BorderSpacing.Left = 8
+      BorderSpacing.Top = 8
+      BorderSpacing.Right = 8
+      Caption = ''
+      WordWrap = True
+    end
+    object pnlMap: TPanel
+      Left = 8
+      Height = 660
+      Top = 121
+      Width = 304
+      Align = alClient
+      BorderSpacing.Left = 8
+      BorderSpacing.Top = 8
+      BorderSpacing.Right = 8
+      BevelOuter = bvLowered
+      TabOrder = 1
+    end
+    object lblAttribution: TLabel
+      Left = 8
+      Height = 30
+      Top = 787
+      Width = 304
+      Align = alBottom
+      BorderSpacing.Left = 8
+      BorderSpacing.Right = 8
+      BorderSpacing.Bottom = 6
+      Caption = 'Places: GeoNames (CC-BY 4.0). Outline: Natural Earth. Click a dot to choose a place.'
+      Font.Height = -11
+      ParentFont = False
+      WordWrap = True
+    end
+  end
+  object pnlStatus: TPanel
+    Left = 0
+    Height = 36
+    Top = 824
+    Width = 1420
+    Align = alBottom
+    BevelOuter = bvNone
+    ClientHeight = 36
+    ClientWidth = 1420
+    TabOrder = 1
+    object lblStatus: TLabel
+      Left = 8
+      Height = 15
+      Top = 10
+      Width = 1180
+      Anchors = [akTop, akLeft, akRight]
+      AutoSize = False
+      Caption = 'Fetching weather data...'
+    end
+    object btnSave: TButton
+      Left = 1200
+      Height = 25
+      Top = 6
+      Width = 100
+      Anchors = [akTop, akRight]
+      Caption = 'Save chart...'
+      TabOrder = 0
+      OnClick = btnSaveClick
+    end
+    object btnRefresh: TButton
+      Left = 1310
+      Height = 25
+      Top = 6
+      Width = 100
+      Anchors = [akTop, akRight]
+      Caption = 'Fetch again'
+      TabOrder = 1
+      OnClick = btnRefreshClick
+    end
+  end
+  object dlgSave: TSaveDialog
+    DefaultExt = '.png'
+    Filter = 'PNG image|*.png'
+    Options = [ofOverwritePrompt, ofEnableSizing, ofViewDetail]
+    Left = 40
+    Top = 40
+  end
+end

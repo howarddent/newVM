@@ -68,6 +68,35 @@ unit uVMPlot2D;
      comes straight from the inherited TOpenGLControl - nothing needs
      re-declaring for those.
 
+     BAR SERIES: a series' PlotType (pstLine, the default, or pstBar) makes
+     it a bar series - one filled bar per point, from y = 0 to the value,
+     centred on its X, BarWidth (default 0.8) times that series' smallest
+     X spacing wide, filled with LineColor and outlined in black, drawn
+     under every line series. Line/marker styling is ignored for bars, and
+     the legend shows a filled swatch. With any bar series plotted the
+     Y range always includes 0, and when every value is >= 0 the axis
+     starts exactly at 0 (no margin below). Several bar series share the
+     same X slots and simply overlap, drawn in series order. For example:
+       Plot.SetSeriesBar(0, clSkyBlue, 'monthly total');
+       Plot.SetSeriesStyle(1, clRed, 2.0, plsSolid, 'average', pmsCircle);
+       Plot.SetData(X, [Totals, Averages]);
+
+     WHISKER SERIES: SetWhiskerData(Index, X, Lo, BoxLo, BoxHi, Hi) makes
+     series Index a box-and-whisker series (PlotType pstWhisker): at each
+     X a box from BoxLo to BoxHi filled with LineColor and outlined in
+     black, and black whiskers out to Lo and Hi with short caps - e.g. a
+     month's mean daily min..max as the box and its extremes as the
+     whiskers. Width as for bars (BarWidth x the smallest X spacing); drawn
+     after bars and before line series; the Y range covers Lo..Hi but is
+     not forced to include 0. SetData only ever fills series 0..n-1, so put
+     the whisker series after them, e.g.
+       Plot.SetData(X, [MaxMean, MinMean]);          // series 0, 1
+       Plot.SetWhiskerData(2, X, Lowest, MinMean, MaxMean, Highest);
+
+     CATEGORY LABELS: SetXTickLabels(Positions, Labels) replaces the
+     automatic numeric X ticks with labelled ones at the given positions
+     (e.g. month names under bars at x = 0..11) until ClearXTickLabels.
+
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
@@ -76,7 +105,7 @@ interface
 
 uses
   Classes, SysUtils, Math, Graphics, LResources,
-  IntfGraphics, FPImage,
+  IntfGraphics, FPImage, FPWritePNG,
   GL, OpenGLContext,
   {$IFDEF LINUX}
   GLX,
@@ -103,6 +132,16 @@ type
   // opt-in.
   TVMPlotMarkerShape = (pmsNone, pmsSquare, pmsDiamond, pmsCircle);
 
+  // How a series is drawn: pstLine (the default - the line strip and/or
+  // markers set by LineStyle/MarkerShape, exactly as before this was
+  // added), pstBar (filled bars from y = 0) or pstWhisker (box-and-whisker,
+  // set with SetWhiskerData) - see the BAR SERIES and WHISKER SERIES notes
+  // in the header comment.
+  TVMPlotSeriesType = (pstLine, pstBar, pstWhisker);
+
+  // Which corner of the plot rectangle the legend panel sits in.
+  TVMPlotLegendCorner = (lcTopRight, lcTopLeft, lcBottomRight, lcBottomLeft);
+
   { TVMPlotSeriesStyle }
 
   TVMPlotSeriesStyle = class(TCollectionItem)
@@ -113,12 +152,16 @@ type
     FMarkerShape: TVMPlotMarkerShape;
     FMarkerSize: Single;
     FName: string;
+    FPlotType: TVMPlotSeriesType;
+    FBarWidth: Single;
     procedure SetLineColor(AValue: TColor);
     procedure SetLineWidth(AValue: Single);
     procedure SetLineStyle(AValue: TVMPlotLineStyle);
     procedure SetMarkerShape(AValue: TVMPlotMarkerShape);
     procedure SetMarkerSize(AValue: Single);
     procedure SetName(const AValue: string);
+    procedure SetPlotType(AValue: TVMPlotSeriesType);
+    procedure SetBarWidth(AValue: Single);
   public
     constructor Create(ACollection: TCollection); override;
     function GetDisplayName: string; override;
@@ -137,6 +180,13 @@ type
     // Left blank (the default), this series is simply omitted from the
     // legend rather than appearing with an empty label.
     property Name: string read FName write SetName;
+    // pstBar draws this series as bars, pstWhisker as box-and-whiskers
+    // (fill = LineColor, black outline/whiskers); LineStyle/LineWidth/
+    // MarkerShape are then ignored for it.
+    property PlotType: TVMPlotSeriesType read FPlotType write SetPlotType default pstLine;
+    // Bar width as a fraction of the series' smallest X spacing (0..1;
+    // 1 = bars touching). Also the box width of a pstWhisker series.
+    property BarWidth: Single read FBarWidth write SetBarWidth;
   end;
 
   { TVMPlotSeriesStyles }
@@ -168,6 +218,9 @@ type
   private
     FXData: array[0..VMPlotMaxSeries - 1] of TVMPlotSeriesData;
     FYData: array[0..VMPlotMaxSeries - 1] of TVMPlotSeriesData;
+    // Box-and-whisker values for pstWhisker series (SetWhiskerData); empty
+    // for every other series. FYData holds the box midpoints for those.
+    FWLo, FWBoxLo, FWBoxHi, FWHi: array[0..VMPlotMaxSeries - 1] of TVMPlotSeriesData;
     FSeriesCount: Integer;
     FHasData: Boolean;
     // False only for the constructor's own default-demo SetData call -
@@ -177,16 +230,23 @@ type
     FUserDataStarted: Boolean;
     FXMin, FXMax, FYMin, FYMax: Double;
     FXTicks, FYTicks: TVMPlotDoubleArray;
+    // Custom X tick labels (SetXTickLabels) - used instead of the automatic
+    // numeric ticks while FUseXTickLabels is set.
+    FUseXTickLabels: Boolean;
+    FXTickLabelPos: TVMPlotDoubleArray;
+    FXTickLabels: array of string;
     FTitle, FXAxisTitle, FYAxisTitle: string;
     FSeriesStyles: TVMPlotSeriesStyles;
     FTexturesBuilt: Boolean;
     FTitleTex, FXAxisTitleTex, FYAxisTitleTex: TVMPlotTextTexture;
     FXTickTex, FYTickTex, FLegendTex: array of TVMPlotTextTexture;
     FVSync: Boolean;
+    FLegendCorner: TVMPlotLegendCorner;
     // See TVMPlot3D's own FSwapIntervalApplied comment (uVMPlot3D.pas) -
     // same idiom, mirrored here.
     FSwapIntervalApplied: Boolean;
     procedure SetVSync(AValue: Boolean);
+    procedure SetLegendCorner(AValue: TVMPlotLegendCorner);
     procedure ApplySwapInterval;
     procedure SetTitle(const AValue: string);
     procedure SetXAxisTitle(const AValue: string);
@@ -206,8 +266,13 @@ type
       MarkerSize: Single; FillColor: TColor);
     procedure DrawMarkers(PlotLeft, PlotBottom, PlotW, PlotH: Integer);
     procedure DrawLegend(PlotLeft, PlotBottom, PlotW, PlotH: Integer);
+    function BarHalfWidth(iser: Integer): Double;
+    procedure DrawBars;
+    procedure DrawWhiskers;
+    function HasWhiskerData(iser: Integer): Boolean;
     procedure RecomputeBounds;
     procedure EnsureUserDataStarted;
+    function RenderScene: Boolean;
   public
     constructor Create(TheOwner: TComponent); override;
     destructor Destroy; override;
@@ -227,6 +292,23 @@ type
       that re-plots a VARYING number of series must call this first, or a
       slot the new SetData doesn't cover keeps showing its old data }
     procedure ClearSeries;
+    // Makes series Index a bar series (see the BAR SERIES header note).
+    procedure SetSeriesBar(Index: Integer; AColor: TColor;
+      const AName: string = ''; ABarWidth: Single = 0.8);
+    // Replaces the automatic numeric X ticks with Labels at Positions (same
+    // length) - e.g. category names under bars - until ClearXTickLabels.
+    procedure SetXTickLabels(const Positions: array of Double;
+      const Labels: array of string);
+    procedure ClearXTickLabels;
+    // Makes series Index a box-and-whisker series over X - see the WHISKER
+    // SERIES header note. All five vectors the same length.
+    procedure SetWhiskerData(Index: Integer; const X, Lo, BoxLo, BoxHi, Hi: TVMobj);
+    // Renders the plot as it currently stands and writes it to FileName as
+    // a PNG at the control's on-screen size. Reads the back buffer before
+    // any swap, so it does not depend on the window being visible or on
+    // the desktop allowing screen capture. False if there is no GL context
+    // yet (the control must have been shown at least once).
+    function SaveToPNG(const FileName: string): Boolean;
   published
     property Title: string read FTitle write SetTitle;
     property XAxisTitle: string read FXAxisTitle write SetXAxisTitle;
@@ -239,6 +321,9 @@ type
     // reason: this component's Paint also ends in an unconditional
     // SwapBuffers with no swap-interval control of its own.
     property VSync: Boolean read FVSync write SetVSync default True;
+    // Corner of the plot area the legend panel is drawn in - move it off
+    // whichever corner the data crowds.
+    property LegendCorner: TVMPlotLegendCorner read FLegendCorner write SetLegendCorner default lcTopRight;
   end;
 
 procedure Register;
@@ -286,6 +371,8 @@ begin
   FLineStyle := plsSolid;
   FMarkerShape := pmsNone;
   FMarkerSize := 6.0;
+  FPlotType := pstLine;
+  FBarWidth := 0.8;
 end;
 
 function TVMPlotSeriesStyle.GetDisplayName: string;
@@ -335,6 +422,21 @@ begin
   Changed(False);
 end;
 
+procedure TVMPlotSeriesStyle.SetPlotType(AValue: TVMPlotSeriesType);
+begin
+  if FPlotType = AValue then Exit;
+  FPlotType := AValue;
+  Changed(False);
+end;
+
+procedure TVMPlotSeriesStyle.SetBarWidth(AValue: Single);
+begin
+  AValue := EnsureRange(AValue, 0.05, 1.0);
+  if FBarWidth = AValue then Exit;
+  FBarWidth := AValue;
+  Changed(False);
+end;
+
 { TVMPlotSeriesStyles }
 
 constructor TVMPlotSeriesStyles.Create(AOwner: TPersistent);
@@ -357,6 +459,9 @@ begin
     // series style edits are rare (design time, or an explicit runtime
     // SetSeriesStyle call), never a per-frame thing.
     TVMPlot2D(GetOwner).InvalidateTextures;
+    // PlotType/BarWidth change the bounds too (bar half-widths, the y = 0
+    // floor), so refit whenever there is data to fit.
+    if TVMPlot2D(GetOwner).FHasData then TVMPlot2D(GetOwner).RecomputeBounds;
     TVMPlot2D(GetOwner).Invalidate;
   end;
 end;
@@ -542,6 +647,13 @@ begin
   Invalidate;
 end;
 
+procedure TVMPlot2D.SetLegendCorner(AValue: TVMPlotLegendCorner);
+begin
+  if FLegendCorner = AValue then Exit;
+  FLegendCorner := AValue;
+  Invalidate;
+end;
+
 procedure TVMPlot2D.SetVSync(AValue: Boolean);
 begin
   if FVSync = AValue then Exit;
@@ -588,6 +700,215 @@ begin
   FSeriesStyles[Index].MarkerSize := AMarkerSize;
 end;
 
+// One-call convenience for a bar series - see the BAR SERIES header note.
+// Series styles feed RecomputeBounds (bar half-widths, the y = 0 floor), so
+// the bounds are refreshed here too in case data was assigned first.
+procedure TVMPlot2D.SetSeriesBar(Index: Integer; AColor: TColor;
+  const AName: string = ''; ABarWidth: Single = 0.8);
+begin
+  assert((Index >= 0) and (Index < VMPlotMaxSeries),
+    s + 'SetSeriesBar : Index out of range');
+  FSeriesStyles[Index].LineColor := AColor;
+  FSeriesStyles[Index].Name := AName;
+  FSeriesStyles[Index].BarWidth := ABarWidth;
+  FSeriesStyles[Index].PlotType := pstBar;
+  if FHasData then RecomputeBounds;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlot2D.SetXTickLabels(const Positions: array of Double;
+  const Labels: array of string);
+var
+  i: Integer;
+begin
+  assert(Length(Positions) = Length(Labels),
+    s + 'SetXTickLabels : Positions and Labels must be the same length');
+  SetLength(FXTickLabelPos, Length(Positions));
+  SetLength(FXTickLabels, Length(Labels));
+  for i := 0 to High(Positions) do begin
+    FXTickLabelPos[i] := Positions[i];
+    FXTickLabels[i] := Labels[i];
+  end;
+  FUseXTickLabels := True;
+  if FHasData then RecomputeBounds;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlot2D.ClearXTickLabels;
+begin
+  if not FUseXTickLabels then Exit;
+  FUseXTickLabels := False;
+  SetLength(FXTickLabelPos, 0);
+  SetLength(FXTickLabels, 0);
+  if FHasData then RecomputeBounds;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+// Half the drawn width of each bar of series iser, in data units: half of
+// BarWidth times the smallest spacing between any two of its X values
+// (1 if it has fewer than two distinct X). Pairwise for modest series so
+// unsorted X works; consecutive differences beyond that.
+function TVMPlot2D.BarHalfWidth(iser: Integer): Double;
+var
+  i, j, n: Integer;
+  d, dmin: Double;
+begin
+  n := Length(FXData[iser]);
+  dmin := 0;
+  if n <= 2000 then begin
+    for i := 0 to n - 2 do
+      for j := i + 1 to n - 1 do begin
+        d := Abs(FXData[iser][j] - FXData[iser][i]);
+        if (d > 0) and ((dmin = 0) or (d < dmin)) then dmin := d;
+      end;
+  end else
+    for i := 1 to n - 1 do begin
+      d := Abs(FXData[iser][i] - FXData[iser][i - 1]);
+      if (d > 0) and ((dmin = 0) or (d < dmin)) then dmin := d;
+    end;
+  if dmin = 0 then dmin := 1;
+  result := 0.5 * FSeriesStyles[iser].BarWidth * dmin;
+end;
+
+procedure TVMPlot2D.SetWhiskerData(Index: Integer; const X, Lo, BoxLo, BoxHi, Hi: TVMobj);
+
+  function VecLen(const V: TVMobj): Integer;
+  begin
+    result := V.Rows * V.Cols;
+  end;
+
+  function VecAt(const V: TVMobj; idx: Integer): Double;
+  begin
+    if V.Rows = 1 then result := V[0, idx] else result := V[idx, 0];
+  end;
+
+var
+  N, i: Integer;
+  OldXTicks, OldYTicks: TVMPlotDoubleArray;
+begin
+  assert((Index >= 0) and (Index < VMPlotMaxSeries),
+    s + 'SetWhiskerData : Index out of range');
+  N := VecLen(X);
+  assert((VecLen(Lo) = N) and (VecLen(BoxLo) = N) and (VecLen(BoxHi) = N) and (VecLen(Hi) = N),
+    s + 'SetWhiskerData : X, Lo, BoxLo, BoxHi and Hi must be the same length');
+  EnsureUserDataStarted;
+  SetLength(FXData[Index], N);
+  SetLength(FYData[Index], N);
+  SetLength(FWLo[Index], N);
+  SetLength(FWBoxLo[Index], N);
+  SetLength(FWBoxHi[Index], N);
+  SetLength(FWHi[Index], N);
+  for i := 0 to N - 1 do begin
+    FXData[Index][i] := VecAt(X, i);
+    FWLo[Index][i] := VecAt(Lo, i);
+    FWBoxLo[Index][i] := VecAt(BoxLo, i);
+    FWBoxHi[Index][i] := VecAt(BoxHi, i);
+    FWHi[Index][i] := VecAt(Hi, i);
+    FYData[Index][i] := 0.5 * (FWBoxLo[Index][i] + FWBoxHi[Index][i]);
+  end;
+  if Index + 1 > FSeriesCount then FSeriesCount := Index + 1;
+  // via the field, not the property: the property's Changed() would refit
+  // the bounds through TVMPlotSeriesStyles.Update before the data is set
+  FSeriesStyles[Index].FPlotType := pstWhisker;
+
+  OldXTicks := FXTicks;
+  OldYTicks := FYTicks;
+  RecomputeBounds;
+  FHasData := True;
+  if TicksChanged(OldXTicks, FXTicks) or TicksChanged(OldYTicks, FYTicks) then
+    InvalidateTextures;
+  InvalidateTextures;   // the legend may have gained an entry
+  Invalidate;
+end;
+
+function TVMPlot2D.HasWhiskerData(iser: Integer): Boolean;
+begin
+  result := (FSeriesStyles[iser].PlotType = pstWhisker) and (Length(FXData[iser]) > 0)
+    and (Length(FWLo[iser]) = Length(FXData[iser]));
+end;
+
+// Every whisker series, in pass 1's data space after the bars and before
+// any line series: per point a box from BoxLo to BoxHi in LineColor with a
+// black outline, then black whiskers from the box out to Lo and Hi with
+// caps half the box width.
+procedure TVMPlot2D.DrawWhiskers;
+var
+  iser, i: Integer;
+  hw, x: Double;
+  Clr: TColor;
+begin
+  glDisable(GL_LINE_STIPPLE);
+  for iser := 0 to FSeriesCount - 1 do begin
+    if not HasWhiskerData(iser) then Continue;
+    hw := BarHalfWidth(iser);
+    Clr := ColorToRGB(FSeriesStyles[iser].LineColor);
+    glColor3ub(Clr and $FF, (Clr shr 8) and $FF, (Clr shr 16) and $FF);
+    glBegin(GL_QUADS);
+      for i := 0 to High(FXData[iser]) do begin
+        x := FXData[iser][i];
+        glVertex2d(x - hw, FWBoxLo[iser][i]); glVertex2d(x + hw, FWBoxLo[iser][i]);
+        glVertex2d(x + hw, FWBoxHi[iser][i]); glVertex2d(x - hw, FWBoxHi[iser][i]);
+      end;
+    glEnd;
+    glColor3ub(0, 0, 0);
+    glLineWidth(1.5);
+    glBegin(GL_LINES);
+      for i := 0 to High(FXData[iser]) do begin
+        x := FXData[iser][i];
+        glVertex2d(x, FWBoxHi[iser][i]); glVertex2d(x, FWHi[iser][i]);
+        glVertex2d(x, FWBoxLo[iser][i]); glVertex2d(x, FWLo[iser][i]);
+        glVertex2d(x - hw / 2, FWHi[iser][i]); glVertex2d(x + hw / 2, FWHi[iser][i]);
+        glVertex2d(x - hw / 2, FWLo[iser][i]); glVertex2d(x + hw / 2, FWLo[iser][i]);
+      end;
+    glEnd;
+    glLineWidth(1.0);
+    for i := 0 to High(FXData[iser]) do begin
+      x := FXData[iser][i];
+      glBegin(GL_LINE_LOOP);
+        glVertex2d(x - hw, FWBoxLo[iser][i]); glVertex2d(x + hw, FWBoxLo[iser][i]);
+        glVertex2d(x + hw, FWBoxHi[iser][i]); glVertex2d(x - hw, FWBoxHi[iser][i]);
+      glEnd;
+    end;
+  end;
+end;
+
+// Every bar series' bars, in pass 1's data space, before any line series
+// (so lines and markers sit on top): a filled quad per point from y = 0
+// to the value in the series' LineColor, then a thin black outline.
+procedure TVMPlot2D.DrawBars;
+var
+  iser, i: Integer;
+  hw, x, y: Double;
+  Clr: TColor;
+begin
+  glDisable(GL_LINE_STIPPLE);
+  for iser := 0 to FSeriesCount - 1 do begin
+    if FSeriesStyles[iser].PlotType <> pstBar then Continue;
+    hw := BarHalfWidth(iser);
+    Clr := ColorToRGB(FSeriesStyles[iser].LineColor);
+    glColor3ub(Clr and $FF, (Clr shr 8) and $FF, (Clr shr 16) and $FF);
+    glBegin(GL_QUADS);
+      for i := 0 to High(FXData[iser]) do begin
+        x := FXData[iser][i]; y := FYData[iser][i];
+        glVertex2d(x - hw, 0); glVertex2d(x + hw, 0);
+        glVertex2d(x + hw, y); glVertex2d(x - hw, y);
+      end;
+    glEnd;
+    glColor3ub(0, 0, 0);
+    glLineWidth(1.0);
+    for i := 0 to High(FXData[iser]) do begin
+      x := FXData[iser][i]; y := FYData[iser][i];
+      glBegin(GL_LINE_LOOP);
+        glVertex2d(x - hw, 0); glVertex2d(x + hw, 0);
+        glVertex2d(x + hw, y); glVertex2d(x - hw, y);
+      glEnd;
+    end;
+  end;
+end;
+
 // Marks cached title/tick GL textures for rebuild on the next paint -
 // called whenever the title strings or the tick set (i.e. the data) change.
 // Does not touch FTexturesBuilt's sibling per-texture GL resources itself;
@@ -632,10 +953,11 @@ end;
 procedure TVMPlot2D.RecomputeBounds;
 const
   MarginFrac = 0.08;
+  BarXMarginFrac = 0.02;   // bars already carry half a bar of space at each end
 var
   i, iser: Integer;
-  XMargin, YMargin: Double;
-  HasAny: Boolean;
+  XMargin, YMargin, hw: Double;
+  HasAny, HasBars, HasRealBars: Boolean;
 begin
   HasAny := False;
   for iser := 0 to FSeriesCount - 1 do
@@ -653,14 +975,48 @@ begin
     end;
   if not HasAny then Exit;  // every series still empty - nothing to fit
 
-  XMargin := (FXMax - FXMin) * MarginFrac;
+  // Bar series reach half a bar beyond their outermost X, and always down
+  // (or up) to y = 0 - see the BAR SERIES header note.
+  HasBars := False;
+  HasRealBars := False;
+  for iser := 0 to FSeriesCount - 1 do begin
+    if (FSeriesStyles[iser].PlotType <> pstBar) or (Length(FXData[iser]) = 0) then Continue;
+    HasBars := True;
+    HasRealBars := True;
+    hw := BarHalfWidth(iser);
+    for i := 0 to High(FXData[iser]) do begin
+      FXMin := Min(FXMin, FXData[iser][i] - hw);
+      FXMax := Max(FXMax, FXData[iser][i] + hw);
+    end;
+    FYMin := Min(FYMin, 0);
+    FYMax := Max(FYMax, 0);
+  end;
+  // Whisker series: half a box beyond the outermost X, and the whisker
+  // ends (FYData only holds the box midpoints).
+  for iser := 0 to FSeriesCount - 1 do begin
+    if not HasWhiskerData(iser) then Continue;
+    HasBars := True;   // category-style X: the same small X margin as bars
+    hw := BarHalfWidth(iser);
+    for i := 0 to High(FXData[iser]) do begin
+      FXMin := Min(FXMin, FXData[iser][i] - hw);
+      FXMax := Max(FXMax, FXData[iser][i] + hw);
+      FYMin := Min(FYMin, Min(FWLo[iser][i], FWHi[iser][i]));
+      FYMax := Max(FYMax, Max(FWLo[iser][i], FWHi[iser][i]));
+    end;
+  end;
+
+  if HasBars then XMargin := (FXMax - FXMin) * BarXMarginFrac
+  else XMargin := (FXMax - FXMin) * MarginFrac;
   YMargin := (FYMax - FYMin) * MarginFrac;
   if XMargin = 0 then XMargin := 1;   // guard a constant-X vector
   if YMargin = 0 then YMargin := 1;   // guard a constant-Y vector
   FXMin := FXMin - XMargin; FXMax := FXMax + XMargin;
-  FYMin := FYMin - YMargin; FYMax := FYMax + YMargin;
+  // all-non-negative bars stand on the axis itself, with no margin below
+  if not (HasRealBars and (FYMin >= 0)) then FYMin := FYMin - YMargin;
+  FYMax := FYMax + YMargin;
 
-  FXTicks := ComputeTicks(FXMin, FXMax, 8);
+  if FUseXTickLabels then FXTicks := Copy(FXTickLabelPos, 0, Length(FXTickLabelPos))
+  else FXTicks := ComputeTicks(FXMin, FXMax, 8);
   FYTicks := ComputeTicks(FYMin, FYMax, 6);
 end;
 
@@ -705,6 +1061,8 @@ begin
   for iser := 0 to VMPlotMaxSeries - 1 do begin
     SetLength(FXData[iser], 0);
     SetLength(FYData[iser], 0);
+    SetLength(FWLo[iser], 0); SetLength(FWBoxLo[iser], 0);
+    SetLength(FWBoxHi[iser], 0); SetLength(FWHi[iser], 0);
   end;
   FSeriesCount := 0;
   FHasData := False;
@@ -754,6 +1112,8 @@ begin
     assert(VecLen(YSeries[iser]) = N,
       s + 'SetData : every Y series must be the same length as X');
     FXData[iser] := Copy(XVals, 0, N);
+    SetLength(FWLo[iser], 0); SetLength(FWBoxLo[iser], 0);    // no longer a whisker series' data
+    SetLength(FWBoxHi[iser], 0); SetLength(FWHi[iser], 0);
     SetLength(FYData[iser], N);
     for i := 0 to N - 1 do FYData[iser][i] := VecAt(YSeries[iser], i);
   end;
@@ -834,7 +1194,9 @@ begin
     if (FYMin < 0) and (FYMax > 0) then begin
       glVertex2d(FXMin, 0); glVertex2d(FXMax, 0);
     end;
-    if (FXMin < 0) and (FXMax > 0) then begin
+    // not on a category axis (SetXTickLabels), where x = 0 is just the
+    // first category and the line would cut through its bar
+    if (FXMin < 0) and (FXMax > 0) and not FUseXTickLabels then begin
       glVertex2d(0, FYMin); glVertex2d(0, FYMax);
     end;
   glEnd;
@@ -877,7 +1239,10 @@ begin
     plsDash: begin
       glDisable(GL_LINE_SMOOTH);
       glEnable(GL_LINE_STIPPLE);
-      glLineStipple(3, $00FF);
+      // 16 px on, 16 px off: short enough that a legend swatch (SwatchW,
+      // 40 px) shows dash-gap-dash - at the original factor 3 (24 on,
+      // 24 off) a 26 px swatch never reached a gap and looked solid
+      glLineStipple(2, $00FF);
     end;
     plsDot: begin
       glDisable(GL_LINE_SMOOTH);
@@ -989,7 +1354,8 @@ var
   PX, PY: Double;
 begin
   for iser := 0 to FSeriesCount - 1 do begin
-    if FSeriesStyles[iser].MarkerShape = pmsNone then Continue;
+    if (FSeriesStyles[iser].MarkerShape = pmsNone) or
+       (FSeriesStyles[iser].PlotType <> pstLine) then Continue;
     for i := 0 to High(FXData[iser]) do begin
       PX := PlotLeft + (FXData[iser][i] - FXMin) / (FXMax - FXMin) * PlotW;
       PY := PlotBottom + (FYData[iser][i] - FYMin) / (FYMax - FYMin) * PlotH;
@@ -1078,7 +1444,10 @@ begin
 
   SetLength(FXTickTex, Length(FXTicks));
   for i := 0 to High(FXTicks) do
-    FXTickTex[i] := CreateTextTexture(FormatTick(FXTicks[i]), 8, False);
+    if FUseXTickLabels and (i <= High(FXTickLabels)) then
+      FXTickTex[i] := CreateTextTexture(FXTickLabels[i], 8, False)
+    else
+      FXTickTex[i] := CreateTextTexture(FormatTick(FXTicks[i]), 8, False);
 
   SetLength(FYTickTex, Length(FYTicks));
   for i := 0 to High(FYTicks) do
@@ -1131,11 +1500,12 @@ procedure TVMPlot2D.DrawLegend(PlotLeft, PlotBottom, PlotW, PlotH: Integer);
 const
   PanelInset = 10;  // gap between the plot rectangle's edges and the panel
   Padding = 8;      // gap between the panel's border and its content
-  SwatchW = 26;
+  SwatchW = 40;      // >= one dash period plus a dash (see ApplyLineStyle)
   SwatchGap = 6;
   RowGap = 4;
 var
   i, RowCount, RowH, ContentW, BoxW, BoxH, X0, Y0, RowY: Integer;
+  Clr: TColor;
 begin
   RowCount := 0;
   ContentW := 0;
@@ -1150,8 +1520,10 @@ begin
 
   BoxW := ContentW + Padding * 2;
   BoxH := RowCount * RowH + (RowCount - 1) * RowGap + Padding * 2;
-  X0 := PlotLeft + PlotW - BoxW - PanelInset;
-  Y0 := PlotBottom + PlotH - BoxH - PanelInset;
+  if FLegendCorner in [lcTopLeft, lcBottomLeft] then X0 := PlotLeft + PanelInset
+  else X0 := PlotLeft + PlotW - BoxW - PanelInset;
+  if FLegendCorner in [lcBottomRight, lcBottomLeft] then Y0 := PlotBottom + PanelInset
+  else Y0 := PlotBottom + PlotH - BoxH - PanelInset;
 
   glDisable(GL_TEXTURE_2D);
   glColor4f(1, 1, 1, 0.75);
@@ -1173,7 +1545,51 @@ begin
   for i := 0 to FSeriesCount - 1 do begin
     if FSeriesStyles[i].Name = '' then Continue;
     RowY := RowY - RowH;
-    if FSeriesStyles[i].LineStyle <> plsNone then begin
+    if FSeriesStyles[i].PlotType = pstBar then begin
+      // bar series: a small filled, outlined block instead of a line
+      Clr := ColorToRGB(FSeriesStyles[i].LineColor);
+      glDisable(GL_LINE_STIPPLE);
+      glColor3ub(Clr and $FF, (Clr shr 8) and $FF, (Clr shr 16) and $FF);
+      glBegin(GL_QUADS);
+        glVertex2d(X0 + Padding + 4, RowY + 2);
+        glVertex2d(X0 + Padding + SwatchW - 4, RowY + 2);
+        glVertex2d(X0 + Padding + SwatchW - 4, RowY + RowH - 2);
+        glVertex2d(X0 + Padding + 4, RowY + RowH - 2);
+      glEnd;
+      glColor3ub(0, 0, 0);
+      glLineWidth(1.0);
+      glBegin(GL_LINE_LOOP);
+        glVertex2d(X0 + Padding + 4, RowY + 2);
+        glVertex2d(X0 + Padding + SwatchW - 4, RowY + 2);
+        glVertex2d(X0 + Padding + SwatchW - 4, RowY + RowH - 2);
+        glVertex2d(X0 + Padding + 4, RowY + RowH - 2);
+      glEnd;
+    end else if FSeriesStyles[i].PlotType = pstWhisker then begin
+      // whisker series: a small box with whiskers above and below
+      Clr := ColorToRGB(FSeriesStyles[i].LineColor);
+      glDisable(GL_LINE_STIPPLE);
+      glColor3ub(Clr and $FF, (Clr shr 8) and $FF, (Clr shr 16) and $FF);
+      glBegin(GL_QUADS);
+        glVertex2d(X0 + Padding + 7, RowY + RowH * 0.3);
+        glVertex2d(X0 + Padding + SwatchW - 7, RowY + RowH * 0.3);
+        glVertex2d(X0 + Padding + SwatchW - 7, RowY + RowH * 0.7);
+        glVertex2d(X0 + Padding + 7, RowY + RowH * 0.7);
+      glEnd;
+      glColor3ub(0, 0, 0);
+      glLineWidth(1.0);
+      glBegin(GL_LINE_LOOP);
+        glVertex2d(X0 + Padding + 7, RowY + RowH * 0.3);
+        glVertex2d(X0 + Padding + SwatchW - 7, RowY + RowH * 0.3);
+        glVertex2d(X0 + Padding + SwatchW - 7, RowY + RowH * 0.7);
+        glVertex2d(X0 + Padding + 7, RowY + RowH * 0.7);
+      glEnd;
+      glBegin(GL_LINES);
+        glVertex2d(X0 + Padding + SwatchW / 2, RowY + 1);
+        glVertex2d(X0 + Padding + SwatchW / 2, RowY + RowH * 0.3);
+        glVertex2d(X0 + Padding + SwatchW / 2, RowY + RowH * 0.7);
+        glVertex2d(X0 + Padding + SwatchW / 2, RowY + RowH - 1);
+      glEnd;
+    end else if FSeriesStyles[i].LineStyle <> plsNone then begin
       ApplyLineStyle(FSeriesStyles[i]);
       glBegin(GL_LINES);
         glVertex2d(X0 + Padding, RowY + RowH / 2);
@@ -1194,7 +1610,8 @@ begin
   for i := 0 to FSeriesCount - 1 do begin
     if FSeriesStyles[i].Name = '' then Continue;
     RowY := RowY - RowH;
-    if FSeriesStyles[i].MarkerShape <> pmsNone then
+    if (FSeriesStyles[i].MarkerShape <> pmsNone) and
+       (FSeriesStyles[i].PlotType = pstLine) then
       DrawMarker(X0 + Padding + SwatchW / 2, RowY + RowH / 2,
         FSeriesStyles[i].MarkerShape, Min(FSeriesStyles[i].MarkerSize, RowH - 2),
         FSeriesStyles[i].LineColor);
@@ -1215,6 +1632,54 @@ begin
 end;
 
 procedure TVMPlot2D.Paint;
+begin
+  if not MakeCurrent then Exit;
+  if RenderScene then SwapBuffers;
+end;
+
+function TVMPlot2D.SaveToPNG(const FileName: string): Boolean;
+var
+  W, H, x, y, o: Integer;
+  Buf: array of Byte;
+  Img: TFPMemoryImage;
+  Writer: TFPWriterPNG;
+  c: TFPColor;
+begin
+  result := False;
+  if not HandleAllocated or not MakeCurrent then Exit;
+  if not RenderScene then Exit;
+  W := Width;
+  H := Height;
+  SetLength(Buf, W * H * 4);
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glReadBuffer(GL_BACK);
+  glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, @Buf[0]);
+  Img := TFPMemoryImage.Create(W, H);
+  Writer := TFPWriterPNG.Create;
+  try
+    Writer.UseAlpha := False;
+    for y := 0 to H - 1 do
+      for x := 0 to W - 1 do begin
+        o := ((H - 1 - y) * W + x) * 4;          // GL rows run bottom-up
+        c.red := Buf[o] * 257;
+        c.green := Buf[o + 1] * 257;
+        c.blue := Buf[o + 2] * 257;
+        c.alpha := alphaOpaque;
+        Img.Colors[x, y] := c;
+      end;
+    Img.SaveToFile(FileName, Writer);
+    result := True;
+  finally
+    Writer.Free;
+    Img.Free;
+  end;
+  Invalidate;   // put the on-screen frame back in step
+end;
+
+// Everything Paint draws, without the final SwapBuffers - shared with
+// SaveToPNG, which reads the result back from the back buffer instead.
+// Needs a current GL context; False if there is nothing to draw on.
+function TVMPlot2D.RenderScene: Boolean;
 const
   // Fixed pixel margins reserved around the data-space plot rectangle for
   // the title/axis-titles/tick labels - independent of window size, so
@@ -1227,7 +1692,7 @@ var
   i, iser, W, H, PlotLeft, PlotBottom, PlotW, PlotH: Integer;
   px, py: Double;
 begin
-  if not MakeCurrent then Exit;
+  result := False;
   W := Width;
   H := Height;
   if (W = 0) or (H = 0) then Exit;
@@ -1263,9 +1728,12 @@ begin
     glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
 
     DrawAxes;
+    DrawBars;       // under the line series
+    DrawWhiskers;
 
     for iser := 0 to FSeriesCount - 1 do begin
-      if FSeriesStyles[iser].LineStyle = plsNone then Continue;
+      if (FSeriesStyles[iser].LineStyle = plsNone) or
+         (FSeriesStyles[iser].PlotType <> pstLine) then Continue;
       ApplyLineStyle(FSeriesStyles[iser]);
       glBegin(GL_LINE_STRIP);
         for i := 0 to High(FXData[iser]) do
@@ -1331,8 +1799,7 @@ begin
     // painted, all of which are further from the top-right corner anyway).
     DrawLegend(PlotLeft, PlotBottom, PlotW, PlotH);
   end;
-
-  SwapBuffers;
+  result := True;
 end;
 
 procedure TVMPlot2D.Resize;
