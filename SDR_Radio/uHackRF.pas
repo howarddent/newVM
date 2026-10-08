@@ -279,13 +279,15 @@ begin
   FCapabilities.DeviceName := 'HackRF';
   FCapabilities.MinFreqHz := 1.0e6;
   FCapabilities.MaxFreqHz := 6.0e9;
-  SetLength(FCapabilities.SampleRates, 6);
+  // 2.048Msps is DAB's own rate (see uDABDecoder.pas).
+  SetLength(FCapabilities.SampleRates, 7);
   FCapabilities.SampleRates[0] := 2.0e6;
-  FCapabilities.SampleRates[1] := 4.0e6;
-  FCapabilities.SampleRates[2] := 8.0e6;
-  FCapabilities.SampleRates[3] := 10.0e6;
-  FCapabilities.SampleRates[4] := 16.0e6;
-  FCapabilities.SampleRates[5] := 20.0e6;
+  FCapabilities.SampleRates[1] := 2.048e6;
+  FCapabilities.SampleRates[2] := 4.0e6;
+  FCapabilities.SampleRates[3] := 8.0e6;
+  FCapabilities.SampleRates[4] := 10.0e6;
+  FCapabilities.SampleRates[5] := 16.0e6;
+  FCapabilities.SampleRates[6] := 20.0e6;
   // Default to the lowest offered rate, not the highest - uFMReceiver.pas's
   // DSP chain (TRationalResamplerC's wideband antialiasing filter runs
   // directly at FsIn) is direct-form and single-threaded, and its own

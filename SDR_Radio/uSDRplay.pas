@@ -738,16 +738,20 @@ begin
   // API's own decimation stage, not a real ADC rate; see this unit's own
   // header comment (BELOW 2Msps (DECIMATION)) for how SetSampleRateHz
   // gets there.
-  SetLength(FCapabilities.SampleRates, 9);
+  // [2] (2.048Msps) is DAB's own rate - mode I's OFDM symbol is defined
+  // as 2048 samples at exactly that rate (see uDABDecoder.pas) - a real
+  // ADC rate, inside the native range, so no decimation is involved.
+  SetLength(FCapabilities.SampleRates, 10);
   FCapabilities.SampleRates[0] := 1.0e6;
   FCapabilities.SampleRates[1] := 2.0e6;
-  FCapabilities.SampleRates[2] := 3.0e6;
-  FCapabilities.SampleRates[3] := 4.0e6;
-  FCapabilities.SampleRates[4] := 5.0e6;
-  FCapabilities.SampleRates[5] := 6.0e6;
-  FCapabilities.SampleRates[6] := 8.0e6;
-  FCapabilities.SampleRates[7] := 9.0e6;
-  FCapabilities.SampleRates[8] := 10.0e6;
+  FCapabilities.SampleRates[2] := 2.048e6;
+  FCapabilities.SampleRates[3] := 3.0e6;
+  FCapabilities.SampleRates[4] := 4.0e6;
+  FCapabilities.SampleRates[5] := 5.0e6;
+  FCapabilities.SampleRates[6] := 6.0e6;
+  FCapabilities.SampleRates[7] := 8.0e6;
+  FCapabilities.SampleRates[8] := 9.0e6;
+  FCapabilities.SampleRates[9] := 10.0e6;
   FCapabilities.DefaultSampleRateHz := 2.0e6;
   FCapabilities.DefaultFreqHz := 100000000;
 

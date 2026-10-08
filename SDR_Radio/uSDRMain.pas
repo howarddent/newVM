@@ -102,7 +102,7 @@ uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Spin, IniFiles, LazLogger,
   uSDRDevice, uSDRRFSource, uVMPlotSDRSpectrum, uFreqKeypad, uFMReceiver,
-  uAMReceiver;
+  uAMReceiver, uDABDecoder, uDABScanForm;
 
 type
 
@@ -179,6 +179,8 @@ type
     FFreqRetryTimer: TTimer;
     FEdgePanTimer: TTimer;
     FRDSTimer: TTimer;
+    DABScanButton: TButton;
+    FDABScanForm: TDABScanForm;
     FEdgePanDirection: Integer;
     FShutdownDone: Boolean;
 
@@ -208,6 +210,8 @@ type
     procedure FreqRetryTimerTick(Sender: TObject);
     procedure EdgePanTimerTick(Sender: TObject);
     procedure RDSTimerTick(Sender: TObject);
+    procedure DABScanButtonClick(Sender: TObject);
+    function PrepareForDABScan(out Msg: string): Boolean;
     function RunFrequencyKeypad(MinHz, MaxHz: Double; out ResultHz: Double): Boolean;
     procedure UpdatePeakThreshold;
     procedure ReportError(const Where: string);
@@ -333,6 +337,16 @@ begin
   ModeCombo.Items.Add('AM');
   ModeCombo.ItemIndex := 0;
   ModeCombo.OnChange := @ModeComboChange;
+
+  // DAB is a separate window (uDABScanForm.pas) rather than a third
+  // Mode: it needs the whole capture at 2.048 Msps and steps the front
+  // end itself, which the FM/AM receivers' "tune within the span" model
+  // doesn't fit.
+  DABScanButton := TButton.Create(Self);
+  DABScanButton.Parent := ReceiverGroupBox;
+  DABScanButton.SetBounds(200, 17, 110, 25);
+  DABScanButton.Caption := 'DAB Scan...';
+  DABScanButton.OnClick := @DABScanButtonClick;
 
   ListenFreqLabel := TLabel.Create(Self);
   ListenFreqLabel.Parent := ReceiverGroupBox;
@@ -510,6 +524,9 @@ begin
   // 0. Nothing may fire into a half-torn-down object - see above.
   try
     if Assigned(FRDSTimer) then FRDSTimer.Enabled := False;
+    // The DAB scan thread retunes the source and reads its stream, so it
+    // goes before either is torn down.
+    if Assigned(FDABScanForm) then FDABScanForm.StopScan;
     if Assigned(FEdgePanTimer) then FEdgePanTimer.Enabled := False;
     if Assigned(FFreqRetryTimer) then FFreqRetryTimer.Enabled := False;
     FEdgePanDirection := 0;
@@ -1460,6 +1477,55 @@ end;
 procedure TForm1.RDSTimerTick(Sender: TObject);
 begin
   UpdateRDSDisplay;
+end;
+
+procedure TForm1.DABScanButtonClick(Sender: TObject);
+begin
+  if not Assigned(FDABScanForm) then begin
+    FDABScanForm := TDABScanForm.CreateFor(Self, FRFSource);
+    FDABScanForm.OnPrepare := @PrepareForDABScan;
+  end;
+  FDABScanForm.Show;
+  FDABScanForm.BringToFront;
+end;
+
+// Puts the radio into the state a DAB scan needs: connected, streaming,
+// at 2.048 Msps. Goes through the same Start/Stop handler as the button
+// (so the rate combo, status line and analyser all stay consistent), and
+// switches Listen off - the scan retunes the front end under it, so the
+// FM/AM receiver would only be playing noise.
+function TForm1.PrepareForDABScan(out Msg: string): Boolean;
+var
+  i, RateIdx: Integer;
+  Caps: TSDRCapabilities;
+begin
+  Result := False;
+  Msg := '';
+  if not FRFSource.IsOpen then begin
+    Msg := 'connect the radio first';
+    Exit;
+  end;
+  Caps := FRFSource.Capabilities;
+  RateIdx := -1;
+  for i := 0 to High(Caps.SampleRates) do
+    if Round(Caps.SampleRates[i]) = DABSampleRateHz then RateIdx := i;
+  if RateIdx < 0 then begin
+    Msg := Caps.DeviceName + ' offers no 2.048 Msps sample rate';
+    Exit;
+  end;
+
+  ListenCheckBox.Checked := False;
+  if FRFSource.IsStreaming and (Round(FRFSource.SampleRateHz) <> DABSampleRateHz) then
+    StartStopButtonClick(Self);   // stop, so the rate can change
+  if not FRFSource.IsStreaming then begin
+    RateCombo.ItemIndex := RateIdx;
+    StartStopButtonClick(Self);
+    if not FRFSource.IsStreaming then begin
+      Msg := 'could not start streaming: ' + FRFSource.LastError;
+      Exit;
+    end;
+  end;
+  Result := True;
 end;
 
 procedure TForm1.ApplyFrequencyChangedUI;
