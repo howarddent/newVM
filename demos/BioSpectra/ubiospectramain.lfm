@@ -146,12 +146,12 @@ object fmBio: TfmBio
       ClientWidth = 1192
       object pnlSynthCtl: TPanel
         Left = 0
-        Height = 36
+        Height = 40
         Top = 0
         Width = 1192
         Align = alTop
         BevelOuter = bvNone
-        ClientHeight = 36
+        ClientHeight = 40
         ClientWidth = 1192
         TabOrder = 0
         object lblF0: TLabel
@@ -173,6 +173,23 @@ object fmBio: TfmBio
           TabOrder = 0
           Value = 5
           OnChange = seF0Change
+        end
+        object rgWave: TRadioGroup
+          Left = 320
+          Height = 34
+          Top = 1
+          Width = 300
+          AutoFill = True
+          Caption = 'Show'
+          Columns = 3
+          ItemIndex = 2
+          Items.Strings = (
+            'Square'
+            'Triangle'
+            'Both'
+          )
+          TabOrder = 1
+          OnSelectionChanged = rgWaveSelectionChanged
         end
       end
       object memSynth: TMemo
@@ -197,6 +214,94 @@ object fmBio: TfmBio
         BevelOuter = bvNone
         TabOrder = 2
         OnResize = SynthPanelResize
+      end
+    end
+    object tsSynthesis: TTabSheet
+      Caption = 'Square wave synthesis'
+      ClientHeight = 732
+      ClientWidth = 1192
+      object pnlSynCtl: TPanel
+        Left = 0
+        Height = 40
+        Top = 0
+        Width = 1192
+        Align = alTop
+        BevelOuter = bvNone
+        ClientHeight = 40
+        ClientWidth = 1192
+        TabOrder = 0
+        object lblSynF0: TLabel
+          Left = 8
+          Height = 15
+          Top = 12
+          Width = 160
+          Caption = 'Fundamental frequency f0 (Hz):'
+        end
+        object seSynF0: TFloatSpinEdit
+          Left = 190
+          Height = 23
+          Top = 8
+          Width = 90
+          DecimalPlaces = 2
+          Increment = 1
+          MaxValue = 50
+          MinValue = 0.25
+          TabOrder = 0
+          Value = 5
+          OnChange = SynthesisChange
+        end
+        object lblTerms: TLabel
+          Left = 310
+          Height = 15
+          Top = 12
+          Width = 170
+          Caption = 'Odd harmonics added (1 .. 10):'
+        end
+        object seTerms: TSpinEdit
+          Left = 490
+          Height = 23
+          Top = 8
+          Width = 60
+          MaxValue = 10
+          MinValue = 1
+          TabOrder = 1
+          Value = 10
+          OnChange = SynthesisChange
+        end
+        object cbAllSums: TCheckBox
+          Left = 580
+          Height = 19
+          Top = 10
+          Width = 200
+          Caption = 'Overlay every partial sum'
+          Checked = True
+          State = cbChecked
+          TabOrder = 2
+          OnChange = SynthesisChange
+        end
+      end
+      object memSyn: TMemo
+        Left = 812
+        Height = 692
+        Top = 40
+        Width = 380
+        Align = alRight
+        Font.Name = 'Consolas'
+        ParentFont = False
+        ReadOnly = True
+        ScrollBars = ssAutoBoth
+        TabOrder = 1
+        WordWrap = False
+      end
+      object pnlSyn: TPanel
+        Left = 0
+        Height = 692
+        Top = 40
+        Width = 812
+        Align = alClient
+        BevelOuter = bvNone
+        TabOrder = 2
+        OnResize = SynPanelResize
       end
     end
   end

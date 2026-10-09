@@ -55,8 +55,25 @@ unit ubiospectramain;
      square's amplitudes 4/(pi n) falling as 1/n, 20 dB per decade, the
      triangle's 8/(pi^2 n^2) falling as 1/n^2, 40 dB per decade - and the
      memo lists the predicted amplitude of the first harmonics beside
-     what integrating the PSD across each peak gives. The time plot shows
-     the first four periods only; the spectrum uses the whole 20 s.
+     what integrating the PSD across each peak gives. A radio group
+     shows the square wave, the triangle, or both overlaid; the time plot
+     shows the first four periods only; the spectrum uses the whole 20 s.
+
+     SQUARE-WAVE SYNTHESIS (the fifth tab)
+
+     The square wave's Fourier series the other way round: the partial
+     sums  S_K(t) = (4/pi) sum over k = 1..K of sin(2 pi n_k f0 t)/n_k  over the
+     odd harmonics n_k = 1, 3, 5, ... , built term by term on newVM
+     vectors - each term is one  (4/(pi n)) * Sin((2 pi n f0) * T)  added
+     to the running sum. A spin edit sets K from 1 (the fundamental alone)
+     to 10 (the fundamental plus the next nine odd harmonics, up to the
+     19th), the time plot shows the ideal square wave dashed grey with
+     either just S_K or, with "overlay every partial sum" ticked, all of
+     S_1 .. S_K shaded from light to dark blue so the build-up reads as
+     one picture, and the spectrum below is the PSD of S_K itself - K
+     lines and nothing else. The memo lists the terms and, for S_K, the
+     RMS error against the square wave and the peak overshoot, which never
+     falls below about 9 % however many terms are added (Gibbs).
 
      LAYOUT
 
@@ -102,14 +119,24 @@ type
   { TfmBio }
 
   TfmBio = class(TForm)
+    cbAllSums: TCheckBox;
     cbLinear: TCheckBox;
     lblF0: TLabel;
+    lblSynF0: TLabel;
+    lblTerms: TLabel;
+    memSyn: TMemo;
+    pnlSyn: TPanel;
+    pnlSynCtl: TPanel;
+    seSynF0: TFloatSpinEdit;
+    seTerms: TSpinEdit;
+    tsSynthesis: TTabSheet;
     lblFmax: TLabel;
     memSynth: TMemo;
     pnlSynth: TPanel;
     pnlSynthCtl: TPanel;
     pnlTop: TPanel;
     pcSignals: TPageControl;
+    rgWave: TRadioGroup;
     seF0: TFloatSpinEdit;
     seFmax: TFloatSpinEdit;
     tsABP: TTabSheet;
@@ -123,15 +150,19 @@ type
     pnlECG: TPanel;
     pnlEEG: TPanel;
     procedure cbLinearChange(Sender: TObject);
+    procedure SynthesisChange(Sender: TObject);
+    procedure SynPanelResize(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure PlotsPanelResize(Sender: TObject);
+    procedure rgWaveSelectionChanged(Sender: TObject);
     procedure seF0Change(Sender: TObject);
     procedure seFmaxChange(Sender: TObject);
     procedure SynthPanelResize(Sender: TObject);
   private
     FTabs: array[0..2] of TSignalTab;
     FSynthTime, FSynthSpec: TVMPlot2D;
+    FSynTime, FSynSpec: TVMPlot2D;
     function DataDir: string;
     function LoadWFDB212(const DatFile, HeaFile: string; SigIndex: Integer;
       StartSec: Double): TSignalExcerpt;
@@ -142,6 +173,7 @@ type
     function SpectrumYTitle(const Units: string): string;
     procedure ShowSignal(var Tab: TSignalTab);
     procedure ShowSynthetic;
+    procedure ShowSynthesis;
     procedure ShowAll;
   end;
 
@@ -349,14 +381,21 @@ begin
   FSynthTime.Height := pnlSynth.Height div 2;
   FSynthTime.XAxisTitle := 'time (s)';
   FSynthTime.YAxisTitle := 'amplitude';
-  FSynthTime.SetSeriesStyle(0, clBlue, 1.5, plsSolid, 'square');
-  FSynthTime.SetSeriesStyle(1, $2CA02C, 1.5, plsSolid, 'triangle');
   FSynthSpec := TVMPlot2D.Create(Self);
   FSynthSpec.Parent := pnlSynth;
   FSynthSpec.Align := alClient;
   FSynthSpec.XAxisTitle := 'frequency (Hz)';
-  FSynthSpec.SetSeriesStyle(0, clBlue, 1.0, plsSolid, 'square');
-  FSynthSpec.SetSeriesStyle(1, $2CA02C, 1.0, plsSolid, 'triangle');
+
+  FSynTime := TVMPlot2D.Create(Self);
+  FSynTime.Parent := pnlSyn;
+  FSynTime.Align := alTop;
+  FSynTime.Height := pnlSyn.Height div 2;
+  FSynTime.XAxisTitle := 'time (s)';
+  FSynTime.YAxisTitle := 'amplitude';
+  FSynSpec := TVMPlot2D.Create(Self);
+  FSynSpec.Parent := pnlSyn;
+  FSynSpec.Align := alClient;
+  FSynSpec.XAxisTitle := 'frequency (Hz)';
 
   ShowAll;
 
@@ -388,6 +427,18 @@ begin
     FSynthTime.Height := pnlSynth.Height div 2;
 end;
 
+procedure TfmBio.SynPanelResize(Sender: TObject);
+begin
+  if Assigned(FSynTime) then
+    FSynTime.Height := pnlSyn.Height div 2;
+end;
+
+procedure TfmBio.SynthesisChange(Sender: TObject);
+begin
+  if Assigned(FSynTime) then
+    ShowSynthesis;
+end;
+
 procedure TfmBio.ShowAll;
 var
   i: Integer;
@@ -396,6 +447,7 @@ begin
   for i := 0 to 2 do
     ShowSignal(FTabs[i]);
   ShowSynthetic;
+  ShowSynthesis;
 end;
 
 procedure TfmBio.seFmaxChange(Sender: TObject);
@@ -409,6 +461,12 @@ begin
 end;
 
 procedure TfmBio.seF0Change(Sender: TObject);
+begin
+  if Assigned(FSynthTime) then
+    ShowSynthetic;
+end;
+
+procedure TfmBio.rgWaveSelectionChanged(Sender: TObject);
 begin
   if Assigned(FSynthTime) then
     ShowSynthetic;
@@ -485,6 +543,126 @@ begin
   end;
 end;
 
+procedure TfmBio.ShowSynthesis;
+const
+  MaxTerms = 10;
+var
+  NumTerms, k, n, NSamp, NShow, NBins, i: Integer;
+  f0, Sw2, Rms, Peak: Double;
+  T, Sq, Sum, F, P, TShow: TVMobj;
+  Sums: array of TVMobj;
+  Series: array of TVMobj;
+  SqP, SumP: PDouble;
+  nSer: Integer;
+  Shade: Byte;
+begin
+  f0 := seSynF0.Value;
+  NumTerms := seTerms.Value;
+  NSamp := Round(SynthFs * SynthDuration);
+  T := TVMobj.Create(1, NSamp);
+  T.linspace(0, 1 / SynthFs);
+
+  // the target, as on the previous tab
+  Sq := TVMobj.Create(1, NSamp);
+  SqP := Sq.DataPtr;
+  for i := 0 to NSamp - 1 do
+    if Frac(f0 * i / SynthFs) < 0.5 then SqP[i] := 1.0 else SqP[i] := -1.0;
+
+  // the partial sums, each one term on from the last
+  SetLength(Sums, NumTerms);
+  Sum := TVMobj.Create(1, NSamp);                        // zero
+  for k := 1 to NumTerms do
+  begin
+    n := 2 * k - 1;                                   // 1, 3, 5, ...
+    Sum := Sum + (4 / (Pi * n)) * Sin((2 * Pi * n * f0) * T);
+    Sums[k - 1] := Sum;
+  end;
+
+  // time plot: two periods, square wave dashed grey, then the sums
+  NShow := Min(NSamp, Round(2 * SynthFs / f0));
+  TShow := SubMatrix(T, 0, 0, 1, NShow);
+  SetLength(Series, NumTerms + 1);
+  Series[0] := SubMatrix(Sq, 0, 0, 1, NShow);
+  FSynTime.SetSeriesStyle(0, clGray, 1.0, plsDash, 'square wave');
+  nSer := 1;
+  if cbAllSums.Checked then
+    for k := 1 to NumTerms do
+    begin
+      Series[nSer] := SubMatrix(Sums[k - 1], 0, 0, 1, NShow);
+      if k = NumTerms then
+        FSynTime.SetSeriesStyle(nSer, clRed, 2.0, plsSolid, Format('n <= %d', [2 * k - 1]))
+      else
+      begin
+        Shade := 200 - Round(150 * (k - 1) / Max(1, NumTerms - 1));   // light to dark blue
+        // only the first and last sums get legend names, so a ten-entry
+        // legend doesn't cover half the plot
+        if k = 1 then
+          FSynTime.SetSeriesStyle(nSer, RGBToColor(Shade, Shade, 255), 1.0, plsSolid, 'n = 1 (fundamental)')
+        else
+          FSynTime.SetSeriesStyle(nSer, RGBToColor(Shade, Shade, 255), 1.0, plsSolid, '');
+      end;
+      Inc(nSer);
+    end
+  else
+  begin
+    Series[1] := SubMatrix(Sums[NumTerms - 1], 0, 0, 1, NShow);
+    FSynTime.SetSeriesStyle(1, clRed, 2.0, plsSolid, Format('sum to n = %d', [2 * NumTerms - 1]));
+    nSer := 2;
+  end;
+  SetLength(Series, nSer);
+  FSynTime.Title := Format('Square wave from its Fourier series: %d odd harmonic%s (n = 1 .. %d), f0 = %.3g Hz',
+    [NumTerms, Copy('s', 1, Ord(NumTerms <> 1)), 2 * NumTerms - 1, f0]);
+  FSynTime.ClearSeries;
+  FSynTime.SetData(TShow, Series);
+
+  // spectrum of the current sum
+  ComputePSD(Sums[NumTerms - 1], SynthFs, F, P, NBins, Sw2);
+  FSynSpec.YAxisTitle := SpectrumYTitle('unit');
+  FSynSpec.SetSeriesStyle(0, clRed, 1.0, plsSolid, Format('PSD of the sum to n = %d', [2 * NumTerms - 1]));
+  FSynSpec.Title := Format('Power spectral density of the partial sum, Hamming window, N = %d, to %.1f Hz', [NSamp, F[0, F.Cols - 1]]);
+  FSynSpec.ClearSeries;
+  FSynSpec.SetData(F, [P]);
+
+  // error of the current sum against the square wave
+  SumP := Sums[NumTerms - 1].DataPtr;
+  Rms := 0; Peak := 0;
+  for i := 0 to NSamp - 1 do
+  begin
+    Rms := Rms + Sqr(SumP[i] - SqP[i]);
+    if Abs(SumP[i]) > Peak then Peak := Abs(SumP[i]);
+  end;
+  Rms := Sqrt(Rms / NSamp);
+
+  memSyn.Lines.BeginUpdate;
+  try
+    memSyn.Clear;
+    memSyn.Lines.Add('Fourier synthesis of a unit square wave');
+    memSyn.Lines.Add(Format('Fundamental f0:     %.6g Hz', [f0]));
+    memSyn.Lines.Add(Format('Sampling frequency: %.6g Hz', [SynthFs]));
+    memSyn.Lines.Add(Format('Duration:           %.0f s  (%d samples)', [SynthDuration, NSamp]));
+    memSyn.Lines.Add(Format('Terms added:        %d of %d', [NumTerms, MaxTerms]));
+    memSyn.Lines.Add('');
+    memSyn.Lines.Add('  S_K(t) = (4/pi) sum sin(2 pi n f0 t) / n');
+    memSyn.Lines.Add('           over odd n = 1, 3, 5, ...');
+    memSyn.Lines.Add('');
+    memSyn.Lines.Add('   k    n   f (Hz)   amplitude 4/(pi n)');
+    for k := 1 to NumTerms do
+      memSyn.Lines.Add(Format('  %2d  %3d  %7.2f   %.4f', [k, 2 * k - 1, (2 * k - 1) * f0, 4 / (Pi * (2 * k - 1))]));
+    memSyn.Lines.Add('');
+    memSyn.Lines.Add(Format('RMS error vs square wave: %.4f', [Rms]));
+    memSyn.Lines.Add(Format('Peak of the sum:          %.4f  (overshoot %.1f %% of the 2-unit jump)', [Peak, 100 * (Peak - 1) / 2]));
+    memSyn.Lines.Add('');
+    memSyn.Lines.Add('The RMS error keeps falling as terms are');
+    memSyn.Lines.Add('added, but the overshoot at each edge does');
+    memSyn.Lines.Add('not: it settles near 9 % (the Gibbs');
+    memSyn.Lines.Add('phenomenon), only narrowing towards the edge.');
+    memSyn.Lines.Add('The spectrum holds exactly K lines, one per');
+    memSyn.Lines.Add('term, with nothing at the even harmonics.');
+  finally
+    memSyn.Lines.EndUpdate;
+  end;
+end;
+
 procedure TfmBio.ShowSynthetic;
 var
   N, NShow, NBins, i, h, k, k0, k1: Integer;
@@ -495,9 +673,14 @@ var
   dummyF: TVMobj;
   dummyN: Integer;
   dummyS: Double;
-  WasLinear: Boolean;
+  WasLinear, ShowSq, ShowTri: Boolean;
+  TimeSeries, SpecSeries: array of TVMobj;
+  nSer: Integer;
+  Title: string;
 begin
   f0 := seF0.Value;
+  ShowSq := rgWave.ItemIndex in [0, 2];
+  ShowTri := rgWave.ItemIndex in [1, 2];
   N := Round(SynthFs * SynthDuration);
   T := TVMobj.Create(1, N);
   T.linspace(0, 1 / SynthFs);
@@ -515,17 +698,46 @@ begin
   // time plot: the first four periods, so the shape is visible at any f0
   NShow := Min(N, Round(4 * SynthFs / f0));
   TShow := SubMatrix(T, 0, 0, 1, NShow);
-  FSynthTime.Title := Format('Square and triangle waves, f0 = %.3g Hz, unit amplitude - first %d periods of the %.0f s signal', [f0, 4, SynthDuration]);
-  FSynthTime.ClearSeries;
-  FSynthTime.SetData(TShow, [SubMatrix(Sq, 0, 0, 1, NShow), SubMatrix(Tri, 0, 0, 1, NShow)]);
+  case rgWave.ItemIndex of
+    0: Title := 'Square wave';
+    1: Title := 'Triangle wave';
+  else Title := 'Square and triangle waves';
+  end;
+  FSynthTime.Title := Format('%s, f0 = %.3g Hz, unit amplitude - first %d periods of the %.0f s signal', [Title, f0, 4, SynthDuration]);
 
   // spectra
   ComputePSD(Sq, SynthFs, F, PSq, NBins, Sw2);
   ComputePSD(Tri, SynthFs, dummyF, PTri, dummyN, dummyS);
+
+  // the chosen series, in a fixed order with fixed colours, whichever are on
+  SetLength(TimeSeries, 2);
+  SetLength(SpecSeries, 2);
+  nSer := 0;
+  if ShowSq then
+  begin
+    TimeSeries[nSer] := SubMatrix(Sq, 0, 0, 1, NShow);
+    SpecSeries[nSer] := PSq;
+    FSynthTime.SetSeriesStyle(nSer, clBlue, 1.5, plsSolid, 'square');
+    FSynthSpec.SetSeriesStyle(nSer, clBlue, 1.0, plsSolid, 'square');
+    Inc(nSer);
+  end;
+  if ShowTri then
+  begin
+    TimeSeries[nSer] := SubMatrix(Tri, 0, 0, 1, NShow);
+    SpecSeries[nSer] := PTri;
+    FSynthTime.SetSeriesStyle(nSer, $2CA02C, 1.5, plsSolid, 'triangle');
+    FSynthSpec.SetSeriesStyle(nSer, $2CA02C, 1.0, plsSolid, 'triangle');
+    Inc(nSer);
+  end;
+  SetLength(TimeSeries, nSer);
+  SetLength(SpecSeries, nSer);
+
+  FSynthTime.ClearSeries;
+  FSynthTime.SetData(TShow, TimeSeries);
   FSynthSpec.YAxisTitle := SpectrumYTitle('unit');
   FSynthSpec.Title := Format('Power spectral density, Hamming window, N = %d, %.3f Hz resolution, to %.1f Hz', [N, SynthFs / N, F[0, F.Cols - 1]]);
   FSynthSpec.ClearSeries;
-  FSynthSpec.SetData(F, [PSq, PTri]);
+  FSynthSpec.SetData(F, SpecSeries);
 
   // memo: theory against the measured harmonic amplitudes (always from the
   // linear PSD, whatever the check box says)
@@ -542,6 +754,7 @@ begin
   try
     memSynth.Clear;
     memSynth.Lines.Add('Synthetic signals (no PhysioNet record)');
+    memSynth.Lines.Add('Showing:            ' + Title);
     memSynth.Lines.Add(Format('Fundamental f0:     %.6g Hz', [f0]));
     memSynth.Lines.Add(Format('Sampling frequency: %.6g Hz', [SynthFs]));
     memSynth.Lines.Add(Format('Duration:           %.0f s  (%d samples)', [SynthDuration, N]));
@@ -553,12 +766,17 @@ begin
     memSynth.Lines.Add(Format('  resolution %.4f Hz, Nyquist %.1f Hz', [Fres, SynthFs / 2]));
     memSynth.Lines.Add('');
     memSynth.Lines.Add('Fourier series, odd harmonics n only:');
-    memSynth.Lines.Add('  square:   a_n = 4/(pi n)      ~ 1/n,   -20 dB/decade');
-    memSynth.Lines.Add('  triangle: a_n = 8/(pi^2 n^2)  ~ 1/n^2, -40 dB/decade');
+    if ShowSq then
+      memSynth.Lines.Add('  square:   a_n = 4/(pi n)      ~ 1/n,   -20 dB/decade');
+    if ShowTri then
+      memSynth.Lines.Add('  triangle: a_n = 8/(pi^2 n^2)  ~ 1/n^2, -40 dB/decade');
     memSynth.Lines.Add('');
     memSynth.Lines.Add('Harmonic amplitude, theory / measured, the');
     memSynth.Lines.Add('latter as sqrt(2 sum P df) over +-5 bins:');
-    memSynth.Lines.Add('  n  f (Hz)  square         triangle');
+    Title := '  n  f (Hz)';
+    if ShowSq then Title := Title + '  square       ';
+    if ShowTri then Title := Title + '  triangle';
+    memSynth.Lines.Add(Title);
     // (the linear PSDs are cut at the upper-frequency limit like the plots,
     // so only harmonics inside that range can be measured)
     h := 1;
@@ -574,12 +792,14 @@ begin
       end;
       ASq := Sqrt(2 * SumSq * Fres);
       ATri := Sqrt(2 * SumTri * Fres);
-      memSynth.Lines.Add(Format(' %2d %7.2f  %.4f/%.4f  %.5f/%.5f',
-        [h, h * f0, 4 / (Pi * h), ASq, 8 / (Sqr(Pi) * h * h), ATri]));
+      Title := Format(' %2d %7.2f', [h, h * f0]);
+      if ShowSq then Title := Title + Format('  %.4f/%.4f', [4 / (Pi * h), ASq]);
+      if ShowTri then Title := Title + Format('  %.5f/%.5f', [8 / (Sqr(Pi) * h * h), ATri]);
+      memSynth.Lines.Add(Title);
       Inc(h, 2);
     end;
     memSynth.Lines.Add('');
-    memSynth.Lines.Add('Even harmonics are absent from both; the small');
+    memSynth.Lines.Add('Even harmonics are absent; the small');
     memSynth.Lines.Add('values between peaks are the Hamming window''s');
     memSynth.Lines.Add('sidelobes, and sampling makes the square wave''s');
     memSynth.Lines.Add('edges land on sample instants, which slightly');

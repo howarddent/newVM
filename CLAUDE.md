@@ -1961,13 +1961,26 @@ packages. Compiled binaries and each demo's own `lib/` output are
   a "linear scale" check box switches every spectrum between dB and plain
   units^2/Hz. A fourth tab, "Square and triangle waves", generates both
   at a chosen fundamental (1000 Hz, 20 s, unit amplitude, a loop over the
-  phase since newVM has no elementwise `Sign`/`Frac`) and overlays them
-  on both plots - the time plot showing the first four periods only - with
+  phase since newVM has no elementwise `Sign`/`Frac`) and shows either or
+  both (a Square/Triangle/Both radio group; series styles are assigned per
+  call since the triangle's series index depends on whether the square is
+  shown) on both plots - the time plot showing the first four periods only - with
   the memo tabulating each odd harmonic's textbook amplitude (`4/(pi n)`
   for the square, `8/(pi^2 n^2)` for the triangle) against the value
   recovered by integrating the linear PSD over +-5 bins around the peak;
   they agree to three decimals, which doubles as a check of the PSD
-  scaling.
+  scaling. A fifth tab, "Square wave synthesis", goes the other way:
+  the partial sums `(4/pi) sum sin(2 pi n f0 t)/n` over the odd
+  harmonics, each term one `(4/(pi n)) * Sin((2 pi n f0) * T)` added to
+  the running sum, with a spin edit for how many terms (1 to 10, i.e.
+  up to the 19th harmonic), the ideal square wave dashed grey, a check
+  box overlaying every partial sum shaded light to dark blue with the
+  last in red, the PSD of the current sum beneath (exactly K lines),
+  and the memo giving each term, the RMS error and the peak overshoot -
+  which stays near 9 % however many terms are added (Gibbs). Two
+  Pascal gotchas hit writing it: `K`/`k` and `N`/`n` are the same
+  identifier (case-insensitive), and a `{` inside a `{ }` comment
+  (a `sum_{k=1..K}` in the header) opens a nested comment level.
   - **Data** lives in `data/` as 20 s excerpts fetched by HTTP range
     request (about 50 KB in all) plus the unmodified `.hea` headers, so the
     demo runs offline; `data/README.md` has the byte ranges, re-fetch
