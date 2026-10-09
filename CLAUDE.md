@@ -1929,6 +1929,74 @@ packages. Compiled binaries and each demo's own `lib/` output are
     default FPC mode and `Dialogs`, and nothing here needs it.
     `VMPlotMaxSeries` had to rise from 10 to 16 for the 12 possible
     series (see `Graphs/uVMPlot2D.pas` above).
+- **`Resonance`** — resonance and damping of the standard second-order
+  system `H(s) = wn^2/(s^2 + 2 zeta wn s + wn^2)`, on two `TVMPlot2D`s
+  stacked in a panel: the impulse response `h(t)` above and the
+  magnitude response `|H(jw)|` below, one curve per damping ratio
+  ticked in a check group (0.05 .. 2.0, eight choices, coloured the same
+  on both plots), with spin edits for the natural frequency `fn` (Hz)
+  and the number of periods of `fn` to show. Each response is a
+  one-line newVM vector expression: the three impulse-response cases
+  (under-, critically and over-damped) with elementwise `Exp`/`Sin` and
+  the operators, e.g. `K * (Exp((-z*wn) * T) * Sin(wd * T))`; the
+  magnitude as `Exp(-0.5 * Ln(D))` for `D^(-1/2)` since newVM has no
+  elementwise reciprocal, with `AddScalar(-Sqr(R), 1)` for `1 - r^2`
+  since there's no scalar-minus-vector operator either. The memo gives
+  per ratio the textbook figures - `Q = 1/(2 zeta)`, the 2 % settling
+  time, the damped frequency, and for `zeta < 1/sqrt 2` the peak gain
+  and resonant frequency. Calls `ClearSeries` before each `SetData`
+  for the same reason `JetVent` does (a varying number of series).
+  Verified by screenshot: `zeta = 0.1` peaks at 5.03 near `fn`, matching
+  `1/(2 zeta sqrt(1 - zeta^2))`.
+- **`BioSpectra`** — frequency spectra of three biological signals from
+  PhysioNet: an ECG (MIT-BIH Arrhythmia record 100, MLII, 360 Hz), an EEG
+  (MIT-BIH Polysomnographic record slp01a, C4-A1, 250 Hz) and an invasive
+  arterial pressure (slp01a, BP). One `TPageControl` tab per signal, each
+  with a 20 s time trace on one `TVMPlot2D`, its Hamming-windowed power
+  spectral density up to the Nyquist frequency on a second one beneath,
+  and the recording parameters in a memo alongside - sampling frequency,
+  ADC resolution, gain, baseline, units, the excerpt's position, and the
+  record's raw `.hea` header. A spin edit (0 = Nyquist) caps the plotted
+  frequency on all tabs, for looking at the EEG's 0-40 Hz on its own, and
+  a "linear scale" check box switches every spectrum between dB and plain
+  units^2/Hz. A fourth tab, "Square and triangle waves", generates both
+  at a chosen fundamental (1000 Hz, 20 s, unit amplitude, a loop over the
+  phase since newVM has no elementwise `Sign`/`Frac`) and overlays them
+  on both plots - the time plot showing the first four periods only - with
+  the memo tabulating each odd harmonic's textbook amplitude (`4/(pi n)`
+  for the square, `8/(pi^2 n^2)` for the triangle) against the value
+  recovered by integrating the linear PSD over +-5 bins around the peak;
+  they agree to three decimals, which doubles as a check of the PSD
+  scaling.
+  - **Data** lives in `data/` as 20 s excerpts fetched by HTTP range
+    request (about 50 KB in all) plus the unmodified `.hea` headers, so the
+    demo runs offline; `data/README.md` has the byte ranges, re-fetch
+    commands, licence (ODC-BY) and citations. Both records are WFDB
+    format 212 - two 12-bit two's-complement samples packed in three
+    bytes, signals interleaved - decoded by the form's own `LoadWFDB212`,
+    which also parses the `gain(baseline)/units` field (baseline
+    defaulting to the ADC-zero column) and the `fs/counter(base)` form
+    of the sampling frequency. Decoded ranges were checked in Python
+    before the Pascal was written: ECG +-1 mV, pressure 39-128 mmHg,
+    EEG +-150 uV.
+  - **Spectrum**: mean removed, Hamming window as
+    `AddScalar(-0.46 * Cos(Theta), 0.54)`, `FFT_R2C` from
+    `newVMComplex.pas` (FFTW) for the packed half-spectrum, one-sided PSD
+    `2|X|^2/(fs sum w^2)` (not doubled at DC/Nyquist) via
+    `Sqr(GetRealPart(X)) + Sqr(GetImagPart(X))`, plotted in dB as
+    `(10/ln 10) * Ln(P)` against `k fs/N`, all in one `ComputePSD` shared
+    by the four tabs; the frequency axis is cut with `SubMatrix`. The dB
+    floor is 150 dB below the spectrum's own peak, not an absolute
+    constant: with the mean removed the DC bin is exactly zero, and a
+    first absolute floor of 1e-30 put it at -300 dB, stretching every dB
+    axis. Both plots call `ClearSeries` before `SetData`.
+  - **Checked by screenshot**: the ECG spectrum shows QRS energy below
+    40 Hz and the 60 Hz US mains spike of the MIT-BIH recording; the
+    pressure spectrum shows heart-rate harmonics; the EEG a 1/f fall with
+    narrow interference lines.
+  - **Gotcha**: creating the OpenGL plot controls on each `TTabSheet` in
+    `FormCreate` brings that sheet forward, so the form opened on the last
+    tab filled until `pcSignals.ActivePage := tsECG` was set at the end.
 - **`newPoly`** — least-squares polynomial fitting with
   `newPolymath.pas`'s `TPolynomial.Fit` (see its own section above),
   shown on two `TVMPlot2D` components stacked in one form, the fit above

@@ -33,6 +33,10 @@ openblas.dll
 # an extension (.pas/.lpr/.lpi/.lfm/.ico/...).
 demos/*/[A-Za-z]*
 !demos/*/*.*
+# ...but a demo's data/ directory is real content (demos/BioSpectra/data/ holds
+# the PhysioNet excerpts) - a directory has no dot, so the negation above
+# would not rescue it, and git never descends into an excluded directory
+!demos/*/data/
 
 # demos/Chebyshev/ groups its sub-projects one level deeper than the
 # demos/<Name>/ layout above (e.g. demos/Chebyshev/NormalIntegration/).
