@@ -2178,7 +2178,20 @@ packages. Compiled binaries and each demo's own `lib/` output are
     typed constant; `uWeatherData`'s initialization shifts it down and
     puts `.3` first (and second on macOS, where `openssl.pas` copies entry
     2 over entry 1). Needed by anything here that does HTTPS with FPC
-    3.2.2.
+    3.2.2. The same failure appears on Windows ("cannot open SSL
+    library" at run time) because the unit only knows the OpenSSL
+    1.0/1.1 DLL names, so `PreferOpenSSL3` there puts
+    `libcrypto-3-x64.dll`/`libssl-3-x64.dll` into the first-tried
+    `DLLUtilName`/`DLLSSLName` slots (writable typed constants) with the
+    1.1 names left as fallback. The DLLs themselves are not in the repo
+    (`demos/*/*.dll` is ignored): copy a pair beside the exe - Git for
+    Windows ships them in `mingw64\bin` - or put them on PATH.
+    Likewise the county map's netCDF reader: on Windows it looks for
+    `netcdf.dll`, which `winget install Unidata.NetCDF` puts in
+    `C:\Program Files\netCDF <version>\bin` together with its own
+    dependencies (`hdf5.dll`, `hdf5_hl.dll`, `zlib1.dll`, `libcurl.dll`;
+    the MSVC runtimes there are normally already on the system) - copy
+    those five beside the exe, since that bin directory is not on PATH.
   - **FPC's `Format` has no `+` flag**: `'%+8.1f'` raises "Invalid
     argument index in format" at run time (it compiles). The signed
     anomalies go through a small `Signed()` helper instead.

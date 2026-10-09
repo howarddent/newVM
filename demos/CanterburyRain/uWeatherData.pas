@@ -57,7 +57,12 @@ unit uWeatherData;
      request fails with "Could not initialize OpenSSL library". The unit's
      DLLVersions suffix list is a writable typed constant, so the
      initialization section below puts '.3' at the front of it before any
-     connection is made; the older suffixes are still tried after it.
+     connection is made; the older suffixes are still tried after it. On
+     Windows the equivalent failure reads "Could not initialize OpenSSL
+     library" too (the unit only knows the 1.0/1.1 DLL names), and the
+     same initialization puts libcrypto-3-x64.dll/libssl-3-x64.dll into
+     the first-tried name slots - the DLLs themselves have to be beside
+     the exe or on PATH, Git for Windows' mingw64in being one source.
 
 *******************************************************************************}
 
@@ -449,8 +454,23 @@ begin
 end;
 {$ENDIF}
 
+{$IFDEF WINDOWS}
+{ The Windows counterpart. openssl.pas tries DLLUtilName/DLLSSLName first
+  (libeay32/ssleay32, the OpenSSL 1.0 names) and then the 1.1 names in
+  DLLUtilName2/DLLSSLName2/3; none of those exist for OpenSSL 3, whose
+  Windows builds are libcrypto-3-x64.dll and libssl-3-x64.dll (Git for
+  Windows ships a pair in mingw64in, which is where this machine's copies
+  beside the exe came from). Those typed constants are writable, so the
+  OpenSSL 3 names go into the first-tried slots and the 1.1 names stay as
+  the fallback. The DLLs must be beside the exe or on PATH; .gitignore
+  keeps them out of the repo (demos/*/*.dll). }
+procedure PreferOpenSSL3;
+begin
+  DLLUtilName := {$IFDEF WIN64}'libcrypto-3-x64.dll'{$ELSE}'libcrypto-3.dll'{$ENDIF};
+  DLLSSLName  := {$IFDEF WIN64}'libssl-3-x64.dll'{$ELSE}'libssl-3.dll'{$ENDIF};
+end;
+{$ENDIF}
+
 initialization
-  {$IFDEF UNIX}
-  PreferOpenSSL3;
-  {$ENDIF}
+  PreferOpenSSL3;   // Unix: '.3' suffix first; Windows: the OpenSSL 3 DLL names first
 end.

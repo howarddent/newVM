@@ -37,6 +37,10 @@ demos/*/[A-Za-z]*
 # the PhysioNet excerpts) - a directory has no dot, so the negation above
 # would not rescue it, and git never descends into an excluded directory
 !demos/*/data/
+# Runtime DLLs dropped beside a demo's exe on Windows (demos/CanterburyRain
+# needs OpenSSL's libssl-3-x64.dll/libcrypto-3-x64.dll for HTTPS) - the
+# "!demos/*/*.*" negation above would otherwise commit them
+demos/*/*.dll
 
 # demos/Chebyshev/ groups its sub-projects one level deeper than the
 # demos/<Name>/ layout above (e.g. demos/Chebyshev/NormalIntegration/).
