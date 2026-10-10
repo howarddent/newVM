@@ -44,6 +44,7 @@ type
     WireframeCheckBox: TCheckBox;
     ShowAxesCheckBox: TCheckBox;
     LevelCurvesCheckBox: TCheckBox;
+    AxisBoxCheckBox: TCheckBox;
     ResetViewButton: TButton;
     HintLabel: TLabel;
     procedure FormCreate(Sender: TObject);
@@ -51,6 +52,7 @@ type
     procedure WireframeCheckBoxChange(Sender: TObject);
     procedure ShowAxesCheckBoxChange(Sender: TObject);
     procedure LevelCurvesCheckBoxChange(Sender: TObject);
+    procedure AxisBoxCheckBoxChange(Sender: TObject);
   private
     FPlot: TVMPlot3D;
     FLightPad: TVMLightPad;
@@ -149,6 +151,14 @@ end;
 procedure TForm1.LevelCurvesCheckBoxChange(Sender: TObject);
 begin
   FPlot.ShowLevelCurves := LevelCurvesCheckBox.Checked;
+end;
+
+procedure TForm1.AxisBoxCheckBoxChange(Sender: TObject);
+begin
+  if AxisBoxCheckBox.Checked then
+    FPlot.AxisStyle := pasBox
+  else
+    FPlot.AxisStyle := pasCentred;
 end;
 
 end.

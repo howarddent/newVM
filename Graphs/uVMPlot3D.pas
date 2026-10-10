@@ -75,6 +75,12 @@ type
 
   { TVMPlot3D }
 
+  // How the axes are drawn - see DrawAxisBox. pasCentred is the original
+  // three coloured lines through the origin with tick points on them;
+  // pasBox is the conventional three gridded back planes (floor and two
+  // walls) with the scales along their outer edges.
+  TVMPlot3DAxisStyle = (pasCentred, pasBox);
+
   TVMPlot3D = class(TOpenGLControl)
   private
     FRows, FCols: Integer;
@@ -83,6 +89,13 @@ type
     FHasData: Boolean;
     FYaw, FPitch, FDistance: Double;
     FWireframe, FShowAxes, FShowLevelCurves: Boolean;
+    FAxisStyle: TVMPlot3DAxisStyle;
+    // Which side of the box each back plane sits on this frame - chosen by
+    // DrawAxisBox from the camera's world position so the planes stay
+    // BEHIND the surface as it rotates; DrawAxisLabels reads them to put
+    // the scales on the matching edges. +1 or -1, in world units of HalfW/
+    // HalfZ.
+    FBoxSX, FBoxSY, FBoxSZ: Integer;
     FDragging: Boolean;
     FLastMouseX, FLastMouseY: Integer;
 
@@ -115,6 +128,7 @@ type
     procedure SetWireframe(AValue: Boolean);
     procedure SetShowAxes(AValue: Boolean);
     procedure SetShowLevelCurves(AValue: Boolean);
+    procedure SetAxisStyle(AValue: TVMPlot3DAxisStyle);
     procedure SetTitle(const AValue: string);
     procedure SetXAxisTitle(const AValue: string);
     procedure SetYAxisTitle(const AValue: string);
@@ -131,7 +145,9 @@ type
     procedure ComputeNormal(r, c: Integer);
     procedure HeightToColor(t: Double; out r, g, b: Double);
     procedure DrawAxisLines;
+    procedure DrawAxisBox;
     procedure DrawAxisLabels;
+    procedure CameraWorldPos(out cx, cy, cz: Double);
     procedure DrawLevelCurves;
     function BuildDefaultDemoMatrix: TVMobj;
     procedure EmitVertex(r, c: Integer);
@@ -165,6 +181,7 @@ type
     property Wireframe: Boolean read FWireframe write SetWireframe;
     property ShowAxes: Boolean read FShowAxes write SetShowAxes;
     property ShowLevelCurves: Boolean read FShowLevelCurves write SetShowLevelCurves;
+    property AxisStyle: TVMPlot3DAxisStyle read FAxisStyle write SetAxisStyle default pasCentred;
     property Title: string read FTitle write SetTitle;
     property XAxisTitle: string read FXAxisTitle write SetXAxisTitle;
     property YAxisTitle: string read FYAxisTitle write SetYAxisTitle;
@@ -392,6 +409,8 @@ begin
   FWireframe := False;
   FShowAxes := True;
   FShowLevelCurves := False;
+  FAxisStyle := pasCentred;
+  FBoxSX := -1; FBoxSY := -1; FBoxSZ := -1;
   FLightX := DefaultLightX;
   FLightY := DefaultLightY;
   FHasData := False;
@@ -433,6 +452,13 @@ procedure TVMPlot3D.SetShowAxes(AValue: Boolean);
 begin
   if FShowAxes = AValue then Exit;
   FShowAxes := AValue;
+  Invalidate;
+end;
+
+procedure TVMPlot3D.SetAxisStyle(AValue: TVMPlot3DAxisStyle);
+begin
+  if FAxisStyle = AValue then Exit;
+  FAxisStyle := AValue;
   Invalidate;
 end;
 
@@ -916,6 +942,132 @@ begin
   glEnable(GL_LIGHTING);
 end;
 
+// The camera's position in WORLD space, by inverting Paint's camera
+// transform (translate(0,0,-D) . Rx(pitch) . Ry(yaw) applied to the scene):
+// the camera sits at the origin of eye space, so its world position is
+// Ry(-yaw) . Rx(-pitch) . (0,0,+D). Used to pick which three faces of the
+// axis box are the far ones this frame.
+procedure TVMPlot3D.CameraWorldPos(out cx, cy, cz: Double);
+var
+  yawRad, pitchRad, y1, z1: Double;
+begin
+  yawRad := FYaw * Pi / 180;
+  pitchRad := FPitch * Pi / 180;
+  // Rx(-pitch) applied to (0, 0, D)
+  y1 := FDistance * Sin(pitchRad);
+  z1 := FDistance * Cos(pitchRad);
+  // Ry(-yaw) applied to (0, y1, z1)
+  cx := -z1 * Sin(yawRad);
+  cy := y1;
+  cz := z1 * Cos(yawRad);
+end;
+
+// The conventional axis box: three gridded planes - the floor (z = bottom)
+// and the two walls behind the surface - meeting at the back corner, with
+// grid lines at every tick, and the three scales drawn by DrawAxisLabels
+// along the planes' outer edges. Which two walls are "behind" depends on
+// where the camera is, so each frame the faces are chosen as the ones
+// facing AWAY from the camera (sign of the camera's world coordinate on
+// each axis, from CameraWorldPos) - as the surface is dragged round, a
+// wall that would come in front of the surface swaps to the opposite
+// side. The floor likewise swaps to the top if the view goes underneath.
+// The planes sit a little outside the surface's own extent (BoxPad) so a
+// surface edge never lies on a grid line, and the whole thing is drawn
+// unlit, grey, with a slightly brighter edge frame.
+procedure TVMPlot3D.DrawAxisBox;
+const
+  HalfW = WorldSize / 2;
+  HalfZ = ZScale / 2;
+  BoxPad = 1.06;   // planes this far beyond the surface's half-extent
+var
+  i: Integer;
+  cx, cy, cz, bx, by, bz, zRange, zx, zy, zz: Double;
+  px, py: Double;
+
+  function TickX(i: Integer): Double;
+  begin
+    Result := (FXTickPos[i] - (FCols - 1) / 2) * (WorldSize / (FCols - 1));
+  end;
+  function TickY(i: Integer): Double;
+  begin
+    Result := (FYTickPos[i] - (FRows - 1) / 2) * (WorldSize / (FRows - 1));
+  end;
+  function TickZ(i: Integer): Double;
+  begin
+    Result := ((FZTicks[i] - FZMin) / zRange - 0.5) * ZScale;
+  end;
+
+begin
+  zRange := Max(FZMax - FZMin, 1e-9);
+  CameraWorldPos(cx, cy, cz);
+  // a plane goes on the side the camera is NOT on
+  if cx >= 0 then FBoxSX := -1 else FBoxSX := 1;
+  if cy >= 0 then FBoxSY := -1 else FBoxSY := 1;
+  if cz >= 0 then FBoxSZ := -1 else FBoxSZ := 1;
+  bx := FBoxSX * HalfW * BoxPad;   // the x = const wall
+  by := FBoxSY * HalfW * BoxPad;   // the y = const wall
+  bz := FBoxSZ * HalfZ * BoxPad;   // the floor (or ceiling)
+
+  glDisable(GL_LIGHTING);
+
+  // the planes themselves, translucent, so the surface's colours still read
+  glDepthMask(GL_FALSE);
+  glColor4f(0.30, 0.30, 0.38, 0.35);
+  glBegin(GL_QUADS);
+    // floor: z = bz
+    glVertex3d(-HalfW * BoxPad, -HalfW * BoxPad, bz); glVertex3d(HalfW * BoxPad, -HalfW * BoxPad, bz);
+    glVertex3d(HalfW * BoxPad, HalfW * BoxPad, bz);   glVertex3d(-HalfW * BoxPad, HalfW * BoxPad, bz);
+    // wall: x = bx
+    glVertex3d(bx, -HalfW * BoxPad, -HalfZ * BoxPad); glVertex3d(bx, HalfW * BoxPad, -HalfZ * BoxPad);
+    glVertex3d(bx, HalfW * BoxPad, HalfZ * BoxPad);   glVertex3d(bx, -HalfW * BoxPad, HalfZ * BoxPad);
+    // wall: y = by
+    glVertex3d(-HalfW * BoxPad, by, -HalfZ * BoxPad); glVertex3d(HalfW * BoxPad, by, -HalfZ * BoxPad);
+    glVertex3d(HalfW * BoxPad, by, HalfZ * BoxPad);   glVertex3d(-HalfW * BoxPad, by, HalfZ * BoxPad);
+  glEnd;
+  glDepthMask(GL_TRUE);
+
+  // grid lines at every tick, on all three planes
+  glLineWidth(1.0);
+  glColor4f(0.55, 0.55, 0.62, 0.8);
+  glBegin(GL_LINES);
+    for i := 0 to High(FXTicks) do begin
+      px := TickX(i);
+      glVertex3d(px, -HalfW * BoxPad, bz); glVertex3d(px, HalfW * BoxPad, bz);      // floor, along y
+      glVertex3d(px, by, -HalfZ * BoxPad); glVertex3d(px, by, HalfZ * BoxPad);      // y-wall, vertical
+    end;
+    for i := 0 to High(FYTicks) do begin
+      py := TickY(i);
+      glVertex3d(-HalfW * BoxPad, py, bz); glVertex3d(HalfW * BoxPad, py, bz);      // floor, along x
+      glVertex3d(bx, py, -HalfZ * BoxPad); glVertex3d(bx, py, HalfZ * BoxPad);      // x-wall, vertical
+    end;
+    for i := 0 to High(FZTicks) do begin
+      zz := TickZ(i);
+      glVertex3d(bx, -HalfW * BoxPad, zz); glVertex3d(bx, HalfW * BoxPad, zz);      // x-wall, horizontal
+      glVertex3d(-HalfW * BoxPad, by, zz); glVertex3d(HalfW * BoxPad, by, zz);      // y-wall, horizontal
+    end;
+  glEnd;
+
+  // the edge frame of the three planes, brighter
+  glLineWidth(1.5);
+  glColor4f(0.80, 0.80, 0.86, 1.0);
+  zx := -HalfZ * BoxPad; zy := HalfZ * BoxPad;
+  glBegin(GL_LINE_LOOP);   // floor outline
+    glVertex3d(-HalfW * BoxPad, -HalfW * BoxPad, bz); glVertex3d(HalfW * BoxPad, -HalfW * BoxPad, bz);
+    glVertex3d(HalfW * BoxPad, HalfW * BoxPad, bz);   glVertex3d(-HalfW * BoxPad, HalfW * BoxPad, bz);
+  glEnd;
+  glBegin(GL_LINES);       // the vertical edges of the two walls
+    glVertex3d(bx, -HalfW * BoxPad, zx); glVertex3d(bx, -HalfW * BoxPad, zy);
+    glVertex3d(bx, HalfW * BoxPad, zx);  glVertex3d(bx, HalfW * BoxPad, zy);
+    glVertex3d(-HalfW * BoxPad, by, zx); glVertex3d(-HalfW * BoxPad, by, zy);
+    glVertex3d(HalfW * BoxPad, by, zx);  glVertex3d(HalfW * BoxPad, by, zy);
+    // top edges of the walls
+    glVertex3d(bx, -HalfW * BoxPad, -bz); glVertex3d(bx, HalfW * BoxPad, -bz);
+    glVertex3d(-HalfW * BoxPad, by, -bz); glVertex3d(HalfW * BoxPad, by, -bz);
+  glEnd;
+
+  glEnable(GL_LIGHTING);
+end;
+
 // Projects a 3D world point to this frame's screen pixel coordinates by
 // replaying - in plain Pascal, not via a GL matrix query - the exact
 // camera transform Paint sets up on the GL matrix stack:
@@ -1127,7 +1279,7 @@ const
   HalfZ = ZScale / 2;
 var
   i, VW, VH: Integer;
-  sx, sy: Double;
+  sx, sy, ex, ey, bz: Double;
   infront: Boolean;
 begin
   VW := Width;
@@ -1139,7 +1291,49 @@ begin
   if FTitle <> '' then
     DrawTextTexture(FTitleTex, VW / 2, VH - 18, 0, 0.5, 0.5);
 
-  if FShowAxes then begin
+  if FShowAxes and (FAxisStyle = pasBox) then begin
+    // Scales along the box's outer edges. X ticks go along the floor's
+    // FRONT edge (the one away from the y-wall, on the camera's side, so
+    // the surface never covers them). Y ticks go along the floor edge at
+    // the x-wall's foot - the far side - which from a typical elevated view
+    // is clear of the surface, whereas the near x edge put them underneath
+    // the surface's own front corner (seen on the first screenshot). Z
+    // ticks go up the x-wall's front vertical edge, visible and
+    // unobstructed since the wall is behind the surface. Positions use the
+    // same BoxPad as DrawAxisBox so labels sit just outside the planes.
+    ex := FBoxSX * HalfW * 1.06;    // the floor edge AT the x-wall
+    ey := -FBoxSY * HalfW * 1.06;   // the floor edge away from the y-wall
+    bz := FBoxSZ * HalfZ * 1.06;
+    for i := 0 to High(FXTicks) do begin
+      WorldToScreen((FXTickPos[i] - (FCols - 1) / 2) * (WorldSize / (FCols - 1)),
+        ey, bz, VW, VH, sx, sy, infront);
+      if infront then DrawTextTexture(FXTickTex[i], sx, sy - 6, 0, 0.5, 1);
+    end;
+    for i := 0 to High(FYTicks) do begin
+      WorldToScreen(ex, (FYTickPos[i] - (FRows - 1) / 2) * (WorldSize / (FRows - 1)),
+        bz, VW, VH, sx, sy, infront);
+      if infront then DrawTextTexture(FYTickTex[i], sx + 6 * FBoxSX, sy, 0, 0.5 - 0.5 * FBoxSX, 0.5);
+    end;
+    for i := 0 to High(FZTicks) do begin
+      WorldToScreen(FBoxSX * HalfW * 1.06, ey,
+        ((FZTicks[i] - FZMin) / Max(FZMax - FZMin, 1e-9) - 0.5) * ZScale,
+        VW, VH, sx, sy, infront);
+      if infront then DrawTextTexture(FZTickTex[i], sx - 6, sy, 0, 1, 0.5);
+    end;
+    if FXAxisTitle <> '' then begin
+      WorldToScreen(0, ey * 1.18, bz, VW, VH, sx, sy, infront);
+      if infront then DrawTextTexture(FXAxisTitleTex, sx, sy - 6, 0, 0.5, 1);
+    end;
+    if FYAxisTitle <> '' then begin
+      WorldToScreen(ex * 1.22, 0, bz, VW, VH, sx, sy, infront);
+      if infront then DrawTextTexture(FYAxisTitleTex, sx, sy, 0, 0.5 - 0.5 * FBoxSX, 0.5);
+    end;
+    if FZAxisTitle <> '' then begin
+      WorldToScreen(FBoxSX * HalfW * 1.06, ey, -bz * 1.15, VW, VH, sx, sy, infront);
+      if infront then DrawTextTexture(FZAxisTitleTex, sx, sy, 0, 0.5, 0);
+    end;
+  end
+  else if FShowAxes then begin
     for i := 0 to High(FXTicks) do begin
       WorldToScreen((FXTickPos[i] - (FCols - 1) / 2) * (WorldSize / (FCols - 1)),
         0, 0, VW, VH, sx, sy, infront);
@@ -1282,7 +1476,11 @@ begin
   ambient[0] := 0.35; ambient[1] := 0.35; ambient[2] := 0.35; ambient[3] := 1;
   glLightModelfv(GL_LIGHT_MODEL_AMBIENT, @ambient[0]);
 
-  if FShowAxes then DrawAxisLines;
+  if FShowAxes then
+    case FAxisStyle of
+      pasCentred: DrawAxisLines;
+      pasBox: DrawAxisBox;
+    end;
 
   if FHasData then begin
     if FWireframe then
