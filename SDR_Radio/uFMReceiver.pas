@@ -302,18 +302,6 @@ type
     FDemodThread: TFMDemodThread;
     FChainBuilt: Boolean;
     FLastError: string;
-    // Live on/off switch for FDemod's own impulse blanker (uDSPBlocks.pas's
-    // TFMDemodulator.BlankerEnabled) - see that property's own comment for
-    // why this needs to be a real toggle rather than a fixed default: the
-    // blanker's zero-order-hold approach, tuned/tested against one
-    // reception scenario (a marginal broadcast-FM signal producing classic
-    // click noise), is a plausible source of new artifacts in some OTHER
-    // scenario this app gets used in - pushed into FDemod fresh every
-    // ProcessDemodOnce call (see that method) rather than only on write,
-    // the same "plain field, read every call" pattern FVolume already
-    // uses, so toggling it live (chain built or not) always takes effect
-    // on the very next epoch with no extra plumbing.
-    FClickBlankerEnabled: Boolean;
     // Diagnostic only - FLastError only ever holds the MOST RECENT
     // exception message, so on its own it can't distinguish "this
     // happened once, ages ago" from "this is firing on every other
@@ -369,11 +357,6 @@ type
     function AudioAcquireSkipCount: Integer;
     // Forwards FErrorCount - see that field's own comment.
     function AudioErrorCount: Integer;
-    // Forwards FDemod.ClickCount (uDSPBlocks.pas's TFMDemodulator) - total
-    // samples the impulse blanker has suppressed, i.e. confirmed FM click-
-    // noise events (see TFMDemodulator.Process's own comment). 0 before
-    // Active is ever set True (FDemod doesn't exist yet).
-    function AudioClickCount: Integer;
   published
     property Source: TSDRRFSource read FSource write SetSource;
     // Absolute RF frequency to listen to, in Hz - independent of
@@ -385,10 +368,6 @@ type
     property Volume: Single read FVolume write FVolume;
     property EpochDurationMs: Integer read FEpochDurationMs write FEpochDurationMs
       default DefaultEpochDurationMs;
-    // See FClickBlankerEnabled's own comment. On by default, matching
-    // TFMDemodulator.Create's own default.
-    property ClickBlankerEnabled: Boolean read FClickBlankerEnabled write FClickBlankerEnabled
-      default True;
     property Active: Boolean read GetActive write SetActive default False;
   end;
 
@@ -401,7 +380,6 @@ begin
   inherited Create(AOwner);
   FVolume := 1.0;
   FEpochDurationMs := DefaultEpochDurationMs;
-  FClickBlankerEnabled := True;
   FPlayer := TWaveOutPlayer.Create;
 end;
 
@@ -610,11 +588,6 @@ begin
   Result := FErrorCount;
 end;
 
-function TFMBroadcastReceiver.AudioClickCount: Integer;
-begin
-  if Assigned(FDemod) then Result := FDemod.ClickCount else Result := 0;
-end;
-
 procedure TFMBroadcastReceiver.SetActive(AValue: Boolean);
 begin
   if AValue = Assigned(FAcquireThread) then Exit;
@@ -790,7 +763,6 @@ begin
   if not FChainBuilt then Exit;
   if not FQueue.TryPop(Baseband) then Exit;
 
-  FDemod.BlankerEnabled := FClickBlankerEnabled;
   Multiplex := FDemod.Process(Baseband);
 
   // RDS is a second reader of the multiplex, not a stage in the audio

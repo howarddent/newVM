@@ -182,7 +182,6 @@ type
     BandwidthLabel: TLabel;
     BandwidthTrackBar: TTrackBar;
     SynchronousCheckBox: TCheckBox;
-    ClickBlankerCheckBox: TCheckBox;
     VolumeLabel: TLabel;
     VolumeTrackBar: TTrackBar;
     RDSStationLabel: TLabel;
@@ -264,7 +263,6 @@ type
     procedure ListenKeypadButtonClick(Sender: TObject);
     procedure BandwidthTrackBarChange(Sender: TObject);
     procedure SynchronousCheckBoxChange(Sender: TObject);
-    procedure ClickBlankerCheckBoxChange(Sender: TObject);
     procedure VolumeTrackBarChange(Sender: TObject);
   end;
 
@@ -517,22 +515,6 @@ begin
   SynchronousCheckBox.SetBounds(240, 74, 140, 19);
   SynchronousCheckBox.Caption := 'Synchronous';
   SynchronousCheckBox.OnChange := @SynchronousCheckBoxChange;
-
-  // FM-only (ApplyListenModeVisibility hides this whenever AM is selected,
-  // the opposite of BandwidthLabel/BandwidthTrackBar/SynchronousCheckBox
-  // above - same row, since the two control sets are never shown
-  // together) - toggles TFMBroadcastReceiver.ClickBlankerEnabled, i.e.
-  // TFMDemodulator's own impulse blanker (see uDSPBlocks.pas's
-  // TFMDemodulator.BlankerEnabled and uFMReceiver.pas's own
-  // FClickBlankerEnabled for why this needs to be a live toggle rather
-  // than always-on: tuned against one reception scenario, and a plausible
-  // source of new artifacts in another).
-  ClickBlankerCheckBox := TCheckBox.Create(Self);
-  ClickBlankerCheckBox.Parent := ListenPanel;
-  ClickBlankerCheckBox.SetBounds(10, 52, 220, 19);
-  ClickBlankerCheckBox.Caption := 'Click Blanker';
-  ClickBlankerCheckBox.Checked := True;
-  ClickBlankerCheckBox.OnChange := @ClickBlankerCheckBoxChange;
 
   VolumeLabel := TLabel.Create(Self);
   VolumeLabel.Parent := ListenPanel;
@@ -2177,7 +2159,6 @@ begin
   BandwidthLabel.Visible := IsAM;
   BandwidthTrackBar.Visible := IsAM;
   SynchronousCheckBox.Visible := IsAM;
-  ClickBlankerCheckBox.Visible := not IsAM;
   // RDS rides on the FM multiplex - there is no such thing on AM.
   RDSStationLabel.Visible := not IsAM;
   RDSTextLabel.Visible := not IsAM;
@@ -2295,15 +2276,6 @@ end;
 procedure TForm1.SynchronousCheckBoxChange(Sender: TObject);
 begin
   FAMReceiver.Synchronous := SynchronousCheckBox.Checked;
-end;
-
-// See ClickBlankerCheckBox's own comment (FormCreate) for what this
-// toggles. Safe to change live, whether or not FReceiver is currently
-// Active - FClickBlankerEnabled is a plain field TFMBroadcastReceiver
-// pushes into FDemod fresh every epoch, same as Volume.
-procedure TForm1.ClickBlankerCheckBoxChange(Sender: TObject);
-begin
-  FReceiver.ClickBlankerEnabled := ClickBlankerCheckBox.Checked;
 end;
 
 procedure TForm1.VolumeTrackBarChange(Sender: TObject);
