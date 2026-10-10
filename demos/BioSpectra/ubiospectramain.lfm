@@ -310,14 +310,101 @@ object fmBio: TfmBio
       ClientWidth = 1192
       object pnlBiCtl: TPanel
         Left = 0
-        Height = 44
+        Height = 84
         Top = 0
         Width = 1192
         Align = alTop
         BevelOuter = bvNone
-        ClientHeight = 44
+        ClientHeight = 84
         ClientWidth = 1192
         TabOrder = 0
+        object rgBiSignal: TRadioGroup
+          Left = 8
+          Height = 38
+          Top = 44
+          Width = 300
+          AutoFill = True
+          Caption = 'Signal'
+          Columns = 2
+          ItemIndex = 0
+          Items.Strings = (
+            'EEG (300 s)'
+            'Two tones through x + k x^2'
+          )
+          TabOrder = 4
+          OnSelectionChanged = BispectrumChange
+        end
+        object pnlBiSynth: TPanel
+          Left = 320
+          Height = 38
+          Top = 44
+          Width = 600
+          BevelOuter = bvNone
+          ClientHeight = 38
+          ClientWidth = 600
+          TabOrder = 5
+          Visible = False
+          object lblFa: TLabel
+            Left = 0
+            Height = 15
+            Top = 12
+            Width = 50
+            Caption = 'fa (Hz):'
+          end
+          object seFa: TFloatSpinEdit
+            Left = 50
+            Height = 23
+            Top = 8
+            Width = 70
+            DecimalPlaces = 1
+            Increment = 1
+            MaxValue = 30
+            MinValue = 0.5
+            TabOrder = 0
+            Value = 6
+            OnChange = BispectrumChange
+          end
+          object lblFb: TLabel
+            Left = 140
+            Height = 15
+            Top = 12
+            Width = 50
+            Caption = 'fb (Hz):'
+          end
+          object seFb: TFloatSpinEdit
+            Left = 190
+            Height = 23
+            Top = 8
+            Width = 70
+            DecimalPlaces = 1
+            Increment = 1
+            MaxValue = 30
+            MinValue = 0.5
+            TabOrder = 1
+            Value = 10
+            OnChange = BispectrumChange
+          end
+          object lblK: TLabel
+            Left = 280
+            Height = 15
+            Top = 12
+            Width = 120
+            Caption = 'nonlinearity k:'
+          end
+          object seK: TFloatSpinEdit
+            Left = 380
+            Height = 23
+            Top = 8
+            Width = 70
+            DecimalPlaces = 2
+            Increment = 0.1
+            MaxValue = 5
+            MinValue = 0
+            TabOrder = 2
+            Value = 0.5
+            OnChange = BispectrumChange
+          end
+        end
         object lblBiFmax: TLabel
           Left = 8
           Height = 15
@@ -386,8 +473,8 @@ object fmBio: TfmBio
       end
       object memBi: TMemo
         Left = 812
-        Height = 688
-        Top = 44
+        Height = 648
+        Top = 84
         Width = 380
         Align = alRight
         Font.Name = 'Consolas'
@@ -399,8 +486,8 @@ object fmBio: TfmBio
       end
       object pnlBi: TPanel
         Left = 0
-        Height = 688
-        Top = 44
+        Height = 648
+        Top = 84
         Width = 812
         Align = alClient
         BevelOuter = bvNone

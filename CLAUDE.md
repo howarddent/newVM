@@ -1996,7 +1996,20 @@ packages. Compiled binaries and each demo's own `lib/` output are
   memo quotes. Only the f2 <= f1 triangle is computed, the grid being
   filled symmetrically, and the square `TVMobj` goes to `SetData` with
   `XAxisMin/Max`/`YAxisMin/Max` set to the frequency range so the ticks
-  read in Hz, and `ZAxisMin/Max` fixed to 0..1 for bicoherence. The
+  read in Hz, and `ZAxisMin/Max` fixed to 0..1 for bicoherence, drawn
+  with `AxisStyle = pasBox` (see the `uVMPlot3D.pas` section). A
+  "Signal" radio group swaps the EEG for a synthetic test signal - two
+  tones at `fa`/`fb` (spin edits, default 6 and 10 Hz) with random
+  phases drawn once, through the memoryless nonlinearity `y = x + k x^2`
+  (`k` from a spin edit, default 0.5) plus a little white noise, at the
+  EEG's own length and rate so the two are comparable. The square term
+  makes intermodulation products at `2fa`, `2fb`, `fa+fb` and `fb-fa`
+  whose phases are fixed combinations of the tones' phases, i.e.
+  genuinely phase-coupled, so the bicoherence peaks near 1 at `(fa,fa)`,
+  `(fb,fb)`, `(fb,fa)` and `(fb,fb-fa)` on a flat floor - the textbook
+  picture, which the EEG does not show - and at `k = 0` the peaks vanish
+  while the power spectrum would still show both tones: the memo spells
+  out the expected positions. The
   inner accumulation is a plain loop over `GetRealPart`/`GetImagPart`
   values - no BLAS primitive forms a triple product on a grid. The
   project gained `../../Graphs/uVMPlot3D.pas` (and so `GLU`) for it.
@@ -2755,6 +2768,28 @@ not part of the `LazOpenGLContext` Lazarus package, so no extra
   mode (`if (not FWireframe) and FShowLevelCurves` in `Paint`), since a
   contour line has no independent visual meaning against a mesh that
   already shows every grid edge.
+- **`AxisStyle`** (`pasCentred`, the default, or `pasBox`): how the axes
+  are drawn when `ShowAxes` is on. `pasCentred` is the original gizmo -
+  three coloured lines through the origin with tick points on them.
+  `pasBox` is the conventional plot box: three translucent gridded
+  planes, a floor and two walls meeting at the back corner, with grid
+  lines at every tick and the scales along their outer edges
+  (`DrawAxisBox`, plus a `pasBox` branch in `DrawAxisLabels`). Which two
+  walls are the back ones, and whether the floor is below or above, is
+  decided every frame from the camera's world position
+  (`CameraWorldPos`, the inverse of `Paint`'s camera transform): each
+  plane goes on the side the camera is *not* on, so as the surface is
+  dragged round a wall that would come in front of it swaps to the
+  opposite side. The chosen sides are kept in `FBoxSX/SY/SZ` for the
+  label pass. The planes sit 6 % beyond the surface's extent (`BoxPad`)
+  so an edge never lies on a grid line, and are drawn with depth writes
+  off so the surface always shows through them. Label placement: X
+  ticks along the floor's front edge, Y ticks along the floor edge at
+  the foot of the x-wall (the far side - the near side put them under
+  the surface's front corner, seen on the first screenshot), Z ticks up
+  the x-wall's front vertical edge. `demos/BioSpectra`'s bispectrum tab
+  uses it; the `Plot3D` demo has an "Axis Box" check box to compare the
+  two styles.
 - **`DrawLevelCurves`**: per-tick, per-quad marching-triangles contour
   extraction - for each `FZTicks[i]` strictly between `FZMin`/`FZMax`
   (converted to the same world-space Z the surface itself is drawn in, via

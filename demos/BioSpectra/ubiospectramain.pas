@@ -110,6 +110,32 @@ unit ubiospectramain;
      frequency limits so the ticks read in Hz; drag rotates, the wheel
      zooms, as that component always does.
 
+     A "Signal" radio group swaps the EEG for a synthetic test signal that
+     shows what quadratic phase coupling looks like when it is definitely
+     there: two sine waves at fa and fb (spin edits, default 6 and 10 Hz)
+     with random starting phases, put through the memoryless nonlinearity
+
+       y = x + k x^2        (k from a spin edit, default 0.5)
+
+     plus a little white noise. The square term is the whole point: with
+     x = sin(2 pi fa t + pa) + sin(2 pi fb t + pb) it generates
+     intermodulation products at 2fa, 2fb, fa+fb and |fa-fb| (and DC),
+     every one of them with a phase that is a fixed combination of pa and
+     pb - 2pa, 2pb, pa+pb, pa-pb - so each is phase-LOCKED to the two
+     tones that made it. The bispectrum is built to detect exactly that:
+     the bicoherence shows sharp peaks at (fa, fa), (fb, fb), (fb, fa) and
+     (fb, fb-fa) - every pair of frequencies whose sum is one of the
+     products - close to 1, against a floor near 1/sqrt(epochs)
+     everywhere else - where the EEG
+     shows a mostly flat surface with its low-frequency ridge. The same
+     20 s / 300 s lengths and epoching as the EEG are used, the sampling
+     rate matching the EEG's 250 Hz so the two are directly comparable, and
+     the memo lists the expected peak positions beside what was found. At
+     k = 0 the products vanish and so do the peaks, which is the cleanest
+     demonstration of all: the power spectrum would still show the two
+     tones either way, and only the bispectrum can tell the two cases
+     apart.
+
      LAYOUT
 
      A TPageControl with one TTabSheet per signal; each sheet holds a memo
@@ -159,6 +185,14 @@ type
     cbLevelCurves: TCheckBox;
     lblBiFmax: TLabel;
     lblEpoch: TLabel;
+    lblFa: TLabel;
+    lblFb: TLabel;
+    lblK: TLabel;
+    pnlBiSynth: TPanel;
+    rgBiSignal: TRadioGroup;
+    seFa: TFloatSpinEdit;
+    seFb: TFloatSpinEdit;
+    seK: TFloatSpinEdit;
     memBi: TMemo;
     pnlBi: TPanel;
     pnlBiCtl: TPanel;
@@ -212,6 +246,8 @@ type
     FSynTime, FSynSpec: TVMPlot2D;
     FBiPlot: TVMPlot3D;
     FEEGLong: TSignalExcerpt;   // the 300 s EEG excerpt, for the bispectrum only
+    FBiSynthPhaseA, FBiSynthPhaseB: Double;   // the tones' random phases, drawn once
+    function SyntheticBispectrumSignal(N: Integer; Fs: Double): TVMobj;
     function DataDir: string;
     function LoadWFDB212(const DatFile, HeaFile: string; SigIndex: Integer;
       StartSec: Double): TSignalExcerpt;
@@ -406,6 +442,9 @@ begin
   FTabs[2].Signal.Database := 'MIT-BIH Polysomnographic Database (slpdb)';
   FEEGLong := LoadWFDB212(DataDir + 'slp01a_600s_300s.dat', DataDir + 'slp01a.hea', 2, 600);
   FEEGLong.Database := 'MIT-BIH Polysomnographic Database (slpdb)';
+  Randomize;
+  FBiSynthPhaseA := 2 * Pi * Random;
+  FBiSynthPhaseB := 2 * Pi * Random;
 
   for i := 0 to 2 do
     with FTabs[i] do
@@ -454,6 +493,7 @@ begin
   FBiPlot.Align := alClient;
   FBiPlot.XAxisTitle := 'f1 (Hz)';
   FBiPlot.YAxisTitle := 'f2 (Hz)';
+  FBiPlot.AxisStyle := pasBox;   // gridded back planes with the scales on their edges
 
   ShowAll;
 
@@ -510,6 +550,27 @@ begin
     FBiPlot.ShowLevelCurves := cbLevelCurves.Checked;
 end;
 
+{ Two tones through y = x + k x^2 plus noise - see the unit comment. The
+  tones' phases are drawn once (FormCreate) and kept, so changing k or the
+  frequencies re-synthesises the same realisation rather than a new one. }
+function TfmBio.SyntheticBispectrumSignal(N: Integer; Fs: Double): TVMobj;
+var
+  T, X: TVMobj;
+  k: Double;
+  i: Integer;
+  P: PDouble;
+begin
+  T := TVMobj.Create(1, N);
+  T.linspace(0, 1 / Fs);
+  k := seK.Value;
+  X := Sin(AddScalar((2 * Pi * seFa.Value) * T, FBiSynthPhaseA))
+     + Sin(AddScalar((2 * Pi * seFb.Value) * T, FBiSynthPhaseB));
+  Result := X + k * Sqr(X);                        // the nonlinearity
+  P := Result.DataPtr;
+  for i := 0 to N - 1 do
+    P[i] := P[i] + 0.05 * RandG(0, 1);             // a little white noise
+end;
+
 procedure TfmBio.ShowBispectrum;
 var
   Sig: TSignalExcerpt;
@@ -523,9 +584,23 @@ var
   Bre, Bim, P12, P3: array of array of Double;
   Pk: array of Double;   // E|X(k)|^2
   a1, b1, a2, b2, a3, b3, re, im: Double;
-  Bicoh: Boolean;
+  Bicoh, Synth: Boolean;
+  Expected: string;
+  fa, fb: Double;
 begin
-  Sig := FEEGLong;          // the 300 s EEG excerpt, not the EEG tab's 20 s
+  Synth := rgBiSignal.ItemIndex = 1;
+  pnlBiSynth.Visible := Synth;
+  if Synth then
+  begin
+    // same length and rate as the EEG excerpt, so the two are comparable
+    Sig := FEEGLong;
+    Sig.Data := SyntheticBispectrumSignal(FEEGLong.Data.Cols, FEEGLong.Fs);
+    Sig.RecordName := 'synthetic';
+    Sig.Description := Format('sin(2 pi %.3g t) + sin(2 pi %.3g t), then y = x + %.3g x^2', [seFa.Value, seFb.Value, seK.Value]);
+    Sig.Units := 'unit';
+  end
+  else
+    Sig := FEEGLong;          // the 300 s EEG excerpt, not the EEG tab's 20 s
   Fs := Sig.Fs;
   NTotal := Sig.Data.Cols;
   EpochSec := seEpoch.Value;
@@ -609,15 +684,16 @@ begin
       end;
     end;
 
+  if Synth then Expected := 'Two-tone test signal' else Expected := 'EEG';
   if Bicoh then
   begin
-    FBiPlot.Title := Format('EEG bicoherence b(f1,f2), %s, %d epochs of %.3g s', [Sig.RecordName, NumEp, NEp / Fs]);
+    FBiPlot.Title := Format('%s bicoherence b(f1,f2), %s, %d epochs of %.3g s', [Expected, Sig.RecordName, NumEp, NEp / Fs]);
     FBiPlot.ZAxisTitle := 'bicoherence';
     FBiPlot.ZAxisMin := 0; FBiPlot.ZAxisMax := 1;
   end
   else
   begin
-    FBiPlot.Title := Format('EEG bispectrum |B(f1,f2)|, %s, %d epochs of %.3g s', [Sig.RecordName, NumEp, NEp / Fs]);
+    FBiPlot.Title := Format('%s bispectrum |B(f1,f2)|, %s, %d epochs of %.3g s', [Expected, Sig.RecordName, NumEp, NEp / Fs]);
     FBiPlot.ZAxisTitle := '|B| (' + Sig.Units + '^3)';
     FBiPlot.ZAxisMin := 0; FBiPlot.ZAxisMax := 0;   // from the data
   end;
@@ -629,11 +705,36 @@ begin
   memBi.Lines.BeginUpdate;
   try
     memBi.Clear;
-    memBi.Lines.Add('Bispectrum of a 300 s EEG excerpt');
-    memBi.Lines.Add('Record:     ' + Sig.RecordName + ' - ' + Sig.Description);
-    memBi.Lines.Add(Format('Excerpt:    %.0f s to %.0f s of the record', [Sig.StartSec, Sig.StartSec + NTotal / Fs]));
-    memBi.Lines.Add('            (the EEG tab shows its first 20 s)');
-    memBi.Lines.Add(Format('Sampling:   %.6g Hz, %d samples (%.1f s)', [Fs, NTotal, NTotal / Fs]));
+    if Synth then
+    begin
+      fa := seFa.Value; fb := seFb.Value;
+      memBi.Lines.Add('Bispectrum of a synthetic two-tone signal');
+      memBi.Lines.Add('Signal:     ' + Sig.Description);
+      memBi.Lines.Add('            + white noise, sd 0.05');
+      memBi.Lines.Add(Format('Sampling:   %.6g Hz, %d samples (%.1f s)', [Fs, NTotal, NTotal / Fs]));
+      memBi.Lines.Add('');
+      memBi.Lines.Add('The x^2 term makes intermodulation products');
+      memBi.Lines.Add('phase-locked to the tones that produce them:');
+      memBi.Lines.Add(Format('  2fa   = %5.1f Hz   phase 2 pa', [2 * fa]));
+      memBi.Lines.Add(Format('  2fb   = %5.1f Hz   phase 2 pb', [2 * fb]));
+      memBi.Lines.Add(Format('  fa+fb = %5.1f Hz   phase pa + pb', [fa + fb]));
+      memBi.Lines.Add(Format('  fb-fa = %5.1f Hz   phase pb - pa', [Abs(fb - fa)]));
+      memBi.Lines.Add('so the bicoherence should peak near 1 at');
+      memBi.Lines.Add(Format('  (f1, f2) = (%.3g, %.3g), (%.3g, %.3g), (%.3g, %.3g)', [fa, fa, fb, fb, Max(fa, fb), Min(fa, fb)]));
+      memBi.Lines.Add(Format('  and (%.3g, %.3g) [the difference tone]', [Max(fa, fb), Abs(fb - fa)]));
+      memBi.Lines.Add('and sit near the bias floor elsewhere. Set k = 0');
+      memBi.Lines.Add('and the peaks vanish while the power spectrum');
+      memBi.Lines.Add('still shows the two tones - only the bispectrum');
+      memBi.Lines.Add('separates the two cases.');
+    end
+    else
+    begin
+      memBi.Lines.Add('Bispectrum of a 300 s EEG excerpt');
+      memBi.Lines.Add('Record:     ' + Sig.RecordName + ' - ' + Sig.Description);
+      memBi.Lines.Add(Format('Excerpt:    %.0f s to %.0f s of the record', [Sig.StartSec, Sig.StartSec + NTotal / Fs]));
+      memBi.Lines.Add('            (the EEG tab shows its first 20 s)');
+      memBi.Lines.Add(Format('Sampling:   %.6g Hz, %d samples (%.1f s)', [Fs, NTotal, NTotal / Fs]));
+    end;
     memBi.Lines.Add('');
     memBi.Lines.Add(Format('Epochs:     %d of %d samples (%.3g s), 50 %% overlap', [NumEp, NEp, NEp / Fs]));
     memBi.Lines.Add('Window:     Hamming, mean removed per epoch');
