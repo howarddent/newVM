@@ -45,6 +45,10 @@
         <Filename Value="../../Graphs/uVMPlot2D.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
+      <Unit>
+        <Filename Value="../../Graphs/uVMPlot3D.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

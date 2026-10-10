@@ -9,12 +9,15 @@ decoded by `ubiospectramain.pas`'s `LoadWFDB212`.
 |---|---|---|---|---|
 | `100_60s_20s.dat`, `100.hea` | MIT-BIH Arrhythmia Database (`mitdb/1.0.0`), record 100 | MLII (ECG) | 360 Hz | 60 s to 80 s |
 | `slp01a_600s_20s.dat`, `slp01a.hea` | MIT-BIH Polysomnographic Database (`slpdb/1.0.0`), record slp01a | BP (invasive arterial), EEG (C4-A1) | 250 Hz | 600 s to 620 s |
+| `slp01a_600s_300s.dat` | same record | EEG (C4-A1), for the bispectrum tab only | 250 Hz | 600 s to 900 s |
 
 Byte ranges: record 100 has 2 signals, so 3 bytes per frame - 60 s is
 frame 21600, byte 64800, and 20 s is 7200 frames = 21600 bytes. slp01a has
 4 signals, 6 bytes per frame - 600 s is frame 150000, byte 900000, and
-20 s is 5000 frames = 30000 bytes. The `.hea` files are the records'
-complete, unmodified headers.
+20 s is 5000 frames = 30000 bytes, and 300 s is 75000 frames = 450000 bytes
+(the 300 s file starts at the same byte, so its first 20 s are the 20 s
+file exactly). The `.hea` files are the records' complete, unmodified
+headers.
 
 Re-fetch with:
 
@@ -23,6 +26,7 @@ Re-fetch with:
     curl -o slp01a.hea $B/slpdb/1.0.0/slp01a.hea
     curl -r 64800-86399   -o 100_60s_20s.dat    $B/mitdb/1.0.0/100.dat
     curl -r 900000-929999 -o slp01a_600s_20s.dat $B/slpdb/1.0.0/slp01a.dat
+    curl -r 900000-1349999 -o slp01a_600s_300s.dat $B/slpdb/1.0.0/slp01a.dat
 
 Both databases are published under the Open Data Commons Attribution
 License v1.0. Citations: Moody GB, Mark RG. The impact of the MIT-BIH

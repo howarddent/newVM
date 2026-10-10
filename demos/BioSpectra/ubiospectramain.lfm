@@ -304,5 +304,108 @@ object fmBio: TfmBio
         OnResize = SynPanelResize
       end
     end
+    object tsBispectrum: TTabSheet
+      Caption = 'EEG bispectrum'
+      ClientHeight = 732
+      ClientWidth = 1192
+      object pnlBiCtl: TPanel
+        Left = 0
+        Height = 44
+        Top = 0
+        Width = 1192
+        Align = alTop
+        BevelOuter = bvNone
+        ClientHeight = 44
+        ClientWidth = 1192
+        TabOrder = 0
+        object lblBiFmax: TLabel
+          Left = 8
+          Height = 15
+          Top = 14
+          Width = 130
+          Caption = 'f1, f2 up to (Hz):'
+        end
+        object seBiFmax: TFloatSpinEdit
+          Left = 130
+          Height = 23
+          Top = 10
+          Width = 70
+          DecimalPlaces = 0
+          Increment = 5
+          MaxValue = 62
+          MinValue = 5
+          TabOrder = 0
+          Value = 30
+          OnChange = BispectrumChange
+        end
+        object lblEpoch: TLabel
+          Left = 220
+          Height = 15
+          Top = 14
+          Width = 110
+          Caption = 'Epoch length (s):'
+        end
+        object seEpoch: TFloatSpinEdit
+          Left = 330
+          Height = 23
+          Top = 10
+          Width = 70
+          DecimalPlaces = 1
+          Increment = 0.5
+          MaxValue = 10
+          MinValue = 0.5
+          TabOrder = 1
+          Value = 2
+          OnChange = BispectrumChange
+        end
+        object rgBiKind: TRadioGroup
+          Left = 420
+          Height = 38
+          Top = 2
+          Width = 330
+          AutoFill = True
+          Caption = 'Show'
+          Columns = 2
+          ItemIndex = 1
+          Items.Strings = (
+            'Bispectrum magnitude |B|'
+            'Bicoherence (0 .. 1)'
+          )
+          TabOrder = 2
+          OnSelectionChanged = BispectrumChange
+        end
+        object cbLevelCurves: TCheckBox
+          Left = 770
+          Height = 19
+          Top = 12
+          Width = 120
+          Caption = 'Level curves'
+          TabOrder = 3
+          OnChange = cbLevelCurvesChange
+        end
+      end
+      object memBi: TMemo
+        Left = 812
+        Height = 688
+        Top = 44
+        Width = 380
+        Align = alRight
+        Font.Name = 'Consolas'
+        ParentFont = False
+        ReadOnly = True
+        ScrollBars = ssAutoBoth
+        TabOrder = 1
+        WordWrap = False
+      end
+      object pnlBi: TPanel
+        Left = 0
+        Height = 688
+        Top = 44
+        Width = 812
+        Align = alClient
+        BevelOuter = bvNone
+        TabOrder = 2
+      end
+    end
   end
 end

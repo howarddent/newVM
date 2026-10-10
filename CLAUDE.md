@@ -1981,6 +1981,25 @@ packages. Compiled binaries and each demo's own `lib/` output are
   Pascal gotchas hit writing it: `K`/`k` and `N`/`n` are the same
   identifier (case-insensitive), and a `{` inside a `{ }` comment
   (a `sum_{k=1..K}` in the header) opens a nested comment level.
+  A sixth tab, "EEG bispectrum", puts a `TVMPlot3D` to use: a separate
+  300 s EEG excerpt (`data/slp01a_600s_300s.dat`, 450 KB, same start as
+  the 20 s one so its first 20 s are identical - the bispectrum needs
+  epochs to average, and 20 s gave only 19 with a bicoherence floor of
+  0.23; 300 s gives 299 and a floor of 0.06) is cut into overlapping
+  epochs (length from a spin edit, default 2 s at 50 % overlap), each
+  mean-removed, Hamming-windowed and `FFT_R2C`'d, and
+  the triple product `X(f1) X(f2) X*(f1+f2)` accumulated on the (f1, f2)
+  grid up to a chosen limit (default 30 Hz; capped at a quarter of fs so
+  f1+f2 stays below Nyquist). A radio group picks the bispectrum
+  magnitude or the bicoherence, which divides out the power at the three
+  frequencies and lies in [0, 1] with a `1/sqrt(epochs)` bias floor the
+  memo quotes. Only the f2 <= f1 triangle is computed, the grid being
+  filled symmetrically, and the square `TVMobj` goes to `SetData` with
+  `XAxisMin/Max`/`YAxisMin/Max` set to the frequency range so the ticks
+  read in Hz, and `ZAxisMin/Max` fixed to 0..1 for bicoherence. The
+  inner accumulation is a plain loop over `GetRealPart`/`GetImagPart`
+  values - no BLAS primitive forms a triple product on a grid. The
+  project gained `../../Graphs/uVMPlot3D.pas` (and so `GLU`) for it.
   - **Data** lives in `data/` as 20 s excerpts fetched by HTTP range
     request (about 50 KB in all) plus the unmodified `.hea` headers, so the
     demo runs offline; `data/README.md` has the byte ranges, re-fetch

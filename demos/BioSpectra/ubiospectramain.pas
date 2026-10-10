@@ -75,6 +75,41 @@ unit ubiospectramain;
      RMS error against the square wave and the peak overshoot, which never
      falls below about 9 % however many terms are added (Gibbs).
 
+     EEG BISPECTRUM (the sixth tab)
+
+     The power spectrum throws away phase; the bispectrum keeps the phase
+     relation between pairs of frequencies and their sum,
+
+       B(f1, f2) = E[ X(f1) X(f2) X*(f1 + f2) ]
+
+     averaged over epochs, so it is large only where the components at
+     f1, f2 and f1+f2 are phase-locked - quadratic phase coupling, which
+     a Gaussian process never shows and an anaesthetised EEG famously does
+     (the bispectral index, BIS, is built on exactly this). Averaging is
+     what makes it usable - with the 20 s excerpt there were only 19
+     epochs and the bicoherence floor sat near 0.23 - so this tab reads a
+     separate 300 s excerpt of the same EEG (data/slp01a_600s_300s.dat,
+     starting at the same 600 s; its first 20 s are the other tabs'
+     excerpt exactly). That is cut into epochs of a chosen length (default
+     2 s, 500 samples) at 50 % overlap - 299 of them - each mean-removed,
+     Hamming-windowed and FFT'd
+     with FFT_R2C; the triple product is accumulated on the (f1, f2) grid
+     for f1, f2 up to the chosen limit (default 30 Hz, where the EEG's
+     power lives) and f1 + f2 within the half-spectrum. Two things are
+     offered: the bispectrum magnitude |B| itself, and the bicoherence
+
+       b(f1, f2) = |B| / sqrt( E[|X(f1) X(f2)|^2] E[|X(f1+f2)|^2] )
+
+     which divides out the power at the three frequencies and lies in
+     [0, 1], so it reads as a fraction of the power that is phase-coupled
+     rather than as power-weighted magnitude - with few epochs it has a
+     bias floor of about 1/sqrt(epochs). Only the f2 <= f1 triangle is
+     independent (B is symmetric in f1, f2), so the grid is filled on
+     both sides from one computation. The result is a square TVMobj
+     handed to a TVMPlot3D as a height field, its axis ranges set to the
+     frequency limits so the ticks read in Hz; drag rotates, the wheel
+     zooms, as that component always does.
+
      LAYOUT
 
      A TPageControl with one TTabSheet per signal; each sheet holds a memo
@@ -93,7 +128,7 @@ interface
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Spin,
-  newVM, newVMComplex, uVMPlot2D;
+  newVM, newVMComplex, uVMPlot2D, uVMPlot3D;
 
 type
   { One signal excerpt plus what the header said about it }
@@ -121,6 +156,16 @@ type
   TfmBio = class(TForm)
     cbAllSums: TCheckBox;
     cbLinear: TCheckBox;
+    cbLevelCurves: TCheckBox;
+    lblBiFmax: TLabel;
+    lblEpoch: TLabel;
+    memBi: TMemo;
+    pnlBi: TPanel;
+    pnlBiCtl: TPanel;
+    rgBiKind: TRadioGroup;
+    seBiFmax: TFloatSpinEdit;
+    seEpoch: TFloatSpinEdit;
+    tsBispectrum: TTabSheet;
     lblF0: TLabel;
     lblSynF0: TLabel;
     lblTerms: TLabel;
@@ -150,6 +195,8 @@ type
     pnlECG: TPanel;
     pnlEEG: TPanel;
     procedure cbLinearChange(Sender: TObject);
+    procedure BispectrumChange(Sender: TObject);
+    procedure cbLevelCurvesChange(Sender: TObject);
     procedure SynthesisChange(Sender: TObject);
     procedure SynPanelResize(Sender: TObject);
     procedure FormCreate(Sender: TObject);
@@ -163,6 +210,8 @@ type
     FTabs: array[0..2] of TSignalTab;
     FSynthTime, FSynthSpec: TVMPlot2D;
     FSynTime, FSynSpec: TVMPlot2D;
+    FBiPlot: TVMPlot3D;
+    FEEGLong: TSignalExcerpt;   // the 300 s EEG excerpt, for the bispectrum only
     function DataDir: string;
     function LoadWFDB212(const DatFile, HeaFile: string; SigIndex: Integer;
       StartSec: Double): TSignalExcerpt;
@@ -174,6 +223,7 @@ type
     procedure ShowSignal(var Tab: TSignalTab);
     procedure ShowSynthetic;
     procedure ShowSynthesis;
+    procedure ShowBispectrum;
     procedure ShowAll;
   end;
 
@@ -354,6 +404,8 @@ begin
   FTabs[1].Signal.Database := 'MIT-BIH Polysomnographic Database (slpdb)';
   FTabs[2].Signal := LoadWFDB212(DataDir + 'slp01a_600s_20s.dat', DataDir + 'slp01a.hea', 1, 600);
   FTabs[2].Signal.Database := 'MIT-BIH Polysomnographic Database (slpdb)';
+  FEEGLong := LoadWFDB212(DataDir + 'slp01a_600s_300s.dat', DataDir + 'slp01a.hea', 2, 600);
+  FEEGLong.Database := 'MIT-BIH Polysomnographic Database (slpdb)';
 
   for i := 0 to 2 do
     with FTabs[i] do
@@ -397,6 +449,12 @@ begin
   FSynSpec.Align := alClient;
   FSynSpec.XAxisTitle := 'frequency (Hz)';
 
+  FBiPlot := TVMPlot3D.Create(Self);
+  FBiPlot.Parent := pnlBi;
+  FBiPlot.Align := alClient;
+  FBiPlot.XAxisTitle := 'f1 (Hz)';
+  FBiPlot.YAxisTitle := 'f2 (Hz)';
+
   ShowAll;
 
   // creating the GL controls on each sheet brings that sheet forward, so
@@ -410,6 +468,7 @@ var
 begin
   for i := 0 to 2 do
     FTabs[i].Signal.HeaderLines.Free;
+  FEEGLong.HeaderLines.Free;
 end;
 
 procedure TfmBio.PlotsPanelResize(Sender: TObject);
@@ -439,6 +498,177 @@ begin
     ShowSynthesis;
 end;
 
+procedure TfmBio.BispectrumChange(Sender: TObject);
+begin
+  if Assigned(FBiPlot) then
+    ShowBispectrum;
+end;
+
+procedure TfmBio.cbLevelCurvesChange(Sender: TObject);
+begin
+  if Assigned(FBiPlot) then
+    FBiPlot.ShowLevelCurves := cbLevelCurves.Checked;
+end;
+
+procedure TfmBio.ShowBispectrum;
+var
+  Sig: TSignalExcerpt;
+  Fs, Fres, Fmax, EpochSec, Mean, Sw2, Peak, PeakF1, PeakF2, Mag, Denom: Double;
+  NTotal, NEp, Hop, NumEp, NBins, KMax, e, i, k, k1, k2: Integer;
+  Theta, W, Seg, Segw, Grid: TVMobj;
+  X: TVMobjZ;
+  Xr, Xi: TVMobj;
+  SP, WP: PDouble;
+  // accumulators on the (k1, k2) grid, k2 <= k1
+  Bre, Bim, P12, P3: array of array of Double;
+  Pk: array of Double;   // E|X(k)|^2
+  a1, b1, a2, b2, a3, b3, re, im: Double;
+  Bicoh: Boolean;
+begin
+  Sig := FEEGLong;          // the 300 s EEG excerpt, not the EEG tab's 20 s
+  Fs := Sig.Fs;
+  NTotal := Sig.Data.Cols;
+  EpochSec := seEpoch.Value;
+  NEp := Round(EpochSec * Fs);
+  if NEp > NTotal then NEp := NTotal;
+  Hop := Max(1, NEp div 2);                     // 50 % overlap
+  NumEp := (NTotal - NEp) div Hop + 1;
+  NBins := NEp div 2 + 1;
+  Fres := Fs / NEp;
+  Fmax := seBiFmax.Value;
+  if (Fmax <= 0) or (Fmax > Fs / 4) then Fmax := Fs / 4;   // f1 + f2 must stay below Nyquist
+  KMax := Min(Trunc(Fmax / Fres), (NBins - 1) div 2);
+  Bicoh := rgBiKind.ItemIndex = 1;
+
+  // Hamming window for the epoch
+  Theta := TVMobj.Create(1, NEp);
+  Theta.linspace(0, 2 * Pi / (NEp - 1));
+  W := AddScalar((-0.46) * Cos(Theta), 0.54);
+  WP := W.DataPtr;
+  Sw2 := 0;
+  for i := 0 to NEp - 1 do Sw2 := Sw2 + Sqr(WP[i]);
+
+  SetLength(Bre, KMax + 1, KMax + 1);
+  SetLength(Bim, KMax + 1, KMax + 1);
+  SetLength(P12, KMax + 1, KMax + 1);
+  SetLength(P3, KMax + 1, KMax + 1);
+  SetLength(Pk, 2 * KMax + 1);
+
+  for e := 0 to NumEp - 1 do
+  begin
+    Seg := SubMatrix(Sig.Data, 0, e * Hop, 1, NEp);
+    SP := Seg.DataPtr;
+    Mean := 0;
+    for i := 0 to NEp - 1 do Mean := Mean + SP[i];
+    Segw := AddScalar(Seg, -Mean / NEp) * W;
+    X := FFT_R2C(Segw);
+    Xr := GetRealPart(X);
+    Xi := GetImagPart(X);
+    for k := 0 to 2 * KMax do
+      Pk[k] := Pk[k] + Sqr(Xr[0, k]) + Sqr(Xi[0, k]);
+    for k1 := 0 to KMax do
+    begin
+      a1 := Xr[0, k1]; b1 := Xi[0, k1];
+      for k2 := 0 to k1 do
+      begin
+        a2 := Xr[0, k2]; b2 := Xi[0, k2];
+        a3 := Xr[0, k1 + k2]; b3 := Xi[0, k1 + k2];
+        // X1 * X2
+        re := a1 * a2 - b1 * b2;
+        im := a1 * b2 + b1 * a2;
+        P12[k1, k2] := P12[k1, k2] + re * re + im * im;
+        P3[k1, k2] := P3[k1, k2] + a3 * a3 + b3 * b3;
+        // (X1 X2) * conj(X3)
+        Bre[k1, k2] := Bre[k1, k2] + re * a3 + im * b3;
+        Bim[k1, k2] := Bim[k1, k2] + im * a3 - re * b3;
+      end;
+    end;
+  end;
+
+  // fill the grid, both triangles, as |B| or bicoherence; scale |B| to
+  // the PSD's units^3/Hz^2-ish convention per epoch so values are not
+  // astronomically small
+  Grid := TVMobj.Create(KMax + 1, KMax + 1);
+  Peak := 0; PeakF1 := 0; PeakF2 := 0;
+  for k1 := 0 to KMax do
+    for k2 := 0 to k1 do
+    begin
+      Mag := Sqrt(Sqr(Bre[k1, k2]) + Sqr(Bim[k1, k2]));
+      if Bicoh then
+      begin
+        Denom := Sqrt(P12[k1, k2] * P3[k1, k2]);
+        if Denom > 0 then Mag := Mag / Denom else Mag := 0;
+      end
+      else
+        Mag := Mag / (NumEp * Power(Fs * Sw2, 1.5));
+      Grid[k2, k1] := Mag;    // row = f2, column = f1
+      Grid[k1, k2] := Mag;
+      if (Mag > Peak) and (k1 > 0) and (k2 > 0) then
+      begin
+        Peak := Mag; PeakF1 := k1 * Fres; PeakF2 := k2 * Fres;
+      end;
+    end;
+
+  if Bicoh then
+  begin
+    FBiPlot.Title := Format('EEG bicoherence b(f1,f2), %s, %d epochs of %.3g s', [Sig.RecordName, NumEp, NEp / Fs]);
+    FBiPlot.ZAxisTitle := 'bicoherence';
+    FBiPlot.ZAxisMin := 0; FBiPlot.ZAxisMax := 1;
+  end
+  else
+  begin
+    FBiPlot.Title := Format('EEG bispectrum |B(f1,f2)|, %s, %d epochs of %.3g s', [Sig.RecordName, NumEp, NEp / Fs]);
+    FBiPlot.ZAxisTitle := '|B| (' + Sig.Units + '^3)';
+    FBiPlot.ZAxisMin := 0; FBiPlot.ZAxisMax := 0;   // from the data
+  end;
+  FBiPlot.XAxisMin := 0; FBiPlot.XAxisMax := KMax * Fres;
+  FBiPlot.YAxisMin := 0; FBiPlot.YAxisMax := KMax * Fres;
+  FBiPlot.ShowLevelCurves := cbLevelCurves.Checked;
+  FBiPlot.SetData(Grid);
+
+  memBi.Lines.BeginUpdate;
+  try
+    memBi.Clear;
+    memBi.Lines.Add('Bispectrum of a 300 s EEG excerpt');
+    memBi.Lines.Add('Record:     ' + Sig.RecordName + ' - ' + Sig.Description);
+    memBi.Lines.Add(Format('Excerpt:    %.0f s to %.0f s of the record', [Sig.StartSec, Sig.StartSec + NTotal / Fs]));
+    memBi.Lines.Add('            (the EEG tab shows its first 20 s)');
+    memBi.Lines.Add(Format('Sampling:   %.6g Hz, %d samples (%.1f s)', [Fs, NTotal, NTotal / Fs]));
+    memBi.Lines.Add('');
+    memBi.Lines.Add(Format('Epochs:     %d of %d samples (%.3g s), 50 %% overlap', [NumEp, NEp, NEp / Fs]));
+    memBi.Lines.Add('Window:     Hamming, mean removed per epoch');
+    memBi.Lines.Add(Format('Resolution: %.4g Hz per bin', [Fres]));
+    memBi.Lines.Add(Format('Grid:       f1, f2 = 0 .. %.4g Hz, %d x %d', [KMax * Fres, KMax + 1, KMax + 1]));
+    memBi.Lines.Add(Format('            (f1 + f2 <= %.4g Hz, half the Nyquist)', [2 * KMax * Fres]));
+    memBi.Lines.Add('');
+    if Bicoh then
+    begin
+      memBi.Lines.Add('Shown: bicoherence');
+      memBi.Lines.Add('  b = |B| / sqrt(E|X1 X2|^2  E|X3|^2), 0 .. 1');
+      memBi.Lines.Add(Format('  bias floor ~ 1/sqrt(epochs) = %.2f', [1 / Sqrt(NumEp)]));
+    end
+    else
+    begin
+      memBi.Lines.Add('Shown: bispectrum magnitude');
+      memBi.Lines.Add('  |B| = |E[X(f1) X(f2) X*(f1+f2)]|');
+      memBi.Lines.Add('  (per epoch, window-normalised)');
+    end;
+    memBi.Lines.Add('');
+    memBi.Lines.Add(Format('Largest off-axis value %.4g at', [Peak]));
+    memBi.Lines.Add(Format('  f1 = %.3g Hz, f2 = %.3g Hz (sum %.3g Hz)', [PeakF1, PeakF2, PeakF1 + PeakF2]));
+    memBi.Lines.Add('');
+    memBi.Lines.Add('The surface is symmetric about f1 = f2;');
+    memBi.Lines.Add('the f2 <= f1 triangle is the independent');
+    memBi.Lines.Add('region. A ridge along the axes reflects');
+    memBi.Lines.Add('the low-frequency power, not coupling;');
+    memBi.Lines.Add('peaks off the axes mark frequency pairs');
+    memBi.Lines.Add('whose phases are locked to their sum.');
+    memBi.Lines.Add('Drag to rotate, wheel to zoom.');
+  finally
+    memBi.Lines.EndUpdate;
+  end;
+end;
+
 procedure TfmBio.ShowAll;
 var
   i: Integer;
@@ -448,6 +678,7 @@ begin
     ShowSignal(FTabs[i]);
   ShowSynthetic;
   ShowSynthesis;
+  ShowBispectrum;
 end;
 
 procedure TfmBio.seFmaxChange(Sender: TObject);
