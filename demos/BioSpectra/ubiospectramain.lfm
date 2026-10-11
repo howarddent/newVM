@@ -160,13 +160,14 @@ object fmBio: TfmBio
           Left = 8
           Height = 34
           Top = 1
-          Width = 560
+          Width = 700
           AutoFill = True
           Caption = 'Excerpt'
-          Columns = 3
-          ItemIndex = 1
+          Columns = 4
+          ItemIndex = 2
           Items.Strings = (
             'Awake, before induction'
+            'Sedated, BIS ~84'
             'Propofol, BIS ~45'
             'Burst suppression'
           )
@@ -175,10 +176,10 @@ object fmBio: TfmBio
         end
       end
       object memAnaes: TMemo
-        Left = 752
+        Left = 682
         Height = 692
         Top = 40
-        Width = 440
+        Width = 510
         Align = alRight
         Font.Name = 'Consolas'
         ParentFont = False
@@ -191,7 +192,7 @@ object fmBio: TfmBio
         Left = 0
         Height = 692
         Top = 40
-        Width = 752
+        Width = 682
         Align = alClient
         BevelOuter = bvNone
         TabOrder = 2
@@ -573,12 +574,13 @@ object fmBio: TfmBio
           Width = 400
           AutoFill = True
           Caption = 'Excerpt (300 s for the bispectrum)'
-          Columns = 3
-          ItemIndex = 1
+          Columns = 4
+          ItemIndex = 2
           Items.Strings = (
             'Awake'
-            'Propofol, BIS ~45'
-            'Burst suppression'
+            'Sedated'
+            'Propofol'
+            'Burst supp.'
           )
           TabOrder = 0
           OnSelectionChanged = AnaesBiChange
@@ -671,10 +673,10 @@ object fmBio: TfmBio
         end
       end
       object memABi: TMemo
-        Left = 752
+        Left = 682
         Height = 688
         Top = 44
-        Width = 440
+        Width = 510
         Align = alRight
         Font.Name = 'Consolas'
         ParentFont = False
@@ -687,7 +689,7 @@ object fmBio: TfmBio
         Left = 0
         Height = 688
         Top = 44
-        Width = 752
+        Width = 682
         Align = alClient
         BevelOuter = bvNone
         TabOrder = 2

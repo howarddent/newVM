@@ -36,7 +36,7 @@ CD-ROM. Psychiatry and Clinical Neurosciences 53:175-177 (1999).
 Goldberger AL et al. PhysioBank, PhysioToolkit, and PhysioNet.
 Circulation 101(23):e215-e220 (2000).
 
-## VitalDB: frontal EEG under anaesthesia (the "Anaesthesia EEG" tab)
+## VitalDB: frontal EEG under anaesthesia and sedation (the "Anaesthesia EEG" and "Anaesthesia bispectrum" tabs)
 
 | File | Contents |
 |---|---|
@@ -44,9 +44,12 @@ Circulation 101(23):e215-e220 (2000).
 | `vitaldb_655_eeg300.csv` | 300 s of each state for the bispectrum tab, each containing its 20 s excerpt: awake 745-1045 s, propofol 1890-2190 s, burst suppression 8314-8614 s (ending with its excerpt: the recording has a 16 s gap from 8619 s). The awake window avoids 1000-1300 s, which carries ECG artefact (spikes once a second; bicoherence ~0.9 everywhere) |
 | `vitaldb_655_trend.csv` | every 10 s over the whole case: BIS, SQI, suppression ratio, propofol and remifentanil effect-site concentrations (Orchestra TCI); BIS/SQI/SR blank while SQI is 0 |
 | `vitaldb_655_case.txt` | the case's row of the VitalDB case table (demographics, operation, times) |
-| `fetch_vitaldb.py` | re-creates the three files above (standard library only) |
+| `vitaldb_574_eeg.csv` | the sedated state: one 20 s excerpt of `BIS/EEG1_WAV` from case 574, from 3440 s (SQI 100 %) |
+| `vitaldb_574_eeg300.csv` | 300 s of the sedated state, 3300-3600 s, containing that excerpt |
+| `vitaldb_574_trend.csv`, `vitaldb_574_case.txt` | case 574's trend and case-table row, as for case 655 |
+| `fetch_vitaldb.py` | re-creates all eight files (standard library only) |
 
-Source: [VitalDB](https://vitaldb.net), case 655 - also published on
+Source: [VitalDB](https://vitaldb.net), cases 655 and 574 - also published on
 PhysioNet as `vitaldb/1.0.0` - fetched through VitalDB's open web API
 (`api.vitaldb.net/cases`, `/trks`, `/<track id>`; no login). Licence
 CC BY 4.0. Citation: Lee HC, Park Y, Yoon SB, Yang SM, Park D, Jung CW.
@@ -63,3 +66,22 @@ SQI > 85, Ce > 2), the strongest 8-14 Hz alpha against 16-24 Hz beta.
 Case 655 led on both (21 uV, alpha 14.8 dB over beta) with 15 minutes
 awake. It also reached burst suppression later (SR up to 65 %), and the
 excerpt is the 20 s of highest suppression ratio with SQI > 70.
+
+How case 574 was chosen (2026-10-11), for a sedated state at BIS 70-90:
+VitalDB lists 72 cases as "Sedationalgesia". 50 of them have the raw BIS
+EEG and an Orchestra propofol pump. Counting the time each spent at BIS
+70-90 with SQI >= 50 while propofol was running gave about 26 hours in
+all, with 31 cases holding at least 10 minutes. Case 574 (67-year-old
+woman, removal of a peritoneal dialysis catheter) has two hours of it.
+From about 1800 s to 5000 s its propofol Ce is held at 1.0 ug/ml and its
+remifentanil Ce at 1.0 ng/ml, with BIS 82-86, SQI ~95 % and no volatile
+agent or nitrous oxide (Primus MAC and FiN2O both 0). That is sedation
+with an opioid, not propofol alone.
+
+Within that stretch, 300 s windows every 150 s were checked for
+artefact. Those starting at 2400, 2550, 3000, 3150 and 3600 s each hold a
+single huge spike: kurtosis over 1000 and bicoherence ~0.7 everywhere.
+3300-3600 s is clean, with kurtosis 3.4 and mean bicoherence 0.053, at
+the 1/sqrt(299) = 0.058 bias floor. Its first 20 s had SQI only 60-80 %,
+so the 20 s excerpt is taken from 3440 s, where SQI is 100 %. The band
+powers and bicoherence were cross-checked in numpy.

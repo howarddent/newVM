@@ -59,7 +59,9 @@ unit ubiospectramain;
 
      ANAESTHESIA EEG (the fourth tab)
 
-     Frontal EEG from one anaesthetic in VitalDB (Seoul National
+     Frontal EEG in four states, in order of depth: awake, sedated,
+     propofol maintenance and burst suppression. Three come from one
+     anaesthetic in VitalDB (Seoul National
      University Hospital's open intra-operative database, CC BY 4.0, also
      on PhysioNet as vitaldb): case 655, a 52-year-old man having a
      videoscopic liver sectionectomy under total intravenous anaesthesia -
@@ -74,12 +76,25 @@ unit ubiospectramain;
      trend of BIS, SQI, SR and both effect-site concentrations, and a few
      fields from the case table - read by LoadVitalDB.
 
+     The sedated state comes from a second patient, case 574: a
+     67-year-old woman having a peritoneal dialysis catheter removed under
+     sedation-analgesia. Her propofol Ce is held at 1.0 ug/ml with
+     remifentanil at 1.0 ng/ml, BIS ~84. Its files are the same kinds,
+     vitaldb_574_*, with one column. Each case is a TAnaesCase (trend plus
+     details); AnaesStateCase says which case each state comes from, and
+     the trend plot shows the chosen state's case. At this light level the
+     EEG is still awake-like: about the same power, the alpha still the
+     ~9 Hz resting rhythm, and a little more beta. The slow waves and the
+     frontal 11 Hz alpha appear only nearer loss of consciousness. It is a
+     different patient, so the comparison is of spectral shape more than
+     absolute power.
+
      The tab shows the whole-case trend at the top (BIS, SR, propofol
      Ce x10 to share the 0-100 axis, a dashed line at each excerpt,
      plotted point by point with PlotXY so each series can skip its own
      gaps), then the time trace and the PSD of the excerpt picked in the
      radio group, the PSD with the EEG bands marked. Stepping through the
-     three shows the change: under propofol the power rises eightfold, slow-delta waves appear, and a frontal
+     four shows the change: under propofol the power rises eightfold, slow-delta waves appear, and a frontal
      alpha near 11 Hz takes over (about ten times the awake alpha power,
      which peaks at ~9 Hz), while beta halves; in burst suppression the
      power falls back as the EEG goes flat between bursts. The memo
@@ -90,11 +105,11 @@ unit ubiospectramain;
      and the 7-14 Hz peak frequency.
 
      --snapshot=<prefix> opens this tab, saves its plots (<prefix>_trend,
-     _time0..2 and _spectrum0..2 .png, one per excerpt), the whole window
+     _time0..3 and _spectrum0..3 .png, one per excerpt), the whole window
      (<prefix>_window.bmp) and the EEG tab's spectrum
      (<prefix>_eeg_spectrum.png; _ecg_ and _abp_spectrum likewise), then the anaesthesia bispectrum tab's
-     window for each display and state (<prefix>_bispectrumB0..2.bmp for
-     |B|, _bispectrumdB0..2 for |B| in dB, _bispectrumb0..2 for
+     window for each display and state (<prefix>_bispectrumB0..3.bmp for
+     |B|, _bispectrumdB0..3 for |B| in dB, _bispectrumb0..3 for
      bicoherence - TVMPlot3D has
      no SaveToPNG, but under GTK2 the form image includes the GL area),
      prints both tabs' memos and exits - for checking them unattended.
@@ -199,7 +214,8 @@ unit ubiospectramain;
      300 s of each state (data/vitaldb_655_eeg300.csv, each containing its
      20 s excerpt: awake 745-1045 s, propofol 1890-2190 s, burst
      suppression 8314-8614 s - the last ending with its excerpt because
-     the recording has a 16 s gap from 8619 s), 299 epochs of 2 s and a
+     the recording has a 16 s gap from 8619 s - and, from case 574,
+     sedated 3300-3600 s), 299 epochs of 2 s and a
      bicoherence floor of 0.06. The computation is the seventh tab's,
      moved into ComputeBispectrum so both tabs share it, which gained a
      lower frequency limit: the surface starts at 1 Hz by default (a spin
@@ -213,17 +229,17 @@ unit ubiospectramain;
 
      The surface's title carries the state's SynchFastSlow, the BIS
      index's bispectral sub-parameter (Rampil 1998), and the memo all
-     three: ln( sum |B| over 0.5-47 Hz / sum |B| over 40-47 Hz ), a band
+     four: ln( sum |B| over 0.5-47 Hz / sum |B| over 40-47 Hz ), a band
      taken as the band of the sum frequency f1 + f2 (the published
      description doesn't say; both f1 and f2 in 40-47 Hz would put the sum
      past this 128 Hz EEG's Nyquist frequency), over f2 <= f1 with both
      >= 0.5 Hz - its own pass in SynchFastSlow, since it needs X up to
-     47 Hz. Awake 5.35, propofol 7.05, burst suppression 4.11 (matching a
-     numpy calculation exactly): it rises as the fast activity falls away
+     47 Hz. Awake 5.35, sedated 3.69, propofol 7.05, burst suppression
+     4.11 (the case 655 values matching a numpy calculation exactly): it rises as the fast activity falls away
      under propofol, then drops as the broadband bursts refill 40-47 Hz -
      the depth at which BIS leans on the burst suppression ratio instead.
      Not the monitor's own value, whose details are proprietary. The memo
-     tabulates the mean bicoherence of all three states over four regions
+     tabulates the mean bicoherence of all four states over four regions
      (delta x delta, alpha x alpha, alpha x delta, beta x beta) and each
      one's largest value with both frequencies >= 1 Hz: propofol gathers
      its coupling in the alpha band, peaking at (11.5, 10.5) Hz with 0.49
@@ -231,7 +247,10 @@ unit ubiospectramain;
      it - while its beta coupling drops to the floor; awake shows little
      beyond the eye-movement corner (delta 0.38); burst suppression is
      high everywhere (0.92 peak, 0.4-0.6 means), each burst a transient
-     whose components start phase-aligned. Checked against an independent
+     whose components start phase-aligned; sedated sits at the bias floor
+     everywhere (0.05-0.07, peak 0.22), the nearest to Gaussian noise, and
+     has the lowest SynchFastSlow - relatively more 40-47 Hz, most likely
+     forehead EMG in an unparalysed patient. Checked against an independent
      numpy calculation, which agreed to two decimals. The awake 300 s
      deliberately avoid 1000-1300 s, where ECG spikes once a second give a
      bicoherence of ~0.9 everywhere.
@@ -286,6 +305,16 @@ type
     KMin: Integer;               // bottom bin: the grid is (KMax-KMin+1) square
     Fres: Double;                // Hz per bin
     Peak, PeakF1, PeakF2: Double;   // largest value off the axes, and where
+  end;
+
+  { One VitalDB case on the anaesthesia tabs: its 10 s trend and its
+    details. Trend columns, in Vals order: BIS, SQI (%), SR (%), propofol
+    and remifentanil effect-site concentrations; NaN = not recorded. }
+  TAnaesCase = record
+    Id: string;
+    Info: TStringList;          // 'field: value' lines from the case table
+    T: array of Double;         // s from case start
+    Vals: array[0..4] of array of Double;
   end;
 
   { TfmBio }
@@ -381,27 +410,29 @@ type
     FBiPlot: TVMPlot3D;
     FEEGLong: TSignalExcerpt;   // the 300 s EEG excerpt, for the bispectrum only
     FBiSynthPhaseA, FBiSynthPhaseB: Double;   // the tones' random phases, drawn once
-    // anaesthesia EEG tab: three excerpts of one VitalDB case, its trend, its details
-    FAnaesEEG: array[0..2] of TVMobj;          // 1 x N, uV
-    FAnaesName: array[0..2] of string;
-    FAnaesStart: array[0..2] of Double;        // s from case start
-    FTrendT, FTrendBIS, FTrendSQI, FTrendSR, FTrendPPF, FTrendRFTN: array of Double;   // NaN = not recorded
-    FAnaesCase: TStringList;                   // 'field: value' lines from the case table
+    // anaesthesia EEG tab: four states from two VitalDB cases (AnaesStateCase),
+    // a 20 s excerpt of each, and each case's trend and details
+    FAnaesCases: array[0..1] of TAnaesCase;
+    FAnaesEEG: array[0..3] of TVMobj;          // 1 x N, uV
+    FAnaesName: array[0..3] of string;
+    FAnaesStart: array[0..3] of Double;        // s from its case's start
     FAnaesTrend, FAnaesTime, FAnaesSpec: TVMPlot2D;
     // anaesthesia bispectrum tab: 300 s of each state, its own copies of
     // the trend and trace plots, and the bispectrum surface
-    FAnaesLong: array[0..2] of TVMobj;
-    FAnaesLongStart: array[0..2] of Double;
+    FAnaesLong: array[0..3] of TVMobj;
+    FAnaesLongStart: array[0..3] of Double;
     FABiTrend, FABiTime: TVMPlot2D;
     FABiPlot: TVMPlot3D;
     FSnapshot: string;   // --snapshot=<prefix>: save the anaesthesia tab's plots, print its memo, exit
     procedure LoadVitalDB;
     procedure LoadVitalDBEEG(const FileName: string; var Names: array of string;
       var Starts: array of Double; var Data: array of TVMobj);
-    procedure DrawAnaesTrend(Plot: TVMPlot2D; Compact: Boolean = False);
+    procedure LoadAnaesCase(const Id: string; var C: TAnaesCase);
+    procedure DrawAnaesTrend(Plot: TVMPlot2D; j: Integer; Compact: Boolean = False);
     procedure DrawAnaesTrace(Plot: TVMPlot2D; j: Integer; Compact: Boolean = False);
     procedure ShowAnaesBispectrum;
-    function TrendMean(const V: array of Double; T0, T1: Double): Double;
+    function TrendMean(const C: TAnaesCase; Which: Integer; T0, T1: Double): Double;
+    function StateMean(j, Which: Integer; Long: Boolean = False): Double;
     procedure ShowAnaesthesia;
     procedure SnapshotShow(Sender: TObject);
     procedure DoSnapshot(Data: PtrInt);
@@ -805,7 +836,8 @@ begin
   for i := 0 to 2 do
     FTabs[i].Signal.HeaderLines.Free;
   FEEGLong.HeaderLines.Free;
-  FAnaesCase.Free;
+  FAnaesCases[0].Info.Free;
+  FAnaesCases[1].Info.Free;
 end;
 
 procedure TfmBio.PlotsPanelResize(Sender: TObject);
@@ -1271,11 +1303,18 @@ begin
   end;
 end;
 
-{ --- the anaesthesia EEG tab (VitalDB case 655) ------------------------------ }
+{ --- the anaesthesia EEG tabs (VitalDB cases 655 and 574) ------------------- }
 
 const
   AnaesFs = 128.0;                                        // BIS Vista EEG
-  AnaesColour: array[0..2] of TColor = (clGray, clRed, clBlue);
+  // states in order of depth: awake, sedated, propofol, burst suppression
+  AnaesStates = 4;
+  AnaesColour: array[0..AnaesStates - 1] of TColor = (clGray, $0000A0FF, clRed, clBlue);   // grey, orange, red, blue
+  // which of FAnaesCases each state comes from: 0 = case 655, 1 = case 574
+  AnaesStateCase: array[0..AnaesStates - 1] of Integer = (0, 1, 0, 0);
+  AnaesShort: array[0..AnaesStates - 1] of string = ('awake', 'sedated', 'propofol', 'burst s.');
+  // TAnaesCase.Vals columns
+  tvBIS = 0; tvSQI = 1; tvSR = 2; tvPPF = 3; tvRFTN = 4;
 
 { one of the VitalDB EEG files: '#' comments - one of them naming the
   excerpts and their start times - a header row, then one row per sample
@@ -1349,13 +1388,14 @@ begin
   end;
 end;
 
-procedure TfmBio.LoadVitalDB;
+{ one case's trend (time_s,BIS,SQI,SR,PPF_CE,RFTN_CE, empty where not
+  recorded) and case-table details }
+procedure TfmBio.LoadAnaesCase(const Id: string; var C: TAnaesCase);
 var
   Fmt: TFormatSettings;
   L, Parts: TStringList;
-  i, n: Integer;
+  i, k, n: Integer;
   Line: string;
-  LongNames: array[0..2] of string;
   function Num(const S: string): Double;
   begin
     if Trim(S) = '' then Result := NaN else Result := StrToFloat(Trim(S), Fmt);
@@ -1363,57 +1403,103 @@ var
 begin
   Fmt := DefaultFormatSettings;
   Fmt.DecimalSeparator := '.';
-  LoadVitalDBEEG(DataDir + 'vitaldb_655_eeg.csv', FAnaesName, FAnaesStart, FAnaesEEG);
-  LoadVitalDBEEG(DataDir + 'vitaldb_655_eeg300.csv', LongNames, FAnaesLongStart, FAnaesLong);
+  C.Id := Id;
   L := TStringList.Create;
   Parts := TStringList.Create;
   try
     Parts.Delimiter := ',';
     Parts.StrictDelimiter := True;
-
-    // trend: time_s,BIS,SQI,SR,PPF_CE,RFTN_CE, empty where not recorded
-    L.LoadFromFile(DataDir + 'vitaldb_655_trend.csv');
-    SetLength(FTrendT, 0);
+    L.LoadFromFile(DataDir + 'vitaldb_' + Id + '_trend.csv');
+    SetLength(C.T, L.Count);
+    for k := 0 to 4 do SetLength(C.Vals[k], L.Count);
+    n := 0;
     for i := 0 to L.Count - 1 do
     begin
       Line := Trim(L[i]);
       if (Line = '') or (Line[1] = '#') or (Pos('time_s', Line) = 1) then Continue;
       Parts.DelimitedText := Line;
       if Parts.Count < 6 then Continue;
-      n := Length(FTrendT);
-      SetLength(FTrendT, n + 1); SetLength(FTrendBIS, n + 1); SetLength(FTrendSQI, n + 1);
-      SetLength(FTrendSR, n + 1); SetLength(FTrendPPF, n + 1); SetLength(FTrendRFTN, n + 1);
-      FTrendT[n] := Num(Parts[0]);
-      FTrendBIS[n] := Num(Parts[1]);
-      FTrendSQI[n] := Num(Parts[2]);
-      FTrendSR[n] := Num(Parts[3]);
-      FTrendPPF[n] := Num(Parts[4]);
-      FTrendRFTN[n] := Num(Parts[5]);
+      C.T[n] := Num(Parts[0]);
+      for k := 0 to 4 do C.Vals[k][n] := Num(Parts[k + 1]);
+      Inc(n);
     end;
-
-    FAnaesCase := TStringList.Create;
-    FAnaesCase.NameValueSeparator := ':';
-    FAnaesCase.LoadFromFile(DataDir + 'vitaldb_655_case.txt');
+    SetLength(C.T, n);
+    for k := 0 to 4 do SetLength(C.Vals[k], n);
   finally
     Parts.Free;
     L.Free;
   end;
+  C.Info := TStringList.Create;
+  C.Info.NameValueSeparator := ':';
+  C.Info.LoadFromFile(DataDir + 'vitaldb_' + Id + '_case.txt');
 end;
 
-{ mean of a trend over [T0, T1], ignoring gaps; NaN if nothing recorded }
-function TfmBio.TrendMean(const V: array of Double; T0, T1: Double): Double;
+{ case 655's three excerpts (awake, propofol, burst suppression) become
+  states 0, 2 and 3, case 574's one (sedated) state 1 }
+procedure TfmBio.LoadVitalDB;
+const
+  Slot655: array[0..2] of Integer = (0, 2, 3);
+var
+  i: Integer;
+  Names: array[0..2] of string;
+  Starts: array[0..2] of Double;
+  Data: array[0..2] of TVMobj;
+  Names1: array[0..0] of string;
+  Starts1: array[0..0] of Double;
+  Data1: array[0..0] of TVMobj;
+begin
+  LoadAnaesCase('655', FAnaesCases[0]);
+  LoadAnaesCase('574', FAnaesCases[1]);
+
+  LoadVitalDBEEG(DataDir + 'vitaldb_655_eeg.csv', Names, Starts, Data);
+  for i := 0 to 2 do
+  begin
+    FAnaesName[Slot655[i]] := Names[i];
+    FAnaesStart[Slot655[i]] := Starts[i];
+    FAnaesEEG[Slot655[i]] := Data[i];
+  end;
+  LoadVitalDBEEG(DataDir + 'vitaldb_655_eeg300.csv', Names, Starts, Data);
+  for i := 0 to 2 do
+  begin
+    FAnaesLongStart[Slot655[i]] := Starts[i];
+    FAnaesLong[Slot655[i]] := Data[i];
+  end;
+
+  LoadVitalDBEEG(DataDir + 'vitaldb_574_eeg.csv', Names1, Starts1, Data1);
+  FAnaesName[1] := Names1[0];
+  FAnaesStart[1] := Starts1[0];
+  FAnaesEEG[1] := Data1[0];
+  LoadVitalDBEEG(DataDir + 'vitaldb_574_eeg300.csv', Names1, Starts1, Data1);
+  FAnaesLongStart[1] := Starts1[0];
+  FAnaesLong[1] := Data1[0];
+end;
+
+{ mean of one of a case's trends over [T0, T1], ignoring gaps; NaN if
+  nothing recorded }
+function TfmBio.TrendMean(const C: TAnaesCase; Which: Integer; T0, T1: Double): Double;
 var
   k, n: Integer;
 begin
   Result := 0;
   n := 0;
-  for k := 0 to High(FTrendT) do
-    if (FTrendT[k] >= T0) and (FTrendT[k] <= T1) and not IsNan(V[k]) then
+  for k := 0 to High(C.T) do
+    if (C.T[k] >= T0) and (C.T[k] <= T1) and not IsNan(C.Vals[Which][k]) then
     begin
-      Result := Result + V[k];
+      Result := Result + C.Vals[Which][k];
       Inc(n);
     end;
   if n > 0 then Result := Result / n else Result := NaN;
+end;
+
+{ state j's mean of trend Which over its 20 s excerpt, or (Long) its 300 s }
+function TfmBio.StateMean(j, Which: Integer; Long: Boolean): Double;
+begin
+  if Long then
+    Result := TrendMean(FAnaesCases[AnaesStateCase[j]], Which,
+      FAnaesLongStart[j], FAnaesLongStart[j] + FAnaesLong[j].Cols / AnaesFs)
+  else
+    Result := TrendMean(FAnaesCases[AnaesStateCase[j]], Which,
+      FAnaesStart[j], FAnaesStart[j] + FAnaesEEG[j].Cols / AnaesFs);
 end;
 
 procedure TfmBio.AnaesPanelResize(Sender: TObject);
@@ -1442,43 +1528,48 @@ begin
   if Result <> '' then Result[1] := LowerCase(Result[1]);
 end;
 
-{ the whole case: BIS, suppression ratio and propofol effect-site
-  concentration (x10 to share the 0-100 axis), with a dashed vertical line
-  at the middle of each 20 s excerpt - on both anaesthesia tabs. Compact
-  (the bispectrum tab's shorter plot) names the colours in the title
-  instead of a legend, which would cover the plot at that height. }
-procedure TfmBio.DrawAnaesTrend(Plot: TVMPlot2D; Compact: Boolean);
+{ the whole of the chosen state's case: BIS, suppression ratio and
+  propofol effect-site concentration (x10 to share the 0-100 axis), with a
+  dashed vertical line at the middle of each of that case's 20 s excerpts
+  - on both anaesthesia tabs. Compact (the bispectrum tab's shorter plot)
+  names the colours in the title instead of a legend, which would cover
+  the plot at that height. }
+procedure TfmBio.DrawAnaesTrend(Plot: TVMPlot2D; j: Integer; Compact: Boolean);
 var
-  i, k: Integer;
+  i, k, c: Integer;
   function Nm(const S: string): string;
   begin
     if Compact then Result := '' else Result := S;
   end;
 begin
+  c := AnaesStateCase[j];
   Plot.ClearSeries;
   if Compact then
-    Plot.Title := Format('Case %s: BIS (black), SR %% (green), propofol Ce x10 (purple)', [Trim(FAnaesCase.Values['caseid'])])
+    Plot.Title := Format('Case %s: BIS (black), SR %% (green), propofol Ce x10 (purple)', [FAnaesCases[c].Id])
   else
-    Plot.Title := Format('Case %s: BIS, SR (%%), propofol Ce (ug/ml x10) - dashed: excerpts', [Trim(FAnaesCase.Values['caseid'])]);
+    Plot.Title := Format('Case %s: BIS, SR (%%), propofol Ce (ug/ml x10) - dashed: excerpts', [FAnaesCases[c].Id]);
   Plot.LegendCorner := lcBottomRight;
   Plot.SetSeriesStyle(0, clBlack, 1.5, plsSolid, Nm('BIS'));
   Plot.SetSeriesStyle(1, clGreen, 1.0, plsSolid, Nm('SR %'));
   Plot.SetSeriesStyle(2, clPurple, 1.5, plsSolid, Nm('propofol Ce x10'));
-  for i := 0 to 2 do
-    Plot.SetSeriesStyle(3 + i, AnaesColour[i], 2.0, plsDash, '');
-  for k := 0 to High(FTrendT) do
-  begin
-    // BIS 0 with suppression well short of 100 % is a momentary loss of
-    // signal, not an isoelectric EEG - left out rather than drawn as a dip
-    if not IsNan(FTrendBIS[k]) and (FTrendBIS[k] > 0) then Plot.PlotXY(FTrendT[k], FTrendBIS[k], 0);
-    if not IsNan(FTrendSR[k]) then Plot.PlotXY(FTrendT[k], FTrendSR[k], 1);
-    if not IsNan(FTrendPPF[k]) then Plot.PlotXY(FTrendT[k], 10 * FTrendPPF[k], 2);
-  end;
-  for i := 0 to 2 do
-  begin
-    Plot.PlotXY(FAnaesStart[i] + 10, 0, 3 + i);
-    Plot.PlotXY(FAnaesStart[i] + 10, 100, 3 + i);
-  end;
+  with FAnaesCases[c] do
+    for k := 0 to High(T) do
+    begin
+      // BIS 0 with suppression well short of 100 % is a momentary loss of
+      // signal, not an isoelectric EEG - left out rather than drawn as a dip
+      if not IsNan(Vals[tvBIS][k]) and (Vals[tvBIS][k] > 0) then Plot.PlotXY(T[k], Vals[tvBIS][k], 0);
+      if not IsNan(Vals[tvSR][k]) then Plot.PlotXY(T[k], Vals[tvSR][k], 1);
+      if not IsNan(Vals[tvPPF][k]) then Plot.PlotXY(T[k], 10 * Vals[tvPPF][k], 2);
+    end;
+  k := 3;
+  for i := 0 to AnaesStates - 1 do
+    if AnaesStateCase[i] = c then
+    begin
+      Plot.SetSeriesStyle(k, AnaesColour[i], 2.0, plsDash, '');
+      Plot.PlotXY(FAnaesStart[i] + 10, 0, k);
+      Plot.PlotXY(FAnaesStart[i] + 10, 100, k);
+      Inc(k);
+    end;
 end;
 
 { excerpt j's 20 s time trace }
@@ -1488,7 +1579,8 @@ var
 begin
   T := TVMobj.Create(1, FAnaesEEG[j].Cols);
   T.linspace(0, 1 / AnaesFs);
-  Plot.Title := Format('Frontal EEG, %s - 20 s from %.0f s', [LowerFirst(rgAnaes.Items[j]), FAnaesStart[j]]);
+  Plot.Title := Format('Frontal EEG, %s - case %s, 20 s from %.0f s',
+    [LowerFirst(rgAnaes.Items[j]), FAnaesCases[AnaesStateCase[j]].Id, FAnaesStart[j]]);
   Plot.ClearSeries;
   if Compact then
     Plot.SetSeriesStyle(0, AnaesColour[j], 1.0, plsSolid, '')
@@ -1503,68 +1595,92 @@ const
   BandHi: array[0..3] of Double = (4, 8, 13, 30);
   BandName: array[0..3] of string = ('delta 0.5-4 Hz', 'theta 4-8 Hz', 'alpha 8-13 Hz', 'beta 13-30 Hz');
 var
-  i, j, k, N, NBins: Integer;
-  Sw2, Df, Tot, Pk, PkF, Mean, Rms, T0, T1: Double;
-  F, FL: TVMobj;
-  P, PL: array[0..2] of TVMobj;
+  i, j, k, b, N, NBins: Integer;
+  Sw2, Df, Tot, Pk, PkF, Mean, Rms: Double;
+  F, FL, P, PL: TVMobj;
   XP, FP: PDouble;
-  Band: array[0..2, 0..3] of Double;
-  TotP, Alpha, RmsV: array[0..2] of Double;
-  Lbl: array[0..2] of string;
-  function C(const Key: string): string;
+  Band: array[0..AnaesStates - 1, 0..3] of Double;
+  TotP, Alpha, RmsV, V: array[0..AnaesStates - 1] of Double;
+  function C(ci: Integer; const Key: string): string;
   begin
-    Result := Trim(FAnaesCase.Values[Key]);
+    Result := Trim(FAnaesCases[ci].Info.Values[Key]);
   end;
-  function Row3(const Name, Fm: string; const V: array of Double): string;
+  function RowN(const Name, Fm: string; const W: array of Double): string;
   var
     m: Integer;
   begin
     Result := Format('%-19s', [Name]);
-    for m := 0 to 2 do
-      if IsNan(V[m]) then Result := Result + Format('%9s', ['-'])
-      else Result := Result + Format('%9s', [Format(Fm, [V[m]])]);
+    for m := 0 to High(W) do
+      if IsNan(W[m]) then Result := Result + Format('%9s', ['-'])
+      else Result := Result + Format('%9s', [Format(Fm, [W[m]])]);
   end;
-  function TrendRow(const V: array of Double; i: Integer): Double;
+  function TrendRow(const Name, Fm: string; Which: Integer): string;
+  var
+    m: Integer;
   begin
-    Result := TrendMean(V, FAnaesStart[i], FAnaesStart[i] + 20);
+    for m := 0 to AnaesStates - 1 do V[m] := StateMean(m, Which);
+    Result := RowN(Name, Fm, V);
+  end;
+  // at two spaces' indent, broken at spaces to fit the memo's width
+  procedure AddWrapped(Text: string);
+  const
+    Width = 42;
+  var
+    k: Integer;
+  begin
+    while Length(Text) > Width do
+    begin
+      k := Width;
+      while (k > 1) and (Text[k] <> ' ') do Dec(k);
+      if k <= 1 then k := Width;
+      memAnaes.Lines.Add('  ' + Copy(Text, 1, k - 1));
+      Delete(Text, 1, k);
+    end;
+    memAnaes.Lines.Add('  ' + Text);
+  end;
+  procedure AddPatient(ci: Integer; const States: string);
+  begin
+    memAnaes.Lines.Add(Format('Case %s (%s):', [C(ci, 'caseid'), States]));
+    memAnaes.Lines.Add(Format('  %s y %s, %s cm, %s kg, ASA %s', [C(ci, 'age'), C(ci, 'sex'), C(ci, 'height'), C(ci, 'weight'), C(ci, 'asa')]));
+    AddWrapped(C(ci, 'opname') + ' (' + LowerCase(C(ci, 'approach')) + ')');
+    memAnaes.Lines.Add('  for ' + LowerCase(C(ci, 'dx')));
+    memAnaes.Lines.Add(Format('  anaesthesia %s to %s s, surgery %s to %s s', [C(ci, 'anestart'), C(ci, 'aneend'), C(ci, 'opstart'), C(ci, 'opend')]));
   end;
 begin
   if not Assigned(FAnaesTime) then Exit;
-  for i := 0 to 2 do
-    Lbl[i] := rgAnaes.Items[i];
 
-  DrawAnaesTrend(FAnaesTrend);
   j := rgAnaes.ItemIndex;
-  if j < 0 then j := 1;
+  if j < 0 then j := 2;
+  DrawAnaesTrend(FAnaesTrend, j);
   N := FAnaesEEG[j].Cols;
   DrawAnaesTrace(FAnaesTime, j);
 
   // the chosen excerpt's spectrum, to 40 Hz unless the spin edit says
   // otherwise, with the EEG bands marked along the top
-  ComputePSD(FAnaesEEG[j], AnaesFs, F, P[j], NBins, Sw2, False, 40, 0.5);
+  ComputePSD(FAnaesEEG[j], AnaesFs, F, P, NBins, Sw2, False, 40, 0.5);
   FAnaesSpec.YAxisTitle := SpectrumYTitle('uV');
-  FAnaesSpec.Title := Format('PSD, %s - Hamming window, %.2f Hz bins', [LowerFirst(Lbl[j]), AnaesFs / N]);
+  FAnaesSpec.Title := Format('PSD, %s - Hamming window, %.2f Hz bins', [LowerFirst(rgAnaes.Items[j]), AnaesFs / N]);
   FAnaesSpec.ClearSeries;
-  FAnaesSpec.SetSeriesStyle(0, AnaesColour[j], 1.5, plsSolid, Lbl[j]);
-  FAnaesSpec.SetData(F, [P[j]]);
+  FAnaesSpec.SetSeriesStyle(0, AnaesColour[j], 1.5, plsSolid, rgAnaes.Items[j]);
+  FAnaesSpec.SetData(F, [P]);
 
   // band powers, alpha peak and RMS from the linear, full-range PSD
-  for i := 0 to 2 do
+  for i := 0 to AnaesStates - 1 do
   begin
-    ComputePSD(FAnaesEEG[i], AnaesFs, FL, PL[i], NBins, Sw2, True);
-    Df := AnaesFs / N;
-    XP := PL[i].DataPtr;
+    ComputePSD(FAnaesEEG[i], AnaesFs, FL, PL, NBins, Sw2, True);
+    Df := AnaesFs / FAnaesEEG[i].Cols;
+    XP := PL.DataPtr;
     FP := FL.DataPtr;
     Tot := 0;
-    for k := 0 to 3 do Band[i, k] := 0;
+    for b := 0 to 3 do Band[i, b] := 0;
     Pk := -1;
     PkF := NaN;
     for k := 0 to FL.Cols - 1 do
     begin
       if (FP[k] >= 0.5) and (FP[k] < 30) then Tot := Tot + XP[k] * Df;
-      for j := 0 to 3 do
-        if (FP[k] >= BandLo[j]) and (FP[k] < BandHi[j]) then
-          Band[i, j] := Band[i, j] + XP[k] * Df;
+      for b := 0 to 3 do
+        if (FP[k] >= BandLo[b]) and (FP[k] < BandHi[b]) then
+          Band[i, b] := Band[i, b] + XP[k] * Df;
       if (FP[k] >= 7) and (FP[k] <= 14) and (XP[k] > Pk) then
       begin
         Pk := XP[k];
@@ -1575,11 +1691,11 @@ begin
     Alpha[i] := PkF;
     XP := FAnaesEEG[i].DataPtr;
     Mean := 0;
-    for k := 0 to N - 1 do Mean := Mean + XP[k];
-    Mean := Mean / N;
+    for k := 0 to FAnaesEEG[i].Cols - 1 do Mean := Mean + XP[k];
+    Mean := Mean / FAnaesEEG[i].Cols;
     Rms := 0;
-    for k := 0 to N - 1 do Rms := Rms + Sqr(XP[k] - Mean);
-    RmsV[i] := Sqrt(Rms / N);
+    for k := 0 to FAnaesEEG[i].Cols - 1 do Rms := Rms + Sqr(XP[k] - Mean);
+    RmsV[i] := Sqrt(Rms / FAnaesEEG[i].Cols);
   end;
 
   memAnaes.Lines.BeginUpdate;
@@ -1587,34 +1703,40 @@ begin
     memAnaes.Clear;
     memAnaes.Lines.Add('Source:   VitalDB, Seoul National University');
     memAnaes.Lines.Add('          Hospital - open data, CC BY 4.0');
-    memAnaes.Lines.Add('          (PhysioNet vitaldb 1.0.0), case ' + C('caseid'));
-    memAnaes.Lines.Add(Format('Patient:  %s y %s, %s cm, %s kg, ASA %s', [C('age'), C('sex'), C('height'), C('weight'), C('asa')]));
-    memAnaes.Lines.Add('Surgery:  ' + C('opname') + ' (' + LowerCase(C('approach')) + ')');
-    memAnaes.Lines.Add('          for ' + LowerCase(C('dx')));
-    memAnaes.Lines.Add('Anaesthetic: total intravenous - propofol and');
-    memAnaes.Lines.Add('          remifentanil by target-controlled');
-    memAnaes.Lines.Add('          infusion (Orchestra), no volatile');
-    memAnaes.Lines.Add(Format('Times:    anaesthesia %s-%s s,', [C('anestart'), C('aneend')]));
-    memAnaes.Lines.Add(Format('          surgery %s-%s s, from case start', [C('opstart'), C('opend')]));
+    memAnaes.Lines.Add('          (PhysioNet vitaldb 1.0.0), two cases:');
+    AddPatient(0, 'awake, propofol, burst suppression');
+    memAnaes.Lines.Add('  general anaesthetic, total intravenous -');
+    memAnaes.Lines.Add('  propofol and remifentanil by target-');
+    memAnaes.Lines.Add('  controlled infusion (Orchestra), no volatile');
+    AddPatient(1, 'sedated');
+    memAnaes.Lines.Add('  sedation-analgesia: propofol and');
+    memAnaes.Lines.Add('  remifentanil by target-controlled infusion,');
+    memAnaes.Lines.Add('  no volatile or nitrous oxide');
+    memAnaes.Lines.Add('Times are from each case''s start.');
     memAnaes.Lines.Add('');
     memAnaes.Lines.Add('EEG:      BIS Vista frontal channel 1');
     memAnaes.Lines.Add(Format('          (BIS/EEG1_WAV), %.0f Hz, uV', [AnaesFs]));
     memAnaes.Lines.Add(Format('          20 s excerpts, N = %d, %.3f Hz bins', [N, AnaesFs / N]));
     memAnaes.Lines.Add('');
-    memAnaes.Lines.Add(Format('%-19s%9s%9s%9s', ['', 'awake', 'propofol', 'burst s.']));
-    memAnaes.Lines.Add(Row3('start (s)', '%.0f', [FAnaesStart[0], FAnaesStart[1], FAnaesStart[2]]));
-    memAnaes.Lines.Add(Row3('BIS', '%.0f', [TrendRow(FTrendBIS, 0), TrendRow(FTrendBIS, 1), TrendRow(FTrendBIS, 2)]));
-    memAnaes.Lines.Add(Row3('SQI (%)', '%.0f', [TrendRow(FTrendSQI, 0), TrendRow(FTrendSQI, 1), TrendRow(FTrendSQI, 2)]));
-    memAnaes.Lines.Add(Row3('suppression (%)', '%.0f', [TrendRow(FTrendSR, 0), TrendRow(FTrendSR, 1), TrendRow(FTrendSR, 2)]));
-    memAnaes.Lines.Add(Row3('propofol Ce ug/ml', '%.1f', [TrendRow(FTrendPPF, 0), TrendRow(FTrendPPF, 1), TrendRow(FTrendPPF, 2)]));
-    memAnaes.Lines.Add(Row3('remifent. Ce ng/ml', '%.1f', [TrendRow(FTrendRFTN, 0), TrendRow(FTrendRFTN, 1), TrendRow(FTrendRFTN, 2)]));
-    memAnaes.Lines.Add(Row3('RMS (uV)', '%.1f', RmsV));
-    memAnaes.Lines.Add(Row3('power 0.5-30 uV^2', '%.0f', TotP));
-    for j := 0 to 3 do
-      memAnaes.Lines.Add(Row3('  ' + BandName[j] + ' %', '%.0f',
-        [100 * Band[0, j] / TotP[0], 100 * Band[1, j] / TotP[1], 100 * Band[2, j] / TotP[2]]));
-    memAnaes.Lines.Add(Row3('alpha power uV^2', '%.0f', [Band[0, 2], Band[1, 2], Band[2, 2]]));
-    memAnaes.Lines.Add(Row3('peak 7-14 Hz (Hz)', '%.1f', Alpha));
+    memAnaes.Lines.Add(Format('%-19s%9s%9s%9s%9s', ['', AnaesShort[0], AnaesShort[1], AnaesShort[2], AnaesShort[3]]));
+    for i := 0 to AnaesStates - 1 do V[i] := StrToFloat(FAnaesCases[AnaesStateCase[i]].Id);
+    memAnaes.Lines.Add(RowN('case', '%.0f', V));
+    memAnaes.Lines.Add(RowN('start (s)', '%.0f', FAnaesStart));
+    memAnaes.Lines.Add(TrendRow('BIS', '%.0f', tvBIS));
+    memAnaes.Lines.Add(TrendRow('SQI (%)', '%.0f', tvSQI));
+    memAnaes.Lines.Add(TrendRow('suppression (%)', '%.0f', tvSR));
+    memAnaes.Lines.Add(TrendRow('propofol Ce ug/ml', '%.1f', tvPPF));
+    memAnaes.Lines.Add(TrendRow('remifent. Ce ng/ml', '%.1f', tvRFTN));
+    memAnaes.Lines.Add(RowN('RMS (uV)', '%.1f', RmsV));
+    memAnaes.Lines.Add(RowN('power 0.5-30 uV^2', '%.0f', TotP));
+    for b := 0 to 3 do
+    begin
+      for i := 0 to AnaesStates - 1 do V[i] := 100 * Band[i, b] / TotP[i];
+      memAnaes.Lines.Add(RowN('  ' + BandName[b] + ' %', '%.0f', V));
+    end;
+    for i := 0 to AnaesStates - 1 do V[i] := Band[i, 2];
+    memAnaes.Lines.Add(RowN('alpha power uV^2', '%.0f', V));
+    memAnaes.Lines.Add(RowN('peak 7-14 Hz (Hz)', '%.1f', Alpha));
     memAnaes.Lines.Add('');
     memAnaes.Lines.Add('What to look for:');
     memAnaes.Lines.Add('- awake: small, broadband EEG with a fair');
@@ -1623,6 +1745,18 @@ begin
     memAnaes.Lines.Add('  the forehead from the back of the head;');
     memAnaes.Lines.Add('  the frontal lead also picks up eye');
     memAnaes.Lines.Add('  movement, which lands in delta');
+    memAnaes.Lines.Add('- sedated (another patient, case 574):');
+    memAnaes.Lines.Add('  propofol Ce 1.0 ug/ml with remifentanil');
+    memAnaes.Lines.Add('  1.0 ng/ml takes BIS to the low 80s, yet');
+    memAnaes.Lines.Add('  the EEG is still awake-like - the same');
+    memAnaes.Lines.Add('  small power, the alpha still the ~9 Hz');
+    memAnaes.Lines.Add('  resting rhythm, and more beta, not less');
+    memAnaes.Lines.Add('  (the beta "excitation" of light propofol');
+    memAnaes.Lines.Add('  sedation). The slow waves and the frontal');
+    memAnaes.Lines.Add('  ~11 Hz alpha come only nearer loss of');
+    memAnaes.Lines.Add('  consciousness. A different head and');
+    memAnaes.Lines.Add('  electrode contact: compare the shape of');
+    memAnaes.Lines.Add('  the spectrum more than its absolute power');
     memAnaes.Lines.Add('- propofol: everything grows (power x8),');
     memAnaes.Lines.Add('  large slow-delta waves appear, and the');
     memAnaes.Lines.Add('  alpha is a different rhythm - faster');
@@ -1637,7 +1771,7 @@ begin
     memAnaes.Lines.Add('');
     memAnaes.Lines.Add('BIS/SQI/SR and the effect-site');
     memAnaes.Lines.Add('concentrations are means over each excerpt');
-    memAnaes.Lines.Add('from the 10 s trend in data/; the band');
+    memAnaes.Lines.Add('from the 10 s trends in data/; the band');
     memAnaes.Lines.Add('powers integrate the linear PSD.');
   finally
     memAnaes.Lines.EndUpdate;
@@ -1683,27 +1817,27 @@ var
   Info, BInfo: TBispecInfo;
   Bicoh: Boolean;
   T0, T1, f1, f2, Sum, Mx: Double;
-  Reg: array[0..2, 0..3] of Double;
-  PeakV, PeakA, PeakB, SFS: array[0..2] of Double;
+  Reg: array[0..AnaesStates - 1, 0..3] of Double;
+  PeakV, PeakA, PeakB, SFS, V: array[0..AnaesStates - 1] of Double;
   SFSText: string;
-  function Row3(const Name, Fm: string; const V: array of Double): string;
+  function Row3(const Name, Fm: string; const Vs: array of Double): string;
   var
     m: Integer;
   begin
     Result := Format('%-23s', [Name]);
-    for m := 0 to 2 do
-      if IsNan(V[m]) then Result := Result + Format('%9s', ['-'])
-      else Result := Result + Format('%9s', [Format(Fm, [V[m]])]);
+    for m := 0 to High(Vs) do
+      if IsNan(Vs[m]) then Result := Result + Format('%9s', ['-'])
+      else Result := Result + Format('%9s', [Format(Fm, [Vs[m]])]);
   end;
 begin
   j := rgABi.ItemIndex;
-  if j < 0 then j := 1;
-  DrawAnaesTrend(FABiTrend, True);
+  if j < 0 then j := 2;
+  DrawAnaesTrend(FABiTrend, j, True);
   DrawAnaesTrace(FABiTime, j, True);
 
-  // SynchFastSlow for all three states: the chosen one goes in the
+  // SynchFastSlow for all four states: the chosen one goes in the
   // surface's title, all three in the memo
-  for i := 0 to 2 do
+  for i := 0 to AnaesStates - 1 do
     SFS[i] := SynchFastSlow(FAnaesLong[i], AnaesFs, seABiEpoch.Value);
   SFSText := Format(' - SynchFastSlow %.2f', [SFS[j]]);
 
@@ -1750,10 +1884,10 @@ begin
   FABiPlot.ShowLevelCurves := cbABiLevels.Checked;
   FABiPlot.SetData(Grid);
 
-  // bicoherence of all three states, whatever is displayed, so the memo
+  // bicoherence of all four states, whatever is displayed, so the memo
   // can compare them: the mean over each region (f2 <= f1 half), and the
   // largest value with both frequencies at least 1 Hz
-  for i := 0 to 2 do
+  for i := 0 to AnaesStates - 1 do
   begin
     BGrid := ComputeBispectrum(FAnaesLong[i], AnaesFs, seABiEpoch.Value, seABiFmax.Value, True, BInfo);
     for r := 0 to 3 do
@@ -1788,14 +1922,15 @@ begin
   try
     memABi.Clear;
     memABi.Lines.Add('Bispectrum of frontal EEG under anaesthesia');
-    memABi.Lines.Add(Format('VitalDB case %s, BIS Vista channel 1, %.0f Hz', [Trim(FAnaesCase.Values['caseid']), AnaesFs]));
+    memABi.Lines.Add('VitalDB cases 655 and 574, BIS Vista channel 1,');
+    memABi.Lines.Add(Format('%.0f Hz', [AnaesFs]));
     memABi.Lines.Add('(details on the Anaesthesia EEG tab)');
     memABi.Lines.Add('');
-    memABi.Lines.Add('Shown: ' + rgAnaes.Items[j]);
+    memABi.Lines.Add(Format('Shown: %s (case %s)', [rgAnaes.Items[j], FAnaesCases[AnaesStateCase[j]].Id]));
     memABi.Lines.Add(Format('  300 s from %.0f to %.0f s; the trace above is', [T0, T1]));
     memABi.Lines.Add(Format('  its 20 s excerpt from %.0f s', [FAnaesStart[j]]));
     memABi.Lines.Add(Format('  BIS %.0f, SQI %.0f %%, SR %.0f %%, propofol %.1f ug/ml',
-      [TrendMean(FTrendBIS, T0, T1), TrendMean(FTrendSQI, T0, T1), TrendMean(FTrendSR, T0, T1), TrendMean(FTrendPPF, T0, T1)]));
+      [StateMean(j, tvBIS, True), StateMean(j, tvSQI, True), StateMean(j, tvSR, True), StateMean(j, tvPPF, True)]));
     memABi.Lines.Add('  (means over the 300 s)');
     memABi.Lines.Add(Format('Epochs: %d of %d samples (%.3g s), 50 %% overlap,', [Info.NumEp, Info.NEp, Info.NEp / AnaesFs]));
     memABi.Lines.Add(Format('  Hamming, mean removed; %.3g Hz bins,', [Info.Fres]));
@@ -1805,9 +1940,12 @@ begin
       memABi.Lines.Add(Format('Bicoherence bias floor ~1/sqrt(epochs) = %.2f', [1 / Sqrt(Info.NumEp)]));
     memABi.Lines.Add('');
     memABi.Lines.Add('Bicoherence, mean over each region (full grid):');
-    memABi.Lines.Add(Format('%-23s%9s%9s%9s', ['', 'awake', 'propofol', 'burst s.']));
+    memABi.Lines.Add(Format('%-23s%9s%9s%9s%9s', ['', AnaesShort[0], AnaesShort[1], AnaesShort[2], AnaesShort[3]]));
     for r := 0 to 3 do
-      memABi.Lines.Add(Row3(RegName[r], '%.2f', [Reg[0, r], Reg[1, r], Reg[2, r]]));
+    begin
+      for i := 0 to AnaesStates - 1 do V[i] := Reg[i, r];
+      memABi.Lines.Add(Row3(RegName[r], '%.2f', V));
+    end;
     memABi.Lines.Add(Row3('largest (f1,f2 >= 1 Hz)', '%.2f', PeakV));
     memABi.Lines.Add(Row3('  at f1 (Hz)', '%.1f', PeakA));
     memABi.Lines.Add(Row3('  at f2 (Hz)', '%.1f', PeakB));
@@ -1830,6 +1968,17 @@ begin
     memABi.Lines.Add('  alpha is not a pure sine, so its harmonic');
     memABi.Lines.Add('  near 22 Hz is phase-locked to it - while');
     memABi.Lines.Add('  beta coupling falls to the floor');
+    memABi.Lines.Add('- sedated (case 574): flat, at the bias floor');
+    memABi.Lines.Add('  in every region - the closest of the four');
+    memABi.Lines.Add('  to Gaussian noise. Its SynchFastSlow is the');
+    memABi.Lines.Add('  lowest: relatively more 40-47 Hz activity,');
+    memABi.Lines.Add('  most likely forehead muscle (EMG) in an');
+    memABi.Lines.Add('  unparalysed, lightly sedated patient - which');
+    memABi.Lines.Add('  BIS sees too');
+    memABi.Lines.Add('- clean data matters as much here: several');
+    memABi.Lines.Add('  300 s windows near this one each hold a');
+    memABi.Lines.Add('  single huge spike, and there the bicoherence');
+    memABi.Lines.Add('  is ~0.7 everywhere');
     memABi.Lines.Add('- awake: little coupling except at low');
     memABi.Lines.Add('  frequencies, where eye movements - sharp,');
     memABi.Lines.Add('  non-sinusoidal - put locked harmonics');

@@ -1,0 +1,20 @@
+caseid: 574
+age: 67
+sex: F
+height: 154.9
+weight: 46.5
+bmi: 19.4
+asa: 2
+department: General surgery
+optype: Vascular
+dx: End stage renal disease
+opname: Removal of continuous ambulatory peritoneal dialysis catheter
+approach: Open
+position: Supine
+ane_type: Sedationalgesia
+casestart: 0
+caseend: 9937
+anestart: -2810
+aneend: 9790
+opstart: 1390
+opend: 9190

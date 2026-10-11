@@ -2042,7 +2042,8 @@ packages. Compiled binaries and each demo's own `lib/` output are
     `FormCreate` brings that sheet forward, so the form opened on the last
     tab filled until `pcSignals.ActivePage := tsECG` was set at the end.
   - **Anaesthesia EEG tab** (added 2026-10-11, fourth of seven): frontal
-    EEG through one anaesthetic from **VitalDB**, Seoul National University
+    EEG through one anaesthetic (plus a sedated state from a second case -
+    see below) from **VitalDB**, Seoul National University
     Hospital's open intra-operative database (CC BY 4.0, also PhysioNet
     `vitaldb`). It's the only open-access raw anaesthesia EEG on PhysioNet:
     the eeg-gaba-anesthesia, eeg-power-anesthesia and JSMF sets are
@@ -2124,6 +2125,35 @@ packages. Compiled binaries and each demo's own `lib/` output are
         activity falls under propofol, then drops in burst suppression,
         where broadband bursts refill 40-47 Hz and BIS relies on the
         suppression ratio instead. Not the monitor's own number.
+    - **Sedated state** (added the same day, at the user's request): a
+      fourth state on both anaesthesia tabs, in depth order awake,
+      sedated, propofol, burst suppression. It comes from a second
+      VitalDB patient, **case 574**, because case 655 never sat at
+      sedation depth. Case 574 is a 67-year-old woman under
+      sedation-analgesia, with propofol Ce held at 1.0 ug/ml,
+      remifentanil at 1.0 ng/ml and BIS ~84. The excerpt starts at
+      3440 s (SQI 100 %) and the 300 s window is 3300-3600 s.
+      `fetch_vitaldb.py` now writes both cases from a `CASES` table, and
+      reproduces the case 655 files byte for byte. In the code each case
+      is a `TAnaesCase` (trend plus details). `AnaesStateCase` maps each
+      state to its case, and the trend plot follows the chosen state's
+      case. Things worth knowing:
+      - **Why case 574**: VitalDB has 72 "Sedationalgesia" cases. 50
+        have raw BIS EEG and a propofol pump, about 26 h at BIS 70-90 in
+        all, and 31 of them have at least 10 min. The selection details
+        are in `data/README.md`.
+      - **Spikes**: several 300 s windows near the one used each hold a
+        single huge spike, with kurtosis over 1000 and bicoherence ~0.7
+        everywhere. Screen windows by kurtosis before trusting a
+        bicoherence.
+      - **What it shows**: at this depth the EEG is still awake-like.
+        Power is 29 against 36 uV^2 awake, and the alpha peak is still
+        9.2 Hz rather than the 11 Hz frontal alpha. Beta is a little
+        higher (20 %). Bicoherence sits at the floor everywhere (peak
+        0.22). SynchFastSlow is the lowest of the four (3.69), most
+        likely from forehead EMG.
+      - **Layout**: both memos widened from 440 to 510 px for the
+        four-column tables.
     - **Spectrum defaults (whole demo)**: "Linear scale" is ticked by
       default. The upper-frequency spin edit's 0 now means "the signal's
       own default": 40 Hz for the ECG and both EEGs and 20 Hz for the
