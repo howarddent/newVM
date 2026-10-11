@@ -2078,6 +2078,15 @@ packages. Compiled binaries and each demo's own `lib/` output are
   moving syllable by syllable. A first version stacked one PSD per
   headline on a `TVMPlotStack`, replaced at the user's request.
   The spectrum is shown bare: `ShowAxes` and `ShowCursor` off and no title.
+  **On Linux** (2026-10-11) it runs on `TVMSpeech`'s eSpeak back end.
+  With no Zira, it picks the first `... - female` voice, eSpeak's
+  English (Great Britain) `+f3`. Its `initialization` now applies the
+  Unix half of the OpenSSL 3 fix as well (`'.3'` first in
+  `DLLVersions`, as in `uWeatherData`), without which Fetch fails under
+  FPC 3.2.2 on Ubuntu 24.04. The status line also checks for an empty
+  voice list instead of indexing it: on Linux, before this back end
+  existed, indexing it raised "List index (0) out of bounds" at
+  start-up.
   **`TVMPlotSpectrum` gained `ShowCursor`** (default True, so SDR_Radio
   is unchanged) for this: off, it drops the tuning cursor, its band, the
   small value label hanging from the top edge and the big "MHz" corner
@@ -2648,9 +2657,9 @@ own. Things worth knowing:
   stream's `Format` after rendering, never assumed.
 - The constructor skips SAPI under `csDesigning`, so the component can
   sit on a form in the IDE without COM being touched at design time.
-  Non-Windows targets compile with every method stubbed to raise
-  `EVMSpeech`, so a cross-platform project still builds; a macOS/Linux
-  back end would go behind the same interface. The intended next step
+  Targets other than Windows and Linux (i.e. macOS) compile with every
+  method stubbed to raise `EVMSpeech`, so a cross-platform project still
+  builds - see the Linux back end below. The intended next step
   is a formant-synthesis engine as a second back end, which is where
   newVM's own resonator/FFT machinery comes in (see the Resonance demo).
 - **Prosody presets (`Style`)**: SAPI parses XML in the text under the
@@ -2675,6 +2684,60 @@ own. Things worth knowing:
   uses the five `Prosody*`/`Break*Ms` properties as set; `SSMLFor(Text)`
   returns what the engine would receive, for inspection. Text is
   XML-escaped first, so an `&` in a headline can't break the parse.
+- **Linux back end: eSpeak NG + PulseAudio** (added 2026-10-11),
+  behind the same interface, under `{$IFDEF LINUX}`. `libespeak-ng.so.1`
+  (synthesis) and `libpulse-simple.so.0` (playback) are both bound at
+  run time with `LoadLibrary`, like `fftw3.pas`, so the unit builds
+  without them and only raises `EVMSpeech` when speech is asked for.
+  Both ship with desktop Ubuntu: `libespeak-ng1` comes in with
+  speech-dispatcher, and pulse-simple also talks to PipeWire's pulse
+  server. Things worth knowing:
+  - **Synthesis** uses `AUDIO_OUTPUT_SYNCHRONOUS`: `espeak_Synth` passes
+    16-bit mono PCM at 22050 Hz to a callback on the calling thread and
+    returns when the text is done, so `Synthesize` fills `Waveform`
+    directly, with no device and no temporary file. eSpeak isn't
+    thread-safe and is only ever called from the caller's thread.
+  - **`Speak`** renders the same way, then plays through
+    `pa_simple_write` in ~46 ms chunks: on the calling thread when
+    blocking, or on a `TThread` when `Async` (the demo `.lpr`s already
+    include `cthreads`). `Stop` terminates the thread, which flushes
+    rather than drains. Measured: a blocking `Speak` returns once the
+    audio has finished, an async one in 6 ms, and `Stop` cuts it off in
+    0.1 s.
+  - **`Voices`** lists English voices first, with English (Great
+    Britain) at index 0. Each English voice is followed by a `... -
+    female` entry, eSpeak's `+f3` variant passed to
+    `espeak_SetVoiceByName`, which measured 214 Hz against the male
+    104 Hz. Every other language comes after, 139 entries in all.
+    eSpeak is a formant synthesiser, so all of them sound clearly
+    synthetic, but its formants are very clean in a spectrum.
+  - **Rate/Volume**: words per minute = `175 * 3^(Rate/10)`, SAPI's
+    documented 1/3x..3x span, clamped to eSpeak's 80..450. Volume
+    0..100 goes straight onto eSpeak's 0..200 scale, where 100 is
+    normal.
+  - **Prosody, measured the same way as SAPI's.** eSpeak's SSML
+    `<prosody pitch>` also delivers only about half of what it asks
+    (-20 % gave -10 %). Its `PITCH` parameter covers the full range
+    (0..100, 50 = the voice's own: 10 -> 72 Hz, 30 -> 84, 50 -> 101,
+    70 -> 124, 90 -> 153). So the style's overall pitch, rate and
+    volume are set as **parameters** before synthesis: pitch is
+    50 + 3 per SAPI step, putting -10 near SAPI's 78 Hz. The SSML
+    (`WrapSSML`'s Linux output) carries only `<break time>` pauses and
+    ssHAL's falling final clause (`<prosody pitch="-8%">`). As with
+    SAPI's absolute tags, a style other than ssPlain overrides
+    `Rate`/`Volume`. eSpeak's `RANGE` parameter (intonation swing) is
+    also set per style: 40 for ssCalm, 20 for ssHAL. SAPI has no
+    equivalent. Set the voice before the parameters, because
+    `espeak_SetVoiceByName` resets pitch and range to the voice's own.
+    Measured on one sentence: plain 104 Hz with a 23 Hz 10-90 %
+    spread, ssCalm 93 Hz/17, ssHAL 74 Hz/9 at about 60 % of the RMS
+    and 1.7x the duration - close to Rain's ~72 Hz, almost stressless
+    reading.
+  - Two FPC points hit while writing it: a `{$ELSEIF}` needs its block
+    opened with `{$IF DEFINED(X)}`, not `{$IFDEF X}`, which fails with
+    "ENDIF without IF(N)DEF"; and a local named `Name` inside a
+    `TComponent` method is a duplicate identifier, the same trap as
+    `TVMPlot2D`'s `RGBA`.
 - **`demos/Speech`** exercises it: a memo of text, voice/rate/volume
   controls, a Style combo (the info label's hint shows the generated
   markup), Speak/Stop, and Synthesize, which plots the whole utterance

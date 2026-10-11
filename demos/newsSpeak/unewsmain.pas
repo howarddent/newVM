@@ -53,10 +53,12 @@ unit unewsmain;
      Full stops are appended where missing so the style's sentence pause
      separates headline, summary and the next item.
      The voice is the female one, Zira, found by name (voice order isn't
-     guaranteed), in TVMSpeech's ssCalm style. The spectrum is shown bare
+     guaranteed) - or on Linux, where TVMSpeech runs on eSpeak NG, the
+     first voice named '... - female', eSpeak's English (Great Britain)
+     female variant - in TVMSpeech's ssCalm style. The spectrum is shown bare
      - ShowAxes and ShowCursor off and no title - just the moving trace
      over 0 .. 4 kHz; the status line says which headline is playing.
-     Stop purges SAPI and halts the sequence.
+     Stop purges the speech engine and halts the sequence.
 
 *******************************************************************************}
 
@@ -438,6 +440,15 @@ begin
       FSpeech.Voice := i;
       Break;
     end;
+  {$IFNDEF WINDOWS}
+  // eSpeak (Linux): its English female variant, listed second
+  for i := 0 to FSpeech.Voices.Count - 1 do
+    if Pos(' - female', FSpeech.Voices[i]) > 0 then
+    begin
+      FSpeech.Voice := i;
+      Break;
+    end;
+  {$ENDIF}
 
   FSpectrum := TVMPlotSpectrum.Create(Self);
   FSpectrum.Parent := Self;
@@ -464,7 +475,10 @@ begin
 
   btnRead.Enabled := False;
   btnStop.Enabled := False;
-  lblStatus.Caption := Format('%d SAPI voice(s), using %s. Press Fetch.', [FSpeech.Voices.Count, FSpeech.Voices[FSpeech.Voice]]);
+  if FSpeech.Voices.Count > 0 then
+    lblStatus.Caption := Format('%d voice(s), using %s. Press Fetch.', [FSpeech.Voices.Count, FSpeech.Voices[FSpeech.Voice]])
+  else
+    lblStatus.Caption := 'No speech voices found (SAPI on Windows, eSpeak NG on Linux). Press Fetch for the headlines.';
 end;
 
 procedure TfmNews.FormDestroy(Sender: TObject);
@@ -536,11 +550,30 @@ begin
   FinishReading('Stopped.');
 end;
 
-initialization
-  {$IFDEF WINDOWS}
-  // FPC 3.2.2's openssl unit knows only the 1.0/1.1 DLL names - see
-  // demos/CanterburyRain/uWeatherData.pas, from which this is copied
+{ FPC 3.2.2's openssl unit knows only the 1.0/1.1 library names - see
+  demos/CanterburyRain/uWeatherData.pas, from which this is copied: on
+  Unix the '.3' suffix goes first in DLLVersions (Ubuntu 24.04 has only
+  OpenSSL 3), on Windows the OpenSSL 3 DLL names go in the first slots. }
+procedure PreferOpenSSL3;
+{$IFDEF WINDOWS}
+begin
   DLLUtilName := 'libcrypto-3-x64.dll';
   DLLSSLName := 'libssl-3-x64.dll';
+end;
+{$ELSE}
+var
+  i: Integer;
+begin
+  if DLLVersions[1] = '.3' then Exit;
+  for i := High(DLLVersions) downto Low(DLLVersions) + 1 do
+    DLLVersions[i] := DLLVersions[i - 1];
+  DLLVersions[1] := '.3';
+  {$IFDEF DARWIN}
+  DLLVersions[2] := '.3';   // openssl.pas copies entry 2 over entry 1 on macOS
   {$ENDIF}
+end;
+{$ENDIF}
+
+initialization
+  PreferOpenSSL3;
 end.

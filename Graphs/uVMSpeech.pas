@@ -3,7 +3,8 @@ unit uVMSpeech;
 {*******************************************************************************
 
      TVMSpeech - a text-to-speech component for Lazarus, Windows SAPI 5
-     behind it, with the synthesised waveform available as a newVM TVMobj.
+     or (on Linux) eSpeak NG behind it, with the synthesised waveform
+     available as a newVM TVMobj.
 
      WHAT IT DOES
 
@@ -58,10 +59,59 @@ unit uVMSpeech;
 
      COM is initialised per thread by ComObj's own initialization
      (CoInitialize on the main thread), which is enough for an LCL
-     application. The unit compiles only for Windows; on other targets
-     everything is stubbed to raise, so a cross-platform project still
-     builds (see the IFDEF WINDOWS blocks) - a macOS/Linux back end
-     would go behind the same interface.
+     application.
+
+     THE LINUX BACK END - eSpeak NG
+
+     On Linux the same interface is backed by libespeak-ng (synthesis)
+     and libpulse-simple (playback), both bound at run time with
+     LoadLibrary like fftw3.pas, so the unit builds with neither
+     installed and only fails, with EVMSpeech, when speech is actually
+     asked for. Both come with any desktop Ubuntu (libespeak-ng1 is
+     pulled in by speech-dispatcher; libpulse-simple also talks to
+     PipeWire through its pulse server).
+
+       - Synthesis is eSpeak's AUDIO_OUTPUT_SYNCHRONOUS mode: espeak_Synth
+         hands 16-bit mono PCM (22050 Hz) to a callback on the calling
+         thread and returns when the text is done, so Synthesize collects
+         it straight into Waveform - no device, no temporary file.
+       - Speak renders the same way and plays the samples through
+         pa_simple_write: on the calling thread when blocking, or on a
+         small TThread when Async (the demos' .lpr files already pull in
+         cthreads). Stop terminates that thread, which flushes the stream
+         instead of draining it. espeak itself is only ever called from
+         the thread Speak/Synthesize are called on, as it is not
+         thread-safe.
+       - Voices lists eSpeak's own voices, English first with English
+         (Great Britain) at index 0 (so Voice = 0 is a sensible default),
+         and each English voice followed by a female version (eSpeak's
+         '+f3' variant, named '... - female'), then every other language.
+         There are well over a hundred; it is a formant synthesiser, so
+         every one of them sounds distinctly synthetic - but the formants
+         in its spectrum are unusually clean.
+       - Rate (-10..10) maps onto eSpeak's words per minute as
+         175 * 3^(Rate/10), SAPI's own documented 1/3x .. 3x span, limited
+         to eSpeak's 80..450; Volume (0..100) onto eSpeak's 0..200 scale
+         where 100 is normal, so 100 here is eSpeak's normal level.
+       - Prosody, measured the same way as SAPI's (pitch-tracked renders
+         of one sentence): eSpeak's SSML <prosody pitch> also delivers
+         only about half of what it asks (-20 % gave -10 %), while its
+         PITCH parameter covers the range properly (0..100, 50 = the
+         voice's own: 10 -> 72 Hz, 30 -> 84, 50 -> 101, 70 -> 124, 90 ->
+         153 Hz). So the style's overall pitch, rate and volume are set
+         as PARAMETERS before synthesis - pitch 50 + 3 per SAPI step,
+         which puts -10 near SAPI's measured 78 Hz - and the SSML carries
+         only the pauses (<break time>) and ssHAL's falling final clause
+         (<prosody pitch="-8%">, about two of SAPI's steps once halved).
+         As with SAPI's <rate absspeed>/<volume level>, a style other
+         than ssPlain overrides Rate and Volume. eSpeak's RANGE parameter
+         (intonation swing, 50 = normal) is also set per style - 40 for
+         ssCalm, 20 for ssHAL, flattening the contour towards Rain's
+         almost stressless delivery - which SAPI has no equivalent for.
+         SSMLFor shows the SSML the engine receives, not the parameters.
+
+     On other targets (macOS) everything is still stubbed to raise
+     EVMSpeech, so a cross-platform project builds.
 
      PROSODY - THE STYLE PRESETS
 
@@ -128,12 +178,15 @@ interface
 uses
   Classes, SysUtils, Math, LResources,
   {$IFDEF WINDOWS} ComObj, Variants, ActiveX, {$ENDIF}
+  {$IFDEF LINUX} DynLibs, ctypes, {$ENDIF}
   newVM;
 
 type
   EVMSpeech = class(Exception);
 
   TVMSpeechStyle = (ssPlain, ssNewsreader, ssCalm, ssHAL, ssCustom);
+
+  TSmallIntArray = array of SmallInt;
 
   { TVMSpeech }
 
@@ -142,6 +195,10 @@ type
     {$IFDEF WINDOWS}
     FVoice: Variant;          // SAPI.SpVoice
     FDefaultOutput: Variant;  // its original AudioOutputStream, to restore
+    {$ENDIF}
+    {$IFDEF LINUX}
+    FEngineNames: TStringList;   // eSpeak voice name (+variant) per Voices entry
+    FPlayer: TThread;            // the Async playback thread, if any
     {$ENDIF}
     FVoices: TStringList;
     FVoiceIndex: Integer;
@@ -162,6 +219,10 @@ type
     procedure SetRate(AValue: Integer);
     procedure SetVolume(AValue: Integer);
     procedure EnumerateVoices;
+    {$IFDEF LINUX}
+    function RenderPCM(const Text: string): TSmallIntArray;
+    procedure ApplyEngineSettings;
+    {$ENDIF}
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
@@ -209,6 +270,197 @@ const
   SVSFIsXML = 8;
   SAFT16kHz16BitMono = 22;   // SpeechAudioFormatType
 
+{$IFDEF LINUX}
+{ --- eSpeak NG and PulseAudio-simple, bound at run time --------------------- }
+
+const
+  AUDIO_OUTPUT_SYNCHRONOUS = 2;   // espeak_AUDIO_OUTPUT: PCM to the callback, Synth blocks
+  espeakCHARS_UTF8 = 1;
+  espeakSSML = $10;
+  POS_CHARACTER = 1;
+  EE_OK = 0;
+  espeakRATE = 1;
+  espeakVOLUME = 2;
+  espeakPITCH = 3;
+  espeakRANGE = 4;
+  PA_STREAM_PLAYBACK = 1;
+  PA_SAMPLE_S16LE = 3;
+
+type
+  TEspeakCallback = function(wav: PSmallInt; numsamples: cint; events: Pointer): cint; cdecl;
+  {$PACKRECORDS C}
+  TEspeakVoice = record
+    name, languages, identifier: PChar;
+    gender, age, variant, xx1: cuint8;
+    score: cint;
+    spare: Pointer;
+  end;
+  PEspeakVoice = ^TEspeakVoice;
+  PPEspeakVoice = ^PEspeakVoice;
+  TPaSampleSpec = record
+    format: cint;
+    rate: cuint32;
+    channels: cuint8;
+  end;
+  {$PACKRECORDS DEFAULT}
+
+var
+  espeak_Initialize: function(output, buflength: cint; path: PChar; options: cint): cint; cdecl;
+  espeak_SetSynthCallback: procedure(cb: TEspeakCallback); cdecl;
+  espeak_Synth: function(text: Pointer; size: csize_t; position: cuint; position_type: cint;
+    end_position: cuint; flags: cuint; unique_identifier: pcuint; user_data: Pointer): cint; cdecl;
+  espeak_SetParameter: function(parameter, value, relative: cint): cint; cdecl;
+  espeak_ListVoices: function(voice_spec: Pointer): PPEspeakVoice; cdecl;
+  espeak_SetVoiceByName: function(name: PChar): cint; cdecl;
+
+  pa_simple_new: function(server, name: PChar; dir: cint; dev, stream_name: PChar;
+    ss: Pointer; map, attr: Pointer; error: pcint): Pointer; cdecl;
+  pa_simple_write: function(s: Pointer; data: Pointer; bytes: csize_t; error: pcint): cint; cdecl;
+  pa_simple_drain: function(s: Pointer; error: pcint): cint; cdecl;
+  pa_simple_flush: function(s: Pointer; error: pcint): cint; cdecl;
+  pa_simple_free: procedure(s: Pointer); cdecl;
+
+  ESpeakTried, ESpeakOK, PulseTried, PulseOK: Boolean;
+  ESpeakSampleRate: Integer;
+  GCapture: TSmallIntArray;   // the callback's output (one synthesis at a time)
+  GCaptureN: Integer;
+
+{ eSpeak calls this from inside espeak_Synth, on the same thread, with each
+  chunk of samples; a nil wav marks the end. Returning 0 means carry on. }
+function CaptureCallback(wav: PSmallInt; numsamples: cint; events: Pointer): cint; cdecl;
+begin
+  Result := 0;
+  if (wav = nil) or (numsamples <= 0) then Exit;
+  if GCaptureN + numsamples > Length(GCapture) then
+    SetLength(GCapture, Max(2 * Length(GCapture), GCaptureN + numsamples + 65536));
+  Move(wav^, GCapture[GCaptureN], numsamples * SizeOf(SmallInt));
+  Inc(GCaptureN, numsamples);
+end;
+
+function LoadESpeak: Boolean;
+var
+  H: TLibHandle;
+begin
+  if not ESpeakTried then
+  begin
+    ESpeakTried := True;
+    H := LoadLibrary('libespeak-ng.so.1');
+    if H = NilHandle then H := LoadLibrary('libespeak-ng.so');
+    if H <> NilHandle then
+    begin
+      Pointer(espeak_Initialize) := GetProcedureAddress(H, 'espeak_Initialize');
+      Pointer(espeak_SetSynthCallback) := GetProcedureAddress(H, 'espeak_SetSynthCallback');
+      Pointer(espeak_Synth) := GetProcedureAddress(H, 'espeak_Synth');
+      Pointer(espeak_SetParameter) := GetProcedureAddress(H, 'espeak_SetParameter');
+      Pointer(espeak_ListVoices) := GetProcedureAddress(H, 'espeak_ListVoices');
+      Pointer(espeak_SetVoiceByName) := GetProcedureAddress(H, 'espeak_SetVoiceByName');
+      if Assigned(espeak_Initialize) and Assigned(espeak_SetSynthCallback) and Assigned(espeak_Synth)
+        and Assigned(espeak_SetParameter) and Assigned(espeak_ListVoices) and Assigned(espeak_SetVoiceByName) then
+      begin
+        ESpeakSampleRate := espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS, 500, nil, 0);
+        if ESpeakSampleRate > 0 then
+        begin
+          espeak_SetSynthCallback(@CaptureCallback);
+          ESpeakOK := True;
+        end;
+      end;
+    end;
+  end;
+  Result := ESpeakOK;
+end;
+
+function LoadPulse: Boolean;
+var
+  H: TLibHandle;
+begin
+  if not PulseTried then
+  begin
+    PulseTried := True;
+    H := LoadLibrary('libpulse-simple.so.0');
+    if H <> NilHandle then
+    begin
+      Pointer(pa_simple_new) := GetProcedureAddress(H, 'pa_simple_new');
+      Pointer(pa_simple_write) := GetProcedureAddress(H, 'pa_simple_write');
+      Pointer(pa_simple_drain) := GetProcedureAddress(H, 'pa_simple_drain');
+      Pointer(pa_simple_flush) := GetProcedureAddress(H, 'pa_simple_flush');
+      Pointer(pa_simple_free) := GetProcedureAddress(H, 'pa_simple_free');
+      PulseOK := Assigned(pa_simple_new) and Assigned(pa_simple_write) and Assigned(pa_simple_drain)
+        and Assigned(pa_simple_flush) and Assigned(pa_simple_free);
+    end;
+  end;
+  Result := PulseOK;
+end;
+
+{ Plays 16-bit mono samples through the default sink, in ~46 ms chunks so
+  that Abort (the player thread's Terminated) is noticed promptly; an
+  aborted stream is flushed, a finished one drained. Raises only when
+  called without an abort flag, i.e. from a blocking Speak. }
+function PlayPCM(const Samples: TSmallIntArray; Rate: Integer; Aborted: TThread): Boolean;
+const
+  Chunk = 1024;
+var
+  Spec: TPaSampleSpec;
+  S: Pointer;
+  Err: cint;
+  i, n: Integer;
+  function Stopped: Boolean;
+  begin
+    Result := (Aborted <> nil) and Aborted.CheckTerminated;
+  end;
+begin
+  Result := False;
+  Spec.format := PA_SAMPLE_S16LE;
+  Spec.rate := Rate;
+  Spec.channels := 1;
+  S := pa_simple_new(nil, 'newVM', PA_STREAM_PLAYBACK, nil, 'TVMSpeech', @Spec, nil, nil, @Err);
+  if S = nil then
+  begin
+    if Aborted = nil then
+      raise EVMSpeech.CreateFmt('TVMSpeech: cannot open the audio output (PulseAudio error %d)', [Err]);
+    Exit;
+  end;
+  try
+    i := 0;
+    while (i < Length(Samples)) and not Stopped do
+    begin
+      n := Min(Chunk, Length(Samples) - i);
+      if pa_simple_write(S, @Samples[i], n * SizeOf(SmallInt), @Err) < 0 then Break;
+      Inc(i, n);
+    end;
+    if Stopped then pa_simple_flush(S, @Err) else pa_simple_drain(S, @Err);
+    Result := True;
+  finally
+    pa_simple_free(S);
+  end;
+end;
+
+type
+  { Async Speak's playback: owns its copy of the samples, so the caller can
+    synthesise the next text while this one is still being heard }
+  TVMSpeechPlayer = class(TThread)
+  private
+    FSamples: TSmallIntArray;
+    FRate: Integer;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const ASamples: TSmallIntArray; ARate: Integer);
+  end;
+
+constructor TVMSpeechPlayer.Create(const ASamples: TSmallIntArray; ARate: Integer);
+begin
+  FSamples := ASamples;
+  FRate := ARate;
+  FreeOnTerminate := False;
+  inherited Create(False);
+end;
+
+procedure TVMSpeechPlayer.Execute;
+begin
+  PlayPCM(FSamples, FRate, Self);
+end;
+{$ENDIF}
+
 { TVMSpeech }
 
 constructor TVMSpeech.Create(AOwner: TComponent);
@@ -235,6 +487,11 @@ begin
     EnumerateVoices;
   end;
   {$ENDIF}
+  {$IFDEF LINUX}
+  FEngineNames := TStringList.Create;
+  if not (csDesigning in ComponentState) then
+    EnumerateVoices;
+  {$ENDIF}
 end;
 
 destructor TVMSpeech.Destroy;
@@ -250,12 +507,16 @@ begin
     FVoice := Unassigned;
   end;
   {$ENDIF}
+  {$IFDEF LINUX}
+  Stop;
+  FEngineNames.Free;
+  {$ENDIF}
   FVoices.Free;
   inherited Destroy;
 end;
 
 procedure TVMSpeech.EnumerateVoices;
-{$IFDEF WINDOWS}
+{$IF DEFINED(WINDOWS)}
 var
   Tokens: Variant;
   i: Integer;
@@ -264,6 +525,51 @@ begin
   Tokens := FVoice.GetVoices;
   for i := 0 to Tokens.Count - 1 do
     FVoices.Add(Tokens.Item(i).GetDescription);
+end;
+{$ELSEIF DEFINED(LINUX)}
+var
+  List: PPEspeakVoice;
+  i: Integer;
+  VName, VId: string;
+  English, Others: TStringList;
+  procedure AddVoice(const Display, Engine: string);
+  begin
+    FVoices.Add(Display);
+    FEngineNames.Add(Engine);
+  end;
+begin
+  FVoices.Clear;
+  FEngineNames.Clear;
+  if not LoadESpeak then Exit;   // no engine: an empty list, as on a SAPI-less Windows
+  English := TStringList.Create;
+  Others := TStringList.Create;
+  try
+    List := espeak_ListVoices(nil);
+    i := 0;
+    while (List <> nil) and (List[i] <> nil) do
+    begin
+      VName := string(List[i]^.name);
+      VId := string(List[i]^.identifier);
+      if Pos('/en', VId) > 0 then
+      begin
+        if VId = 'gmw/en' then English.Insert(0, VName) else English.Add(VName);   // en-gb first
+      end
+      else
+        Others.Add(VName);
+      Inc(i);
+    end;
+    for i := 0 to English.Count - 1 do
+    begin
+      AddVoice(English[i], English[i]);
+      AddVoice(English[i] + ' - female', English[i] + '+f3');
+    end;
+    Others.Sort;
+    for i := 0 to Others.Count - 1 do
+      AddVoice(Others[i], Others[i]);
+  finally
+    English.Free;
+    Others.Free;
+  end;
 end;
 {$ELSE}
 begin
@@ -326,6 +632,14 @@ function TVMSpeech.WrapSSML(const Text: string): string;
 var
   i, n, clauseStart: Integer;
   body, sentence, c: string;
+  function Pause(ms: Integer): string;
+  begin
+    {$IFDEF WINDOWS}
+    Result := Format('<silence msec="%d"/>', [ms]);
+    {$ELSE}
+    Result := Format('<break time="%dms"/>', [ms]);
+    {$ENDIF}
+  end;
   procedure FlushClause(upTo: Integer; const brk: string; falling: Boolean);
   var
     piece: string;
@@ -335,7 +649,12 @@ var
     begin
       piece := XmlEscape(piece);
       if falling then
+        {$IFDEF WINDOWS}
         piece := Format('<pitch absmiddle="%d">', [EnsureRange(FProsodyPitch - 2, -10, 10)]) + piece + '</pitch>';
+        {$ELSE}
+        // relative to the PITCH parameter; eSpeak delivers ~half, so ~2 SAPI steps
+        piece := '<prosody pitch="-8%">' + piece + '</prosody>';
+        {$ENDIF}
       sentence := sentence + piece + ' ';
     end;
     if brk <> '' then sentence := sentence + brk;
@@ -355,7 +674,7 @@ begin
       // a sentence end: the final clause of a HAL sentence falls
       FlushClause(i, '', FStyle = ssHAL);
       if FBreakSentenceMs > 0 then
-        sentence := sentence + Format('<silence msec="%d"/>', [FBreakSentenceMs]);
+        sentence := sentence + Pause(FBreakSentenceMs);
       body := body + sentence;
       sentence := '';
     end
@@ -363,18 +682,24 @@ begin
     begin
       FlushClause(i, '', False);
       if FBreakClauseMs > 0 then
-        sentence := sentence + Format('<silence msec="%d"/>', [FBreakClauseMs]);
+        sentence := sentence + Pause(FBreakClauseMs);
     end;
     Inc(i);
   end;
   FlushClause(n, '', FStyle = ssHAL);   // anything after the last stop
   body := body + sentence;
 
+  {$IFDEF WINDOWS}
   // SAPI's own envelope: rate and pitch on their -10..10 scales, volume
   // 0..100 - all nested so each applies to the whole text
   Result := Format('<rate absspeed="%d"><pitch absmiddle="%d"><volume level="%d">%s</volume></pitch></rate>',
     [EnsureRange(FProsodyRate, -10, 10), EnsureRange(FProsodyPitch, -10, 10),
      EnsureRange(FProsodyVolume, 0, 100), body]);
+  {$ELSE}
+  // eSpeak: rate, pitch and volume go in as engine parameters (see the
+  // unit comment), so the SSML is only the pauses and the falling clauses
+  Result := '<speak>' + body + '</speak>';
+  {$ENDIF}
 end;
 
 function TVMSpeech.PrepareText(const Text: string; out IsXml: Boolean): string;
@@ -398,7 +723,7 @@ var
   Flags: Integer;
 {$ENDIF}
 begin
-  {$IFDEF WINDOWS}
+  {$IF DEFINED(WINDOWS)}
   if VarIsEmpty(FVoice) then raise EVMSpeech.Create('SAPI voice not available');
   FVoice.AudioOutputStream := FDefaultOutput;
   Prepared := PrepareText(Text, IsXml);
@@ -406,8 +731,16 @@ begin
   if IsXml then Flags := Flags or SVSFIsXML;
   if FAsync then Flags := Flags or SVSFlagsAsync or SVSFPurgeBeforeSpeak;
   FVoice.Speak(Prepared, Flags);
+  {$ELSEIF DEFINED(LINUX)}
+  Stop;
+  if not LoadPulse then
+    raise EVMSpeech.Create('TVMSpeech: libpulse-simple.so.0 not found - cannot play audio');
+  if FAsync then
+    FPlayer := TVMSpeechPlayer.Create(RenderPCM(Text), ESpeakSampleRate)
+  else
+    PlayPCM(RenderPCM(Text), ESpeakSampleRate, nil);
   {$ELSE}
-  raise EVMSpeech.Create('TVMSpeech: only the Windows (SAPI) back end exists yet');
+  raise EVMSpeech.Create('TVMSpeech: no speech back end for this platform (SAPI on Windows, eSpeak NG on Linux)');
   {$ENDIF}
 end;
 
@@ -417,10 +750,18 @@ begin
   if not VarIsEmpty(FVoice) then
     FVoice.Speak('', SVSFPurgeBeforeSpeak);
   {$ENDIF}
+  {$IFDEF LINUX}
+  if FPlayer <> nil then
+  begin
+    FPlayer.Terminate;   // the thread flushes the stream rather than draining it
+    FPlayer.WaitFor;
+    FreeAndNil(FPlayer);
+  end;
+  {$ENDIF}
 end;
 
 procedure TVMSpeech.Synthesize(const Text: string);
-{$IFDEF WINDOWS}
+{$IF DEFINED(WINDOWS)}
 var
   Stream, Fmt, Data: Variant;
   P: Pointer;
@@ -464,9 +805,80 @@ begin
   end;
   FHasWaveform := True;
 end;
+{$ELSEIF DEFINED(LINUX)}
+var
+  PCM: TSmallIntArray;
+  i: Integer;
+  W: PDouble;
+begin
+  PCM := RenderPCM(Text);
+  if Length(PCM) < 1 then raise EVMSpeech.Create('eSpeak returned no audio');
+  FSampleRate := ESpeakSampleRate;
+  FWaveform := TVMobj.Create(1, Length(PCM));
+  W := FWaveform.DataPtr;
+  for i := 0 to High(PCM) do
+    W[i] := PCM[i] / 32768.0;
+  FHasWaveform := True;
+end;
 {$ELSE}
 begin
-  raise EVMSpeech.Create('TVMSpeech: only the Windows (SAPI) back end exists yet');
+  raise EVMSpeech.Create('TVMSpeech: no speech back end for this platform (SAPI on Windows, eSpeak NG on Linux)');
+end;
+{$ENDIF}
+
+{$IFDEF LINUX}
+{ Voice, then the parameters - setting a voice resets eSpeak's pitch and
+  range to that voice's own, so the order matters. A style other than
+  ssPlain overrides Rate and Volume, as SAPI's absspeed/level tags do. }
+procedure TVMSpeech.ApplyEngineSettings;
+var
+  r, v, Range: Integer;
+begin
+  if (FVoiceIndex >= 0) and (FVoiceIndex < FEngineNames.Count) then
+    espeak_SetVoiceByName(PChar(FEngineNames[FVoiceIndex]));
+  if FStyle = ssPlain then
+  begin
+    r := FRate;
+    v := FVolume;
+  end
+  else
+  begin
+    r := FProsodyRate;
+    v := FProsodyVolume;
+  end;
+  espeak_SetParameter(espeakRATE, EnsureRange(Round(175 * Power(3, EnsureRange(r, -10, 10) / 10)), 80, 450), 0);
+  espeak_SetParameter(espeakVOLUME, EnsureRange(v, 0, 100), 0);
+  if FStyle = ssPlain then
+    espeak_SetParameter(espeakPITCH, 50, 0)
+  else
+    espeak_SetParameter(espeakPITCH, EnsureRange(50 + 3 * FProsodyPitch, 0, 100), 0);
+  case FStyle of
+    ssCalm: Range := 40;
+    ssHAL:  Range := 20;
+  else
+    Range := 50;
+  end;
+  espeak_SetParameter(espeakRANGE, Range, 0);
+end;
+
+function TVMSpeech.RenderPCM(const Text: string): TSmallIntArray;
+var
+  Prepared: string;
+  IsXml: Boolean;
+  Flags: cuint;
+  rc: cint;
+begin
+  if not LoadESpeak then
+    raise EVMSpeech.Create('TVMSpeech: libespeak-ng.so.1 not found (apt install libespeak-ng1)');
+  Prepared := PrepareText(Text, IsXml);
+  ApplyEngineSettings;
+  Flags := espeakCHARS_UTF8;
+  if IsXml then Flags := Flags or espeakSSML;
+  GCaptureN := 0;
+  rc := espeak_Synth(PChar(Prepared), Length(Prepared) + 1, 0, POS_CHARACTER, 0, Flags, nil, nil);
+  if rc <> EE_OK then
+    raise EVMSpeech.CreateFmt('espeak_Synth failed (error %d)', [rc]);
+  Result := Copy(GCapture, 0, GCaptureN);
 end;
 {$ENDIF}
 

@@ -5,14 +5,15 @@ unit uspeechmain;
      Main form for the Speech demo - exercises TVMSpeech (Graphs/
      uVMSpeech.pas) and shows what it hands back to newVM.
 
-     The text in the memo is spoken through SAPI with the chosen voice,
+     The text in the memo is spoken through SAPI (Windows) or eSpeak NG
+     (Linux) with the chosen voice,
      rate and volume (Speak), or rendered silently into the component's
      Waveform (Synthesize) and plotted: the whole utterance above as a
      time trace, and below it the power spectral density of the whole
      thing - mean removed, Hamming window, FFT_R2C, one-sided dB, the
      same recipe as demos/BioSpectra - cut at 5 kHz, above which a
-     speech spectrum carries little of interest (the desktop voices
-     render at 22050 Hz, so the Nyquist limit is 11 kHz). A "Play"
+     speech spectrum carries little of interest (the desktop voices,
+     and eSpeak, render at 22050 Hz, so the Nyquist limit is 11 kHz). A "Play"
      button speaks the same text again so the trace and the sound can be
      matched by ear, and "Save WAV" writes the samples out.
 
@@ -114,7 +115,7 @@ begin
   FSpecPlot.SetSeriesStyle(0, clRed, 1.0, plsSolid, 'Hamming-windowed PSD');
 
   ApplySettings;
-  lblInfo.Caption := Format('%d SAPI voice(s) installed', [FSpeech.Voices.Count]);
+  lblInfo.Caption := Format('%d voice(s) installed', [FSpeech.Voices.Count]);
 end;
 
 procedure TfmSpeech.ApplySettings;

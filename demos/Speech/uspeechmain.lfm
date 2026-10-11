@@ -3,7 +3,7 @@ object fmSpeech: TfmSpeech
   Height = 760
   Top = 120
   Width = 1000
-  Caption = 'newVM text-to-speech demo (SAPI)'
+  Caption = 'newVM text-to-speech demo'
   ClientHeight = 760
   ClientWidth = 1000
   Position = poScreenCenter
