@@ -1,0 +1,187 @@
+object fmSpeech: TfmSpeech
+  Left = 300
+  Height = 760
+  Top = 120
+  Width = 1000
+  Caption = 'newVM text-to-speech demo (SAPI)'
+  ClientHeight = 760
+  ClientWidth = 1000
+  Position = poScreenCenter
+  LCLVersion = '4.99.0.0'
+  OnCreate = FormCreate
+  object pnlControls: TPanel
+    Left = 0
+    Height = 156
+    Top = 0
+    Width = 1000
+    Align = alTop
+    BevelOuter = bvNone
+    ClientHeight = 156
+    ClientWidth = 1000
+    TabOrder = 0
+    object memText: TMemo
+      Left = 8
+      Height = 100
+      Top = 8
+      Width = 560
+      Anchors = [akTop, akLeft, akRight]
+      Lines.Strings = (
+        'The quick brown fox jumps over the lazy dog.'
+        'Mary had a little lamb, its fleece was white as snow.'
+      )
+      ScrollBars = ssAutoVertical
+      TabOrder = 0
+    end
+    object lblVoice: TLabel
+      Left = 584
+      Height = 15
+      Top = 12
+      Width = 40
+      Caption = 'Voice:'
+    end
+    object cbVoice: TComboBox
+      Left = 584
+      Height = 23
+      Top = 30
+      Width = 400
+      Anchors = [akTop, akLeft, akRight]
+      ItemHeight = 15
+      Style = csDropDownList
+      TabOrder = 1
+      OnChange = cbVoiceChange
+    end
+    object lblRate: TLabel
+      Left = 584
+      Height = 15
+      Top = 66
+      Width = 90
+      Caption = 'Rate (-10 .. 10):'
+    end
+    object seRate: TSpinEdit
+      Left = 684
+      Height = 23
+      Top = 62
+      Width = 60
+      MaxValue = 10
+      MinValue = -10
+      TabOrder = 2
+      Value = 0
+      OnChange = seRateChange
+    end
+    object lblVolume: TLabel
+      Left = 770
+      Height = 15
+      Top = 66
+      Width = 90
+      Caption = 'Volume (0 .. 100):'
+    end
+    object seVolume: TSpinEdit
+      Left = 880
+      Height = 23
+      Top = 62
+      Width = 60
+      MaxValue = 100
+      MinValue = 0
+      TabOrder = 3
+      Value = 100
+      OnChange = seVolumeChange
+    end
+    object lblStyle: TLabel
+      Left = 584
+      Height = 15
+      Top = 126
+      Width = 40
+      Caption = 'Style:'
+    end
+    object cbStyle: TComboBox
+      Left = 624
+      Height = 23
+      Top = 122
+      Width = 200
+      ItemHeight = 15
+      Items.Strings = (
+        'Plain (as typed)'
+        'Newsreader'
+        'Calm'
+        'HAL'
+        'Custom'
+      )
+      Style = csDropDownList
+      TabOrder = 9
+      OnChange = cbStyleChange
+    end
+    object btnSpeak: TButton
+      Left = 584
+      Height = 25
+      Top = 96
+      Width = 70
+      Caption = 'Speak'
+      TabOrder = 4
+      OnClick = btnSpeakClick
+    end
+    object btnStop: TButton
+      Left = 660
+      Height = 25
+      Top = 96
+      Width = 60
+      Caption = 'Stop'
+      TabOrder = 5
+      OnClick = btnStopClick
+    end
+    object btnSynth: TButton
+      Left = 736
+      Height = 25
+      Top = 96
+      Width = 90
+      Caption = 'Synthesize'
+      TabOrder = 6
+      OnClick = btnSynthClick
+    end
+    object btnPlay: TButton
+      Left = 832
+      Height = 25
+      Top = 96
+      Width = 60
+      Caption = 'Play'
+      Enabled = False
+      TabOrder = 7
+      OnClick = btnPlayClick
+    end
+    object btnSave: TButton
+      Left = 898
+      Height = 25
+      Top = 96
+      Width = 80
+      Caption = 'Save WAV'
+      Enabled = False
+      TabOrder = 8
+      OnClick = btnSaveClick
+    end
+    object lblInfo: TLabel
+      Left = 8
+      Height = 15
+      Top = 128
+      Width = 560
+      Anchors = [akTop, akLeft, akRight]
+      Caption = ''
+      ParentShowHint = False
+    end
+  end
+  object pnlPlots: TPanel
+    Left = 0
+    Height = 610
+    Top = 150
+    Width = 1000
+    Align = alClient
+    BevelOuter = bvNone
+    TabOrder = 1
+    OnResize = pnlPlotsResize
+  end
+  object dlgSave: TSaveDialog
+    DefaultExt = '.wav'
+    Filter = 'WAV files|*.wav'
+    Options = [ofOverwritePrompt, ofEnableSizing, ofViewDetail]
+    Left = 520
+    Top = 200
+  end
+end
