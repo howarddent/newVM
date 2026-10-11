@@ -97,6 +97,17 @@ unit uVMPlot2D;
      automatic numeric X ticks with labelled ones at the given positions
      (e.g. month names under bars at x = 0..11) until ClearXTickLabels.
 
+     LABELLED X BANDS: AddXBand(X0, X1, Color, Caption) marks an X range -
+     e.g. the EEG's delta/theta/alpha/beta bands on a spectrum - with a
+     faint tint of Color across the full height of the plot (pass 1,
+     under the gridlines and data) and a solid bar of it along the top
+     edge with Caption centred inside in bold (pass 2, pixel space, so a
+     constant height). Clipped to the visible X range, and a caption is
+     dropped where its bar is too narrow for it; bands don't move the
+     bounds. A top-corner legend moves down below the bars. The text is
+     black, as every label here, so light colours read best. ClearXBands
+     removes them all.
+
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
@@ -212,6 +223,14 @@ type
   TVMPlotDoubleArray = array of Double;
   TVMPlotSeriesData = array of Double;
 
+  // A labelled X range (AddXBand): a faint tint across the plot and a
+  // solid bar along its top edge with Caption inside - e.g. EEG bands.
+  TVMPlotXBand = record
+    X0, X1: Double;
+    Color: TColor;
+    Caption: string;
+  end;
+
   { TVMPlot2D }
 
   TVMPlot2D = class(TOpenGLControl)
@@ -240,6 +259,9 @@ type
     FTexturesBuilt: Boolean;
     FTitleTex, FXAxisTitleTex, FYAxisTitleTex: TVMPlotTextTexture;
     FXTickTex, FYTickTex, FLegendTex: array of TVMPlotTextTexture;
+    FXBands: array of TVMPlotXBand;
+    FXBandTex: array of TVMPlotTextTexture;
+    FBandBarH: Integer;   // height of the band bars this paint, for the legend
     FVSync: Boolean;
     FLegendCorner: TVMPlotLegendCorner;
     // See TVMPlot3D's own FSwapIntervalApplied comment (uVMPlot3D.pas) -
@@ -268,6 +290,8 @@ type
     procedure DrawLegend(PlotLeft, PlotBottom, PlotW, PlotH: Integer);
     function BarHalfWidth(iser: Integer): Double;
     procedure DrawBars;
+    procedure DrawXBandTints;
+    function DrawXBandBars(PlotLeft, PlotBottom, PlotW, PlotH: Integer): Integer;
     procedure DrawWhiskers;
     function HasWhiskerData(iser: Integer): Boolean;
     procedure RecomputeBounds;
@@ -300,6 +324,11 @@ type
     procedure SetXTickLabels(const Positions: array of Double;
       const Labels: array of string);
     procedure ClearXTickLabels;
+    // Labelled X ranges - see TVMPlotXBand. Drawn clipped to the visible X
+    // range; a caption is only drawn when it fits inside its bar. They do
+    // not affect the bounds, so a band beyond the data simply isn't seen.
+    procedure AddXBand(X0, X1: Double; AColor: TColor; const ACaption: string);
+    procedure ClearXBands;
     // Makes series Index a box-and-whisker series over X - see the WHISKER
     // SERIES header note. All five vectors the same length.
     procedure SetWhiskerData(Index: Integer; const X, Lo, BoxLo, BoxHi, Hi: TVMobj);
@@ -736,6 +765,92 @@ begin
   Invalidate;
 end;
 
+procedure TVMPlot2D.AddXBand(X0, X1: Double; AColor: TColor; const ACaption: string);
+var
+  n: Integer;
+begin
+  n := Length(FXBands);
+  SetLength(FXBands, n + 1);
+  FXBands[n].X0 := Min(X0, X1);
+  FXBands[n].X1 := Max(X0, X1);
+  FXBands[n].Color := AColor;
+  FXBands[n].Caption := ACaption;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlot2D.ClearXBands;
+begin
+  if Length(FXBands) = 0 then Exit;
+  SetLength(FXBands, 0);
+  InvalidateTextures;
+  Invalidate;
+end;
+
+// Pass 1 (data space): each band's faint full-height tint, under the
+// gridlines and data.
+procedure TVMPlot2D.DrawXBandTints;
+var
+  i: Integer;
+  a, b: Double;
+  Clr: TColor;
+begin
+  for i := 0 to High(FXBands) do begin
+    a := Max(FXBands[i].X0, FXMin);
+    b := Min(FXBands[i].X1, FXMax);
+    if b <= a then Continue;
+    Clr := ColorToRGB(FXBands[i].Color);
+    glColor4ub(Clr and $FF, (Clr shr 8) and $FF, (Clr shr 16) and $FF, 40);
+    glBegin(GL_QUADS);
+      glVertex2d(a, FYMin); glVertex2d(b, FYMin);
+      glVertex2d(b, FYMax); glVertex2d(a, FYMax);
+    glEnd;
+  end;
+end;
+
+// Pass 2 (pixel space): the solid bar along the top of the plot, outlined,
+// with the caption centred in it when it fits. Returns the bar height
+// (0 with no bands), which the legend moves down by.
+function TVMPlot2D.DrawXBandBars(PlotLeft, PlotBottom, PlotW, PlotH: Integer): Integer;
+var
+  i: Integer;
+  a, b, pa, pb, BarTop: Double;
+  Clr: TColor;
+begin
+  result := 0;
+  if Length(FXBands) = 0 then Exit;
+  for i := 0 to High(FXBandTex) do
+    result := Max(result, FXBandTex[i].H + 2);
+  if result = 0 then result := 16;
+  BarTop := PlotBottom + PlotH;
+  for i := 0 to High(FXBands) do begin
+    a := Max(FXBands[i].X0, FXMin);
+    b := Min(FXBands[i].X1, FXMax);
+    if b <= a then Continue;
+    pa := PlotLeft + (a - FXMin) / (FXMax - FXMin) * PlotW;
+    pb := PlotLeft + (b - FXMin) / (FXMax - FXMin) * PlotW;
+    Clr := ColorToRGB(FXBands[i].Color);
+    glDisable(GL_TEXTURE_2D);
+    glColor4ub(Clr and $FF, (Clr shr 8) and $FF, (Clr shr 16) and $FF, 220);
+    glBegin(GL_QUADS);
+      glVertex2d(pa, BarTop - result); glVertex2d(pb, BarTop - result);
+      glVertex2d(pb, BarTop); glVertex2d(pa, BarTop);
+    glEnd;
+    glColor3f(0.35, 0.35, 0.35);
+    glLineWidth(1.0);
+    glBegin(GL_LINE_LOOP);
+      glVertex2d(pa, BarTop - result); glVertex2d(pb, BarTop - result);
+      glVertex2d(pb, BarTop); glVertex2d(pa, BarTop);
+    glEnd;
+    if (i <= High(FXBandTex)) and FXBandTex[i].Built and (FXBandTex[i].W + 4 <= pb - pa) then begin
+      glEnable(GL_TEXTURE_2D);
+      glColor4f(1, 1, 1, 1);
+      DrawTextTexture(FXBandTex[i], (pa + pb) / 2, BarTop - result / 2, 0, 0.5, 0.5);
+      glDisable(GL_TEXTURE_2D);
+    end;
+  end;
+end;
+
 procedure TVMPlot2D.ClearXTickLabels;
 begin
   if not FUseXTickLabels then Exit;
@@ -937,6 +1052,7 @@ begin
   for i := 0 to High(FXTickTex) do FreeTextTexture(FXTickTex[i]);
   for i := 0 to High(FYTickTex) do FreeTextTexture(FYTickTex[i]);
   for i := 0 to High(FLegendTex) do FreeTextTexture(FLegendTex[i]);
+  for i := 0 to High(FXBandTex) do FreeTextTexture(FXBandTex[i]);
 end;
 
 // Recomputes the combined bounding box (every series' X and Y alike) -
@@ -1457,6 +1573,11 @@ begin
   for i := 0 to FSeriesCount - 1 do
     if FSeriesStyles[i].Name <> '' then
       FLegendTex[i] := CreateTextTexture(FSeriesStyles[i].Name, 9, False);
+
+  SetLength(FXBandTex, Length(FXBands));
+  for i := 0 to High(FXBands) do
+    if FXBands[i].Caption <> '' then
+      FXBandTex[i] := CreateTextTexture(FXBands[i].Caption, 9, True);
 end;
 
 // Draws Tex as a textured quad anchored at (X,Y) in the current (pixel-
@@ -1523,7 +1644,7 @@ begin
   if FLegendCorner in [lcTopLeft, lcBottomLeft] then X0 := PlotLeft + PanelInset
   else X0 := PlotLeft + PlotW - BoxW - PanelInset;
   if FLegendCorner in [lcBottomRight, lcBottomLeft] then Y0 := PlotBottom + PanelInset
-  else Y0 := PlotBottom + PlotH - BoxH - PanelInset;
+  else Y0 := PlotBottom + PlotH - BoxH - PanelInset - FBandBarH;   // below any band bars
 
   glDisable(GL_TEXTURE_2D);
   glColor4f(1, 1, 1, 0.75);
@@ -1686,10 +1807,10 @@ const
   // labels stay a constant size regardless of how the control is resized.
   TopMargin = 34;
   BottomMargin = 55;
-  LeftMargin = 65;
+  MinLeftMargin = 65;
   RightMargin = 18;
 var
-  i, iser, W, H, PlotLeft, PlotBottom, PlotW, PlotH: Integer;
+  i, iser, W, H, PlotLeft, PlotBottom, PlotW, PlotH, LeftMargin, TickW: Integer;
   px, py: Double;
 begin
   result := False;
@@ -1703,6 +1824,12 @@ begin
     FTexturesBuilt := True;
   end;
 
+  // the left margin grows with the widest Y tick label (e.g. 0.0012 on a
+  // linear PSD), so the rotated Y axis title never runs into the labels:
+  // tick marks 8 px, the labels, 4 px, the title's own height, 4 px
+  TickW := 0;
+  for i := 0 to High(FYTickTex) do TickW := Max(TickW, FYTickTex[i].W);
+  LeftMargin := Max(MinLeftMargin, 8 + TickW + 4 + FYAxisTitleTex.H + 4);
   PlotLeft := LeftMargin;
   PlotBottom := BottomMargin;
   PlotW := Max(W - LeftMargin - RightMargin, 1);
@@ -1727,6 +1854,7 @@ begin
     glEnable(GL_LINE_SMOOTH);
     glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
 
+    DrawXBandTints; // under everything else
     DrawAxes;
     DrawBars;       // under the line series
     DrawWhiskers;
@@ -1758,7 +1886,7 @@ begin
     if FXAxisTitle <> '' then
       DrawTextTexture(FXAxisTitleTex, PlotLeft + PlotW / 2, 12, 0, 0.5, 0);
     if FYAxisTitle <> '' then
-      DrawTextTexture(FYAxisTitleTex, 14, PlotBottom + PlotH / 2, 90, 0.5, 1);
+      DrawTextTexture(FYAxisTitleTex, Max(2, PlotLeft - 8 - TickW - 4 - FYAxisTitleTex.H), PlotBottom + PlotH / 2, 90, 0.5, 1);
     glDisable(GL_TEXTURE_2D);
 
     glColor3f(0.55, 0.55, 0.55);
@@ -1794,6 +1922,9 @@ begin
     // (its own semi-transparent background would otherwise be drawn
     // under any marker near the top-right corner).
     DrawMarkers(PlotLeft, PlotBottom, PlotW, PlotH);
+
+    // labelled X bands' bars along the top edge, under the legend
+    FBandBarH := DrawXBandBars(PlotLeft, PlotBottom, PlotW, PlotH);
 
     // Drawn last (on top of the border/gridlines/ticks/line strips already
     // painted, all of which are further from the top-right corner anyway).
