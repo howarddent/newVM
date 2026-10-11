@@ -2041,6 +2041,101 @@ packages. Compiled binaries and each demo's own `lib/` output are
   - **Gotcha**: creating the OpenGL plot controls on each `TTabSheet` in
     `FormCreate` brings that sheet forward, so the form opened on the last
     tab filled until `pcSignals.ActivePage := tsECG` was set at the end.
+  - **Anaesthesia EEG tab** (added 2026-10-11, fourth of seven): frontal
+    EEG through one anaesthetic from **VitalDB**, Seoul National University
+    Hospital's open intra-operative database (CC BY 4.0, also PhysioNet
+    `vitaldb`). It's the only open-access raw anaesthesia EEG on PhysioNet:
+    the eeg-gaba-anesthesia, eeg-power-anesthesia and JSMF sets are
+    restricted and mostly processed. Case 655: a 52-year-old man, liver
+    sectionectomy, propofol and remifentanil TCI, no volatile. The BIS
+    Vista channel 1 (`BIS/EEG1_WAV`) is 128 Hz in uV, with three 20 s
+    excerpts: awake before induction (BIS 94), maintenance (BIS 46,
+    propofol Ce 4.0) and burst suppression (BIS 16, SR 61 %). There is a
+    whole-case trend of BIS, SR and propofol Ce x10 with a dashed line at
+    each excerpt, drawn with `PlotXY` so each series skips its own gaps.
+    Below it are the chosen excerpt's trace and its PSD (originally all
+    three overlaid; changed to follow the radio group at the user's
+    request, 2026-10-11).
+    The memo gives the band shares from the linear PSD (`ComputePSD`'s new
+    `LinearFull` flag). Propofol shows power x8, slow-delta waves, an
+    11.2 Hz frontal alpha at ten times the awake alpha power (which peaks
+    at 8.7 Hz), and beta halved. Data files are plain CSV (VitalDB isn't
+    WFDB), made by `data/fetch_vitaldb.py`; the case-selection criteria
+    are in `data/README.md`. Things worth knowing:
+    - **VitalDB's web API needs no login**: `api.vitaldb.net/cases` and
+      `/trks` (gzipped CSV) give the case table and every case's track
+      ids, and `api.vitaldb.net/<tid>` gives one track. A **wave** track
+      is one row per sample on an implicit 1/fs grid (the Time column is
+      filled only on the first and last rows), with empty values for
+      gaps. A **numeric** track carries its own times.
+    - **Most cases start recording after induction** (`anestart` < 0), and
+      many attach the BIS sensor after induction too. Only about 155 of
+      the propofol-TCI cases aged 18-65 have usable awake EEG.
+    - **BIS reads 0, not missing, before the sensor is on and in signal
+      dropouts.** The data file blanks BIS/SQI/SR where SQI is 0, and the
+      plot skips any remaining BIS of 0.
+    - BioSpectra now has **`--snapshot=<prefix>`**: it opens this tab,
+      saves the trend, each excerpt's trace and the spectra via
+      `SaveToPNG` plus the window, prints the memo, and exits.
+    - **Layout gotcha**: two `alTop` plots created in code stack in an
+      arbitrary order (the trace came out above the trend). Set each
+      `Top` explicitly in the panel's `OnResize`.
+    - **Anaesthesia bispectrum tab** (eighth, after "EEG bispectrum";
+      same date): the anaesthesia trend and trace on top, with no legends
+      at that height (the trend's title names the colours). In place of the
+      PSD is the chosen state's bispectrum or bicoherence on a
+      `TVMPlot3D`, computed from 300 s of each state
+      (`vitaldb_655_eeg300.csv`, 299 epochs of 2 s, floor 0.06). The
+      calculation moved out of `ShowBispectrum` into `ComputeBispectrum`,
+      shared by both tabs. Results, which matched an independent numpy
+      calculation to two decimals:
+      - propofol: coupling gathers in alpha, peaking 0.49 at
+        (11.5, 10.5) Hz, with beta at the floor
+      - awake: only the eye-movement corner (delta x delta 0.38)
+      - burst suppression: high everywhere (0.92 peak), since each burst
+        is a phase-aligned transient
+      The awake window starts at the 745 s excerpt. The cleaner-looking
+      1000-1300 s turned out to carry ECG spikes about once a second, and
+      bicoherence ~0.9 everywhere: perfectly phase-locked harmonics. A
+      bicoherence that high across the whole plane means artefact.
+      - **The low-frequency peak**: drift and eye movement in the
+        0-0.5 Hz bins put a huge peak near (0, 0) that set the height
+        scale and flattened the surface. `ComputeBispectrum` now takes
+        an `Fmin`, and the grid starts at bin `KMin`. The tab draws from
+        1 Hz by default (spin edit); the memo's region means still use
+        the full grid. Even from 1 Hz, linear |B| is dominated by the
+        delta corner, because |B| scales with amplitude cubed. So the
+        display offers `|B| (dB)` as well: 10 log10 re the surface's
+        maximum, floored at -60 dB, since -40 left awake and burst
+        suppression mostly flat on the floor. Bicoherence, the default,
+        is self-normalising and needed only the lower limit.
+      - **SynchFastSlow** (BIS's bispectral sub-parameter, Rampil 1998)
+        is in the surface's title for the chosen state, and in the memo
+        for all three. It's ln( sum|B| over 0.5-47 Hz / sum|B| over
+        40-47 Hz ). The literature never says how a band maps onto the
+        (f1, f2) plane, and the openibis reimplementation's code couldn't
+        be reached. Here a band is the band of the **sum frequency**
+        f1 + f2, the only reading that fits a 128 Hz EEG: both f1 and f2
+        in 40-47 Hz would put the sum past Nyquist. Sums run over f2 <=
+        f1 with both >= 0.5 Hz, natural log. It's a separate pass
+        (`SynchFastSlow`), since it needs X up to 47 Hz, beyond the
+        plotted grid. Values: awake 5.35, propofol 7.05, burst
+        suppression 4.11, matching numpy exactly. It rises as fast
+        activity falls under propofol, then drops in burst suppression,
+        where broadband bursts refill 40-47 Hz and BIS relies on the
+        suppression ratio instead. Not the monitor's own number.
+    - **Spectrum defaults (whole demo)**: "Linear scale" is ticked by
+      default. The upper-frequency spin edit's 0 now means "the signal's
+      own default": 40 Hz for the ECG and both EEGs and 20 Hz for the
+      arterial pressure (`TSignalTab.DefaultFmax`, and `ComputePSD`'s
+      `DefaultFmax` parameter), Nyquist for the synthetic tabs. These
+      were 30 Hz for the EEGs only at first; the user asked for 40/20/40
+      the same day. EEG
+      spectra start at 0.5 Hz (`Fmin`). Below 0.5 Hz, drift and eye
+      movement in the frontal lead peak 2-16x above anything in the
+      bands, which flattened the linear plot. Both EEG spectra carry the
+      delta/theta/alpha/beta/gamma bars (`AddEEGBands`, on `TVMPlot2D`'s
+      new `AddXBand`).
 - **`newsSpeak`** — fetches the day's Channel 4 News headlines and reads
   the top five aloud, with a live spectrum of the speech on a
   `TVMPlotSpectrum` (the SDR analyser's front-on display) as each one
@@ -2555,6 +2650,22 @@ per-series grids.
   into `FXTicks` by `RecomputeBounds`, labels used by `BuildTextures`)
   until `ClearXTickLabels`; while set, `DrawAxes` also skips the x = 0
   gridline, which on a category axis would cut through the first bar.
+- **Labelled X bands** (added 2026-10-11 for BioSpectra's EEG bands):
+  `AddXBand(X0, X1, Color, Caption)` / `ClearXBands`. Each band draws a
+  faint tint (alpha 40/255) across the full plot height in pass 1, before
+  `DrawAxes`, so it sits under the gridlines and data. It also draws a solid
+  bar (alpha 220) along the top edge in pass 2, in pixel space so its
+  height is constant, with `Caption` in bold, centred, and dropped when the
+  bar is too narrow. Bands are clipped to the visible X range and don't
+  move the bounds. A top-corner legend moves down by the bar height
+  (`FBandBarH`). Text is black, as every label here, so light colours
+  read best. A local named `Top` in a method of this class is a
+  duplicate identifier, like `RGBA`.
+- **Left margin grows with the Y tick labels** (same date): it is
+  `Max(65, 8 + widest Y tick label + 4 + Y title height + 4)`, with the
+  rotated Y title placed just left of the labels. With the old fixed
+  65 px, a linear PSD's `0.0012`-style ticks ran into the Y axis title.
+  Plots with narrow ticks are unchanged.
 - **`SaveToPNG(FileName)`**: `Paint` is now `MakeCurrent` + `RenderScene`
   (everything it used to draw) + `SwapBuffers`; `SaveToPNG` calls
   `RenderScene` and reads the back buffer with `glReadPixels` before any

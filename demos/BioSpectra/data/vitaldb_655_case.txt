@@ -1,0 +1,20 @@
+caseid: 655
+age: 52
+sex: M
+height: 161.1
+weight: 66.3
+bmi: 25.5
+asa: 2
+department: General surgery
+optype: Hepatic
+dx: Hepatocellular carcinoma
+opname: Liver sectionectomy
+approach: Videoscopic
+position: Supine
+ane_type: General
+casestart: 0
+caseend: 16284
+anestart: 757
+aneend: 16057
+opstart: 4657
+opend: 14857
