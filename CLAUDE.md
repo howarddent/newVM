@@ -2041,6 +2041,52 @@ packages. Compiled binaries and each demo's own `lib/` output are
   - **Gotcha**: creating the OpenGL plot controls on each `TTabSheet` in
     `FormCreate` brings that sheet forward, so the form opened on the last
     tab filled until `pcSignals.ActivePage := tsECG` was set at the end.
+- **`newsSpeak`** — fetches the day's Channel 4 News headlines and reads
+  the top five aloud, with a live spectrum of the speech on a
+  `TVMPlotSpectrum` (the SDR analyser's front-on display) as each one
+  plays. The feed is the RSS at `https://www.channel4.com/news/feed`
+  (the one Channel 4's own pages advertise in a `<link
+  rel="alternate">`; `/news/rss` is a 404), fetched with `TFPHTTPClient`
+  over `opensslsockets` exactly as `CanterburyRain` does - including that
+  demo's OpenSSL 3 DLL-name fix, repeated in this unit's
+  `initialization`, so the two DLLs must sit beside the exe (ignored by
+  `demos/*/*.dll`). Parsed with the RTL's `DOM`/`XMLRead`, not scraped:
+  each `<item>`'s title, description (CDATA with the odd tag, stripped)
+  and `pubDate`; "top five" is the feed's newest five, it carries no
+  ranking. Reading is timer-driven on the main thread, no worker: each
+  headline is `Synthesize`d through `TVMSpeech` - Zira, the female
+  voice, picked by name since voice order isn't guaranteed, in the
+  `ssCalm` style - (silently, into a
+  `TVMobj`; the sequence being an introduction - "News headlines from
+  Channel 4 News on" plus the date and time as words, `SpokenDateTime`
+  giving ordinal day, spoken year and a twelve-hour clock because digits
+  read as a jumble - then each headline verbatim followed by the feed's
+  summary of the story, no spoken numbering, and the sign-off "These
+  are the top five headlines today on Channel 4 News"; full stops
+  appended where missing), then
+  `Speak`'d in SAPI's asynchronous mode, and a 30 ms
+  timer FFTs a 1024-sample Hamming-windowed slice of the synthesised
+  waveform at the current playback position - wall-clock time since
+  `Speak`, which tracks SAPI's output closely enough since the waveform
+  IS what SAPI plays - and pushes it with `AddGraph`, the component's
+  0.4 s fade giving persistence. Each frame is relative dB (0 at its own
+  peak, floored at -60, with the DC bin pinned to 0) and resampled onto a
+  fixed 400-bin 0-4 kHz grid, so the display's auto-fit Y range stays
+  still while the spectrum moves. When elapsed time passes the
+  waveform's duration plus 0.3 s the next headline starts; Stop purges
+  SAPI. Verified live: five headlines fetched and read, the formants
+  moving syllable by syllable. A first version stacked one PSD per
+  headline on a `TVMPlotStack`, replaced at the user's request.
+  The spectrum is shown bare: `ShowAxes` and `ShowCursor` off and no title.
+  **`TVMPlotSpectrum` gained `ShowCursor`** (default True, so SDR_Radio
+  is unchanged) for this: off, it drops the tuning cursor, its band, the
+  small value label hanging from the top edge and the big "MHz" corner
+  readout - four separate draw sites in `Paint`, and the label one was
+  missed first time round - none of which mean anything for a speech
+  spectrum. FPC gotchas: a class field can't be a `for`-loop
+  counter, a `DOMString` node-name comparison needs a `UnicodeString(...)`
+  cast, and a local named `Text` inside a form method collides with the
+  inherited property.
 - **`newPoly`** — least-squares polynomial fitting with
   `newPolymath.pas`'s `TPolynomial.Fit` (see its own section above),
   shown on two `TVMPlot2D` components stacked in one form, the fit above
@@ -2569,9 +2615,78 @@ per-series grids.
   generated `.lrs` so the icon can be regenerated/edited later without
   needing to reverse-engineer the resource file.
 
+### `Graphs/uVMSpeech.pas` (`TVMSpeech` text-to-speech component)
+
+A non-visual `TComponent` (not a control) wrapping Windows SAPI 5, in
+the `newVMGraphs` package alongside the plot components, with the
+synthesised audio exposed as a newVM `TVMobj` - the point being that
+speech produced by the OS engine can then be plotted, transformed and
+analysed with the rest of the library. `Speak(Text)` says the text
+through the default device, blocking or with `Async` (SAPI's own
+asynchronous flag, no thread of ours); `Stop` purges; `Synthesize(Text)`
+renders silently to an `SpMemoryStream` and decodes it into
+`Waveform` (a `(1, N)` `TVMobj` in [-1, 1]) with `SampleRate`;
+`SaveToWav` writes that out; `Voices`/`Voice`/`Rate`/`Volume` are SAPI's
+own. Things worth knowing:
+
+- **Late-bound COM**, via `ComObj`'s `CreateOleObject` and Variant
+  dispatch on `SAPI.SpVoice`/`SpMemoryStream`/`SpAudioFormat` - no
+  imported type library, so no 100 KB `sapi_tlb.pas` and no dependence
+  on the type library being registered. Two FPC gotchas: `Type` is a
+  reserved word, so the dispatch property is spelt `Fmt.&Type`; and a
+  `{$IFDEF` mentioned inside a `{ }` comment opens a nested comment
+  level and breaks the parse (the same trap `newvmconfigure.lpr`'s
+  comment-writing hit).
+- **Capturing audio**: set `AudioOutputStream` to a memory stream with
+  a 16 kHz 16-bit mono `Format`, `Speak` synchronously, then `GetData`
+  returns raw PCM as a Variant byte array (no WAV header - the format
+  lives in the stream's `Format` object), read through `VarArrayLock`
+  as little-endian `SmallInt`s. Then put `AudioOutputStream` back to
+  the saved default so a later `Speak` is audible. **The desktop
+  voices (David, Zira) render at 22050 Hz regardless of the requested
+  16 kHz** - seen on the first run - so the rate is read back from the
+  stream's `Format` after rendering, never assumed.
+- The constructor skips SAPI under `csDesigning`, so the component can
+  sit on a form in the IDE without COM being touched at design time.
+  Non-Windows targets compile with every method stubbed to raise
+  `EVMSpeech`, so a cross-platform project still builds; a macOS/Linux
+  back end would go behind the same interface. The intended next step
+  is a formant-synthesis engine as a second back end, which is where
+  newVM's own resonator/FFT machinery comes in (see the Resonance demo).
+- **Prosody presets (`Style`)**: SAPI parses XML in the text under the
+  `SVSFIsXML` flag (8), and understands both W3C SSML and its own older
+  tag set - which are **not equally effective** on the desktop voices.
+  Measured on David by pitch-tracking the rendered audio
+  (autocorrelation over voiced frames, in the probe that drove this):
+  SSML `<prosody pitch="-30%">` moved him from 98 to only 85 Hz, while
+  SAPI's `<pitch absmiddle="-10">` reached 78 and `+10` 118 - the full
+  range. So `WrapSSML` uses SAPI's native `<rate absspeed>`, `<pitch
+  absmiddle>` (both -10..10), `<volume level>` (0..100) and `<silence
+  msec>` tags, and the SSML attempt was replaced. `Style` wraps the text
+  before `Speak`/`Synthesize`, inserting silences at sentence and clause
+  punctuation: `ssPlain` (nothing), `ssNewsreader` (rate -1, 250/120 ms),
+  `ssCalm` (rate -2, pitch -3, volume 80, 450/200 ms) and `ssHAL` (rate
+  -4, pitch -8, volume 70, 800/350 ms, each sentence's last clause nested
+  two pitch steps lower for a gentle fall). Measured on the "I'm sorry,
+  Dave" lines: Plain 9.2 s at 95 Hz, HAL 16.8 s at 74 Hz - slow, low and
+  unhurried, as intended, though still David's timbre: a deeper, smoother
+  voice needs the signal-processing stage (pitch flattening, formant
+  shift) that `Waveform` exists for, the intended next step. `ssCustom`
+  uses the five `Prosody*`/`Break*Ms` properties as set; `SSMLFor(Text)`
+  returns what the engine would receive, for inspection. Text is
+  XML-escaped first, so an `&` in a headline can't break the parse.
+- **`demos/Speech`** exercises it: a memo of text, voice/rate/volume
+  controls, a Style combo (the info label's hint shows the generated
+  markup), Speak/Stop, and Synthesize, which plots the whole utterance
+  on one `TVMPlot2D` and its Hamming-windowed PSD to 5 kHz on another
+  (the BioSpectra recipe), with Play and Save WAV. Verified on screen:
+  7.4 s of "The quick brown fox..." at 22050 Hz, the syllable bursts in
+  the trace and the pitch-harmonic comb under the formant humps in the
+  spectrum.
+
 ### `Graphs/newvmgraphs.lpk` (`newVMGraphs` design-time package)
 
-The Lazarus package that gets `TVMPlot2D` and `TVMPlot3D` into the IDE's
+The Lazarus package that gets `TVMPlot2D`, `TVMPlot3D`, `TVMPlotStack` and `TVMSpeech` into the IDE's
 component palette, following the same two-file shape every Lazarus
 package uses (compare `lazopenglcontext.lpk`/`.pas` in the Lazarus source
 tree itself, under `components/opengl/`): `newvmgraphs.lpk` is the

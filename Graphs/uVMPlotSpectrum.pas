@@ -181,6 +181,7 @@ type
     FPeakLabelTex: array of TVMPlotTextTexture;
 
     FShowAverage: Boolean;
+    FShowCursor: Boolean;
     FAverageCount: Integer;
 
     FCursorValue: Double;
@@ -205,6 +206,7 @@ type
     procedure UpdatePeakLabel;
     procedure DrawPeakMarker;
     procedure SetShowAverage(AValue: Boolean);
+    procedure SetShowCursor(AValue: Boolean);
     procedure SetAverageCount(AValue: Integer);
     procedure ComputeAverageSlice(out AvgY: TVMPlotDoubleArray; out N: Integer);
     procedure DrawAverageLine;
@@ -290,6 +292,11 @@ type
     // comment), so it moves/scales with YOffset/YGain exactly like the
     // individual traces do.
     property ShowAverage: Boolean read FShowAverage write SetShowAverage;
+    // The tunable cursor line, its band and label, and the big corner
+    // readout - the SDR analyser's tuning UI. Off, the display is a plain
+    // spectrum: demos/newsSpeak wants exactly that, a frequency axis with
+    // no notion of a tuned frequency. Default True keeps SDR_Radio as it was.
+    property ShowCursor: Boolean read FShowCursor write SetShowCursor default True;
     property AverageCount: Integer read FAverageCount write SetAverageCount;
     property CurrentYMin: Double read FYMin;
     property CurrentYMax: Double read FYMax;
@@ -399,6 +406,7 @@ begin
   FPeakThreshold := NoPeakThreshold;
   FPeakCount := 0;
   FShowAverage := True;
+  FShowCursor := True;
   FAverageCount := DefaultAverageCount;
   FCursorValue := 0.5;
   FCursorBandwidth := 0;
@@ -547,6 +555,13 @@ procedure TVMPlotSpectrum.SetShowAverage(AValue: Boolean);
 begin
   if FShowAverage = AValue then Exit;
   FShowAverage := AValue;
+  Invalidate;
+end;
+
+procedure TVMPlotSpectrum.SetShowCursor(AValue: Boolean);
+begin
+  if FShowCursor = AValue then Exit;
+  FShowCursor := AValue;
   Invalidate;
 end;
 
@@ -1285,8 +1300,10 @@ begin
 
   DrawAverageLine;
   DrawPeakMarker;
-  DrawCursorBand;
-  DrawCursor;
+  if FShowCursor then begin
+    DrawCursorBand;
+    DrawCursor;
+  end;
 
   // --- pass 2: pixel-space chrome ---
   glViewport(0, 0, W, H);
@@ -1334,15 +1351,18 @@ begin
   // above the top margin, which would collide with the main Title label
   // sitting just above that (confirmed by screenshot - the two overlapped
   // when this was placed at PlotBottom+PlotH+4 with VAlign=0).
-  px := PlotLeft + (FCursorValue - FPlotXMin) / (FPlotXMax - FPlotXMin) * PlotW;
-  DrawTextTexture(FCursorLabelTex, px, PlotBottom + PlotH - 4, 0, 0.5, 1);
+  if FShowCursor then begin
+    px := PlotLeft + (FCursorValue - FPlotXMin) / (FPlotXMax - FPlotXMin) * PlotW;
+    DrawTextTexture(FCursorLabelTex, px, PlotBottom + PlotH - 4, 0, 0.5, 1);
+  end;
 
   // Big HUD frequency readout, fixed in the upper-right corner - see this
   // unit's own BIG FREQUENCY READOUT header comment for why this is
   // separate from the cursor label above (which tracks the cursor's own
   // X position instead of staying put).
-  DrawTextTextureH(FBigFreqTex, W - BigFreqMargin, H - BigFreqMargin,
-    BigFreqDisplayHeight, 1, 1);
+  if FShowCursor then
+    DrawTextTextureH(FBigFreqTex, W - BigFreqMargin, H - BigFreqMargin,
+      BigFreqDisplayHeight, 1, 1);
 
   glDisable(GL_TEXTURE_2D);
 
