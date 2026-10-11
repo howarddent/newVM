@@ -493,7 +493,6 @@ begin
   FBiPlot.Align := alClient;
   FBiPlot.XAxisTitle := 'f1 (Hz)';
   FBiPlot.YAxisTitle := 'f2 (Hz)';
-  FBiPlot.AxisStyle := pasBox;   // gridded back planes with the scales on their edges
 
   ShowAll;
 

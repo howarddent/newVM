@@ -1996,8 +1996,7 @@ packages. Compiled binaries and each demo's own `lib/` output are
   memo quotes. Only the f2 <= f1 triangle is computed, the grid being
   filled symmetrically, and the square `TVMobj` goes to `SetData` with
   `XAxisMin/Max`/`YAxisMin/Max` set to the frequency range so the ticks
-  read in Hz, and `ZAxisMin/Max` fixed to 0..1 for bicoherence, drawn
-  with `AxisStyle = pasBox` (see the `uVMPlot3D.pas` section). A
+  read in Hz, and `ZAxisMin/Max` fixed to 0..1 for bicoherence. A
   "Signal" radio group swaps the EEG for a synthetic test signal - two
   tones at `fa`/`fb` (spin edits, default 6 and 10 Hz) with random
   phases drawn once, through the memoryless nonlinearity `y = x + k x^2`
@@ -2768,9 +2767,10 @@ not part of the `LazOpenGLContext` Lazarus package, so no extra
   mode (`if (not FWireframe) and FShowLevelCurves` in `Paint`), since a
   contour line has no independent visual meaning against a mesh that
   already shows every grid edge.
-- **`AxisStyle`** (`pasCentred`, the default, or `pasBox`): how the axes
-  are drawn when `ShowAxes` is on. `pasCentred` is the original gizmo -
-  three coloured lines through the origin with tick points on them.
+- **`AxisStyle`** (`pasBox`, the default since 11 Oct 2026, or
+  `pasCentred`): how the axes are drawn when `ShowAxes` is on.
+  `pasCentred` is the original gizmo - three coloured lines through the
+  origin with tick points on them, kept as an option.
   `pasBox` is the conventional plot box: three translucent gridded
   planes, a floor and two walls meeting at the back corner, with grid
   lines at every tick and the scales along their outer edges
@@ -2787,9 +2787,8 @@ not part of the `LazOpenGLContext` Lazarus package, so no extra
   ticks along the floor's front edge, Y ticks along the floor edge at
   the foot of the x-wall (the far side - the near side put them under
   the surface's front corner, seen on the first screenshot), Z ticks up
-  the x-wall's front vertical edge. `demos/BioSpectra`'s bispectrum tab
-  uses it; the `Plot3D` demo has an "Axis Box" check box to compare the
-  two styles.
+  the x-wall's front vertical edge. The `Plot3D` demo has an "Axis Box"
+  check box (on by default) to compare the two styles.
 - **`DrawLevelCurves`**: per-tick, per-quad marching-triangles contour
   extraction - for each `FZTicks[i]` strictly between `FZMin`/`FZMax`
   (converted to the same world-space Z the surface itself is drawn in, via

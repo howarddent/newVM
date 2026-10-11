@@ -75,10 +75,11 @@ type
 
   { TVMPlot3D }
 
-  // How the axes are drawn - see DrawAxisBox. pasCentred is the original
-  // three coloured lines through the origin with tick points on them;
-  // pasBox is the conventional three gridded back planes (floor and two
-  // walls) with the scales along their outer edges.
+  // How the axes are drawn - see DrawAxisBox. pasBox (the default) is the
+  // conventional three gridded back planes (floor and two walls) with the
+  // scales along their outer edges; pasCentred is the original three
+  // coloured lines through the origin with tick points on them, kept as
+  // an option.
   TVMPlot3DAxisStyle = (pasCentred, pasBox);
 
   TVMPlot3D = class(TOpenGLControl)
@@ -181,7 +182,7 @@ type
     property Wireframe: Boolean read FWireframe write SetWireframe;
     property ShowAxes: Boolean read FShowAxes write SetShowAxes;
     property ShowLevelCurves: Boolean read FShowLevelCurves write SetShowLevelCurves;
-    property AxisStyle: TVMPlot3DAxisStyle read FAxisStyle write SetAxisStyle default pasCentred;
+    property AxisStyle: TVMPlot3DAxisStyle read FAxisStyle write SetAxisStyle default pasBox;
     property Title: string read FTitle write SetTitle;
     property XAxisTitle: string read FXAxisTitle write SetXAxisTitle;
     property YAxisTitle: string read FYAxisTitle write SetYAxisTitle;
@@ -409,7 +410,7 @@ begin
   FWireframe := False;
   FShowAxes := True;
   FShowLevelCurves := False;
-  FAxisStyle := pasCentred;
+  FAxisStyle := pasBox;
   FBoxSX := -1; FBoxSY := -1; FBoxSZ := -1;
   FLightX := DefaultLightX;
   FLightY := DefaultLightY;

@@ -54,6 +54,8 @@ object Form1: TForm1
       Top = 10
       Width = 90
       Caption = 'Axis Box'
+      Checked = True
+      State = cbChecked
       TabOrder = 3
       OnChange = AxisBoxCheckBoxChange
     end
