@@ -9,7 +9,8 @@ unit ubiospectramain;
      records, byte ranges and licence) - then a fourth tab of frontal EEG
      under anaesthesia from VitalDB, and synthetic square and triangle
      waves, their Fourier synthesis, an EEG bispectrum and the bispectrum
-     of the anaesthesia EEG after that.
+     of the anaesthesia EEG after that, and last a clean and a distorted
+     guitar note.
 
      READING THE DATA
 
@@ -255,6 +256,37 @@ unit ubiospectramain;
      deliberately avoid 1000-1300 s, where ECG spikes once a second give a
      bicoherence of ~0.9 everywhere.
 
+     GUITAR DISTORTION (the ninth tab)
+
+     Linear against nonlinear amplification, on one guitar note: the open
+     G string (G3, 196 Hz) played clean on a nylon-string guitar and
+     through heavy distortion on an electric, by the same player
+     (Freesound "SpeedY", CC0; data/guitar_*.wav, 4 s at 44.1 kHz, made by
+     data/fetch_guitar.py). The clean note is always the left column; the
+     right is the distorted recording, or the clean note through a linear
+     gain y = g x, or through a simulated soft clipper y = tanh(g x) -
+     the controlled comparison, since the recordings also differ in
+     instrument. Each column: 25 ms of the waveform from 0.3 s (or the
+     whole note, decimated by 8), its PSD in dB re its own peak (always
+     dB: on a linear scale only the fundamental shows - ComputePSD's
+     ForceDB), and |B| in dB or the bicoherence from ComputeBispectrum
+     (0.1 s epochs, 50 Hz to 2 kHz by default, grid capped at 400 bins a
+     side). The memo tabulates crest factor, harmonics within 30 dB, power
+     above 1 kHz, the share of the |B| triangle within 30 dB of its
+     maximum and the mean bicoherence for both. Measured: 6 harmonics
+     within 30 dB of the strongest clean against 21 distorted, 0.6 % of
+     the power above 1 kHz against 42 %, 0.8 % of the |B| triangle within
+     30 dB of its maximum against 4.2 % (numpy agreed); "Clean x gain"
+     reproduces the clean column exactly, as linearity says it must, and
+     tanh(100 x) takes the crest factor from 17 to 1.7 dB and the |B|
+     share to 3.4 %. Bicoherence is high on the harmonic
+     lattice for any periodic note - a plucked string's harmonics are
+     already phase-locked - so it is |B|'s spread across the lattice, not
+     the bicoherence, that shows the distortion; the memo says so.
+     Play buttons write the note, scaled to a 0.9 peak, to a temporary
+     WAV and play it asynchronously: PlaySound (MMSystem) on Windows,
+     paplay or aplay through TProcess on Linux.
+
      LAYOUT
 
      A TPageControl with one TTabSheet per signal; each sheet holds a memo
@@ -273,6 +305,8 @@ interface
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Spin,
+  {$IFDEF WINDOWS} MMSystem, {$ENDIF}
+  {$IFDEF UNIX} Process, {$ENDIF}
   newVM, newVMComplex, uVMPlot2D, uVMPlot3D;
 
 type
@@ -361,6 +395,21 @@ type
     tsABP: TTabSheet;
     tsAnaes: TTabSheet;
     tsAnaesBi: TTabSheet;
+    tsGuitar: TTabSheet;
+    pnlGtrCtl: TPanel;
+    rgGtrRight: TRadioGroup;
+    lblGtrGain: TLabel;
+    seGtrGain: TFloatSpinEdit;
+    btnPlayL: TButton;
+    btnPlayR: TButton;
+    cbGtrWhole: TCheckBox;
+    lblGtrFmax: TLabel;
+    seGtrFmax: TFloatSpinEdit;
+    lblGtrEpoch: TLabel;
+    seGtrEpoch: TFloatSpinEdit;
+    rgGtrKind: TRadioGroup;
+    memGtr: TMemo;
+    pnlGtr: TPanel;
     pnlABiCtl: TPanel;
     rgABi: TRadioGroup;
     lblABiFmax: TLabel;
@@ -403,6 +452,10 @@ type
     procedure AnaesBiChange(Sender: TObject);
     procedure cbABiLevelsChange(Sender: TObject);
     procedure AnaesBiPanelResize(Sender: TObject);
+    procedure GuitarChange(Sender: TObject);
+    procedure GuitarPanelResize(Sender: TObject);
+    procedure btnPlayLClick(Sender: TObject);
+    procedure btnPlayRClick(Sender: TObject);
   private
     FTabs: array[0..2] of TSignalTab;
     FSynthTime, FSynthSpec: TVMPlot2D;
@@ -423,6 +476,18 @@ type
     FAnaesLongStart: array[0..3] of Double;
     FABiTrend, FABiTime: TVMPlot2D;
     FABiPlot: TVMPlot3D;
+    // guitar distortion tab: the two recorded notes, the pair currently
+    // shown (left always the clean note), and per column a time trace,
+    // a PSD and a bispectrum surface
+    FGtrFs: Double;
+    FGtrClean, FGtrDist: TVMobj;
+    FGtrSig: array[0..1] of TVMobj;
+    FGtrCol: array[0..1] of TPanel;
+    FGtrTime, FGtrSpec: array[0..1] of TVMPlot2D;
+    FGtrBi: array[0..1] of TVMPlot3D;
+    {$IFDEF UNIX}
+    FPlayer: TProcess;
+    {$ENDIF}
     FSnapshot: string;   // --snapshot=<prefix>: save the anaesthesia tab's plots, print its memo, exit
     procedure LoadVitalDB;
     procedure LoadVitalDBEEG(const FileName: string; var Names: array of string;
@@ -434,6 +499,11 @@ type
     function TrendMean(const C: TAnaesCase; Which: Integer; T0, T1: Double): Double;
     function StateMean(j, Which: Integer; Long: Boolean = False): Double;
     procedure ShowAnaesthesia;
+    function LoadWav16(const FileName: string; out Fs: Double): TVMobj;
+    procedure SaveWav16(const FileName: string; const Data: TVMobj; Fs: Double);
+    procedure StopPlayback;
+    procedure PlayGuitar(c: Integer);
+    procedure ShowGuitar;
     procedure SnapshotShow(Sender: TObject);
     procedure DoSnapshot(Data: PtrInt);
     function SyntheticBispectrumSignal(N: Integer; Fs: Double): TVMobj;
@@ -454,7 +524,7 @@ type
       upper limit, P the PSD (dB or linear per the check box) cut to match }
     procedure ComputePSD(const Data: TVMobj; Fs: Double; out F, P: TVMobj;
       out NBins: Integer; out Sw2: Double; LinearFull: Boolean = False;
-      DefaultFmax: Double = 0; Fmin: Double = 0);
+      DefaultFmax: Double = 0; Fmin: Double = 0; ForceDB: Boolean = False);
     procedure AddEEGBands(Plot: TVMPlot2D);
     function SpectrumYTitle(const Units: string): string;
     procedure ShowSignal(var Tab: TSignalTab);
@@ -568,7 +638,7 @@ end;
 
 procedure TfmBio.ComputePSD(const Data: TVMobj; Fs: Double; out F, P: TVMobj;
   out NBins: Integer; out Sw2: Double; LinearFull: Boolean; DefaultFmax: Double;
-  Fmin: Double);
+  Fmin: Double; ForceDB: Boolean);
 var
   N, k, kMin, kMax: Integer;
   Mean, Fmax, Fres: Double;
@@ -600,7 +670,7 @@ begin
   PP := PP * (2 / (Fs * Sw2));
   PP[0, 0] := PP[0, 0] / 2;                             // DC and Nyquist are not doubled
   if N mod 2 = 0 then PP[0, NBins - 1] := PP[0, NBins - 1] / 2;
-  if not (cbLinear.Checked or LinearFull) then
+  if ForceDB or not (cbLinear.Checked or LinearFull) then
   begin
     // 10 log10, floored 150 dB below the peak: the DC bin is exactly zero
     // after mean removal, and an absolute 1e-30 floor put it at -300 dB,
@@ -755,6 +825,34 @@ begin
   FABiPlot.YAxisTitle := 'f2 (Hz)';
   AnaesBiPanelResize(nil);
 
+  // guitar distortion tab: two columns, each a time trace, a PSD and a
+  // bispectrum surface
+  FGtrClean := LoadWav16(DataDir + 'guitar_clean_G3.wav', FGtrFs);
+  FGtrDist := LoadWav16(DataDir + 'guitar_distorted_G3.wav', FGtrFs);
+  for i := 0 to 1 do
+  begin
+    FGtrCol[i] := TPanel.Create(Self);
+    FGtrCol[i].Parent := pnlGtr;
+    FGtrCol[i].BevelOuter := bvNone;
+    if i = 0 then FGtrCol[i].Align := alLeft else FGtrCol[i].Align := alClient;
+    FGtrTime[i] := TVMPlot2D.Create(Self);
+    FGtrTime[i].Parent := FGtrCol[i];
+    FGtrTime[i].Align := alTop;
+    FGtrTime[i].XAxisTitle := 'time (s)';
+    FGtrTime[i].YAxisTitle := 'amplitude';
+    FGtrSpec[i] := TVMPlot2D.Create(Self);
+    FGtrSpec[i].Parent := FGtrCol[i];
+    FGtrSpec[i].Align := alTop;
+    FGtrSpec[i].XAxisTitle := 'frequency (Hz)';
+    FGtrSpec[i].YAxisTitle := 'dB re peak';
+    FGtrBi[i] := TVMPlot3D.Create(Self);
+    FGtrBi[i].Parent := FGtrCol[i];
+    FGtrBi[i].Align := alClient;
+    FGtrBi[i].XAxisTitle := 'f1 (Hz)';
+    FGtrBi[i].YAxisTitle := 'f2 (Hz)';
+  end;
+  GuitarPanelResize(nil);
+
   ShowAll;
   ShowAnaesBispectrum;   // not in ShowAll: the PSD settings don't touch it
 
@@ -774,13 +872,15 @@ end;
 
 { --snapshot=<prefix>: shows the anaesthesia tab (a never-shown tab's GL
   controls have no context), saves its trend, spectrum and each excerpt's
-  time trace as <prefix>_trend.png, _spectrum.png, _time<n>.png, prints
-  the memo and exits - for checking the tab without clicking through it }
+  time trace as <prefix>_trend.png, _spectrum.png, _time<n>.png, the
+  window on the anaesthesia bispectrum and guitar tabs for each choice
+  (_bispectrum*.bmp, _guitar_<dB|bicoh><n>.bmp), prints the memos and exits - for checking the tab without clicking through it }
 procedure TfmBio.DoSnapshot(Data: PtrInt);
 const
   KindTag: array[0..2] of string = ('B', 'dB', 'b');
+  GtrTag: array[0..1] of string = ('dB', 'bicoh');   // not B/b: Windows file names ignore case
 var
-  i, k: Integer;
+  i, j, k: Integer;
 begin
   pcSignals.ActivePage := tsAnaes;
   Application.ProcessMessages;
@@ -824,6 +924,31 @@ begin
         Free;
       end;
     end;
+  pcSignals.ActivePage := tsGuitar;
+  Application.ProcessMessages;
+  for k := 0 to 1 do               // |B| in dB, bicoherence
+    for i := 0 to rgGtrRight.Items.Count - 1 do
+    begin
+      rgGtrKind.ItemIndex := k;
+      rgGtrRight.ItemIndex := i;
+      ShowGuitar;
+      Application.ProcessMessages;
+      with GetFormImage do
+      try
+        SaveToFile(Format('%s_guitar_%s%d.bmp', [FSnapshot, GtrTag[k], i]));
+      finally
+        Free;
+      end;
+      // GetFormImage leaves the GL areas blank on Windows, so the 2D
+      // plots themselves too (TVMPlot3D has no SaveToPNG)
+      if k = 0 then
+        for j := 0 to 1 do
+        begin
+          FGtrTime[j].SaveToPNG(Format('%s_guitar_%d_time%d.png', [FSnapshot, i, j]));
+          FGtrSpec[j].SaveToPNG(Format('%s_guitar_%d_psd%d.png', [FSnapshot, i, j]));
+        end;
+      if k = 0 then WriteLn(memGtr.Lines.Text);
+    end;
   WriteLn(memAnaes.Lines.Text);
   WriteLn(memABi.Lines.Text);
   Application.Terminate;
@@ -833,6 +958,7 @@ procedure TfmBio.FormDestroy(Sender: TObject);
 var
   i: Integer;
 begin
+  StopPlayback;
   for i := 0 to 2 do
     FTabs[i].Signal.HeaderLines.Free;
   FEEGLong.HeaderLines.Free;
@@ -1208,6 +1334,7 @@ begin
   ShowSynthetic;
   ShowSynthesis;
   ShowBispectrum;
+  ShowGuitar;
 end;
 
 procedure TfmBio.seFmaxChange(Sender: TObject);
@@ -2264,6 +2391,535 @@ begin
     memSynth.Lines.Add('perturbs its higher harmonics.');
   finally
     memSynth.Lines.EndUpdate;
+  end;
+end;
+
+{ ---- guitar distortion tab ---- }
+
+{ A 16-bit PCM WAV as a (1, N) TVMobj in [-1, 1), channels averaged }
+function TfmBio.LoadWav16(const FileName: string; out Fs: Double): TVMobj;
+var
+  B: TBytes;
+  fsm: TFileStream;
+  p, ChunkSize, Channels, Bits, NFrames, i, ch: Integer;
+  ChunkId: string;
+  DataPos, DataSize: Integer;
+  Sum: Double;
+  RP: PDouble;
+  function U16(At: Integer): Integer;
+  begin
+    Result := B[At] or (B[At + 1] shl 8);
+  end;
+  function Id4(At: Integer): string;
+  begin
+    Result := Chr(B[At]) + Chr(B[At + 1]) + Chr(B[At + 2]) + Chr(B[At + 3]);
+  end;
+  function U32(At: Integer): Integer;
+  begin
+    Result := B[At] or (B[At + 1] shl 8) or (B[At + 2] shl 16) or (B[At + 3] shl 24);
+  end;
+begin
+  fsm := TFileStream.Create(FileName, fmOpenRead or fmShareDenyWrite);
+  try
+    SetLength(B, fsm.Size);
+    if Length(B) > 0 then fsm.ReadBuffer(B[0], Length(B));
+  finally
+    fsm.Free;
+  end;
+  if (Length(B) < 12) or (Id4(0) <> 'RIFF')
+    or (Id4(8) <> 'WAVE') then
+    raise Exception.Create(FileName + ' is not a WAV file');
+  Fs := 0; Channels := 0; Bits := 0; DataPos := -1; DataSize := 0;
+  p := 12;
+  while p + 8 <= Length(B) do
+  begin
+    ChunkId := Id4(p);
+    ChunkSize := U32(p + 4);
+    if ChunkId = 'fmt ' then
+    begin
+      if U16(p + 8) <> 1 then
+        raise Exception.Create(FileName + ': not PCM');
+      Channels := U16(p + 10);
+      Fs := U32(p + 12);
+      Bits := U16(p + 22);
+    end
+    else if ChunkId = 'data' then
+    begin
+      DataPos := p + 8;
+      DataSize := Min(ChunkSize, Length(B) - DataPos);
+    end;
+    Inc(p, 8 + ChunkSize + (ChunkSize and 1));   // chunks are word-aligned
+  end;
+  if (DataPos < 0) or (Bits <> 16) or (Channels < 1) then
+    raise Exception.Create(FileName + ': only 16-bit PCM WAV is read');
+  NFrames := DataSize div (2 * Channels);
+  Result := TVMobj.Create(1, NFrames);
+  RP := Result.DataPtr;
+  for i := 0 to NFrames - 1 do
+  begin
+    Sum := 0;
+    for ch := 0 to Channels - 1 do
+      Sum := Sum + SmallInt(U16(DataPos + 2 * (i * Channels + ch)));
+    RP[i] := Sum / (32768.0 * Channels);
+  end;
+end;
+
+{ Data as a 16-bit mono WAV, normalised to a peak of 0.9 - for playback,
+  so every note plays at the same peak level whatever its amplitude here }
+procedure TfmBio.SaveWav16(const FileName: string; const Data: TVMobj; Fs: Double);
+var
+  fsm: TFileStream;
+  N, i, Rate: Integer;
+  Pk: Double;
+  DP: PDouble;
+  S: array of SmallInt;
+  procedure Tag(const T: string);
+  begin
+    fsm.WriteBuffer(T[1], 4);
+  end;
+  procedure W32(V: LongWord);
+  begin
+    V := NtoLE(V);
+    fsm.WriteBuffer(V, 4);
+  end;
+  procedure W16(V: Word);
+  begin
+    V := NtoLE(V);
+    fsm.WriteBuffer(V, 2);
+  end;
+begin
+  N := Data.Cols * Data.Rows;
+  DP := Data.DataPtr;
+  Pk := 0;
+  for i := 0 to N - 1 do
+    if Abs(DP[i]) > Pk then Pk := Abs(DP[i]);
+  if Pk = 0 then Pk := 1;
+  SetLength(S, N);
+  for i := 0 to N - 1 do
+    S[i] := NtoLE(SmallInt(Round(0.9 * 32767 * DP[i] / Pk)));
+  Rate := Round(Fs);
+  fsm := TFileStream.Create(FileName, fmCreate);
+  try
+    Tag('RIFF'); W32(36 + 2 * N); Tag('WAVE');
+    Tag('fmt '); W32(16); W16(1); W16(1); W32(Rate); W32(2 * Rate); W16(2); W16(16);
+    Tag('data'); W32(2 * N);
+    if N > 0 then fsm.WriteBuffer(S[0], 2 * N);
+  finally
+    fsm.Free;
+  end;
+end;
+
+procedure TfmBio.StopPlayback;
+begin
+  {$IFDEF WINDOWS}
+  PlaySound(nil, 0, 0);
+  {$ENDIF}
+  {$IFDEF UNIX}
+  if Assigned(FPlayer) then
+  begin
+    if FPlayer.Running then FPlayer.Terminate(0);
+    FreeAndNil(FPlayer);
+  end;
+  {$ENDIF}
+end;
+
+{ Plays column c's note through the default output device, asynchronously:
+  written to a temporary WAV, then PlaySound (Windows) or paplay/aplay
+  (Linux). Starting one stops whatever was playing. }
+procedure TfmBio.PlayGuitar(c: Integer);
+var
+  FileName: string;
+  {$IFDEF UNIX}
+  Exe: string;
+  {$ENDIF}
+begin
+  StopPlayback;
+  FileName := GetTempDir(False) + Format('biospectra_guitar_%d.wav', [c]);
+  SaveWav16(FileName, FGtrSig[c], FGtrFs);
+  {$IF DEFINED(WINDOWS)}
+  if not PlaySound(PChar(FileName), 0, SND_FILENAME or SND_ASYNC or SND_NODEFAULT) then
+    ShowMessage('Could not play ' + FileName);
+  {$ELSEIF DEFINED(UNIX)}
+  Exe := ExeSearch('paplay', GetEnvironmentVariable('PATH'));
+  if Exe = '' then Exe := ExeSearch('aplay', GetEnvironmentVariable('PATH'));
+  if Exe = '' then
+  begin
+    ShowMessage('Neither paplay nor aplay was found on the PATH');
+    Exit;
+  end;
+  FPlayer := TProcess.Create(nil);
+  FPlayer.Executable := Exe;
+  FPlayer.Parameters.Add(FileName);
+  FPlayer.Execute;
+  {$ELSE}
+  ShowMessage('Playback is implemented for Windows and Linux only');
+  {$ENDIF}
+end;
+
+procedure TfmBio.btnPlayLClick(Sender: TObject);
+begin
+  PlayGuitar(0);
+end;
+
+procedure TfmBio.btnPlayRClick(Sender: TObject);
+begin
+  PlayGuitar(1);
+end;
+
+procedure TfmBio.GuitarChange(Sender: TObject);
+begin
+  if Assigned(FGtrBi[1]) then
+    ShowGuitar;
+end;
+
+{ two equal columns; in each the trace takes the top 22 %, the PSD the
+  next 30 % and the bispectrum the rest. Tops set explicitly: two alTop
+  controls created in code stack in no guaranteed order }
+procedure TfmBio.GuitarPanelResize(Sender: TObject);
+var
+  i: Integer;
+begin
+  if not Assigned(FGtrBi[1]) then Exit;
+  FGtrCol[0].Width := pnlGtr.Width div 2;
+  for i := 0 to 1 do
+  begin
+    FGtrTime[i].Top := 0;
+    FGtrTime[i].Height := pnlGtr.Height * 22 div 100;
+    FGtrSpec[i].Top := FGtrTime[i].Height;
+    FGtrSpec[i].Height := pnlGtr.Height * 30 div 100;
+  end;
+end;
+
+procedure TfmBio.ShowGuitar;
+const
+  GtrFmin = 50.0;        // Hz: the bispectrum surface starts here, clear of DC and handling noise
+  GtrPSDFmax = 8000.0;   // Hz: the PSD's default upper limit (the global spin edit overrides)
+  MaxGridBins = 400;     // bispectrum grid side, to bound memory and the 3D mesh
+  ColColour: array[0..1] of TColor = (clBlue, clRed);
+var
+  c, d, i, k, hn, N, NBins, NShow, Step, i0, kF0, k0, k1, NH30, HTop, nTri, nNear: Integer;
+  G, Fs, Sw2, Fres, Mx, Lvl, HMax, Tot, Above, Cent, BiSum, Fmax, Epoch: Double;
+  T, F, P, Shown, GridB, GridC, Grid, PLin, FLin: TVMobj;
+  SP, DP, PP: PDouble;
+  Info, InfoC: TBispecInfo;
+  Bicoh, Capped: Boolean;
+  Lbl, ShortLbl: array[0..1] of string;
+  H: array of Double;
+  // per column: peak, RMS, crest factor (dB), f0, harmonics within 30 dB,
+  // highest harmonic within 40 dB, % power above 1 kHz, spectral centroid,
+  // % of the |B| triangle within 30 dB of its maximum, mean bicoherence
+  StPeak, StRms, StCrest, StF0, StNH30, StHTop, StAbove, StCent, StNear, StBicoh: array[0..1] of Double;
+  function Row2(const RowName, Fm: string; const V: array of Double): string;
+  begin
+    Result := Format('%-26s%11s%11s', [RowName, Format(Fm, [V[0]]), Format(Fm, [V[1]])]);
+  end;
+begin
+  if not Assigned(FGtrBi[1]) then Exit;   // not yet built
+  Fs := FGtrFs;
+  G := seGtrGain.Value;
+  seGtrGain.Enabled := rgGtrRight.ItemIndex in [1, 2];
+  lblGtrGain.Enabled := seGtrGain.Enabled;
+
+  // the pair: the clean note, and the chosen right-hand one
+  FGtrSig[0] := FGtrClean;
+  Lbl[0] := 'Clean (nylon, recorded)';
+  ShortLbl[0] := 'Clean';
+  case rgGtrRight.ItemIndex of
+    1: begin
+         FGtrSig[1] := G * FGtrClean;                    // an ideal linear amplifier
+         Lbl[1] := Format('Clean x %g (linear gain)', [G]);
+         ShortLbl[1] := Format('Clean x %g', [G]);
+       end;
+    2: begin
+         // a symmetric soft clipper with small-signal gain G; newVM has no
+         // elementwise tanh, so a loop
+         N := FGtrClean.Cols;
+         FGtrSig[1] := TVMobj.Create(1, N);
+         SP := FGtrClean.DataPtr;
+         DP := FGtrSig[1].DataPtr;
+         for i := 0 to N - 1 do DP[i] := Tanh(G * SP[i]);
+         Lbl[1] := Format('tanh(%g x clean) (simulated)', [G]);
+         ShortLbl[1] := Format('tanh(%g x)', [G]);
+       end;
+  else
+    FGtrSig[1] := FGtrDist;
+    Lbl[1] := 'Distorted (electric, recorded)';
+    ShortLbl[1] := 'Distorted';
+  end;
+
+  // bispectrum settings, the grid capped at MaxGridBins a side
+  Epoch := seGtrEpoch.Value;
+  Fmax := seGtrFmax.Value;
+  Capped := Fmax > MaxGridBins * Fs / Round(Epoch * Fs);
+  if Capped then Fmax := MaxGridBins * Fs / Round(Epoch * Fs);
+  Bicoh := rgGtrKind.ItemIndex = 1;
+
+  for c := 0 to 1 do
+  begin
+    N := FGtrSig[c].Cols;
+
+    // time trace: 25 ms (about five periods) from 0.3 s, where the shape
+    // shows, or the whole note every 8th sample, where the envelope does
+    if cbGtrWhole.Checked then
+    begin
+      Step := 8;
+      NShow := N div Step;
+      T := TVMobj.Create(1, NShow);
+      T.linspace(0, Step / Fs);
+      Shown := TVMobj.Create(1, NShow);
+      SP := FGtrSig[c].DataPtr;
+      DP := Shown.DataPtr;
+      for i := 0 to NShow - 1 do DP[i] := SP[i * Step];
+      FGtrTime[c].Title := Format('%s: the whole %.0f s', [ShortLbl[c], N / Fs]);
+    end
+    else
+    begin
+      i0 := Round(0.3 * Fs);
+      NShow := Round(0.025 * Fs);
+      T := TVMobj.Create(1, NShow);
+      T.linspace(i0 / Fs, 1 / Fs);
+      Shown := SubMatrix(FGtrSig[c], 0, i0, 1, NShow);
+      FGtrTime[c].Title := Format('%s: 25 ms from 0.3 s', [ShortLbl[c]]);
+    end;
+    FGtrTime[c].SetSeriesStyle(0, ColColour[c], 1.0, plsSolid, '');
+    FGtrTime[c].ClearSeries;
+    FGtrTime[c].SetData(T, [Shown]);
+
+    // PSD, always in dB (a linear scale would show the fundamental and
+    // little else), relative to its own peak so the two compare by shape
+    ComputePSD(FGtrSig[c], Fs, F, P, NBins, Sw2, False, GtrPSDFmax, 0, True);
+    PP := P.DataPtr;
+    Mx := -1e300;
+    for i := 0 to P.Cols - 1 do if PP[i] > Mx then Mx := PP[i];
+    for i := 0 to P.Cols - 1 do PP[i] := Max(PP[i] - Mx, -120);
+    FGtrSpec[c].Title := Format('%s: PSD, %.2f Hz bins', [ShortLbl[c], Fs / N]);
+    FGtrSpec[c].SetSeriesStyle(0, ColColour[c], 1.0, plsSolid, '');
+    FGtrSpec[c].ClearSeries;
+    FGtrSpec[c].SetData(F, [P]);
+
+    // figures for the memo, from the linear PSD to Nyquist
+    ComputePSD(FGtrSig[c], Fs, FLin, PLin, NBins, Sw2, True);
+    PP := PLin.DataPtr;
+    Fres := Fs / N;
+    SP := FGtrSig[c].DataPtr;
+    StPeak[c] := 0; StRms[c] := 0;
+    for i := 0 to N - 1 do
+    begin
+      if Abs(SP[i]) > StPeak[c] then StPeak[c] := Abs(SP[i]);
+      StRms[c] := StRms[c] + Sqr(SP[i]);
+    end;
+    StRms[c] := Sqrt(StRms[c] / N);
+    StCrest[c] := 20 * Log10(StPeak[c] / StRms[c]);
+    // f0: the strongest line between 80 Hz and 1 kHz may be a harmonic -
+    // the distorted note's 2nd and 3rd outweigh its fundamental - so take
+    // the largest divisor d whose 1/d frequency, still >= 80 Hz, carries
+    // a line within 20 dB of it
+    kF0 := Round(80 / Fres);
+    for k := Round(80 / Fres) to Round(1000 / Fres) do
+      if PP[k] > PP[kF0] then kF0 := k;
+    StF0[c] := kF0 * Fres;
+    for d := 2 to 8 do
+      if kF0 * Fres / d >= 80 then
+      begin
+        k0 := Round((kF0 / d - 3 / Fres));
+        k1 := Round((kF0 / d + 3 / Fres));
+        Lvl := 0;
+        for k := k0 to k1 do
+          if PP[k] > Lvl then
+          begin
+            Lvl := PP[k];
+            i0 := k;
+          end;
+        if Lvl >= 0.01 * PP[kF0] then StF0[c] := i0 * Fres;
+      end;
+    // harmonic hn's level: the PSD's largest value within 10 Hz of hn f0
+    SetLength(H, 0);
+    hn := 1;
+    while (hn * StF0[c] <= 10000) and (hn * StF0[c] + 10 < Fs / 2) do
+    begin
+      k0 := Round((hn * StF0[c] - 10) / Fres);
+      k1 := Round((hn * StF0[c] + 10) / Fres);
+      Lvl := 0;
+      for k := k0 to k1 do if PP[k] > Lvl then Lvl := PP[k];
+      SetLength(H, hn);
+      H[hn - 1] := Lvl;
+      Inc(hn);
+    end;
+    HMax := 0;
+    for k := 0 to High(H) do if H[k] > HMax then HMax := H[k];
+    NH30 := 0; HTop := 0;
+    for k := 0 to High(H) do
+    begin
+      if H[k] >= HMax * 1e-3 then Inc(NH30);
+      if H[k] >= HMax * 1e-4 then HTop := k + 1;
+    end;
+    StNH30[c] := NH30;
+    StHTop[c] := HTop;
+    Tot := 0; Above := 0; Cent := 0;
+    for k := 0 to PLin.Cols - 1 do
+    begin
+      Tot := Tot + PP[k];
+      Cent := Cent + k * Fres * PP[k];
+      if k * Fres > 1000 then Above := Above + PP[k];
+    end;
+    StAbove[c] := 100 * Above / Tot;
+    StCent[c] := Cent / Tot;
+
+    // bispectrum: |B| and bicoherence both, for the memo; one is shown
+    GridB := ComputeBispectrum(FGtrSig[c], Fs, Epoch, Fmax, False, Info, GtrFmin);
+    GridC := ComputeBispectrum(FGtrSig[c], Fs, Epoch, Fmax, True, InfoC, GtrFmin);
+    Mx := 0;
+    for k0 := 0 to GridB.Rows - 1 do
+      for k1 := 0 to GridB.Cols - 1 do
+        if GridB[k0, k1] > Mx then Mx := GridB[k0, k1];
+    // over the independent triangle f2 <= f1 (row = f2, column = f1)
+    nTri := 0; nNear := 0; BiSum := 0;
+    for k1 := 0 to GridB.Cols - 1 do
+      for k0 := 0 to k1 do
+      begin
+        Inc(nTri);
+        if GridB[k0, k1] >= Mx * 1e-3 then Inc(nNear);
+        BiSum := BiSum + GridC[k0, k1];
+      end;
+    StNear[c] := 100 * nNear / Max(1, nTri);
+    StBicoh[c] := BiSum / Max(1, nTri);
+
+    if Bicoh then
+    begin
+      Grid := GridC;
+      FGtrBi[c].Title := ShortLbl[c] + ': bicoherence';
+      FGtrBi[c].ZAxisTitle := 'bicoherence';
+      FGtrBi[c].ZAxisMin := 0; FGtrBi[c].ZAxisMax := 1;
+    end
+    else
+    begin
+      // 10 log10 |B| re the surface's maximum, floored at -60 dB, as on the
+      // anaesthesia bispectrum tab: on a linear scale the fundamental's
+      // corner would hide everything else
+      Grid := GridB;
+      for k0 := 0 to Grid.Rows - 1 do
+        for k1 := 0 to Grid.Cols - 1 do
+          if (Mx > 0) and (Grid[k0, k1] > Mx * 1e-6) then
+            Grid[k0, k1] := 10 * Log10(Grid[k0, k1] / Mx)
+          else
+            Grid[k0, k1] := -60;
+      FGtrBi[c].Title := ShortLbl[c] + ': |B| in dB';
+      FGtrBi[c].ZAxisTitle := '|B| (dB re max)';
+      FGtrBi[c].ZAxisMin := -60; FGtrBi[c].ZAxisMax := 0;
+    end;
+    FGtrBi[c].XAxisMin := Info.KMin * Info.Fres; FGtrBi[c].XAxisMax := Info.KMax * Info.Fres;
+    FGtrBi[c].YAxisMin := Info.KMin * Info.Fres; FGtrBi[c].YAxisMax := Info.KMax * Info.Fres;
+    FGtrBi[c].SetData(Grid);
+  end;
+
+  memGtr.Lines.BeginUpdate;
+  try
+    memGtr.Clear;
+    memGtr.Lines.Add('Linear and nonlinear amplification');
+    memGtr.Lines.Add('of a guitar note');
+    memGtr.Lines.Add('');
+    memGtr.Lines.Add('Open G string (G3, 196 Hz), one player,');
+    memGtr.Lines.Add('Freesound "SpeedY", CC0: the first 4 s of');
+    memGtr.Lines.Add(Format('each, %.0f Hz (see data/README.md)', [Fs]));
+    memGtr.Lines.Add('  left:  ' + Lbl[0]);
+    memGtr.Lines.Add('  right: ' + Lbl[1]);
+    memGtr.Lines.Add('');
+    memGtr.Lines.Add(Format('%-26s%11s%11s', ['', 'left', 'right']));
+    memGtr.Lines.Add(Row2('peak', '%.3g', StPeak));
+    memGtr.Lines.Add(Row2('RMS', '%.3g', StRms));
+    memGtr.Lines.Add(Row2('crest factor (dB)', '%.1f', StCrest));
+    memGtr.Lines.Add(Row2('f0 (Hz)', '%.1f', StF0));
+    memGtr.Lines.Add(Row2('harmonics within 30 dB', '%.0f', StNH30));
+    memGtr.Lines.Add(Row2('highest within 40 dB', '%.0f', StHTop));
+    memGtr.Lines.Add(Row2('power above 1 kHz (%)', '%.1f', StAbove));
+    memGtr.Lines.Add(Row2('spectral centroid (Hz)', '%.0f', StCent));
+    memGtr.Lines.Add(Row2('|B| within 30 dB (% grid)', '%.1f', StNear));
+    memGtr.Lines.Add(Row2('mean bicoherence', '%.2f', StBicoh));
+    memGtr.Lines.Add('(harmonics counted to 10 kHz; |B| and');
+    memGtr.Lines.Add(' bicoherence over the f2 <= f1 triangle)');
+    memGtr.Lines.Add('');
+    memGtr.Lines.Add(Format('Bispectrum: %d epochs of %.3g s, 50 %% overlap,', [Info.NumEp, Info.NEp / Fs]));
+    memGtr.Lines.Add(Format('  Hamming, %.3g Hz bins, f1, f2 = %.0f-%.0f Hz', [Info.Fres, Info.KMin * Info.Fres, Info.KMax * Info.Fres]));
+    if Capped then
+      memGtr.Lines.Add(Format('  (upper limit cut to keep the grid to %d bins)', [MaxGridBins]));
+    memGtr.Lines.Add(Format('  bicoherence bias floor ~1/sqrt(epochs) = %.2f', [1 / Sqrt(Info.NumEp)]));
+    memGtr.Lines.Add('');
+    memGtr.Lines.Add('A LINEAR amplifier, y = g x, scales every');
+    memGtr.Lines.Add('component alike: the PSD by g^2 (+20 log10 g');
+    memGtr.Lines.Add('dB at every frequency), the bispectrum by g^3,');
+    memGtr.Lines.Add('and leaves the bicoherence untouched. No new');
+    memGtr.Lines.Add('frequency can appear. Choose "Clean x gain":');
+    memGtr.Lines.Add('relative to their peaks, the two PSDs and the');
+    memGtr.Lines.Add('two surfaces are identical.');
+    memGtr.Lines.Add('');
+    memGtr.Lines.Add('A NONLINEAR one, y = a1 x + a2 x^2 + a3 x^3 ...,');
+    memGtr.Lines.Add('makes new components: x^2 turns f1 and f2');
+    memGtr.Lines.Add('into f1 + f2 and f1 - f2, x^3 into 3 f1 and');
+    memGtr.Lines.Add('2 f1 +- f2, and so on, each with a phase');
+    memGtr.Lines.Add('fixed by the phases that made it - phase');
+    memGtr.Lines.Add('coupling, which is what the bispectrum');
+    memGtr.Lines.Add('  B(f1,f2) = E[X(f1) X(f2) X*(f1+f2)]');
+    memGtr.Lines.Add('picks up.');
+    memGtr.Lines.Add('');
+    memGtr.Lines.Add('What the recorded pair shows:');
+    memGtr.Lines.Add('- PSD: the clean note is a fundamental and a');
+    memGtr.Lines.Add('  handful of harmonics, gone by ~2 kHz;');
+    memGtr.Lines.Add('  distortion lifts some twenty harmonics to');
+    memGtr.Lines.Add('  within 30 dB of the strongest, far into');
+    memGtr.Lines.Add('  the kHz range.');
+    memGtr.Lines.Add('- time: the clean wave decays, the distorted');
+    memGtr.Lines.Add('  one is compressed and sustains, with a');
+    memGtr.Lines.Add('  lower crest factor - the guitarist''s');
+    memGtr.Lines.Add('  reason for using it (tick "Whole note").');
+    memGtr.Lines.Add('  The recording doesn''t look clipped: the');
+    memGtr.Lines.Add('  amplifier''s and speaker''s filtering');
+    memGtr.Lines.Add('  reshape the clipped wave. "Clean via tanh"');
+    memGtr.Lines.Add('  shows the squaring itself.');
+    memGtr.Lines.Add('- |B| (dB): one note''s harmonics, and every');
+    memGtr.Lines.Add('  product of them, sit on the lattice');
+    memGtr.Lines.Add('  (m f0, n f0). The clean note has peaks');
+    memGtr.Lines.Add('  there already - a plucked string is not a');
+    memGtr.Lines.Add('  sine, and its harmonics are locked to the');
+    memGtr.Lines.Add('  fundamental - but its strong ones are near');
+    memGtr.Lines.Add('  the origin and along the axes, the rest');
+    memGtr.Lines.Add('  30-60 dB down. Distortion lifts the whole');
+    memGtr.Lines.Add('  lattice towards the top of the scale (see');
+    memGtr.Lines.Add('  "|B| within 30 dB" above).');
+    memGtr.Lines.Add('- bicoherence does not separate them here.');
+    memGtr.Lines.Add('  Being normalised, it is high on the');
+    memGtr.Lines.Add('  lattice for any periodic note, clean or');
+    memGtr.Lines.Add('  not: it tells coupled components from');
+    memGtr.Lines.Add('  independent ones (the EEG bispectrum tab''s');
+    memGtr.Lines.Add('  two-tone test), not how strong the');
+    memGtr.Lines.Add('  coupling is. |B| shows how far it spreads.');
+    memGtr.Lines.Add('');
+    memGtr.Lines.Add('With one note every product falls on a');
+    memGtr.Lines.Add('harmonic of f0 anyway. Distort a chord and');
+    memGtr.Lines.Add('the sum and difference tones land between');
+    memGtr.Lines.Add('the notes'' harmonics - the "mud" of a');
+    memGtr.Lines.Add('distorted chord, and why power chords are');
+    memGtr.Lines.Add('fifths, whose products stay harmonic.');
+    memGtr.Lines.Add('');
+    memGtr.Lines.Add('"Clean via tanh" passes the clean note');
+    memGtr.Lines.Add('through y = tanh(g x), a symmetric soft');
+    memGtr.Lines.Add('clipper with small-signal gain g. Being odd,');
+    memGtr.Lines.Add('it adds only odd-order products (x^3, x^5,');
+    memGtr.Lines.Add('...); asymmetric clipping would add even');
+    memGtr.Lines.Add('ones. At high gain it clips even as the');
+    memGtr.Lines.Add('note dies away, so it sustains too. The');
+    memGtr.Lines.Add('recorded pair differ in more than the');
+    memGtr.Lines.Add('amplifier - nylon against electric strings,');
+    memGtr.Lines.Add('and a real amp''s filters - so the simulation');
+    memGtr.Lines.Add('is the controlled comparison: same note,');
+    memGtr.Lines.Add('only the transfer curve changed.');
+    memGtr.Lines.Add('');
+    memGtr.Lines.Add('Play left / Play right use the default');
+    memGtr.Lines.Add('output device; each note is scaled to the');
+    memGtr.Lines.Add('same peak, so the distorted one sounds');
+    memGtr.Lines.Add('louder - its crest factor is lower.');
+    memGtr.Lines.Add('Drag a surface to rotate, wheel to zoom.');
+  finally
+    memGtr.Lines.EndUpdate;
   end;
 end;
 

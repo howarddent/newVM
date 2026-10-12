@@ -85,3 +85,32 @@ single huge spike: kurtosis over 1000 and bicoherence ~0.7 everywhere.
 the 1/sqrt(299) = 0.058 bias floor. Its first 20 s had SQI only 60-80 %,
 so the 20 s excerpt is taken from 3440 s, where SQI is 100 %. The band
 powers and bicoherence were cross-checked in numpy.
+
+## Guitar notes (the "Guitar distortion" tab)
+
+| File | Contents |
+|---|---|
+| `guitar_clean_G3.wav` | open G string (G3, 196 Hz), picked, clean nylon-string guitar - first 4 s |
+| `guitar_distorted_G3.wav` | open G string, electric guitar through heavy distortion - first 4 s |
+| `fetch_guitar.py` | re-creates both (needs `numpy` and `soundfile`) |
+
+Both are by the same player, Freesound user
+[SpeedY](https://freesound.org/people/SpeedY/), released **CC0** (public
+domain): sound [8402](https://freesound.org/people/SpeedY/sounds/8402/)
+"Clean_G_str_pick.wav" from the pack *Nylon Guitar Single notes*, and
+sound [12038](https://freesound.org/people/SpeedY/sounds/12038/)
+"Dist_sng_G_3rd_str.wav" from *Distorted Guitar Single Notes*. Chosen
+(2026-10-12) as a matched pair - same string, same pitch, same player -
+so the difference between them is mostly the amplification. Not
+entirely: the clean note is an acoustic nylon-string guitar and the
+distorted one an electric, which is why the tab also offers the clean
+note through a linear gain and through a simulated `tanh` overdrive.
+
+Freesound's original-file downloads need a login, so the script takes
+the public HQ Ogg Vorbis previews (`cdn.freesound.org/previews/...`,
+44.1 kHz), decodes them, keeps the first 4 s with a 50 ms cosine
+fade-out and writes 16-bit mono PCM WAV. Checked in numpy: both have
+their fundamental at 196 Hz (the distorted note's 2nd and 3rd harmonics
+are stronger than it); the clean note decays to 4 % of its peak within
+2 s, the distorted one sustains, with 42 % of its power above 1 kHz
+against 0.6 %.

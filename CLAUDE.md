@@ -2154,6 +2154,43 @@ packages. Compiled binaries and each demo's own `lib/` output are
         likely from forehead EMG.
       - **Layout**: both memos widened from 440 to 510 px for the
         four-column tables.
+  - **Guitar distortion tab** (ninth, added 2026-10-12): linear against
+    nonlinear amplification on one note - the open G string (196 Hz)
+    picked clean on a nylon-string guitar and through heavy distortion on
+    an electric, by the same Freesound player (SpeedY, CC0;
+    `data/guitar_*.wav`, 4 s, 44.1 kHz, made by `data/fetch_guitar.py`
+    from the public HQ Ogg previews, since originals need a login). The
+    left column is always the clean note; the right is the distorted
+    recording, the clean note times a gain (identical in shape, as
+    linearity demands - the memo's figures match exactly) or
+    `tanh(g x)` - the controlled comparison, since the recordings also
+    differ in instrument. Each column has 25 ms of waveform (or the whole
+    note), the PSD in dB re its own peak (`ComputePSD`'s new `ForceDB`),
+    and |B| in dB or bicoherence via `ComputeBispectrum` (0.1 s epochs,
+    50-2000 Hz, grid capped at 400 bins a side). Play buttons write the
+    note, peak-normalised, to a temp WAV and play it asynchronously:
+    `PlaySound` (`MMSystem`) on Windows, `paplay`/`aplay` through
+    `TProcess` on Linux. Things worth knowing:
+    - **Bicoherence doesn't separate clean from distorted here**: a
+      plucked string's harmonics are already phase-locked, so any
+      periodic note scores high on the harmonic lattice (clean 0.58 mean,
+      distorted 0.31). What distortion changes is |B|'s spread: 0.8 % of
+      the triangle within 30 dB of the maximum clean, 4.2 % distorted
+      (numpy agreed). The memo says so.
+    - **f0 is not the strongest line**: the distorted note's 2nd and 3rd
+      harmonics outweigh its fundamental, so `ShowGuitar` takes the
+      largest divisor of the strongest 80 Hz-1 kHz line that still has a
+      line within 20 dB.
+    - `--snapshot` also writes this tab's 2D plots as PNGs and its window
+      as `_guitar_<dB|bicoh><n>.bmp`. Not `B`/`b`, as the anaesthesia
+      bispectrum's names are: Windows file names ignore case, so
+      `_bispectrumb*.bmp` overwrites `_bispectrumB*.bmp` there. On Windows
+      `GetFormImage` leaves the GL areas blank, and `TVMPlot3D` has no
+      `SaveToPNG`, so the surfaces can only be checked on screen.
+    - Fixed in both plot components along the way: `ComputeTicks`
+      accumulated `v := v + step`, so a tick at zero could come out as
+      `-5.551E-17` and be labelled so. Ticks are now `first + n*step`,
+      with near-zero snapped to 0.
     - **Spectrum defaults (whole demo)**: "Linear scale" is ticked by
       default. The upper-frequency spin edit's 0 now means "the signal's
       own default": 40 Hz for the ECG and both EEGs and 20 Hz for the

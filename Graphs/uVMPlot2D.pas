@@ -528,9 +528,12 @@ begin
   v := first;
   while v <= hi + step * 1e-9 do begin
     SetLength(result, n + 1);
+    // a tick at zero comes out as e.g. -5.551E-17 once rounding creeps
+    // in, and is labelled so; snap it
+    if Abs(v) < step * 1e-9 then v := 0;
     result[n] := v;
     Inc(n);
-    v := v + step;
+    v := first + n * step;   // not v + step, which accumulates the rounding
   end;
 end;
 
