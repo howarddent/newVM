@@ -1776,7 +1776,7 @@ begin
   if not Assigned(FAnaesTime) then Exit;
 
   j := rgAnaes.ItemIndex;
-  if j < 0 then j := 2;
+  if j < 0 then j := 0;
   DrawAnaesTrend(FAnaesTrend, j);
   N := FAnaesEEG[j].Cols;
   DrawAnaesTrace(FAnaesTime, j);
@@ -1957,7 +1957,7 @@ var
   end;
 begin
   j := rgABi.ItemIndex;
-  if j < 0 then j := 2;
+  if j < 0 then j := 0;
   DrawAnaesTrend(FABiTrend, j, True);
   DrawAnaesTrace(FABiTime, j, True);
 

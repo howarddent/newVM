@@ -164,7 +164,7 @@ object fmBio: TfmBio
           AutoFill = True
           Caption = 'Excerpt'
           Columns = 4
-          ItemIndex = 2
+          ItemIndex = 0
           Items.Strings = (
             'Awake, before induction'
             'Sedated, BIS ~84'
@@ -241,7 +241,7 @@ object fmBio: TfmBio
           AutoFill = True
           Caption = 'Show'
           Columns = 3
-          ItemIndex = 2
+          ItemIndex = 0
           Items.Strings = (
             'Square'
             'Triangle'
@@ -575,7 +575,7 @@ object fmBio: TfmBio
           AutoFill = True
           Caption = 'Excerpt (300 s for the bispectrum)'
           Columns = 4
-          ItemIndex = 2
+          ItemIndex = 0
           Items.Strings = (
             'Awake'
             'Sedated'
