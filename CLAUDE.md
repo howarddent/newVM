@@ -2165,7 +2165,7 @@ packages. Compiled binaries and each demo's own `lib/` output are
     linearity demands - the memo's figures match exactly) or
     `tanh(g x)` - the controlled comparison, since the recordings also
     differ in instrument. Each column has 25 ms of waveform (or the whole
-    note), the PSD in dB re its own peak (`ComputePSD`'s new `ForceDB`),
+    note), the PSD re its own peak, linear or dB per "Linear scale",
     and |B| in dB or bicoherence via `ComputeBispectrum` (0.1 s epochs,
     50-2000 Hz, grid capped at 400 bins a side). Play buttons write the
     note, peak-normalised, to a temp WAV and play it asynchronously:

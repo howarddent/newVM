@@ -267,9 +267,9 @@ unit ubiospectramain;
      gain y = g x, or through a simulated soft clipper y = tanh(g x) -
      the controlled comparison, since the recordings also differ in
      instrument. Each column: 25 ms of the waveform from 0.3 s (or the
-     whole note, decimated by 8), its PSD in dB re its own peak (always
-     dB: on a linear scale only the fundamental shows - ComputePSD's
-     ForceDB), and |B| in dB or the bicoherence from ComputeBispectrum
+     whole note, decimated by 8), its PSD relative to its own peak,
+     linear or in dB per the "Linear scale" box (linear, the default,
+     shows the strong harmonics; dB the weak ones too), and |B| in dB or the bicoherence from ComputeBispectrum
      (0.1 s epochs, 50 Hz to 2 kHz by default, grid capped at 400 bins a
      side). The memo tabulates crest factor, harmonics within 30 dB, power
      above 1 kHz, the share of the |B| triangle within 30 dB of its
@@ -524,7 +524,7 @@ type
       upper limit, P the PSD (dB or linear per the check box) cut to match }
     procedure ComputePSD(const Data: TVMobj; Fs: Double; out F, P: TVMobj;
       out NBins: Integer; out Sw2: Double; LinearFull: Boolean = False;
-      DefaultFmax: Double = 0; Fmin: Double = 0; ForceDB: Boolean = False);
+      DefaultFmax: Double = 0; Fmin: Double = 0);
     procedure AddEEGBands(Plot: TVMPlot2D);
     function SpectrumYTitle(const Units: string): string;
     procedure ShowSignal(var Tab: TSignalTab);
@@ -638,7 +638,7 @@ end;
 
 procedure TfmBio.ComputePSD(const Data: TVMobj; Fs: Double; out F, P: TVMobj;
   out NBins: Integer; out Sw2: Double; LinearFull: Boolean; DefaultFmax: Double;
-  Fmin: Double; ForceDB: Boolean);
+  Fmin: Double);
 var
   N, k, kMin, kMax: Integer;
   Mean, Fmax, Fres: Double;
@@ -670,7 +670,7 @@ begin
   PP := PP * (2 / (Fs * Sw2));
   PP[0, 0] := PP[0, 0] / 2;                             // DC and Nyquist are not doubled
   if N mod 2 = 0 then PP[0, NBins - 1] := PP[0, NBins - 1] / 2;
-  if ForceDB or not (cbLinear.Checked or LinearFull) then
+  if not (cbLinear.Checked or LinearFull) then
   begin
     // 10 log10, floored 150 dB below the peak: the DC bin is exactly zero
     // after mean removal, and an absolute 1e-30 floor put it at -300 dB,
@@ -844,7 +844,6 @@ begin
     FGtrSpec[i].Parent := FGtrCol[i];
     FGtrSpec[i].Align := alTop;
     FGtrSpec[i].XAxisTitle := 'frequency (Hz)';
-    FGtrSpec[i].YAxisTitle := 'dB re peak';
     FGtrBi[i] := TVMPlot3D.Create(Self);
     FGtrBi[i].Parent := FGtrCol[i];
     FGtrBi[i].Align := alClient;
@@ -2685,13 +2684,23 @@ begin
     FGtrTime[c].ClearSeries;
     FGtrTime[c].SetData(T, [Shown]);
 
-    // PSD, always in dB (a linear scale would show the fundamental and
-    // little else), relative to its own peak so the two compare by shape
-    ComputePSD(FGtrSig[c], Fs, F, P, NBins, Sw2, False, GtrPSDFmax, 0, True);
+    // PSD, linear or dB per the "Linear scale" box, relative to its own
+    // peak (1, or 0 dB) so the two compare by shape - and a linear gain
+    // leaves it unchanged, as it should
+    ComputePSD(FGtrSig[c], Fs, F, P, NBins, Sw2, False, GtrPSDFmax);
     PP := P.DataPtr;
     Mx := -1e300;
     for i := 0 to P.Cols - 1 do if PP[i] > Mx then Mx := PP[i];
-    for i := 0 to P.Cols - 1 do PP[i] := Max(PP[i] - Mx, -120);
+    if cbLinear.Checked then
+    begin
+      for i := 0 to P.Cols - 1 do PP[i] := PP[i] / Mx;
+      FGtrSpec[c].YAxisTitle := 'PSD re peak';
+    end
+    else
+    begin
+      for i := 0 to P.Cols - 1 do PP[i] := Max(PP[i] - Mx, -120);
+      FGtrSpec[c].YAxisTitle := 'dB re peak';
+    end;
     FGtrSpec[c].Title := Format('%s: PSD, %.2f Hz bins', [ShortLbl[c], Fs / N]);
     FGtrSpec[c].SetSeriesStyle(0, ColColour[c], 1.0, plsSolid, '');
     FGtrSpec[c].ClearSeries;
