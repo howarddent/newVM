@@ -309,6 +309,12 @@ uses
   {$IFDEF UNIX} Process, {$ENDIF}
   newVM, newVMComplex, uVMPlot2D, uVMPlot3D;
 
+const
+  // the band SEF95 is taken over - the same 0.5-30 Hz as the anaesthesia
+  // tab's total power and band percentages
+  SEFLo = 0.5;
+  SEFHi = 30.0;
+
 type
   { One signal excerpt plus what the header said about it }
   TSignalExcerpt = record
@@ -526,6 +532,11 @@ type
       out NBins: Integer; out Sw2: Double; LinearFull: Boolean = False;
       DefaultFmax: Double = 0; Fmin: Double = 0);
     procedure AddEEGBands(Plot: TVMPlot2D);
+    { the frequency below which Pct per cent of Data's power between Lo and
+      Hi Hz lies - SEF95 at Pct = 95 - from the linear, full-range PSD }
+    function SpectralEdge(const Data: TVMobj; Fs, Pct: Double;
+      Lo: Double = SEFLo; Hi: Double = SEFHi): Double;
+    procedure MarkSpectralEdge(Plot: TVMPlot2D; Sef: Double);
     function SpectrumYTitle(const Units: string): string;
     procedure ShowSignal(var Tab: TSignalTab);
     procedure ShowSynthetic;
@@ -706,6 +717,48 @@ begin
   Plot.AddXBand(8, 13, TColor($6FBFFD), 'alpha');     // light orange
   Plot.AddXBand(13, 30, TColor($999AFB), 'beta');     // light red
   Plot.AddXBand(30, 1000, TColor($D6B2CA), 'gamma');  // lavender, seen only above 30 Hz
+end;
+
+{ Cumulative power over the bins from Lo up to Hi, interpolated linearly
+  within the bin where it crosses Pct per cent of the total. Each bin's
+  power is P[k]*df, taken as spread evenly over [f_k, f_k + df) - the
+  same rectangle rule ShowAnaesthesia's band powers use }
+function TfmBio.SpectralEdge(const Data: TVMobj; Fs, Pct: Double;
+  Lo: Double; Hi: Double): Double;
+var
+  F, P: TVMobj;
+  NBins, k: Integer;
+  Sw2, Df, Tot, Cum, Target, Pk: Double;
+  FP, PP: PDouble;
+begin
+  ComputePSD(Data, Fs, F, P, NBins, Sw2, True);
+  Df := Fs / Data.Cols;
+  FP := F.DataPtr;
+  PP := P.DataPtr;
+  Tot := 0;
+  for k := 0 to F.Cols - 1 do
+    if (FP[k] >= Lo) and (FP[k] < Hi) then Tot := Tot + PP[k] * Df;
+  Result := NaN;
+  if Tot <= 0 then Exit;
+  Target := Tot * Pct / 100;
+  Cum := 0;
+  for k := 0 to F.Cols - 1 do
+    if (FP[k] >= Lo) and (FP[k] < Hi) then
+    begin
+      Pk := PP[k] * Df;
+      if Cum + Pk >= Target then
+        Exit(FP[k] + Df * (Target - Cum) / Pk);
+      Cum := Cum + Pk;
+    end;
+  Result := Hi;
+end;
+
+{ SEF95 as a labelled dashed line on an EEG spectrum }
+procedure TfmBio.MarkSpectralEdge(Plot: TVMPlot2D; Sef: Double);
+begin
+  Plot.ClearXMarkers;
+  if not IsNan(Sef) then
+    Plot.AddXMarker(Sef, clBlack, Format('SEF95 %.1f Hz', [Sef]));
 end;
 
 function TfmBio.SpectrumYTitle(const Units: string): string;
@@ -1361,7 +1414,7 @@ end;
 procedure TfmBio.ShowSignal(var Tab: TSignalTab);
 var
   N, NBins, k: Integer;
-  Sw2, Mean, Mn, Mx: Double;
+  Sw2, Mean, Mn, Mx, Sef: Double;
   T, F, P: TVMobj;
   YP: PDouble;
 begin
@@ -1392,6 +1445,12 @@ begin
     SpecPlot.Title := Format('Power spectral density, Hamming window, N = %d, %.3f Hz resolution, %.4g to %.1f Hz', [N, Signal.Fs / N, F[0, 0], F[0, F.Cols - 1]]);
     SpecPlot.ClearSeries;
     SpecPlot.SetData(F, [P]);
+    Sef := NaN;
+    if EEGBands then
+    begin
+      Sef := SpectralEdge(Signal.Data, Signal.Fs, 95);
+      MarkSpectralEdge(SpecPlot, Sef);
+    end;
 
     // recording parameters
     Memo.Lines.BeginUpdate;
@@ -1420,6 +1479,11 @@ begin
         Memo.Lines.Add(Format('  one-sided PSD in %s^2/Hz, linear scale', [Signal.Units]))
       else
         Memo.Lines.Add(Format('  one-sided PSD in dB re 1 %s^2/Hz', [Signal.Units]));
+      if not IsNan(Sef) then
+      begin
+        Memo.Lines.Add(Format('  SEF95 %.1f Hz: 95%% of the power from', [Sef]));
+        Memo.Lines.Add(Format('  %.1f to %.0f Hz lies below it (dashed line)', [SEFLo, SEFHi]));
+      end;
       Memo.Lines.Add('');
       Memo.Lines.Add('Header (.hea):');
       Memo.Lines.AddStrings(Signal.HeaderLines);
@@ -1726,7 +1790,7 @@ var
   F, FL, P, PL: TVMobj;
   XP, FP: PDouble;
   Band: array[0..AnaesStates - 1, 0..3] of Double;
-  TotP, Alpha, RmsV, V: array[0..AnaesStates - 1] of Double;
+  TotP, Alpha, RmsV, Sef95, V: array[0..AnaesStates - 1] of Double;
   function C(ci: Integer; const Key: string): string;
   begin
     Result := Trim(FAnaesCases[ci].Info.Values[Key]);
@@ -1789,6 +1853,7 @@ begin
   FAnaesSpec.ClearSeries;
   FAnaesSpec.SetSeriesStyle(0, AnaesColour[j], 1.5, plsSolid, rgAnaes.Items[j]);
   FAnaesSpec.SetData(F, [P]);
+  MarkSpectralEdge(FAnaesSpec, SpectralEdge(FAnaesEEG[j], AnaesFs, 95));
 
   // band powers, alpha peak and RMS from the linear, full-range PSD
   for i := 0 to AnaesStates - 1 do
@@ -1815,6 +1880,7 @@ begin
     end;
     TotP[i] := Tot;
     Alpha[i] := PkF;
+    Sef95[i] := SpectralEdge(FAnaesEEG[i], AnaesFs, 95);
     XP := FAnaesEEG[i].DataPtr;
     Mean := 0;
     for k := 0 to FAnaesEEG[i].Cols - 1 do Mean := Mean + XP[k];
@@ -1863,6 +1929,7 @@ begin
     for i := 0 to AnaesStates - 1 do V[i] := Band[i, 2];
     memAnaes.Lines.Add(RowN('alpha power uV^2', '%.0f', V));
     memAnaes.Lines.Add(RowN('peak 7-14 Hz (Hz)', '%.1f', Alpha));
+    memAnaes.Lines.Add(RowN('SEF95 (Hz)', '%.1f', Sef95));
     memAnaes.Lines.Add('');
     memAnaes.Lines.Add('What to look for:');
     memAnaes.Lines.Add('- awake: small, broadband EEG with a fair');
@@ -1898,7 +1965,11 @@ begin
     memAnaes.Lines.Add('BIS/SQI/SR and the effect-site');
     memAnaes.Lines.Add('concentrations are means over each excerpt');
     memAnaes.Lines.Add('from the 10 s trends in data/; the band');
-    memAnaes.Lines.Add('powers integrate the linear PSD.');
+    memAnaes.Lines.Add('powers integrate the linear PSD. SEF95,');
+    memAnaes.Lines.Add('the dashed line on the spectrum, is the');
+    memAnaes.Lines.Add('frequency below which 95% of the 0.5-30 Hz');
+    memAnaes.Lines.Add('power lies - it falls as anaesthesia');
+    memAnaes.Lines.Add('deepens and the power moves to slow waves.');
   finally
     memAnaes.Lines.EndUpdate;
   end;

@@ -2728,6 +2728,18 @@ per-series grids.
   (`FBandBarH`). Text is black, as every label here, so light colours
   read best. A local named `Top` in a method of this class is a
   duplicate identifier, like `RGBA`.
+- **Labelled X markers** (added 2026-10-13 for BioSpectra's SEF95):
+  `AddXMarker(X, Color, Caption)` / `ClearXMarkers`. Each marker is a
+  1.5 px dashed vertical line (stipple `$0F0F`, finer than `plsDash`) from
+  the X axis up to the band bars. Its bold caption sits just under the bars
+  on a white panel. `DrawXMarkers` draws them in pass 2, after
+  `DrawXBandBars` (it needs the bar height) and before the legend. The
+  caption goes on the side of the line away from a top-right legend, which
+  otherwise covered it at SEF95 = 23 Hz, and switches sides at the plot
+  edge. Markers outside the visible X range aren't drawn and don't move
+  the bounds. BioSpectra computes SEF95 (`SpectralEdge`) over 0.5-30 Hz of
+  the linear PSD, interpolating within the crossing bin, and marks it on
+  the EEG tab's spectrum and the anaesthesia tab's spectrum.
 - **Left margin grows with the Y tick labels** (same date): it is
   `Max(65, 8 + widest Y tick label + 4 + Y title height + 4)`, with the
   rotated Y title placed just left of the labels. With the old fixed

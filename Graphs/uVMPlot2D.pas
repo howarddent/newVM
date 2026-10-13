@@ -108,6 +108,17 @@ unit uVMPlot2D;
      black, as every label here, so light colours read best. ClearXBands
      removes them all.
 
+     LABELLED X MARKERS: AddXMarker(X, Color, Caption) draws a dashed
+     vertical line of Color at X across the full height of the plot - e.g.
+     an EEG's spectral edge frequency - with Caption in bold at its top,
+     beside the line on the side away from a top legend (left of it under
+     the default top-right legend, right of it otherwise, switching sides
+     where the plot edge leaves no room) and below any band bars, on a
+     white panel so it reads over the data. Drawn in pass 2, pixel space, after the point markers: constant
+     dash length and on top of the series. Like bands they are clipped to
+     the visible X range and don't move the bounds. ClearXMarkers removes
+     them all.
+
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
@@ -231,6 +242,14 @@ type
     Caption: string;
   end;
 
+  // A labelled X position (AddXMarker): a dashed vertical line across the
+  // plot with Caption at its top - e.g. a spectral edge frequency.
+  TVMPlotXMarker = record
+    X: Double;
+    Color: TColor;
+    Caption: string;
+  end;
+
   { TVMPlot2D }
 
   TVMPlot2D = class(TOpenGLControl)
@@ -262,6 +281,8 @@ type
     FXBands: array of TVMPlotXBand;
     FXBandTex: array of TVMPlotTextTexture;
     FBandBarH: Integer;   // height of the band bars this paint, for the legend
+    FXMarkers: array of TVMPlotXMarker;
+    FXMarkerTex: array of TVMPlotTextTexture;
     FVSync: Boolean;
     FLegendCorner: TVMPlotLegendCorner;
     // See TVMPlot3D's own FSwapIntervalApplied comment (uVMPlot3D.pas) -
@@ -292,6 +313,7 @@ type
     procedure DrawBars;
     procedure DrawXBandTints;
     function DrawXBandBars(PlotLeft, PlotBottom, PlotW, PlotH: Integer): Integer;
+    procedure DrawXMarkers(PlotLeft, PlotBottom, PlotW, PlotH, BarH: Integer);
     procedure DrawWhiskers;
     function HasWhiskerData(iser: Integer): Boolean;
     procedure RecomputeBounds;
@@ -329,6 +351,10 @@ type
     // not affect the bounds, so a band beyond the data simply isn't seen.
     procedure AddXBand(X0, X1: Double; AColor: TColor; const ACaption: string);
     procedure ClearXBands;
+    // Labelled X positions - see TVMPlotXMarker. A marker outside the
+    // visible X range isn't drawn; markers do not affect the bounds.
+    procedure AddXMarker(X: Double; AColor: TColor; const ACaption: string);
+    procedure ClearXMarkers;
     // Makes series Index a box-and-whisker series over X - see the WHISKER
     // SERIES header note. All five vectors the same length.
     procedure SetWhiskerData(Index: Integer; const X, Lo, BoxLo, BoxHi, Hi: TVMobj);
@@ -790,6 +816,81 @@ begin
   Invalidate;
 end;
 
+procedure TVMPlot2D.AddXMarker(X: Double; AColor: TColor; const ACaption: string);
+var
+  n: Integer;
+begin
+  n := Length(FXMarkers);
+  SetLength(FXMarkers, n + 1);
+  FXMarkers[n].X := X;
+  FXMarkers[n].Color := AColor;
+  FXMarkers[n].Caption := ACaption;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlot2D.ClearXMarkers;
+begin
+  if Length(FXMarkers) = 0 then Exit;
+  SetLength(FXMarkers, 0);
+  InvalidateTextures;
+  Invalidate;
+end;
+
+// Pass 2 (pixel space): each marker's dashed line from the X axis up to
+// the band bars (BarH, 0 with none), then its caption on a white panel
+// just below the bars, on the side of the line away from a top legend.
+procedure TVMPlot2D.DrawXMarkers(PlotLeft, PlotBottom, PlotW, PlotH, BarH: Integer);
+const
+  Gap = 4;    // between the line and its caption
+  Pad = 2;    // the caption panel's margin round the text
+var
+  i: Integer;
+  px, LineTop, tx, ty: Double;
+  Clr: TColor;
+  HasTex: Boolean;
+begin
+  if Length(FXMarkers) = 0 then Exit;
+  LineTop := PlotBottom + PlotH - BarH;
+  for i := 0 to High(FXMarkers) do begin
+    if (FXMarkers[i].X < FXMin) or (FXMarkers[i].X > FXMax) then Continue;
+    px := PlotLeft + (FXMarkers[i].X - FXMin) / (FXMax - FXMin) * PlotW;
+    Clr := ColorToRGB(FXMarkers[i].Color);
+    glDisable(GL_TEXTURE_2D);
+    glColor3ub(Clr and $FF, (Clr shr 8) and $FF, (Clr shr 16) and $FF);
+    glLineWidth(1.5);
+    glEnable(GL_LINE_STIPPLE);
+    glLineStipple(2, $0F0F);   // 8 px on, 8 px off - finer than plsDash
+    glBegin(GL_LINES);
+      glVertex2d(px, PlotBottom); glVertex2d(px, LineTop);
+    glEnd;
+    glDisable(GL_LINE_STIPPLE);
+
+    HasTex := (i <= High(FXMarkerTex)) and FXMarkerTex[i].Built;
+    if not HasTex then Continue;
+    // on the side away from a top legend (left of the line under a
+    // top-right one), unless the caption would leave the plot there
+    if FLegendCorner = lcTopRight then begin
+      tx := px - Gap - FXMarkerTex[i].W;
+      if tx - Pad < PlotLeft then tx := px + Gap;
+    end else begin
+      tx := px + Gap;
+      if tx + FXMarkerTex[i].W + Pad > PlotLeft + PlotW then
+        tx := px - Gap - FXMarkerTex[i].W;
+    end;
+    ty := LineTop - Pad - FXMarkerTex[i].H;   // bottom of the text
+    glColor4f(1, 1, 1, 0.85);
+    glBegin(GL_QUADS);
+      glVertex2d(tx - Pad, ty - Pad); glVertex2d(tx + FXMarkerTex[i].W + Pad, ty - Pad);
+      glVertex2d(tx + FXMarkerTex[i].W + Pad, LineTop); glVertex2d(tx - Pad, LineTop);
+    glEnd;
+    glEnable(GL_TEXTURE_2D);
+    glColor4f(1, 1, 1, 1);
+    DrawTextTexture(FXMarkerTex[i], tx, ty, 0, 0, 0);
+    glDisable(GL_TEXTURE_2D);
+  end;
+end;
+
 // Pass 1 (data space): each band's faint full-height tint, under the
 // gridlines and data.
 procedure TVMPlot2D.DrawXBandTints;
@@ -1056,6 +1157,7 @@ begin
   for i := 0 to High(FYTickTex) do FreeTextTexture(FYTickTex[i]);
   for i := 0 to High(FLegendTex) do FreeTextTexture(FLegendTex[i]);
   for i := 0 to High(FXBandTex) do FreeTextTexture(FXBandTex[i]);
+  for i := 0 to High(FXMarkerTex) do FreeTextTexture(FXMarkerTex[i]);
 end;
 
 // Recomputes the combined bounding box (every series' X and Y alike) -
@@ -1581,6 +1683,11 @@ begin
   for i := 0 to High(FXBands) do
     if FXBands[i].Caption <> '' then
       FXBandTex[i] := CreateTextTexture(FXBands[i].Caption, 9, True);
+
+  SetLength(FXMarkerTex, Length(FXMarkers));
+  for i := 0 to High(FXMarkers) do
+    if FXMarkers[i].Caption <> '' then
+      FXMarkerTex[i] := CreateTextTexture(FXMarkers[i].Caption, 9, True);
 end;
 
 // Draws Tex as a textured quad anchored at (X,Y) in the current (pixel-
@@ -1928,6 +2035,9 @@ begin
 
     // labelled X bands' bars along the top edge, under the legend
     FBandBarH := DrawXBandBars(PlotLeft, PlotBottom, PlotW, PlotH);
+
+    // labelled X markers: dashed lines up to the bars, captions under them
+    DrawXMarkers(PlotLeft, PlotBottom, PlotW, PlotH, FBandBarH);
 
     // Drawn last (on top of the border/gridlines/ticks/line strips already
     // painted, all of which are further from the top-right corner anyway).
