@@ -57,224 +57,10 @@ object fmBio: TfmBio
     Height = 760
     Top = 40
     Width = 1200
-    ActivePage = tsECG
+    ActivePage = tsSynthesis
     Align = alClient
     TabIndex = 0
     TabOrder = 1
-    object tsECG: TTabSheet
-      Caption = 'ECG'
-      ClientHeight = 732
-      ClientWidth = 1192
-      object memECG: TMemo
-        Left = 862
-        Height = 732
-        Top = 0
-        Width = 330
-        Align = alRight
-        Font.Name = 'Consolas'
-        ParentFont = False
-        ReadOnly = True
-        ScrollBars = ssAutoBoth
-        TabOrder = 0
-        WordWrap = False
-      end
-      object pnlECG: TPanel
-        Left = 0
-        Height = 732
-        Top = 0
-        Width = 862
-        Align = alClient
-        BevelOuter = bvNone
-        TabOrder = 1
-      end
-    end
-    object tsEEG: TTabSheet
-      Caption = 'EEG'
-      ClientHeight = 732
-      ClientWidth = 1192
-      object memEEG: TMemo
-        Left = 862
-        Height = 732
-        Top = 0
-        Width = 330
-        Align = alRight
-        Font.Name = 'Consolas'
-        ParentFont = False
-        ReadOnly = True
-        ScrollBars = ssAutoBoth
-        TabOrder = 0
-        WordWrap = False
-      end
-      object pnlEEG: TPanel
-        Left = 0
-        Height = 732
-        Top = 0
-        Width = 862
-        Align = alClient
-        BevelOuter = bvNone
-        TabOrder = 1
-      end
-    end
-    object tsABP: TTabSheet
-      Caption = 'Arterial pressure'
-      ClientHeight = 732
-      ClientWidth = 1192
-      object memABP: TMemo
-        Left = 862
-        Height = 732
-        Top = 0
-        Width = 330
-        Align = alRight
-        Font.Name = 'Consolas'
-        ParentFont = False
-        ReadOnly = True
-        ScrollBars = ssAutoBoth
-        TabOrder = 0
-        WordWrap = False
-      end
-      object pnlABP: TPanel
-        Left = 0
-        Height = 732
-        Top = 0
-        Width = 862
-        Align = alClient
-        BevelOuter = bvNone
-        TabOrder = 1
-      end
-    end
-    object tsAnaes: TTabSheet
-      Caption = 'Anaesthesia EEG'
-      ClientHeight = 732
-      ClientWidth = 1192
-      object pnlAnaesCtl: TPanel
-        Left = 0
-        Height = 40
-        Top = 0
-        Width = 1192
-        Align = alTop
-        BevelOuter = bvNone
-        ClientHeight = 40
-        ClientWidth = 1192
-        TabOrder = 0
-        object rgAnaes: TRadioGroup
-          Left = 8
-          Height = 34
-          Top = 1
-          Width = 700
-          AutoFill = True
-          Caption = 'Excerpt'
-          Columns = 4
-          ItemIndex = 0
-          Items.Strings = (
-            'Awake, before induction'
-            'Sedated, BIS ~84'
-            'Propofol, BIS ~45'
-            'Burst suppression'
-          )
-          TabOrder = 0
-          OnSelectionChanged = rgAnaesSelectionChanged
-        end
-      end
-      object memAnaes: TMemo
-        Left = 682
-        Height = 692
-        Top = 40
-        Width = 510
-        Align = alRight
-        Font.Name = 'Consolas'
-        ParentFont = False
-        ReadOnly = True
-        ScrollBars = ssAutoBoth
-        TabOrder = 1
-        WordWrap = False
-      end
-      object pnlAnaes: TPanel
-        Left = 0
-        Height = 692
-        Top = 40
-        Width = 682
-        Align = alClient
-        BevelOuter = bvNone
-        TabOrder = 2
-        OnResize = AnaesPanelResize
-      end
-    end
-    object tsSynth: TTabSheet
-      Caption = 'Square and triangle waves'
-      ClientHeight = 732
-      ClientWidth = 1192
-      object pnlSynthCtl: TPanel
-        Left = 0
-        Height = 40
-        Top = 0
-        Width = 1192
-        Align = alTop
-        BevelOuter = bvNone
-        ClientHeight = 40
-        ClientWidth = 1192
-        TabOrder = 0
-        object lblF0: TLabel
-          Left = 8
-          Height = 15
-          Top = 10
-          Width = 160
-          Caption = 'Fundamental frequency f0 (Hz):'
-        end
-        object seF0: TFloatSpinEdit
-          Left = 190
-          Height = 23
-          Top = 6
-          Width = 90
-          DecimalPlaces = 2
-          Increment = 1
-          MaxValue = 200
-          MinValue = 0.25
-          TabOrder = 0
-          Value = 5
-          OnChange = seF0Change
-        end
-        object rgWave: TRadioGroup
-          Left = 320
-          Height = 34
-          Top = 1
-          Width = 300
-          AutoFill = True
-          Caption = 'Show'
-          Columns = 3
-          ItemIndex = 0
-          Items.Strings = (
-            'Square'
-            'Triangle'
-            'Both'
-          )
-          TabOrder = 1
-          OnSelectionChanged = rgWaveSelectionChanged
-        end
-      end
-      object memSynth: TMemo
-        Left = 812
-        Height = 696
-        Top = 36
-        Width = 380
-        Align = alRight
-        Font.Name = 'Consolas'
-        ParentFont = False
-        ReadOnly = True
-        ScrollBars = ssAutoBoth
-        TabOrder = 1
-        WordWrap = False
-      end
-      object pnlSynth: TPanel
-        Left = 0
-        Height = 696
-        Top = 36
-        Width = 812
-        Align = alClient
-        BevelOuter = bvNone
-        TabOrder = 2
-        OnResize = SynthPanelResize
-      end
-    end
     object tsSynthesis: TTabSheet
       Caption = 'Square wave synthesis'
       ClientHeight = 732
@@ -363,6 +149,379 @@ object fmBio: TfmBio
         OnResize = SynPanelResize
       end
     end
+    object tsSynth: TTabSheet
+      Caption = 'Square and triangle waves'
+      ClientHeight = 732
+      ClientWidth = 1192
+      object pnlSynthCtl: TPanel
+        Left = 0
+        Height = 40
+        Top = 0
+        Width = 1192
+        Align = alTop
+        BevelOuter = bvNone
+        ClientHeight = 40
+        ClientWidth = 1192
+        TabOrder = 0
+        object lblF0: TLabel
+          Left = 8
+          Height = 15
+          Top = 10
+          Width = 160
+          Caption = 'Fundamental frequency f0 (Hz):'
+        end
+        object seF0: TFloatSpinEdit
+          Left = 190
+          Height = 23
+          Top = 6
+          Width = 90
+          DecimalPlaces = 2
+          Increment = 1
+          MaxValue = 200
+          MinValue = 0.25
+          TabOrder = 0
+          Value = 5
+          OnChange = seF0Change
+        end
+        object rgWave: TRadioGroup
+          Left = 320
+          Height = 34
+          Top = 1
+          Width = 300
+          AutoFill = True
+          Caption = 'Show'
+          Columns = 3
+          ItemIndex = 0
+          Items.Strings = (
+            'Square'
+            'Triangle'
+            'Both'
+          )
+          TabOrder = 1
+          OnSelectionChanged = rgWaveSelectionChanged
+        end
+      end
+      object memSynth: TMemo
+        Left = 812
+        Height = 696
+        Top = 36
+        Width = 380
+        Align = alRight
+        Font.Name = 'Consolas'
+        ParentFont = False
+        ReadOnly = True
+        ScrollBars = ssAutoBoth
+        TabOrder = 1
+        WordWrap = False
+      end
+      object pnlSynth: TPanel
+        Left = 0
+        Height = 696
+        Top = 36
+        Width = 812
+        Align = alClient
+        BevelOuter = bvNone
+        TabOrder = 2
+        OnResize = SynthPanelResize
+      end
+    end
+    object tsECG: TTabSheet
+      Caption = 'ECG'
+      ClientHeight = 732
+      ClientWidth = 1192
+      object memECG: TMemo
+        Left = 862
+        Height = 732
+        Top = 0
+        Width = 330
+        Align = alRight
+        Font.Name = 'Consolas'
+        ParentFont = False
+        ReadOnly = True
+        ScrollBars = ssAutoBoth
+        TabOrder = 0
+        WordWrap = False
+      end
+      object pnlECG: TPanel
+        Left = 0
+        Height = 732
+        Top = 0
+        Width = 862
+        Align = alClient
+        BevelOuter = bvNone
+        TabOrder = 1
+      end
+    end
+    object tsABP: TTabSheet
+      Caption = 'Arterial pressure'
+      ClientHeight = 732
+      ClientWidth = 1192
+      object memABP: TMemo
+        Left = 862
+        Height = 732
+        Top = 0
+        Width = 330
+        Align = alRight
+        Font.Name = 'Consolas'
+        ParentFont = False
+        ReadOnly = True
+        ScrollBars = ssAutoBoth
+        TabOrder = 0
+        WordWrap = False
+      end
+      object pnlABP: TPanel
+        Left = 0
+        Height = 732
+        Top = 0
+        Width = 862
+        Align = alClient
+        BevelOuter = bvNone
+        TabOrder = 1
+      end
+    end
+    object tsEEG: TTabSheet
+      Caption = 'EEG'
+      ClientHeight = 732
+      ClientWidth = 1192
+      object memEEG: TMemo
+        Left = 862
+        Height = 732
+        Top = 0
+        Width = 330
+        Align = alRight
+        Font.Name = 'Consolas'
+        ParentFont = False
+        ReadOnly = True
+        ScrollBars = ssAutoBoth
+        TabOrder = 0
+        WordWrap = False
+      end
+      object pnlEEG: TPanel
+        Left = 0
+        Height = 732
+        Top = 0
+        Width = 862
+        Align = alClient
+        BevelOuter = bvNone
+        TabOrder = 1
+      end
+    end
+    object tsAnaes: TTabSheet
+      Caption = 'Anaesthesia EEG'
+      ClientHeight = 732
+      ClientWidth = 1192
+      object pnlAnaesCtl: TPanel
+        Left = 0
+        Height = 40
+        Top = 0
+        Width = 1192
+        Align = alTop
+        BevelOuter = bvNone
+        ClientHeight = 40
+        ClientWidth = 1192
+        TabOrder = 0
+        object rgAnaes: TRadioGroup
+          Left = 8
+          Height = 34
+          Top = 1
+          Width = 700
+          AutoFill = True
+          Caption = 'Excerpt'
+          Columns = 4
+          ItemIndex = 0
+          Items.Strings = (
+            'Awake, before induction'
+            'Sedated, BIS ~84'
+            'Propofol, BIS ~45'
+            'Burst suppression'
+          )
+          TabOrder = 0
+          OnSelectionChanged = rgAnaesSelectionChanged
+        end
+      end
+      object memAnaes: TMemo
+        Left = 682
+        Height = 692
+        Top = 40
+        Width = 510
+        Align = alRight
+        Font.Name = 'Consolas'
+        ParentFont = False
+        ReadOnly = True
+        ScrollBars = ssAutoBoth
+        TabOrder = 1
+        WordWrap = False
+      end
+      object pnlAnaes: TPanel
+        Left = 0
+        Height = 692
+        Top = 40
+        Width = 682
+        Align = alClient
+        BevelOuter = bvNone
+        TabOrder = 2
+        OnResize = AnaesPanelResize
+      end
+    end
+    object tsGuitar: TTabSheet
+      Caption = 'Guitar distortion'
+      ClientHeight = 732
+      ClientWidth = 1192
+      object pnlGtrCtl: TPanel
+        Left = 0
+        Height = 44
+        Top = 0
+        Width = 1192
+        Align = alTop
+        BevelOuter = bvNone
+        ClientHeight = 44
+        ClientWidth = 1192
+        TabOrder = 0
+        object rgGtrRight: TRadioGroup
+          Left = 8
+          Height = 40
+          Top = 1
+          Width = 390
+          AutoFill = True
+          Caption = 'Right-hand note (the left is always the clean note)'
+          Columns = 3
+          ItemIndex = 0
+          Items.Strings = (
+            'Distorted (rec.)'
+            'Clean x gain'
+            'Clean via tanh'
+          )
+          TabOrder = 0
+          OnSelectionChanged = GuitarChange
+        end
+        object lblGtrGain: TLabel
+          Left = 404
+          Height = 15
+          Top = 16
+          Width = 30
+          Caption = 'Gain:'
+        end
+        object seGtrGain: TFloatSpinEdit
+          Left = 436
+          Height = 23
+          Top = 12
+          Width = 64
+          DecimalPlaces = 0
+          Increment = 10
+          MaxValue = 1000
+          MinValue = 1
+          TabOrder = 1
+          Value = 100
+          OnChange = GuitarChange
+        end
+        object btnPlayL: TButton
+          Left = 506
+          Height = 25
+          Top = 11
+          Width = 72
+          Caption = 'Play left'
+          TabOrder = 2
+          OnClick = btnPlayLClick
+        end
+        object btnPlayR: TButton
+          Left = 582
+          Height = 25
+          Top = 11
+          Width = 72
+          Caption = 'Play right'
+          TabOrder = 3
+          OnClick = btnPlayRClick
+        end
+        object cbGtrWhole: TCheckBox
+          Left = 662
+          Height = 19
+          Top = 14
+          Width = 84
+          Caption = 'Whole note'
+          TabOrder = 4
+          OnChange = GuitarChange
+        end
+        object lblGtrFmax: TLabel
+          Left = 752
+          Height = 15
+          Top = 16
+          Width = 86
+          Caption = 'f1, f2 to (Hz):'
+        end
+        object seGtrFmax: TFloatSpinEdit
+          Left = 838
+          Height = 23
+          Top = 12
+          Width = 68
+          DecimalPlaces = 0
+          Increment = 250
+          MaxValue = 5000
+          MinValue = 500
+          TabOrder = 5
+          Value = 2000
+          OnChange = GuitarChange
+        end
+        object lblGtrEpoch: TLabel
+          Left = 912
+          Height = 15
+          Top = 16
+          Width = 58
+          Caption = 'Epoch (s):'
+        end
+        object seGtrEpoch: TFloatSpinEdit
+          Left = 970
+          Height = 23
+          Top = 12
+          Width = 60
+          DecimalPlaces = 2
+          Increment = 0.05
+          MaxValue = 0.5
+          MinValue = 0.05
+          TabOrder = 6
+          Value = 0.1
+          OnChange = GuitarChange
+        end
+        object rgGtrKind: TRadioGroup
+          Left = 1036
+          Height = 40
+          Top = 1
+          Width = 152
+          AutoFill = True
+          Caption = 'Show'
+          Columns = 2
+          ItemIndex = 0
+          Items.Strings = (
+            '|B| (dB)'
+            'Bicoh.'
+          )
+          TabOrder = 7
+          OnSelectionChanged = GuitarChange
+        end
+      end
+      object memGtr: TMemo
+        Left = 802
+        Height = 688
+        Top = 44
+        Width = 390
+        Align = alRight
+        Font.Name = 'Consolas'
+        ParentFont = False
+        ReadOnly = True
+        ScrollBars = ssAutoBoth
+        TabOrder = 1
+        WordWrap = False
+      end
+      object pnlGtr: TPanel
+        Left = 0
+        Height = 688
+        Top = 44
+        Width = 802
+        Align = alClient
+        BevelOuter = bvNone
+        TabOrder = 2
+        OnResize = GuitarPanelResize
+      end
+    end
     object tsBispectrum: TTabSheet
       Caption = 'EEG bispectrum'
       ClientHeight = 732
@@ -381,11 +540,11 @@ object fmBio: TfmBio
           Left = 8
           Height = 38
           Top = 44
-          Width = 300
+          Width = 400
           AutoFill = True
           Caption = 'Signal'
           Columns = 2
-          ItemIndex = 0
+          ItemIndex = 1
           Items.Strings = (
             'EEG (300 s)'
             'Two tones through x + k x^2'
@@ -394,7 +553,7 @@ object fmBio: TfmBio
           OnSelectionChanged = BispectrumChange
         end
         object pnlBiSynth: TPanel
-          Left = 320
+          Left = 420
           Height = 38
           Top = 44
           Width = 600
@@ -402,7 +561,7 @@ object fmBio: TfmBio
           ClientHeight = 38
           ClientWidth = 600
           TabOrder = 5
-          Visible = False
+          Visible = True
           object lblFa: TLabel
             Left = 0
             Height = 15
@@ -694,165 +853,6 @@ object fmBio: TfmBio
         BevelOuter = bvNone
         TabOrder = 2
         OnResize = AnaesBiPanelResize
-      end
-    end
-    object tsGuitar: TTabSheet
-      Caption = 'Guitar distortion'
-      ClientHeight = 732
-      ClientWidth = 1192
-      object pnlGtrCtl: TPanel
-        Left = 0
-        Height = 44
-        Top = 0
-        Width = 1192
-        Align = alTop
-        BevelOuter = bvNone
-        ClientHeight = 44
-        ClientWidth = 1192
-        TabOrder = 0
-        object rgGtrRight: TRadioGroup
-          Left = 8
-          Height = 40
-          Top = 1
-          Width = 390
-          AutoFill = True
-          Caption = 'Right-hand note (the left is always the clean note)'
-          Columns = 3
-          ItemIndex = 0
-          Items.Strings = (
-            'Distorted (rec.)'
-            'Clean x gain'
-            'Clean via tanh'
-          )
-          TabOrder = 0
-          OnSelectionChanged = GuitarChange
-        end
-        object lblGtrGain: TLabel
-          Left = 404
-          Height = 15
-          Top = 16
-          Width = 30
-          Caption = 'Gain:'
-        end
-        object seGtrGain: TFloatSpinEdit
-          Left = 436
-          Height = 23
-          Top = 12
-          Width = 64
-          DecimalPlaces = 0
-          Increment = 10
-          MaxValue = 1000
-          MinValue = 1
-          TabOrder = 1
-          Value = 100
-          OnChange = GuitarChange
-        end
-        object btnPlayL: TButton
-          Left = 506
-          Height = 25
-          Top = 11
-          Width = 72
-          Caption = 'Play left'
-          TabOrder = 2
-          OnClick = btnPlayLClick
-        end
-        object btnPlayR: TButton
-          Left = 582
-          Height = 25
-          Top = 11
-          Width = 72
-          Caption = 'Play right'
-          TabOrder = 3
-          OnClick = btnPlayRClick
-        end
-        object cbGtrWhole: TCheckBox
-          Left = 662
-          Height = 19
-          Top = 14
-          Width = 84
-          Caption = 'Whole note'
-          TabOrder = 4
-          OnChange = GuitarChange
-        end
-        object lblGtrFmax: TLabel
-          Left = 752
-          Height = 15
-          Top = 16
-          Width = 86
-          Caption = 'f1, f2 to (Hz):'
-        end
-        object seGtrFmax: TFloatSpinEdit
-          Left = 838
-          Height = 23
-          Top = 12
-          Width = 68
-          DecimalPlaces = 0
-          Increment = 250
-          MaxValue = 5000
-          MinValue = 500
-          TabOrder = 5
-          Value = 2000
-          OnChange = GuitarChange
-        end
-        object lblGtrEpoch: TLabel
-          Left = 912
-          Height = 15
-          Top = 16
-          Width = 58
-          Caption = 'Epoch (s):'
-        end
-        object seGtrEpoch: TFloatSpinEdit
-          Left = 970
-          Height = 23
-          Top = 12
-          Width = 60
-          DecimalPlaces = 2
-          Increment = 0.05
-          MaxValue = 0.5
-          MinValue = 0.05
-          TabOrder = 6
-          Value = 0.1
-          OnChange = GuitarChange
-        end
-        object rgGtrKind: TRadioGroup
-          Left = 1036
-          Height = 40
-          Top = 1
-          Width = 152
-          AutoFill = True
-          Caption = 'Show'
-          Columns = 2
-          ItemIndex = 0
-          Items.Strings = (
-            '|B| (dB)'
-            'Bicoh.'
-          )
-          TabOrder = 7
-          OnSelectionChanged = GuitarChange
-        end
-      end
-      object memGtr: TMemo
-        Left = 802
-        Height = 688
-        Top = 44
-        Width = 390
-        Align = alRight
-        Font.Name = 'Consolas'
-        ParentFont = False
-        ReadOnly = True
-        ScrollBars = ssAutoBoth
-        TabOrder = 1
-        WordWrap = False
-      end
-      object pnlGtr: TPanel
-        Left = 0
-        Height = 688
-        Top = 44
-        Width = 802
-        Align = alClient
-        BevelOuter = bvNone
-        TabOrder = 2
-        OnResize = GuitarPanelResize
       end
     end
   end

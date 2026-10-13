@@ -12,6 +12,12 @@ unit ubiospectramain;
      of the anaesthesia EEG after that, and last a clean and a distorted
      guitar note.
 
+     The tabs run, left to right: square-wave synthesis, square and
+     triangle waves, ECG, arterial pressure, EEG, anaesthesia EEG, guitar
+     distortion, EEG bispectrum, anaesthesia bispectrum - the synthetic
+     signals first, then the recordings, the bispectra last. The order is
+     the order of the TTabSheets in the .lfm; the form opens on the first.
+
      READING THE DATA
 
      The excerpts are raw WFDB format-212 bytes: two 12-bit two's-complement
@@ -58,7 +64,7 @@ unit ubiospectramain;
      gamma beyond - as labelled colour bars along the top of the plot and
      a faint tint beneath (TVMPlot2D's AddXBand).
 
-     ANAESTHESIA EEG (the fourth tab)
+     ANAESTHESIA EEG (the sixth tab)
 
      Frontal EEG in four states, in order of depth: awake, sedated,
      propofol maintenance and burst suppression. Three come from one
@@ -115,7 +121,7 @@ unit ubiospectramain;
      no SaveToPNG, but under GTK2 the form image includes the GL area),
      prints both tabs' memos and exits - for checking them unattended.
 
-     SQUARE AND TRIANGLE WAVES (the fifth tab)
+     SQUARE AND TRIANGLE WAVES (the second tab)
 
      Unit-amplitude square and triangle waves at a chosen fundamental f0,
      sampled at SynthFs = 1000 Hz for 20 s like the real signals, built by
@@ -128,7 +134,7 @@ unit ubiospectramain;
      shows the square wave, the triangle, or both overlaid; the time plot
      shows the first four periods only; the spectrum uses the whole 20 s.
 
-     SQUARE-WAVE SYNTHESIS (the sixth tab)
+     SQUARE-WAVE SYNTHESIS (the first tab)
 
      The square wave's Fourier series the other way round: the partial
      sums  S_K(t) = (4/pi) sum over k = 1..K of sin(2 pi n_k f0 t)/n_k  over the
@@ -144,7 +150,7 @@ unit ubiospectramain;
      RMS error against the square wave and the peak overshoot, which never
      falls below about 9 % however many terms are added (Gibbs).
 
-     EEG BISPECTRUM (the seventh tab)
+     EEG BISPECTRUM (the eighth tab)
 
      The power spectrum throws away phase; the bispectrum keeps the phase
      relation between pairs of frequencies and their sum,
@@ -203,11 +209,19 @@ unit ubiospectramain;
      k = 0 the products vanish and so do the peaks, which is the cleanest
      demonstration of all: the power spectrum would still show the two
      tones either way, and only the bispectrum can tell the two cases
-     apart.
+     apart. The tab opens on this synthetic signal.
 
-     ANAESTHESIA BISPECTRUM (the eighth tab)
+     Above the surface, the signal being analysed: its first 2 s on the
+     left (all 300 s would be a solid band) and on the right its power
+     spectrum, averaged over the very epochs the bispectrum uses (same
+     length, window and 50 % overlap - EpochPSD), and taken to twice the
+     f1, f2 limit, so the sum frequencies f1 + f2 the bispectrum relates
+     are on it too: for the two tones, 2fa, fa+fb and 2fb appear as soon
+     as k > 0.
 
-     The fourth tab's trend and 20 s trace on top (DrawAnaesTrend/
+     ANAESTHESIA BISPECTRUM (the ninth tab)
+
+     The Anaesthesia EEG tab's trend and 20 s trace on top (DrawAnaesTrend/
      DrawAnaesTrace, shared by both tabs; here without legends, which
      would cover plots this short - the trend's title names the colours),
      and in place of the PSD the bispectrum or bicoherence of the chosen
@@ -217,7 +231,7 @@ unit ubiospectramain;
      suppression 8314-8614 s - the last ending with its excerpt because
      the recording has a 16 s gap from 8619 s - and, from case 574,
      sedated 3300-3600 s), 299 epochs of 2 s and a
-     bicoherence floor of 0.06. The computation is the seventh tab's,
+     bicoherence floor of 0.06. The computation is the EEG bispectrum tab's,
      moved into ComputeBispectrum so both tabs share it, which gained a
      lower frequency limit: the surface starts at 1 Hz by default (a spin
      edit), because the frontal lead's drift and eye movements in the
@@ -256,7 +270,7 @@ unit ubiospectramain;
      deliberately avoid 1000-1300 s, where ECG spikes once a second give a
      bicoherence of ~0.9 everywhere.
 
-     GUITAR DISTORTION (the ninth tab)
+     GUITAR DISTORTION (the seventh tab)
 
      Linear against nonlinear amplification, on one guitar note: the open
      G string (G3, 196 Hz) played clean on a nylon-string guitar and
@@ -467,6 +481,8 @@ type
     FSynthTime, FSynthSpec: TVMPlot2D;
     FSynTime, FSynSpec: TVMPlot2D;
     FBiPlot: TVMPlot3D;
+    FBiTop: TPanel;              // the row above it: signal and its PSD
+    FBiTime, FBiSpec: TVMPlot2D;
     FEEGLong: TSignalExcerpt;   // the 300 s EEG excerpt, for the bispectrum only
     FBiSynthPhaseA, FBiSynthPhaseB: Double;   // the tones' random phases, drawn once
     // anaesthesia EEG tab: four states from two VitalDB cases (AnaesStateCase),
@@ -532,6 +548,12 @@ type
       out NBins: Integer; out Sw2: Double; LinearFull: Boolean = False;
       DefaultFmax: Double = 0; Fmin: Double = 0);
     procedure AddEEGBands(Plot: TVMPlot2D);
+    { PSD averaged over the epochs ComputeBispectrum cuts Data into (Hamming,
+      mean removed, 50 % overlap), from 0 to Fmax; dB or linear per the
+      check box, as ComputePSD }
+    procedure EpochPSD(const Data: TVMobj; Fs, EpochSec, Fmax: Double;
+      out F, P: TVMobj);
+    procedure BiPanelResize(Sender: TObject);
     { the frequency below which Pct per cent of Data's power between Lo and
       Hi Hz lies - SEF95 at Pct = 95 - from the linear, full-range PSD }
     function SpectralEdge(const Data: TVMobj; Fs, Pct: Double;
@@ -855,6 +877,21 @@ begin
   AddEEGBands(FAnaesSpec);
   AnaesPanelResize(nil);
 
+  FBiTop := TPanel.Create(Self);
+  FBiTop.Parent := pnlBi;
+  FBiTop.Align := alTop;
+  FBiTop.BevelOuter := bvNone;
+  FBiTime := TVMPlot2D.Create(Self);
+  FBiTime.Parent := FBiTop;
+  FBiTime.Align := alLeft;
+  FBiTime.XAxisTitle := 'time (s)';
+  FBiSpec := TVMPlot2D.Create(Self);
+  FBiSpec.Parent := FBiTop;
+  FBiSpec.Align := alClient;
+  FBiSpec.XAxisTitle := 'frequency (Hz)';
+  pnlBi.OnResize := @BiPanelResize;
+  BiPanelResize(nil);
+
   FBiPlot := TVMPlot3D.Create(Self);
   FBiPlot.Parent := pnlBi;
   FBiPlot.Align := alClient;
@@ -910,7 +947,7 @@ begin
 
   // creating the GL controls on each sheet brings that sheet forward, so
   // the form would otherwise open on the last tab filled
-  pcSignals.ActivePage := tsECG;
+  pcSignals.ActivePage := tsSynthesis;
 
   FSnapshot := Application.GetOptionValue('snapshot');
   if FSnapshot <> '' then
@@ -925,6 +962,8 @@ end;
 { --snapshot=<prefix>: shows the anaesthesia tab (a never-shown tab's GL
   controls have no context), saves its trend, spectrum and each excerpt's
   time trace as <prefix>_trend.png, _spectrum.png, _time<n>.png, the
+  EEG bispectrum tab's signal, PSD and window for each signal
+  (_eegbi<n>_time.png, _eegbi<n>_psd.png, _eegbi<n>.bmp), the
   window on the anaesthesia bispectrum and guitar tabs for each choice
   (_bispectrum*.bmp, _guitar_<dB|bicoh><n>.bmp), prints the memos and exits - for checking the tab without clicking through it }
 procedure TfmBio.DoSnapshot(Data: PtrInt);
@@ -960,6 +999,23 @@ begin
   pcSignals.ActivePage := tsABP;
   Application.ProcessMessages;
   FTabs[2].SpecPlot.SaveToPNG(FSnapshot + '_abp_spectrum.png');
+  pcSignals.ActivePage := tsBispectrum;
+  Application.ProcessMessages;
+  for i := 1 downto 0 do           // two tones (the default), then the EEG
+  begin
+    rgBiSignal.ItemIndex := i;
+    ShowBispectrum;
+    Application.ProcessMessages;
+    FBiTime.SaveToPNG(Format('%s_eegbi%d_time.png', [FSnapshot, i]));
+    FBiSpec.SaveToPNG(Format('%s_eegbi%d_psd.png', [FSnapshot, i]));
+    with GetFormImage do
+    try
+      SaveToFile(Format('%s_eegbi%d.bmp', [FSnapshot, i]));
+    finally
+      Free;
+    end;
+  end;
+  rgBiSignal.ItemIndex := 1;
   pcSignals.ActivePage := tsAnaesBi;
   Application.ProcessMessages;
   for k := 0 to 2 do               // |B|, |B| in dB, bicoherence
@@ -1060,6 +1116,48 @@ end;
 { Two tones through y = x + k x^2 plus noise - see the unit comment. The
   tones' phases are drawn once (FormCreate) and kept, so changing k or the
   frequencies re-synthesises the same realisation rather than a new one. }
+procedure TfmBio.BiPanelResize(Sender: TObject);
+begin
+  if not Assigned(FBiTop) then Exit;
+  FBiTop.Height := pnlBi.Height * 36 div 100;
+  FBiTime.Width := pnlBi.Width * 45 div 100;
+end;
+
+procedure TfmBio.EpochPSD(const Data: TVMobj; Fs, EpochSec, Fmax: Double;
+  out F, P: TVMobj);
+var
+  NTotal, NEp, Hop, NumEp, NBins, KMax, e, k: Integer;
+  Sw2, Mx: Double;
+  FE, PE, Acc: TVMobj;
+  AP: PDouble;
+begin
+  NTotal := Data.Cols;
+  NEp := Round(EpochSec * Fs);
+  if NEp > NTotal then NEp := NTotal;
+  Hop := Max(1, NEp div 2);                     // as ComputeBispectrum
+  NumEp := (NTotal - NEp) div Hop + 1;
+  Acc := TVMobj.Create(1, NEp div 2 + 1);
+  for e := 0 to NumEp - 1 do
+  begin
+    // ComputePSD's linear full-range PSD of one epoch: mean removed,
+    // Hamming, one-sided - summed, then divided by the epoch count
+    ComputePSD(SubMatrix(Data, 0, e * Hop, 1, NEp), Fs, FE, PE, NBins, Sw2, True);
+    Acc := Acc + PE;
+  end;
+  Acc := Acc * (1 / NumEp);
+  KMax := Min(NBins - 1, Trunc(Fmax / (Fs / NEp)));
+  F := SubMatrix(FE, 0, 0, 1, KMax + 1);
+  P := SubMatrix(Acc, 0, 0, 1, KMax + 1);
+  if not cbLinear.Checked then
+  begin
+    // 10 log10, floored 150 dB below the peak, as ComputePSD
+    AP := P.DataPtr;
+    Mx := 0;
+    for k := 0 to KMax do if AP[k] > Mx then Mx := AP[k];
+    P := (10 / Ln10) * Ln(AddScalar(P, Max(Mx * 1e-15, 1e-300)));
+  end;
+end;
+
 function TfmBio.SyntheticBispectrumSignal(N: Integer; Fs: Double): TVMobj;
 var
   T, X: TVMobj;
@@ -1262,8 +1360,8 @@ procedure TfmBio.ShowBispectrum;
 var
   Sig: TSignalExcerpt;
   Fs, Fres, Peak, PeakF1, PeakF2: Double;
-  NTotal, NEp, NumEp, KMax: Integer;
-  Grid: TVMobj;
+  NTotal, NEp, NumEp, KMax, NShow: Integer;
+  Grid, T, F, P: TVMobj;
   Info: TBispecInfo;
   Bicoh, Synth: Boolean;
   Expected: string;
@@ -1306,6 +1404,23 @@ begin
   FBiPlot.YAxisMin := 0; FBiPlot.YAxisMax := KMax * Fres;
   FBiPlot.ShowLevelCurves := cbLevelCurves.Checked;
   FBiPlot.SetData(Grid);
+
+  // the signal itself: its first 2 s, and its epoch-averaged PSD to twice
+  // the f1, f2 limit, where the sums f1 + f2 lie
+  NShow := Min(NTotal, Round(2 * Fs));
+  T := TVMobj.Create(1, NShow);
+  T.linspace(0, 1 / Fs);
+  FBiTime.Title := Format('%s - first %.0f s of %.0f s', [Expected, NShow / Fs, NTotal / Fs]);
+  FBiTime.YAxisTitle := Sig.Units;
+  FBiTime.ClearSeries;
+  FBiTime.SetSeriesStyle(0, clBlue, 1.0, plsSolid);
+  FBiTime.SetData(T, [SubMatrix(Sig.Data, 0, 0, 1, NShow)]);
+  EpochPSD(Sig.Data, Fs, seEpoch.Value, 2 * KMax * Fres, F, P);
+  FBiSpec.Title := Format('PSD, mean of the same %d epochs, %.3g Hz bins', [NumEp, Fres]);
+  FBiSpec.YAxisTitle := SpectrumYTitle(Sig.Units);
+  FBiSpec.ClearSeries;
+  FBiSpec.SetSeriesStyle(0, clRed, 1.0, plsSolid);
+  FBiSpec.SetData(F, [P]);
 
   memBi.Lines.BeginUpdate;
   try

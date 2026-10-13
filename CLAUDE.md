@@ -2012,6 +2012,25 @@ packages. Compiled binaries and each demo's own `lib/` output are
   inner accumulation is a plain loop over `GetRealPart`/`GetImagPart`
   values - no BLAS primitive forms a triple product on a grid. The
   project gained `../../Graphs/uVMPlot3D.pas` (and so `GLU`) for it.
+  Since 2026-10-13 the tab opens on the two-tone signal
+  (`rgBiSignal.ItemIndex = 1` in the `.lfm`, widened to 400 px so both
+  captions fit now its spin edits show from the start). A row above the
+  surface, built in code (`FBiTop`, 36 % of `pnlBi`, sized by
+  `BiPanelResize`), shows the analysed signal's first 2 s (`FBiTime`)
+  and its PSD (`FBiSpec`, `EpochPSD`). The PSD is the mean of
+  `ComputePSD`'s linear PSDs over the bispectrum's own epochs and overlap,
+  taken to `2 * KMax * Fres` so the `f1 + f2` sum tones show. Snapshot
+  mode saves this tab for both signals (`_eegbi<n>_time/_psd.png`,
+  `_eegbi<n>.bmp`).
+  - **Tab order** (since 2026-10-13; the "fourth/fifth/sixth tab" wording
+    above is the order the tabs were added): Square wave synthesis, Square
+    and triangle waves, ECG, Arterial pressure, EEG, Anaesthesia EEG,
+    Guitar distortion, EEG bispectrum, Anaesthesia bispectrum. The order
+    is the order of the `TTabSheet` blocks in `ubiospectramain.lfm`; no
+    code uses a page index. The form opens on the first tab
+    (`ActivePage = tsSynthesis`, and the same assignment at the end of
+    `FormCreate`, which is needed because creating each sheet's GL
+    controls brings that sheet forward).
   - **Data** lives in `data/` as 20 s excerpts fetched by HTTP range
     request (about 50 KB in all) plus the unmodified `.hea` headers, so the
     demo runs offline; `data/README.md` has the byte ranges, re-fetch
