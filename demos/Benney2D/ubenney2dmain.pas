@@ -13,10 +13,14 @@ unit ubenney2dmain;
          film, h - hN in micrometres, x down the slope and y across,
          updated as each output time is reached. The Chebyshev rows are
          interpolated onto equally spaced y (TVMPlot3D assumes an even
-         grid). Each frame's height scale is symmetric about the flat
-         film, +-1.25 x its own largest departure (in the title): a scale
-         fixed for the run was set by the 40 um starting bump and left
-         the later ~5 um waves flat.
+         grid). The surface keeps the plate's proportions: x and y to
+         scale (TVMPlot3D.EqualAspect), and heights at a fixed vertical
+         exaggeration, "height x" (default 5000; TVMPlot3D.ZExaggeration,
+         with the 1e-3 for um over mm). The box is +-1/10 of the plate's
+         longer side at that exaggeration - 6 um for 300 mm at 5000 x -
+         the same for every frame, so frames compare directly; taller
+         waves poke out of it. (Before this each frame was scaled to its
+         own largest departure, which hid how the waves grew.)
        - right, the centre line y = 0 as a waterfall (TVMPlotStack, the
          1-D demo's picture), t = 0 in front.
        - after a run, Replay animates the surface again and the slider
@@ -31,13 +35,21 @@ unit ubenney2dmain;
      Excitation: "excite at x = 0" adds a line source across the plate
      at x = 0, a c cos(2 pi t/T) g(x) (ubenney2dmodel.pas), launching a
      wave train of thickness amplitude a (um here) and wavelength c T.
+     "transverse (%)" and "half-waves" modulate it across the plate,
+     1 + m cos(n pi (y + W/2)/W), seeding the 3-D structure a uniform
+     source can't (default 10 %, n = 2).
      "Flat film" as the start shows it alone. The domain is periodic, so
-     the train comes round to x = 0 after Lx/c (about 4 s by default).
+     the train comes round to x = 0 after Lx/c (about 4 s by default) -
+     unless "absorbing zone" is ticked: a smooth damping zone (length
+     and peak rate set beside it) just before x = Lx relaxes the film
+     to flat, so waves leave the domain and x = 0 acts as an inlet.
 
      Command line, for unattended checks: --snapshot=<prefix> runs,
      saves <prefix>.bmp (the window) and prints the memo; --time=<s>,
      --film=<mm>, --angle=<deg>, --serial (no derivative thread),
-     --excite, --period=<s>, --amp=<um> and --start=<0..3> (the start
+     --excite, --period=<s>, --amp=<um>, --mod=<%>, --modn=<n>,
+     --absorb, --length=<mm>,
+     --width=<mm>, --exag=<x> and --start=<0..3> (the start
      list's index) set the run.
 
 *******************************************************************************}
@@ -90,6 +102,17 @@ type
     lblAmp: TLabel;
     lblExcite: TLabel;
     sePeriod: TFloatSpinEdit;
+    cbAbsorb: TCheckBox;
+    lblZone: TLabel;
+    lblRate: TLabel;
+    seZone: TSpinEdit;
+    seRate: TFloatSpinEdit;
+    lblMod: TLabel;
+    lblModN: TLabel;
+    seMod: TFloatSpinEdit;
+    seModN: TSpinEdit;
+    lblExag: TLabel;
+    seExag: TSpinEdit;
     seAmp: TFloatSpinEdit;
     cbStart: TComboBox;
     lblFilm: TLabel;
@@ -125,6 +148,7 @@ type
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure ParamChange(Sender: TObject);
+    procedure seExagChange(Sender: TObject);
     procedure pnlRightResize(Sender: TObject);
     procedure tbFrameChange(Sender: TObject);
     procedure tmrReplayTimer(Sender: TObject);
@@ -136,7 +160,8 @@ type
     FInterp: TVMobj;                 // Chebyshev rows -> uniform rows
     FFrames: array of TVMobj;        // h - hN in um, (Nyd, Nx)
     FTimes: array of Double;
-    FZRanges: array of Double;       // each frame's height scale, um
+    FZBox: Double;                   // the surface box's half-height, um
+    FShown: Integer;                 // the frame on the surface
     FReplayIndex: Integer;
     FStartTick: QWord;
     FSnapshot: string;
@@ -145,6 +170,7 @@ type
     FRunTime: Double;                // wall time of the last run
     FUpdatingSlider: Boolean;
     function ReadParams: TBenney2DParams;
+    procedure ApplyScale;
     procedure ThreadDone(Sender: TObject);
     procedure ShowFrame(i: Integer);
     procedure WriteInfo(Running: Boolean);
@@ -253,6 +279,7 @@ begin
   FSurface.XAxisTitle := 'x down slope (mm)';
   FSurface.YAxisTitle := 'y across (mm)';
   FSurface.ZAxisTitle := 'um';
+  FSurface.EqualAspect := True;
 
   FStack := TVMPlotStack.Create(Self);
   FStack.Parent := pnlRight;
@@ -274,6 +301,17 @@ begin
     seTime.Value := StrToFloatDef(Application.GetOptionValue('time'), seTime.Value);
   if Application.HasOption('serial') then cbThreads.Checked := False;
   if Application.HasOption('excite') then cbExcite.Checked := True;
+  if Application.HasOption('absorb') then cbAbsorb.Checked := True;
+  if Application.HasOption('mod') then
+    seMod.Value := StrToFloatDef(Application.GetOptionValue('mod'), seMod.Value);
+  if Application.HasOption('modn') then
+    seModN.Value := StrToIntDef(Application.GetOptionValue('modn'), seModN.Value);
+  if Application.HasOption('length') then
+    seLength.Value := StrToIntDef(Application.GetOptionValue('length'), seLength.Value);
+  if Application.HasOption('width') then
+    seWidth.Value := StrToIntDef(Application.GetOptionValue('width'), seWidth.Value);
+  if Application.HasOption('exag') then
+    seExag.Value := StrToIntDef(Application.GetOptionValue('exag'), seExag.Value);
   if Application.HasOption('period') then
     sePeriod.Value := StrToFloatDef(Application.GetOptionValue('period'), sePeriod.Value);
   if Application.HasOption('amp') then
@@ -323,6 +361,11 @@ begin
   Result.Excite := cbExcite.Checked;
   Result.ExcitePeriod := sePeriod.Value;
   Result.ExciteAmp := seAmp.Value / 1000 / seFilm.Value;   // um -> units of hN
+  Result.ExciteMod := seMod.Value / 100;
+  Result.ExciteModN := seModN.Value;
+  Result.Absorb := cbAbsorb.Checked;
+  Result.AbsorbLength := seZone.Value;
+  Result.AbsorbRate := seRate.Value;
 end;
 
 procedure TfmBenney2D.ParamChange(Sender: TObject);
@@ -349,6 +392,11 @@ begin
   cbExcite.Enabled := not Running;
   sePeriod.Enabled := not Running;
   seAmp.Enabled := not Running;
+  seMod.Enabled := not Running;
+  seModN.Enabled := not Running;
+  cbAbsorb.Enabled := not Running;
+  seZone.Enabled := not Running;
+  seRate.Enabled := not Running;
 end;
 
 procedure TfmBenney2D.btnRunClick(Sender: TObject);
@@ -377,13 +425,14 @@ begin
 
   SetLength(FFrames, 0);
   SetLength(FTimes, 0);
-  SetLength(FZRanges, 0);
+  FShown := -1;
   FFailed := False;
   FFailMsg := '';
   FSurface.XAxisMin := 0;
-  FSurface.XAxisMax := P.Lx;
+  FSurface.XAxisMax := P.Lx * (P.Nx - 1) / P.Nx;   // the grid's last point
   FSurface.YAxisMin := -P.W / 2;
   FSurface.YAxisMax := P.W / 2;
+  ApplyScale;
   FStack.ClearStack;
   FStack.MaxSeries := seFrames.Value + 1;
   FStack.ZAxisScale := seTime.Value / seFrames.Value;
@@ -424,11 +473,9 @@ end;
 
 procedure TfmBenney2D.FrameReady(const H: TVMobj; t: Double);
 var
-  n, i: Integer;
+  n: Integer;
   F, Centre: TVMobj;
   P: TBenney2DParams;
-  m: Double;
-  FP: PDouble;
 begin
   P := FModel.Params;
   // h - hN in micrometres, on uniform y rows
@@ -442,11 +489,6 @@ begin
   Centre := TVMobj.Create(1, P.Nx);
   Move(H.DataPtr[CentreRow(P) * P.Nx], Centre.DataPtr^, P.Nx * SizeOf(Double));
   FStack.AddGraph(AddScalar(Centre, -1) * (P.hN * 1000));
-  m := 0;
-  FP := F.DataPtr;
-  for i := 0 to F.Rows * F.Cols - 1 do m := Max(m, Abs(FP[i]));
-  SetLength(FZRanges, n + 1);
-  FZRanges[n] := Max(1.25 * m, 1e-3);
   ShowFrame(n);
   FUpdatingSlider := True;
   tbFrame.Position := n;
@@ -455,12 +497,28 @@ begin
     ProgressBar1.Position := Round(100 * t / seTime.Value);
 end;
 
+{ The fixed height scale: heights seExag times their true size against
+  x and y (um over mm: 1e-3), in a box of +-1/10 of the plate's longer
+  side at that scale. }
+procedure TfmBenney2D.ApplyScale;
+begin
+  FZBox := 0.1 * Max(seLength.Value, seWidth.Value) * 1000 / seExag.Value;
+  FSurface.ZAxisMin := -FZBox;
+  FSurface.ZAxisMax := FZBox;
+  FSurface.ZExaggeration := seExag.Value / 1000;
+end;
+
+procedure TfmBenney2D.seExagChange(Sender: TObject);
+begin
+  ApplyScale;
+  if (FShown >= 0) and (FShown <= High(FFrames)) then ShowFrame(FShown);
+end;
+
 procedure TfmBenney2D.ShowFrame(i: Integer);
 begin
   if (i < 0) or (i > High(FFrames)) then Exit;
-  FSurface.ZAxisMin := -FZRanges[i];
-  FSurface.ZAxisMax := FZRanges[i];
-  FSurface.Title := Format('Film h - hN (um),  t = %.1f s,  scale +-%.3g um', [FTimes[i], FZRanges[i]]);
+  FShown := i;
+  FSurface.Title := Format('Film h - hN (um),  t = %.1f s,  heights x %d', [FTimes[i], seExag.Value]);
   FSurface.SetData(FFrames[i]);
   lblFrame.Caption := Format('t = %.1f s', [FTimes[i]]);
 end;
@@ -578,7 +636,23 @@ begin
       else
         L.Add(Format('  decays at %.3g /s (too short to grow)', [-M.GrowthAt(k)]));
       L.Add(Format('  source a c cos(2 pi t/T) g(x), g %.0f mm wide', [P.ExciteWidth]));
-      L.Add(Format('  waves return to x = 0 after %.1f s (periodic)', [P.Lx / M.WaveSpeed]));
+      if P.ExciteMod > 0 then
+      begin
+        L.Add(Format('  x (1 + %.3g cos(%d pi (y + W/2)/W)) across:', [P.ExciteMod, P.ExciteModN]));
+        k := 2 * Pi / (M.WaveSpeed * P.ExcitePeriod);
+        L.Add(Format('  ky = %.3g /mm (%.0f mm), that part grows at %.3g /s',
+          [P.ExciteModN * Pi / P.W, 2 * P.W / P.ExciteModN, M.GrowthAt2(k, P.ExciteModN * Pi / P.W)]));
+      end;
+      if not P.Absorb then
+        L.Add(Format('  waves return to x = 0 after %.1f s (periodic)', [P.Lx / M.WaveSpeed]));
+    end;
+    if P.Absorb then
+    begin
+      L.Add(Format('absorbing zone x = %.0f .. %.0f mm, peak %.3g /s:',
+        [M.AbsorbStart, M.AbsorbStart + P.AbsorbLength, P.AbsorbRate]));
+      L.Add(Format('  a wave crossing it keeps %.2g %%', [100 * (1 - M.AbsorbedFraction)]));
+      if M.AbsorbStart < 0 then
+        L.Add('  WARNING: longer than the domain allows');
     end;
     L.Add('');
     L.Add(Format('grid: %d Fourier (dx %.2f mm) x %d Chebyshev', [P.Nx, P.Lx / P.Nx, P.Ny + 1]));

@@ -2177,10 +2177,17 @@ packages. Compiled binaries and each demo's own `lib/` output are
     um with curved fronts across the plate.
   - **Display**: the Chebyshev rows go onto 101 uniform rows by
     barycentric interpolation (`UniformRows`), since `TVMPlot3D` assumes
-    an even grid. Each frame is scaled +-1.25 x its own largest
-    departure, about zero, and the scale is in the title. A scale fixed
-    for the run was set by the 40 um starting bump and left the later
-    5 um waves flat.
+    an even grid. The surface keeps the plate's proportions (at the
+    user's request): x and y to scale (`EqualAspect`, a 600 x 300 plate
+    draws 2 : 1), and heights at a fixed vertical exaggeration, "height
+    x" (default 5000, `--exag`; `ZExaggeration` = exaggeration/1000,
+    since heights are um and x, y mm). The box is +-1/10 of the plate's
+    longer side at that scale (6 um for 300 mm at 5000 x), the same for
+    every frame, and taller features poke out of it. Before that each
+    frame was scaled to its own largest departure, which hid how the
+    waves grew; and before that a scale fixed by the 40 um starting
+    bump left the later 5 um waves flat. The x axis is 0 .. Lx - dx,
+    the grid's real extent. `--length`/`--width` set the plate.
   - **Excitation at x = 0** (same date): an optional source in H_t,
     a c cos(2 pi t/T) g(x). g is a 5 mm Gaussian line source across the
     plate with unit integral, and c = 3A is the linear wave speed. In
@@ -2198,8 +2205,45 @@ packages. Compiled binaries and each demo's own `lib/` output are
     train comes back through the source after Lx/c (3.9 s). At T = 1 s,
     300 mm holds 3.94 wavelengths, so each lap adds nearly in phase and
     the train builds up (to about 6 um by 20 s from a 1 um source).
-    An absorbing zone before x = Lx would give a true inlet/outlet.
     Options `--excite`, `--period`, `--amp`, `--start=<0..3>`.
+  - **Absorbing zone** (same date, "absorbing zone" check box, length
+    and peak rate, `--absorb`): -sigma(x) (H - 1) in H_t. sigma is a
+    sin^2 bell, default 10/s over 75 mm, ending 15 mm short of x = Lx
+    so it stays clear of the source at x = 0 = Lx. It relaxes the film
+    to flat, so waves leave the domain and x = 0 acts as an inlet. The
+    smooth bell avoids the reflection a step would cause. A linear wave
+    keeps exp(-rate length/(2c)) = 0.73 % at the defaults. It is
+    explicit (sigma varies with x, so it can't join the per-mode
+    implicit operator; sigma dt ~0.1-0.5). Checked (`check2d`, the
+    forced train at t = 15 s): without the zone the centre line upstream
+    reaches 0.0235 hN as the train laps the domain; with it, 0.0054
+    (the 0.005 launched plus growth), and 0.00002 gets through between
+    the zone and the source. That is 0.4 %, against the 0.73 % estimate.
+  - **Transverse modulation of the excitation** (2026-10-16,
+    "transverse (%)" and "half-waves", `--mod`/`--modn`): the source is
+    multiplied by 1 + m cos(n pi (y + W/2)/W). That has zero slope and
+    third derivative at both walls, so it meets the wall conditions, and
+    its plate average is unchanged. Default 10 %, n = 2. The absorbing
+    zone's controls moved to a fourth row. Why it was added: the user
+    noted the forced waves showed no transverse instability. From a
+    flat film a y-uniform source keeps the film y-uniform to rounding
+    error, so nothing transverse can grow. Checked (`check2d`, m = 0.2,
+    n = 2, t = 3 s): the wave is 0.00630 hN at the wall and 0.00418 on
+    the centre line, ratio 1.505 against (1 + m)/(1 - m) = 1.5.
+  - **What the transverse part does here** (300 s runs, T = 0.7 s,
+    1 um, no absorber; scratch programs, not in the repo):
+    - With broadband noise (0.1 %) the departure from the y-mean grew
+      from ~0.1 % to the size of the 2-D wave (~3 %) by ~340 s.
+    - With only the modulation it stays at the forced ~10 % of the 2-D
+      wave for n = 1 and 2, growing slightly late on (16 % at 300 s for
+      n = 2). It decays for n = 4, 6 and 8.
+    That is linear theory, growth (I - G) kx^2 - G ky^2 - S k^4: 0.034
+    at n = 0, 0.031 at n = 1, 0.021 at n = 2, and negative from n = 4
+    (-0.021, -0.091, -0.193).
+    So at 1.2 x onset the forced 2-D train shows no secondary transverse
+    instability. The noise case's 3-D field is oblique waves at other
+    kx growing beside the train. The fast break-up of 2-D waves in
+    experiments (Re 20-70, ~1 m plates) is beyond the Benney equation.
   - `--snapshot=<prefix>` (saves the window as BMP, prints the memo),
     `--time`, `--film`, `--angle`, `--serial`.
   - **`newVMComplex.pas` gained `TVMobjZ.DataPtr: PComplex16`**, mirroring
@@ -3412,6 +3456,28 @@ not part of the `LazOpenGLContext` Lazarus package, so no extra
   mode (`if (not FWireframe) and FShowLevelCurves` in `Paint`), since a
   contour line has no independent visual meaning against a mesh that
   already shows every grid edge.
+- **Proportions: `EqualAspect` and `ZExaggeration`** (added 2026-10-15
+  for `demos/Benney2D`; public, not published). By default the surface
+  fills a square `WorldSize` box whatever the data's x and y ranges, and
+  the Z range fills the fixed `ZScale` height. `EqualAspect` draws x and
+  y in proportion to `XAxisMax - XAxisMin` and `YAxisMax - YAxisMin`
+  (both must be set), the longer one `WorldSize`. `ZExaggeration > 0`
+  fixes the height scale: a Z value of 1 is drawn that many times as
+  tall as 1 unit of x, so it is the vertical exaggeration when Z shares
+  x's units and includes any unit conversion otherwise. The box then
+  spans `ZAxisMin..ZAxisMax` at that scale. Setting either redraws the
+  last data (`FLastData`).
+  - **Implementation**: the world half-extents are fields (`FHX`, `FHY`,
+    `FHZ`, set in `SetData`). They replace the `WorldSize`/`ZScale`
+    constants in every drawing, tick, label and level-curve formula, so
+    x and y positions use their own extent; the box planes already
+    followed `FHX`/`FHY`/`FHZ`.
+  - **Checked unchanged at the defaults**: BioSpectra's 3-D snapshots,
+    old component against new, differ in at most 11 pixels in about a
+    million, by 1-2 colour levels (floating-point rounding). The one
+    exception is the synthetic-signal image `eegbi1`, which differs
+    between two runs of the old build too (random phases). Plot3D,
+    2DChebBVP and Wave2D still build.
 - **`AxisStyle`** (`pasBox`, the default since 11 Oct 2026, or
   `pasCentred`): how the axes are drawn when `ShowAxes` is on.
   `pasCentred` is the original gizmo - three coloured lines through the

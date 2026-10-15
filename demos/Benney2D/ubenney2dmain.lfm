@@ -12,12 +12,12 @@ object fmBenney2D: TfmBenney2D
   Position = poScreenCenter
   object pnlControls: TPanel
     Left = 0
-    Height = 108
+    Height = 140
     Top = 0
     Width = 1400
     Align = alTop
     BevelOuter = bvNone
-    ClientHeight = 108
+    ClientHeight = 140
     ClientWidth = 1400
     TabOrder = 0
     object lblFilm: TLabel
@@ -186,7 +186,7 @@ object fmBenney2D: TfmBenney2D
       Left = 1122
       Height = 23
       Top = 8
-      Width = 160
+      Width = 118
       ItemHeight = 15
       ItemIndex = 0
       Items.Strings = (
@@ -198,6 +198,27 @@ object fmBenney2D: TfmBenney2D
       Style = csDropDownList
       TabOrder = 8
       Text = 'Bump + noise'
+    end
+    object lblExag: TLabel
+      Left = 1250
+      Height = 15
+      Top = 12
+      Width = 56
+      Caption = 'height x:'
+    end
+    object seExag: TSpinEdit
+      Left = 1310
+      Height = 23
+      Hint = 'vertical exaggeration: heights drawn this many times their true scale against length and width'
+      Top = 8
+      Width = 82
+      Increment = 1000
+      MaxValue = 1000000
+      MinValue = 1
+      OnChange = seExagChange
+      ShowHint = True
+      TabOrder = 46
+      Value = 5000
     end
     object btnRun: TButton
       Left = 8
@@ -322,11 +343,101 @@ object fmBenney2D: TfmBenney2D
       TabOrder = 42
       Value = 1
     end
-    object lblExcite: TLabel
+    object lblMod: TLabel
       Left = 486
       Height = 15
       Top = 84
-      Width = 600
+      Width = 96
+      Caption = 'transverse (%):'
+    end
+    object seMod: TFloatSpinEdit
+      Left = 584
+      Height = 23
+      Hint = 'depth of the source''s modulation across the plate, 1 + m cos(n pi (y + W/2)/W)'
+      Top = 80
+      Width = 64
+      DecimalPlaces = 1
+      Increment = 5
+      MaxValue = 100
+      MinValue = 0
+      OnChange = ParamChange
+      ShowHint = True
+      TabOrder = 47
+      Value = 10
+    end
+    object lblModN: TLabel
+      Left = 656
+      Height = 15
+      Top = 84
+      Width = 70
+      Caption = 'half-waves:'
+    end
+    object seModN: TSpinEdit
+      Left = 728
+      Height = 23
+      Hint = 'n: half-wavelengths of the modulation across the plate'
+      Top = 80
+      Width = 54
+      MaxValue = 64
+      MinValue = 1
+      OnChange = ParamChange
+      ShowHint = True
+      TabOrder = 48
+      Value = 2
+    end
+    object cbAbsorb: TCheckBox
+      Left = 8
+      Height = 19
+      Top = 114
+      Width = 128
+      Caption = 'absorbing zone:'
+      OnChange = ParamChange
+      TabOrder = 43
+    end
+    object lblZone: TLabel
+      Left = 140
+      Height = 15
+      Top = 116
+      Width = 80
+      Caption = 'length (mm):'
+    end
+    object seZone: TSpinEdit
+      Left = 222
+      Height = 23
+      Top = 112
+      Width = 64
+      Increment = 5
+      MaxValue = 1000
+      MinValue = 5
+      OnChange = ParamChange
+      TabOrder = 44
+      Value = 75
+    end
+    object lblRate: TLabel
+      Left = 296
+      Height = 15
+      Top = 116
+      Width = 66
+      Caption = 'rate (1/s):'
+    end
+    object seRate: TFloatSpinEdit
+      Left = 364
+      Height = 23
+      Top = 112
+      Width = 64
+      DecimalPlaces = 1
+      Increment = 1
+      MaxValue = 200
+      MinValue = 0
+      OnChange = ParamChange
+      TabOrder = 45
+      Value = 10
+    end
+    object lblExcite: TLabel
+      Left = 822
+      Height = 15
+      Top = 84
+      Width = 480
       Caption = ''
     end
   end

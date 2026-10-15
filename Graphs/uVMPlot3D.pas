@@ -113,6 +113,13 @@ type
     FXTickPos, FYTickPos: TVMPlotDoubleArray;
     FXAxisMin, FXAxisMax, FYAxisMin, FYAxisMax: Double;
     FZAxisMin, FZAxisMax: Double;
+    // the world half-extents the surface and box are drawn to, set by
+    // SetData: WorldSize/2, WorldSize/2, ZScale/2 unless EqualAspect or
+    // ZExaggeration ask otherwise (see those properties)
+    FHX, FHY, FHZ: Double;
+    FEqualAspect: Boolean;
+    FZExaggeration: Double;
+    FLastData: TVMobj;
     FLightX, FLightY: Double;
     FTexturesBuilt: Boolean;
     FTitleTex, FXAxisTitleTex, FYAxisTitleTex, FZAxisTitleTex: TVMPlotTextTexture;
@@ -138,6 +145,8 @@ type
     procedure SetXAxisMax(AValue: Double);
     procedure SetYAxisMin(AValue: Double);
     procedure SetYAxisMax(AValue: Double);
+    procedure SetEqualAspect(AValue: Boolean);
+    procedure SetZExaggeration(AValue: Double);
     procedure SetZAxisMin(AValue: Double);
     procedure SetZAxisMax(AValue: Double);
     procedure SetLightX(AValue: Double);
@@ -228,6 +237,20 @@ type
     // with there being no such clamping for X/Y either.
     property ZAxisMin: Double read FZAxisMin write SetZAxisMin;
     property ZAxisMax: Double read FZAxisMax write SetZAxisMax;
+    // Proportions. By default the surface fills a square WorldSize box
+    // whatever the data's x and y ranges, and the Z range fills a fixed
+    // ZScale height. EqualAspect draws x and y in proportion to their
+    // axis ranges (XAxisMax - XAxisMin, YAxisMax - YAxisMin; both must
+    // be set), the longer one WorldSize long. ZExaggeration > 0 then
+    // fixes the height scale too: a Z value of 1 is drawn ZExaggeration
+    // times as tall as 1 unit of x - so with Z in the same units as x
+    // and y it is the vertical exaggeration, and with Z in other units
+    // it includes the conversion (Z in um over x in mm: 1e-3 x the
+    // exaggeration). The box then spans ZAxisMin..ZAxisMax at that scale
+    // (or the data's range, if they are unset), and values outside it
+    // simply poke out. Either change redraws the last data at once.
+    property EqualAspect: Boolean read FEqualAspect write SetEqualAspect;
+    property ZExaggeration: Double read FZExaggeration write SetZExaggeration;
     // XY direction of the OpenGL "headlamp" light Paint sets up (see its own
     // comment for why it's a camera-relative directional light rather than
     // a scene-fixed one) - each roughly -1..1, matching whatever a
@@ -409,6 +432,9 @@ begin
 
   FYaw := DefaultYaw;
   FPitch := DefaultPitch;
+  FHX := WorldSize / 2;
+  FHY := WorldSize / 2;
+  FHZ := ZScale / 2;
   FDistance := DefaultDistance;
   FWireframe := False;
   FShowAxes := True;
@@ -672,10 +698,24 @@ end;
 // animated data specifically). Ported from uplot3dmain.pas's BuildSurface,
 // renamed to SetData for parity with
 // TVMPlot2D's public entry point.
+procedure TVMPlot3D.SetEqualAspect(AValue: Boolean);
+begin
+  if FEqualAspect = AValue then Exit;
+  FEqualAspect := AValue;
+  if FHasData then SetData(FLastData);
+end;
+
+procedure TVMPlot3D.SetZExaggeration(AValue: Double);
+begin
+  if FZExaggeration = AValue then Exit;
+  FZExaggeration := AValue;
+  if FHasData then SetData(FLastData);
+end;
+
 procedure TVMPlot3D.SetData(const M: TVMobj);
 var
   r, c: Integer;
-  ZRange, v, dxWorld, dyWorld, DataZMin, DataZMax: Double;
+  ZRange, v, dxWorld, dyWorld, DataZMin, DataZMax, spanX, spanY, spanMax: Double;
   // Snapshotted before RecomputeXYTicks/ComputeTicks reassign FXTicks/
   // FYTicks/FZTicks below - dynamic-array assignment shares the old
   // buffer by reference until reassigned, so these stay valid old values
@@ -704,14 +744,31 @@ begin
   ZRange := FZMax - FZMin;
   if ZRange = 0 then ZRange := 1;   // guard a constant matrix (or a degenerate fixed range)
 
-  dxWorld := WorldSize / (FCols - 1);
-  dyWorld := WorldSize / (FRows - 1);
+  // the world extents - see EqualAspect/ZExaggeration
+  FHX := WorldSize / 2;
+  FHY := WorldSize / 2;
+  FHZ := ZScale / 2;
+  spanX := Abs(FXAxisMax - FXAxisMin);
+  spanY := Abs(FYAxisMax - FYAxisMin);
+  spanMax := Max(spanX, spanY);
+  if FEqualAspect and (spanX > 0) and (spanY > 0) then
+  begin
+    FHX := WorldSize / 2 * spanX / spanMax;
+    FHY := WorldSize / 2 * spanY / spanMax;
+  end;
+  if (FZExaggeration > 0) and (spanMax > 0) then
+    FHZ := (FZMax - FZMin) / 2 * FZExaggeration * WorldSize / spanMax;
+  if FHZ <= 0 then FHZ := ZScale / 2;     // a constant matrix
+  FLastData := M;
+
+  dxWorld := 2 * FHX / (FCols - 1);
+  dyWorld := 2 * FHY / (FRows - 1);
 
   for r := 0 to FRows - 1 do
     for c := 0 to FCols - 1 do begin
       FVerts[r, c].X := (c - (FCols - 1) / 2) * dxWorld;
       FVerts[r, c].Y := (r - (FRows - 1) / 2) * dyWorld;
-      FVerts[r, c].Z := ((M[r, c] - FZMin) / ZRange - 0.5) * ZScale;
+      FVerts[r, c].Z := ((M[r, c] - FZMin) / ZRange - 0.5) * (2 * FHZ);
     end;
 
   for r := 0 to FRows - 1 do
@@ -719,7 +776,7 @@ begin
       ComputeNormal(r, c);
       // FVerts[r,c].Z is already the [-ZScale/2,+ZScale/2] value above -
       // shift/rescale it back to a plain [0,1] fraction for the colour map.
-      HeightToColor(FVerts[r, c].Z / ZScale + 0.5,
+      HeightToColor(FVerts[r, c].Z / (2 * FHZ) + 0.5,
         FVerts[r, c].R, FVerts[r, c].G, FVerts[r, c].B);
     end;
 
@@ -896,7 +953,7 @@ begin
       // already world-scaled (see SetData), so the level being tested
       // against needs the same [FZMin,FZMax] -> [-ZScale/2,+ZScale/2]
       // mapping applied to it first.
-      worldLevel := ((FZTicks[i] - FZMin) / zRangeForTicks - 0.5) * ZScale;
+      worldLevel := ((FZTicks[i] - FZMin) / zRangeForTicks - 0.5) * (2 * FHZ);
       for r := 0 to FRows - 2 do
         for c := 0 to FCols - 2 do begin
           ContourTriangle(FVerts[r, c], FVerts[r, c + 1], FVerts[r + 1, c], worldLevel);
@@ -913,9 +970,6 @@ end;
 // drawn separately in pixel space by DrawAxisLabels, once this frame's
 // camera transform is known. Ported from uplot3dmain.pas's DrawAxisLines.
 procedure TVMPlot3D.DrawAxisLines;
-const
-  HalfW = WorldSize / 2;
-  HalfZ = ZScale / 2;
 var
   i: Integer;
   zRangeForTicks: Double;
@@ -925,22 +979,22 @@ begin
   glDisable(GL_LIGHTING);
   glLineWidth(1.5);
   glBegin(GL_LINES);
-    glColor3f(0.85, 0.25, 0.25); glVertex3d(-HalfW, 0, 0); glVertex3d(HalfW, 0, 0);
-    glColor3f(0.25, 0.75, 0.25); glVertex3d(0, -HalfW, 0); glVertex3d(0, HalfW, 0);
-    glColor3f(0.35, 0.55, 1.0);  glVertex3d(0, 0, -HalfZ); glVertex3d(0, 0, HalfZ);
+    glColor3f(0.85, 0.25, 0.25); glVertex3d(-FHX, 0, 0); glVertex3d(FHX, 0, 0);
+    glColor3f(0.25, 0.75, 0.25); glVertex3d(0, -FHY, 0); glVertex3d(0, FHY, 0);
+    glColor3f(0.35, 0.55, 1.0);  glVertex3d(0, 0, -FHZ); glVertex3d(0, 0, FHZ);
   glEnd;
 
   glPointSize(4);
   glBegin(GL_POINTS);
     glColor3f(0.85, 0.25, 0.25);
     for i := 0 to High(FXTicks) do
-      glVertex3d((FXTickPos[i] - (FCols - 1) / 2) * (WorldSize / (FCols - 1)), 0, 0);
+      glVertex3d((FXTickPos[i] - (FCols - 1) / 2) * (2 * FHX / (FCols - 1)), 0, 0);
     glColor3f(0.25, 0.75, 0.25);
     for i := 0 to High(FYTicks) do
-      glVertex3d(0, (FYTickPos[i] - (FRows - 1) / 2) * (WorldSize / (FRows - 1)), 0);
+      glVertex3d(0, (FYTickPos[i] - (FRows - 1) / 2) * (2 * FHY / (FRows - 1)), 0);
     glColor3f(0.35, 0.55, 1.0);
     for i := 0 to High(FZTicks) do
-      glVertex3d(0, 0, ((FZTicks[i] - FZMin) / zRangeForTicks - 0.5) * ZScale);
+      glVertex3d(0, 0, ((FZTicks[i] - FZMin) / zRangeForTicks - 0.5) * (2 * FHZ));
   glEnd;
 
   glEnable(GL_LIGHTING);
@@ -980,8 +1034,6 @@ end;
 // unlit, grey, with a slightly brighter edge frame.
 procedure TVMPlot3D.DrawAxisBox;
 const
-  HalfW = WorldSize / 2;
-  HalfZ = ZScale / 2;
   BoxPad = 1.06;   // planes this far beyond the surface's half-extent
 var
   i: Integer;
@@ -990,15 +1042,15 @@ var
 
   function TickX(i: Integer): Double;
   begin
-    Result := (FXTickPos[i] - (FCols - 1) / 2) * (WorldSize / (FCols - 1));
+    Result := (FXTickPos[i] - (FCols - 1) / 2) * (2 * FHX / (FCols - 1));
   end;
   function TickY(i: Integer): Double;
   begin
-    Result := (FYTickPos[i] - (FRows - 1) / 2) * (WorldSize / (FRows - 1));
+    Result := (FYTickPos[i] - (FRows - 1) / 2) * (2 * FHY / (FRows - 1));
   end;
   function TickZ(i: Integer): Double;
   begin
-    Result := ((FZTicks[i] - FZMin) / zRange - 0.5) * ZScale;
+    Result := ((FZTicks[i] - FZMin) / zRange - 0.5) * (2 * FHZ);
   end;
 
 begin
@@ -1008,9 +1060,9 @@ begin
   if cx >= 0 then FBoxSX := -1 else FBoxSX := 1;
   if cy >= 0 then FBoxSY := -1 else FBoxSY := 1;
   if cz >= 0 then FBoxSZ := -1 else FBoxSZ := 1;
-  bx := FBoxSX * HalfW * BoxPad;   // the x = const wall
-  by := FBoxSY * HalfW * BoxPad;   // the y = const wall
-  bz := FBoxSZ * HalfZ * BoxPad;   // the floor (or ceiling)
+  bx := FBoxSX * FHX * BoxPad;   // the x = const wall
+  by := FBoxSY * FHY * BoxPad;   // the y = const wall
+  bz := FBoxSZ * FHZ * BoxPad;   // the floor (or ceiling)
 
   glDisable(GL_LIGHTING);
 
@@ -1019,14 +1071,14 @@ begin
   glColor4f(0.30, 0.30, 0.38, 0.35);
   glBegin(GL_QUADS);
     // floor: z = bz
-    glVertex3d(-HalfW * BoxPad, -HalfW * BoxPad, bz); glVertex3d(HalfW * BoxPad, -HalfW * BoxPad, bz);
-    glVertex3d(HalfW * BoxPad, HalfW * BoxPad, bz);   glVertex3d(-HalfW * BoxPad, HalfW * BoxPad, bz);
+    glVertex3d(-FHX * BoxPad, -FHY * BoxPad, bz); glVertex3d(FHX * BoxPad, -FHY * BoxPad, bz);
+    glVertex3d(FHX * BoxPad, FHY * BoxPad, bz);   glVertex3d(-FHX * BoxPad, FHY * BoxPad, bz);
     // wall: x = bx
-    glVertex3d(bx, -HalfW * BoxPad, -HalfZ * BoxPad); glVertex3d(bx, HalfW * BoxPad, -HalfZ * BoxPad);
-    glVertex3d(bx, HalfW * BoxPad, HalfZ * BoxPad);   glVertex3d(bx, -HalfW * BoxPad, HalfZ * BoxPad);
+    glVertex3d(bx, -FHY * BoxPad, -FHZ * BoxPad); glVertex3d(bx, FHY * BoxPad, -FHZ * BoxPad);
+    glVertex3d(bx, FHY * BoxPad, FHZ * BoxPad);   glVertex3d(bx, -FHY * BoxPad, FHZ * BoxPad);
     // wall: y = by
-    glVertex3d(-HalfW * BoxPad, by, -HalfZ * BoxPad); glVertex3d(HalfW * BoxPad, by, -HalfZ * BoxPad);
-    glVertex3d(HalfW * BoxPad, by, HalfZ * BoxPad);   glVertex3d(-HalfW * BoxPad, by, HalfZ * BoxPad);
+    glVertex3d(-FHX * BoxPad, by, -FHZ * BoxPad); glVertex3d(FHX * BoxPad, by, -FHZ * BoxPad);
+    glVertex3d(FHX * BoxPad, by, FHZ * BoxPad);   glVertex3d(-FHX * BoxPad, by, FHZ * BoxPad);
   glEnd;
   glDepthMask(GL_TRUE);
 
@@ -1036,37 +1088,37 @@ begin
   glBegin(GL_LINES);
     for i := 0 to High(FXTicks) do begin
       px := TickX(i);
-      glVertex3d(px, -HalfW * BoxPad, bz); glVertex3d(px, HalfW * BoxPad, bz);      // floor, along y
-      glVertex3d(px, by, -HalfZ * BoxPad); glVertex3d(px, by, HalfZ * BoxPad);      // y-wall, vertical
+      glVertex3d(px, -FHY * BoxPad, bz); glVertex3d(px, FHY * BoxPad, bz);      // floor, along y
+      glVertex3d(px, by, -FHZ * BoxPad); glVertex3d(px, by, FHZ * BoxPad);      // y-wall, vertical
     end;
     for i := 0 to High(FYTicks) do begin
       py := TickY(i);
-      glVertex3d(-HalfW * BoxPad, py, bz); glVertex3d(HalfW * BoxPad, py, bz);      // floor, along x
-      glVertex3d(bx, py, -HalfZ * BoxPad); glVertex3d(bx, py, HalfZ * BoxPad);      // x-wall, vertical
+      glVertex3d(-FHX * BoxPad, py, bz); glVertex3d(FHX * BoxPad, py, bz);      // floor, along x
+      glVertex3d(bx, py, -FHZ * BoxPad); glVertex3d(bx, py, FHZ * BoxPad);      // x-wall, vertical
     end;
     for i := 0 to High(FZTicks) do begin
       zz := TickZ(i);
-      glVertex3d(bx, -HalfW * BoxPad, zz); glVertex3d(bx, HalfW * BoxPad, zz);      // x-wall, horizontal
-      glVertex3d(-HalfW * BoxPad, by, zz); glVertex3d(HalfW * BoxPad, by, zz);      // y-wall, horizontal
+      glVertex3d(bx, -FHY * BoxPad, zz); glVertex3d(bx, FHY * BoxPad, zz);      // x-wall, horizontal
+      glVertex3d(-FHX * BoxPad, by, zz); glVertex3d(FHX * BoxPad, by, zz);      // y-wall, horizontal
     end;
   glEnd;
 
   // the edge frame of the three planes, brighter
   glLineWidth(1.5);
   glColor4f(0.80, 0.80, 0.86, 1.0);
-  zx := -HalfZ * BoxPad; zy := HalfZ * BoxPad;
+  zx := -FHZ * BoxPad; zy := FHZ * BoxPad;
   glBegin(GL_LINE_LOOP);   // floor outline
-    glVertex3d(-HalfW * BoxPad, -HalfW * BoxPad, bz); glVertex3d(HalfW * BoxPad, -HalfW * BoxPad, bz);
-    glVertex3d(HalfW * BoxPad, HalfW * BoxPad, bz);   glVertex3d(-HalfW * BoxPad, HalfW * BoxPad, bz);
+    glVertex3d(-FHX * BoxPad, -FHY * BoxPad, bz); glVertex3d(FHX * BoxPad, -FHY * BoxPad, bz);
+    glVertex3d(FHX * BoxPad, FHY * BoxPad, bz);   glVertex3d(-FHX * BoxPad, FHY * BoxPad, bz);
   glEnd;
   glBegin(GL_LINES);       // the vertical edges of the two walls
-    glVertex3d(bx, -HalfW * BoxPad, zx); glVertex3d(bx, -HalfW * BoxPad, zy);
-    glVertex3d(bx, HalfW * BoxPad, zx);  glVertex3d(bx, HalfW * BoxPad, zy);
-    glVertex3d(-HalfW * BoxPad, by, zx); glVertex3d(-HalfW * BoxPad, by, zy);
-    glVertex3d(HalfW * BoxPad, by, zx);  glVertex3d(HalfW * BoxPad, by, zy);
+    glVertex3d(bx, -FHY * BoxPad, zx); glVertex3d(bx, -FHY * BoxPad, zy);
+    glVertex3d(bx, FHY * BoxPad, zx);  glVertex3d(bx, FHY * BoxPad, zy);
+    glVertex3d(-FHX * BoxPad, by, zx); glVertex3d(-FHX * BoxPad, by, zy);
+    glVertex3d(FHX * BoxPad, by, zx);  glVertex3d(FHX * BoxPad, by, zy);
     // top edges of the walls
-    glVertex3d(bx, -HalfW * BoxPad, -bz); glVertex3d(bx, HalfW * BoxPad, -bz);
-    glVertex3d(-HalfW * BoxPad, by, -bz); glVertex3d(HalfW * BoxPad, by, -bz);
+    glVertex3d(bx, -FHY * BoxPad, -bz); glVertex3d(bx, FHY * BoxPad, -bz);
+    glVertex3d(-FHX * BoxPad, by, -bz); glVertex3d(FHX * BoxPad, by, -bz);
   glEnd;
 
   glEnable(GL_LIGHTING);
@@ -1278,9 +1330,6 @@ end;
 // (WorldToScreen). Must run in a pixel-space glOrtho(0,VW,0,VH,...) pass -
 // see Paint. Ported unchanged from uplot3dmain.pas.
 procedure TVMPlot3D.DrawAxisLabels;
-const
-  HalfW = WorldSize / 2;
-  HalfZ = ZScale / 2;
 var
   i, VW, VH: Integer;
   sx, sy, ex, ey, bz: Double;
@@ -1305,22 +1354,22 @@ begin
     // ticks go up the x-wall's front vertical edge, visible and
     // unobstructed since the wall is behind the surface. Positions use the
     // same BoxPad as DrawAxisBox so labels sit just outside the planes.
-    ex := FBoxSX * HalfW * 1.06;    // the floor edge AT the x-wall
-    ey := -FBoxSY * HalfW * 1.06;   // the floor edge away from the y-wall
-    bz := FBoxSZ * HalfZ * 1.06;
+    ex := FBoxSX * FHX * 1.06;    // the floor edge AT the x-wall
+    ey := -FBoxSY * FHY * 1.06;   // the floor edge away from the y-wall
+    bz := FBoxSZ * FHZ * 1.06;
     for i := 0 to High(FXTicks) do begin
-      WorldToScreen((FXTickPos[i] - (FCols - 1) / 2) * (WorldSize / (FCols - 1)),
+      WorldToScreen((FXTickPos[i] - (FCols - 1) / 2) * (2 * FHX / (FCols - 1)),
         ey, bz, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FXTickTex[i], sx, sy - 6, 0, 0.5, 1);
     end;
     for i := 0 to High(FYTicks) do begin
-      WorldToScreen(ex, (FYTickPos[i] - (FRows - 1) / 2) * (WorldSize / (FRows - 1)),
+      WorldToScreen(ex, (FYTickPos[i] - (FRows - 1) / 2) * (2 * FHY / (FRows - 1)),
         bz, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FYTickTex[i], sx + 6 * FBoxSX, sy, 0, 0.5 - 0.5 * FBoxSX, 0.5);
     end;
     for i := 0 to High(FZTicks) do begin
-      WorldToScreen(FBoxSX * HalfW * 1.06, ey,
-        ((FZTicks[i] - FZMin) / Max(FZMax - FZMin, 1e-9) - 0.5) * ZScale,
+      WorldToScreen(FBoxSX * FHX * 1.06, ey,
+        ((FZTicks[i] - FZMin) / Max(FZMax - FZMin, 1e-9) - 0.5) * (2 * FHZ),
         VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FZTickTex[i], sx - 6, sy, 0, 1, 0.5);
     end;
@@ -1333,38 +1382,38 @@ begin
       if infront then DrawTextTexture(FYAxisTitleTex, sx, sy, 0, 0.5 - 0.5 * FBoxSX, 0.5);
     end;
     if FZAxisTitle <> '' then begin
-      WorldToScreen(FBoxSX * HalfW * 1.06, ey, -bz * 1.15, VW, VH, sx, sy, infront);
+      WorldToScreen(FBoxSX * FHX * 1.06, ey, -bz * 1.15, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FZAxisTitleTex, sx, sy, 0, 0.5, 0);
     end;
   end
   else if FShowAxes then begin
     for i := 0 to High(FXTicks) do begin
-      WorldToScreen((FXTickPos[i] - (FCols - 1) / 2) * (WorldSize / (FCols - 1)),
+      WorldToScreen((FXTickPos[i] - (FCols - 1) / 2) * (2 * FHX / (FCols - 1)),
         0, 0, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FXTickTex[i], sx, sy - 8, 0, 0.5, 1);
     end;
     for i := 0 to High(FYTicks) do begin
-      WorldToScreen(0, (FYTickPos[i] - (FRows - 1) / 2) * (WorldSize / (FRows - 1)),
+      WorldToScreen(0, (FYTickPos[i] - (FRows - 1) / 2) * (2 * FHY / (FRows - 1)),
         0, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FYTickTex[i], sx + 8, sy, 0, 0, 0.5);
     end;
     for i := 0 to High(FZTicks) do begin
       WorldToScreen(0, 0,
-        ((FZTicks[i] - FZMin) / Max(FZMax - FZMin, 1e-9) - 0.5) * ZScale,
+        ((FZTicks[i] - FZMin) / Max(FZMax - FZMin, 1e-9) - 0.5) * (2 * FHZ),
         VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FZTickTex[i], sx - 8, sy, 0, 1, 0.5);
     end;
 
     if FXAxisTitle <> '' then begin
-      WorldToScreen(HalfW * 1.15, 0, 0, VW, VH, sx, sy, infront);
+      WorldToScreen(FHX * 1.15, 0, 0, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FXAxisTitleTex, sx, sy, 0, 0.5, 0.5);
     end;
     if FYAxisTitle <> '' then begin
-      WorldToScreen(0, HalfW * 1.15, 0, VW, VH, sx, sy, infront);
+      WorldToScreen(0, FHY * 1.15, 0, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FYAxisTitleTex, sx, sy, 0, 0.5, 0.5);
     end;
     if FZAxisTitle <> '' then begin
-      WorldToScreen(0, 0, HalfZ * 1.2, VW, VH, sx, sy, infront);
+      WorldToScreen(0, 0, FHZ * 1.2, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FZAxisTitleTex, sx, sy, 0, 0.5, 0.5);
     end;
   end;

@@ -44,6 +44,24 @@ unit ubenney2dmodel;
      um) and the wavelength is c T. Its time mean is zero: no net water
      is added. The domain is periodic, so the waves come round to x = 0
      again after Lx/c seconds and pass through the source.
+     ExciteMod > 0 modulates the source across the plate,
+     x (1 + ExciteMod cos(n pi (y + W/2)/W)) with n = ExciteModN: the
+     cosine has zero slope and third derivative at both walls, so it
+     meets the wall conditions, and its plate average is unchanged. It
+     seeds the transverse structure a uniform source never can: from a
+     flat film a y-uniform source keeps the film y-uniform to rounding
+     error. (As in the spanwise-forced experiments of Liu, Schneider &
+     Gollub 1995.)
+
+     Absorbing zone (optional, Absorb): -sigma(x) (H - 1) added to H_t,
+     sigma = AbsorbRate sin^2(pi u) for u = (x - x0)/AbsorbLength in
+     0..1, the zone ending AbsorbGap short of x = Lx so it stays clear
+     of the source at x = 0 (the same point, periodically). It relaxes
+     the film back to flat, so waves leave at x = Lx instead of coming
+     round again: with the excitation, x = 0 behaves as an inlet. The
+     smooth bell avoids the reflection a step in sigma would cause. A
+     linear wave keeps exp(-AbsorbRate AbsorbLength/(2c)) of itself
+     (0.7 % at the defaults). It is explicit, like the excitation.
 
      Validity. The Benney equation is a long-wave expansion and blows
      up in finite time once Re is more than a few (Pumir, Manneville &
@@ -135,6 +153,15 @@ type
     // (in units of hN); ExciteWidth the Gaussian's half-width, mm
     Excite: Boolean;
     ExciteAmp, ExcitePeriod, ExciteWidth: Double;
+    // transverse modulation of the source: x (1 + ExciteMod cos(n pi
+    // (y + W/2)/W)), n = ExciteModN half-waves across the plate
+    ExciteMod: Double;
+    ExciteModN: Integer;
+    // absorbing zone before x = Lx: -sigma(x) (H - 1) in H_t, sigma a
+    // sin^2 bell of peak AbsorbRate (1/s) over AbsorbLength (mm),
+    // ending AbsorbGap (mm) short of Lx - see the header
+    Absorb: Boolean;
+    AbsorbLength, AbsorbRate, AbsorbGap: Double;
   end;
 
   { Runs a method on its own thread on request: Run starts it, Wait
@@ -186,6 +213,7 @@ type
     FSysA0, FSysDt: array[0..1] of Double;
     FSysNext: Integer;
     FSource: TVMobjZ;                 // modes of S0 g(x), every row
+    FSponge: TVMobj;                  // sigma(x) on every row, 1/s
     function XDeriv(const F: TVMobj; Order: Integer): TVMobj;
     procedure XDeriv2(const F: TVMobj; O1, O2: Integer; out R1, R2: TVMobj);
     procedure XPhase1;
@@ -229,7 +257,11 @@ type
     function WaveSpeed: Double;       // 3A, mm/s
     function FastestK: Double;        // 1/mm, 0 if stable
     function GrowthAt(k: Double): Double;   // 1/s, a downslope wave of wavenumber k
+    function GrowthAt2(kx, ky: Double): Double;   // 1/s, an oblique wave
     function ExciteSource(t: Double): TVMobj; // the source term at t, for checks
+    function SpongeRate(x: Double): Double;   // sigma(x), 1/s
+    function AbsorbStart: Double;             // where the zone begins, mm
+    function AbsorbedFraction: Double;        // of a linear wave crossing it
     function MaxGrowth: Double;       // 1/s
     property Params: TBenney2DParams read FP;
     property X: TVMobj read FX;
@@ -293,6 +325,12 @@ begin
   Result.ExciteAmp := 0.005;     // 1 um on 0.2 mm
   Result.ExcitePeriod := 1.0;
   Result.ExciteWidth := 5.0;
+  Result.ExciteMod := 0;
+  Result.ExciteModN := 2;
+  Result.Absorb := False;
+  Result.AbsorbLength := 75;     // about one fastest-growing wavelength
+  Result.AbsorbRate := 10;       // passes ~0.7 % of a wave at 76 mm/s
+  Result.AbsorbGap := 15;        // clear of the 5 mm source at x = 0 = Lx
 end;
 
 function CentreRow(const P: TBenney2DParams): Integer;
@@ -471,6 +509,15 @@ begin
   FD4 := MatMult(FD2, FD2);
 
   if P.Excite then FSource := ToModes(ExciteSource(0));
+  if P.Absorb then
+  begin
+    FSponge := TVMobj.Create(FNy1, FNx);
+    for i := 0 to FNx - 1 do
+    begin
+      k := SpongeRate(FX.DataPtr[i]);
+      for j := 0 to FNy1 - 1 do FSponge.DataPtr[j * FNx + i] := k;
+    end;
+  end;
   // FWorker is created on the first threaded right-hand side, so a
   // model built only for its physics (the form's memo) starts no thread
   {$IFDEF HAVE_MKL}
@@ -514,6 +561,12 @@ end;
 function TBenney2DModel.GrowthAt(k: Double): Double;
 begin
   Result := (FI - FG) * k * k - FS * k * k * k * k;
+end;
+
+// linear theory: (I - G) kx^2 - G ky^2 - S (kx^2 + ky^2)^2
+function TBenney2DModel.GrowthAt2(kx, ky: Double): Double;
+begin
+  Result := (FI - FG) * kx * kx - FG * ky * ky - FS * Sqr(kx * kx + ky * ky);
 end;
 
 function TBenney2DModel.MaxGrowth: Double;
@@ -741,6 +794,31 @@ begin
   // (periods ~1 s against steps ~0.01 s) and its modes are fixed
   if FP.Excite then
     Result := Result + FSource * Cos(2 * Pi * t / FP.ExcitePeriod);
+  // the absorbing zone, explicit too: sigma varies with x, so it can't
+  // join the per-mode implicit operator; sigma dt is only ~0.1 .. 0.3
+  if FP.Absorb then
+    Result := Result - ToModes(AddScalar(H, -1) * FSponge);   // * elementwise
+end;
+
+function TBenney2DModel.AbsorbStart: Double;
+begin
+  Result := FP.Lx - FP.AbsorbGap - FP.AbsorbLength;
+end;
+
+function TBenney2DModel.SpongeRate(x: Double): Double;
+var
+  u: Double;
+begin
+  u := (x - AbsorbStart) / FP.AbsorbLength;
+  if (u <= 0) or (u >= 1) then Result := 0
+  else Result := FP.AbsorbRate * Sqr(Sin(Pi * u));
+end;
+
+// a wave at speed c spends dx/c in each dx: it keeps
+// exp(-int sigma dx / c) = exp(-AbsorbRate AbsorbLength/(2 c))
+function TBenney2DModel.AbsorbedFraction: Double;
+begin
+  Result := 1 - Exp(-FP.AbsorbRate * FP.AbsorbLength / (2 * WaveSpeed));
 end;
 
 { The source shape S0 g(x) on every row: g a periodic Gaussian about
@@ -750,7 +828,7 @@ end;
 function TBenney2DModel.ExciteSource(t: Double): TVMobj;
 var
   i, j: Integer;
-  d, w, g: Double;
+  d, w, g, my: Double;
 begin
   Result := TVMobj.Create(FNy1, FNx);
   w := FP.ExciteWidth;
@@ -759,7 +837,12 @@ begin
     d := FX.DataPtr[i] - FP.Lx * Round(FX.DataPtr[i] / FP.Lx);   // nearest image of 0
     g := Exp(-Sqr(d / w)) / (w * Sqrt(Pi));
     for j := 0 to FNy1 - 1 do
-      Result.DataPtr[j * FNx + i] := FP.ExciteAmp * WaveSpeed * g * Cos(2 * Pi * t / FP.ExcitePeriod);
+    begin
+      // the transverse modulation: a cosine with zero slope (and third
+      // derivative) at both walls, so it meets the wall conditions
+      my := 1 + FP.ExciteMod * Cos(FP.ExciteModN * Pi * (FY.DataPtr[j] + FP.W / 2) / FP.W);
+      Result.DataPtr[j * FNx + i] := FP.ExciteAmp * WaveSpeed * g * my * Cos(2 * Pi * t / FP.ExcitePeriod);
+    end;
   end;
 end;
 

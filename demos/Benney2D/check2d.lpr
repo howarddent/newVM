@@ -135,8 +135,87 @@ begin
   M.Free;
 end;
 
+{ 4. the absorbing zone: the forced train of check 3 run to t = 15 s
+  with and without it. Without, the train laps the periodic domain and
+  builds up; with, the centre line upstream of the zone (x 20..180)
+  should stay near a and very little should get past it (x 286..292, between the zone and
+  the source). }
+procedure Absorbing(Absorb: Boolean);
+var
+  P: TBenney2DParams;
+  M: TBenney2DModel;
+  Msg: string;
+  i, j0: Integer;
+  x, v, up, dn: Double;
+begin
+  P := DefaultBenney2DParams;
+  P.Excite := True;
+  P.ExciteAmp := 0.005;
+  P.ExcitePeriod := 1.0;
+  P.Absorb := Absorb;
+  M := TBenney2DModel.Create(P);
+  M.Start(M.Flat, 1e-3);
+  while M.Time < 15.0 - 1e-9 do
+    if not M.Advance(Msg) then begin WriteLn('FAILED ', Msg); Exit; end;
+  j0 := CentreRow(P);
+  up := 0; dn := 0;
+  for i := 0 to P.Nx - 1 do
+  begin
+    x := M.X.DataPtr[i];
+    v := Abs(M.H.DataPtr[j0 * P.Nx + i] - 1);
+    if (x >= 20) and (x <= 180) then up := Max(up, v);
+    if (x >= 286) and (x <= 292) then dn := Max(dn, v);
+  end;
+  if Absorb then
+    WriteLn(Format('absorbing zone x %.0f..%.0f mm, rate %.0f /s: a linear wave keeps %.2f %%',
+      [M.AbsorbStart, M.AbsorbStart + P.AbsorbLength, P.AbsorbRate, 100 * (1 - M.AbsorbedFraction)]));
+  WriteLn(Format('  absorb=%s, t = 15 s: max |H - 1| x 20..180: %.5f; x 286..292: %.5f; steps %d, rejected %d',
+    [BoolToStr(Absorb, True), up, dn, M.Steps, M.Rejected]));
+  M.Free;
+end;
+
+{ 5. the transverse modulation: m = 0.2, n = 2 on the check-3 source,
+  t = 3 s. cos(2 pi (y + W/2)/W) is +1 at the walls and -1 on the centre
+  line, so the wave between x = 20 and 200 mm should be (1 + m) a high at
+  the wall and (1 - m) a on the centre line, ratio 1.5. }
+procedure Modulated;
+var
+  P: TBenney2DParams;
+  M: TBenney2DModel;
+  Msg: string;
+  i: Integer;
+  x, aw, ac: Double;
+begin
+  P := DefaultBenney2DParams;
+  P.Excite := True;
+  P.ExciteAmp := 0.005;
+  P.ExcitePeriod := 1.0;
+  P.ExciteMod := 0.2;
+  P.ExciteModN := 2;
+  M := TBenney2DModel.Create(P);
+  M.Start(M.Flat, 1e-3);
+  while M.Time < 3.0 - 1e-9 do
+    if not M.Advance(Msg) then begin WriteLn('FAILED ', Msg); Exit; end;
+  aw := 0; ac := 0;
+  for i := 0 to P.Nx - 1 do
+  begin
+    x := M.X.DataPtr[i];
+    if (x >= 20) and (x <= 200) then
+    begin
+      aw := Max(aw, Abs(M.H.DataPtr[i] - 1));                              // row 0: y = +W/2
+      ac := Max(ac, Abs(M.H.DataPtr[CentreRow(P) * P.Nx + i] - 1));      // y = 0
+    end;
+  end;
+  WriteLn(Format('modulation m = 0.2, n = 2: wall %.5f (expect ~%.4f), centre %.5f (~%.4f), ratio %.3f (expect 1.5)',
+    [aw, 1.2 * P.ExciteAmp, ac, 0.8 * P.ExciteAmp, aw / ac]));
+  M.Free;
+end;
+
 begin
   InitializeCBLAS;
+  Modulated;
+  Absorbing(False);
+  Absorbing(True);
   Forced;
   WriteLn('theory (prototype): 3.7024 /s');
   Linear(True);
