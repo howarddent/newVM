@@ -85,7 +85,7 @@ type
     N: Integer;          // grid points (equations)
     Ax: Double;          // domain is -Ax .. Ax
     h0: Double;          // flat (Nusselt) film thickness
-    Amp, Amp2: Double;   // initial pulses at x = -85 and x = -65
+    Amp, Amp2: Double;   // initial pulses 15 and 35 in from x = -Ax
     Re: Double;          // Reynolds number
     We: Double;          // Weber number
     Eps: Double;         // long-wave expansion parameter
@@ -179,13 +179,15 @@ var
   i: Integer;
   XP, YP: PDouble;
 begin
-  // h0 + Amp exp(-0.4 (x+85)^2) + Amp2 exp(-0.4 (x+65)^2)
+  // h0 + Amp exp(-0.4 (x-x1)^2) + Amp2 exp(-0.4 (x-x2)^2), with the
+  // pulses 15 and 35 in from the left boundary (x = -85 and -65 on the
+  // original's -100 .. 100)
   Result := TVMobj.Create(FP.N, 1);
   XP := X.DataPtr;
   YP := Result.DataPtr;
   for i := 0 to FP.N - 1 do
-    YP[i] := FP.h0 + FP.Amp * Exp(-0.4 * Sqr(XP[i] + 85))
-                   + FP.Amp2 * Exp(-0.4 * Sqr(XP[i] + 65));
+    YP[i] := FP.h0 + FP.Amp * Exp(-0.4 * Sqr(XP[i] + FP.Ax - 15))
+                   + FP.Amp2 * Exp(-0.4 * Sqr(XP[i] + FP.Ax - 35));
 end;
 
 function TBenneyModel.SpectralDiff(const y: TVMobj; const Factor: TVMobjZ): TVMobj;

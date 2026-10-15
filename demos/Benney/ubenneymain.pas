@@ -25,7 +25,10 @@ unit ubenneymain;
          the inclination, the run time) are spin edits, defaulting to its
          values - We 250, eps 0.04, theta = pi/10 (18 deg), 30 time
          units, N = 512 points on -100 .. 100, a 0.2 bump at x = -85 -
-         except Re, 3 rather than its 5. With derivatives scaled by the
+         except Re, 3 rather than its 5, and the domain: "length" sets
+         L (default 400, x on -200 .. 200) with the original's grid
+         spacing kept (N = 2.56 L, so 1024 points), and the bump sits 15
+         in from the left boundary, so a wave can travel further. With derivatives scaled by the
          domain length (ubenneymodel, ScaleByLength) Re 5 blows up at
          t ~ 3.5 - a genuine finite-time blow-up of the Benney equation,
          the same time at N = 512 and 1024 in scipy, h passing 100 - while
@@ -123,6 +126,8 @@ type
     seEps: TFloatSpinEdit;
     seTime: TFloatSpinEdit;
     seSlices: TSpinEdit;
+    lblLength: TLabel;
+    seLength: TSpinEdit;
     tmrReplay: TTimer;
     procedure btnReplayClick(Sender: TObject);
     procedure btnResetViewClick(Sender: TObject);
@@ -151,6 +156,7 @@ type
     FSolMsg: string;
     FSolTried: Boolean;
     function OverlayAt(i: Integer): TVMobj;
+    procedure ApplyLength(var P: TBenneyParams);
     procedure ThreadDone(Sender: TObject);
     procedure SetupStack;
     procedure ShowProfile(i: Integer);
@@ -290,8 +296,8 @@ begin
   FStack.XAxisTitle := 'x';
   FStack.UseFrequencyAxis := True;    // label X in x, not grid index
   FStack.NewestAtBack := True;        // t = 0 stays in front, later times go behind
-  FStack.XAxisMin := -100;
-  FStack.XAxisMax := 100;
+  FStack.XAxisMin := -seLength.Value / 2;
+  FStack.XAxisMax := seLength.Value / 2;
   FStack.ClearStack;                  // drop the component's demo data
   SetupStack;
   WriteInfo(False, 0);
@@ -299,6 +305,8 @@ begin
   if Application.GetOptionValue('start') = 'solitary' then cbStart.ItemIndex := 1;
   if Application.GetOptionValue('re') <> '' then
     seRe.Value := StrToFloatDef(Application.GetOptionValue('re'), seRe.Value);
+  if Application.GetOptionValue('length') <> '' then
+    seLength.Value := StrToIntDef(Application.GetOptionValue('length'), seLength.Value);
   if Application.GetOptionValue('time') <> '' then
     seTime.Value := StrToFloatDef(Application.GetOptionValue('time'), seTime.Value);
   FSnapshot := Application.GetOptionValue('snapshot');
@@ -352,6 +360,7 @@ begin
   seEps.Enabled := not Running;
   seTime.Enabled := not Running;
   seSlices.Enabled := not Running;
+  seLength.Enabled := not Running;
 end;
 
 procedure TfmBenney.btnRunClick(Sender: TObject);
@@ -365,8 +374,11 @@ begin
   P.We := seWe.Value;
   P.Theta := DegToRad(seTheta.Value);
   P.Eps := seEps.Value;
+  ApplyLength(P);
   FreeAndNil(FModel);
   FModel := TBenneyModel.Create(P);
+  FStack.XAxisMin := -P.Ax;
+  FStack.XAxisMax := P.Ax;
 
   SetLength(FProfiles, 0);
   SetLength(FTimes, 0);
@@ -425,6 +437,16 @@ begin
     FSolX0 := FThread.SolX0;
   end;
   if Assigned(FThread) then WriteInfo(True, FThread.FSteps);
+end;
+
+{ The domain is -L/2 .. L/2 for the "length" L, with the original's
+  grid spacing (512 points on 200) kept: N = 2.56 L, rounded to even.
+  The Jacobian is dense (spectral derivatives), so a step costs about
+  (N/512)^2 .. ^3 the original's: L = 400 is roughly 4-8x slower. }
+procedure TfmBenney.ApplyLength(var P: TBenneyParams);
+begin
+  P.Ax := seLength.Value / 2;
+  P.N := 2 * Round(1.28 * seLength.Value);
 end;
 
 function TfmBenney.OverlayAt(i: Integer): TVMobj;
@@ -529,6 +551,7 @@ begin
   P.We := seWe.Value;
   P.Theta := DegToRad(seTheta.Value);
   P.Eps := seEps.Value;
+  ApplyLength(P);
   Rc := 5 / 6 / Tan(P.Theta);
   memInfo.Lines.BeginUpdate;
   try
@@ -551,7 +574,7 @@ begin
     if cbStart.ItemIndex = 1 then
       memInfo.Lines.Add('initial: the solitary wave at this Re')
     else
-      memInfo.Lines.Add('initial: h0 = 1 plus a 0.2 bump at x = -85');
+      memInfo.Lines.Add(Format('initial: h0 = 1 plus a 0.2 bump at x = %.0f', [15 - P.Ax]));
     memInfo.Lines.Add('spectral derivatives (FFT_R2C/FFT_C2R)');
     memInfo.Lines.Add('Kaps-Rentrop stiff integrator, tol 1e-3,');
     memInfo.Lines.Add('Jacobian by central differences');
@@ -611,7 +634,7 @@ begin
     memInfo.Lines.Add('Drag to rotate, wheel to zoom.');
     memInfo.Lines.Add('');
     memInfo.Lines.Add('Derivatives are true d/dx: wavenumbers');
-    memInfo.Lines.Add('2 pi n/L, L = 200. The original used n');
+    memInfo.Lines.Add(Format('2 pi n/L, L = %d. The original used n', [seLength.Value]));
     memInfo.Lines.Add('(a 2 pi domain) - ScaleByLength False.');
   finally
     memInfo.Lines.EndUpdate;

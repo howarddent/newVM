@@ -133,6 +133,26 @@ object fmBenney: TfmBenney
       TabOrder = 5
       Value = 60
     end
+    object lblLength: TLabel
+      Left = 1022
+      Height = 15
+      Top = 12
+      Width = 42
+      Caption = 'length:'
+    end
+    object seLength: TSpinEdit
+      Left = 1068
+      Height = 23
+      Hint = 'domain length L: x runs from -L/2 to L/2, 2.56 L grid points'
+      Top = 8
+      Width = 70
+      Increment = 50
+      MaxValue = 800
+      MinValue = 100
+      ShowHint = True
+      TabOrder = 13
+      Value = 400
+    end
     object lblStart: TLabel
       Left = 822
       Height = 15
