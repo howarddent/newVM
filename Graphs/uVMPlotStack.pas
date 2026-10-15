@@ -57,7 +57,7 @@ unit uVMPlotStack;
        min/max, which would just as happily paint an ordinary noise
        fluctuation red for being that slice's tallest point), via a
        three-stop gradient - LowColor at the low end, MidColor at the
-       midpoint, HighColor at the high end (defaults dark blue, mauve and
+       midpoint, HighColor at the high end (defaults azure, amber and
        red respectively) - each half of the [0,1] fraction interpolated
        separately against its own pair of stops (see DrawSlice). The
        fraction itself is cubed before that lookup, not used linearly -
@@ -65,9 +65,9 @@ unit uVMPlotStack;
        rare outliers otherwise leaves ordinary data stranded in the
        gradient's washed-out middle. A genuine standout peak - well above
        where the bulk of the data (e.g. a noise floor) sits - reads as a
-       hot red spike, with a mauve transition band for values well above
+       hot red spike, with an amber transition band for values well above
        typical but short of a true peak; ordinary fluctuations clustered
-       lower in the range stay a cool dark blue, exactly the contrast
+       lower in the range stay a cool azure, exactly the contrast
        "peaks show up better against noise" asks for.
      - Vertically, within one ribbon: the top-edge vertex carries the
        value-gradient colour above; the paired bottom/floor vertex is
@@ -111,6 +111,47 @@ unit uVMPlotStack;
      a single contiguous run at the tail, found once and truncated with a
      single SetLength.
 
+     FADE (FadeWithAge, default False since 15 Oct 2026): with it on,
+     the Along-Z effect above applies - a slice dims with Age and melts
+     into the background before TrimStack drops it. Off, every slice is
+     drawn at full colour however old, so the earliest graphs in a stack
+     stay as readable as the newest (asked for by demos/Benney, where the
+     t = 0 profile is at the back). The vertical fade to black at each
+     ribbon's own floor is part of the ribbon's look and stays either way.
+
+     STACKING ORDER (NewestAtBack, default False): False is the classic
+     waterfall above - each new graph enters at the FRONT and everything
+     already there steps back. True turns it round for a time evolution
+     read from the start: the first graph stays at the front and each
+     later one is placed one step further BACK (AddGraph gives it Age =
+     the number of slices already held and appends it at the end of
+     FSlices, so index order still runs front to back and Paint's
+     High-downto-0 loop still draws back to front). Nothing ages; once
+     MaxSeries are held, the next graph scrolls the stack forward by one,
+     dropping the front slice. Animate's continuous ageing is ignored in
+     this mode. Asked for by demos/Benney, where the t = 0 profile now
+     sits nearest the viewer. ZAxisScale (default 1) labels the depth
+     axis in caller units - Age times ZAxisScale - so Benney's reads in
+     time rather than slice count.
+
+     AXIS STYLE (AxisStyle, default sasBox since 15 Oct 2026): sasBox is
+     the conventional plot box TVMPlot3D's pasBox draws - three
+     translucent gridded planes (the floor under the ribbons, the back
+     wall behind the oldest slice and a side wall), grid lines at every
+     tick, the scales along their outer edges (DrawAxisBox, and the box
+     anchors in DrawAxisLabels). sasCentred is the original three white
+     lines meeting at the front-left corner (DrawAxisLines). Two things
+     differ from TVMPlot3D's box because this view is orthographic and
+     painter-ordered (see COMPOSITING): the planes are drawn FIRST, so
+     the ribbons cover them, and the perceived viewpoint is the opposite
+     of the true camera direction - an orthographic image from v and -v
+     differ only by a mirror, and the oldest-first draw order is what
+     makes the newest slice read as nearest. So the floor and side wall
+     go on the side of the TRUE camera (sign of CameraDir), which is the
+     side away from the viewer as perceived, and the back wall is always
+     at the oldest end (+Z), since the draw order fixes which end reads
+     as the front whatever the camera does.
+
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
@@ -125,6 +166,10 @@ uses
 
 type
   TVMPlotDoubleArray = array of Double;
+
+  // sasBox: gridded floor/back/side planes (the default); sasCentred: the
+  // original three axis lines at the front-left corner - see AXIS STYLE
+  TVMPlotStackAxisStyle = (sasBox, sasCentred);
 
   // One stacked graph's render-ready state: its own curve values (already
   // pulled out of the TVMobj AddGraph was given - see AddGraph, which
@@ -174,6 +219,15 @@ type
     FLastMouseX, FLastMouseY: Integer;
 
     FShowAxes: Boolean;
+    FAxisStyle: TVMPlotStackAxisStyle;
+    FPerspective: Boolean;
+    FNewestAtBack: Boolean;
+    FZAxisScale: Double;
+    FFadeWithAge: Boolean;
+    // this frame's box planes, from DrawAxisBox, for DrawAxisLabels: the
+    // side wall's x, the floor's y, the front edge's z
+    FBoxX, FBoxY, FBoxFront: Double;
+    FBoxTop: Double;                        // top of the value scale
     FUseFreqAxis: Boolean;
     FXAxisMin, FXAxisMax: Double;
     FTitle, FXAxisTitle, FYAxisTitle, FZAxisTitle: string;
@@ -212,6 +266,15 @@ type
     procedure RecomputeZTicks;
     procedure DrawSlice(const Slice: TVMPlotStackSlice);
     procedure DrawAxisLines;
+    procedure DrawAxisBox;
+    procedure CameraDir(out vx, vy, vz: Double);
+    procedure SetAxisStyle(AValue: TVMPlotStackAxisStyle);
+    procedure SetFadeWithAge(AValue: Boolean);
+    procedure SetPerspective(AValue: Boolean);
+    procedure SetNewestAtBack(AValue: Boolean);
+    procedure SetZAxisScale(AValue: Double);
+    function AgeToZ(Age: Double): Double;
+    function CameraDistance: Double;
     procedure DrawAxisLabels;
     function BuildDefaultDemoSlice(Phase: Double): TVMobj;
     procedure WorldToScreen(wx, wy, wz: Double; VW, VH: Integer;
@@ -267,6 +330,23 @@ type
     property MidColor: TColor read FMidColor write SetMidColor;
     property HighColor: TColor read FHighColor write SetHighColor;
     property ShowAxes: Boolean read FShowAxes write SetShowAxes;
+    // sasBox (default): gridded floor/back/side planes, as TVMPlot3D's
+    // pasBox; sasCentred: the original corner axis lines - see AXIS STYLE
+    property AxisStyle: TVMPlotStackAxisStyle read FAxisStyle write SetAxisStyle default sasBox;
+    // False (default): every slice at full colour however old. True: a
+    // slice dims with Age to black as it nears MaxSeries - see FADE
+    property FadeWithAge: Boolean read FFadeWithAge write SetFadeWithAge default False;
+    // True (default): a narrow (20 deg) perspective camera, so the stack
+    // recedes naturally. False: the parallel (glOrtho) view, in which the
+    // far end tends to look wider than the near one - see DefaultYaw
+    property Perspective: Boolean read FPerspective write SetPerspective default True;
+    // False (default): each new graph enters at the front. True: the first
+    // stays at the front and each later one goes one step further back -
+    // see STACKING ORDER. Changing it clears the stack.
+    property NewestAtBack: Boolean read FNewestAtBack write SetNewestAtBack default False;
+    // Depth-axis labels are Age x ZAxisScale (e.g. the time between
+    // graphs), so the scale can read in the caller's units
+    property ZAxisScale: Double read FZAxisScale write SetZAxisScale;
     // False (default): the X axis is labelled/positioned purely by point
     // index, 0..(N-1) of the most recently added slice - the original,
     // only behaviour this component had. True: XAxisMin/XAxisMax (a real
@@ -329,15 +409,28 @@ const
   // ones, an "exaggerated"/fisheye-like look that is not how this kind of
   // stacked waterfall/spectrogram plot is conventionally drawn (compare
   // e.g. matplotlib's default 3D Axes3D projection, which is close to
-  // orthographic). Paint therefore uses glOrtho instead - a true parallel
-  // projection with NO perspective foreshortening at all, so a slice's
-  // on-screen size never depends on how far back it's receded, only its
-  // own data - only its position and (per DrawSlice) its brightness
-  // change with Age. FZoom (published nowhere - driven by DoMouseWheel)
-  // is the ortho view volume's half-height in world units, not a camera
-  // distance - there is no camera position to speak of in an orthographic
-  // projection, so Paint applies no glTranslatef at all, only the
-  // yaw/pitch glRotatef pair.
+  // orthographic). It then used glOrtho - but a parallel projection of a
+  // deep stack has its own artefact, reported on demos/Benney: with
+  // nothing converging, the eye reads the far end as WIDER than the near
+  // one (reverse perspective). So since 15 Oct 2026 the default is a
+  // NARROW perspective (Perspective property, PerspectiveFovY = 20 deg)
+  // from far enough back that the stack still fills the view: the far
+  // end draws about two thirds the size of the near end, natural rather
+  // than fisheye. FZoom (driven by DoMouseWheel) keeps one meaning in
+  // both modes - the visible half-height at the stack's centre - so the
+  // camera distance is FZoom / tan(FovY/2). Perspective := False brings
+  // back the plain glOrtho view.
+  //
+  // DEPTH DIRECTION: the newest slice is at +Z (AgeToZ), nearest a camera
+  // that really is above and in front of it. Before the perspective
+  // change the newest slice was at -Z with the camera (yaw 30, pitch -25)
+  // truly below and BEHIND the stack - an orthographic image is the
+  // mirror of the one from the opposite direction, and the oldest-first
+  // draw order made it read as seen from above-front. Perspective would
+  // have exposed that (the far end would have drawn biggest), so the
+  // geometry was made honest: Z negated and the default camera mirrored
+  // (yaw -30, pitch +25), which leaves the orthographic picture exactly as
+  // it was. Mouse dragging was negated to match, so it feels the same.
   //
   // DefaultPitch/DefaultYaw are tuned to match the conventional "look down
   // and slightly across" angle typical of this style of plot (e.g. a
@@ -345,9 +438,10 @@ const
   // own shape clearly from above, angled enough in yaw that the time axis
   // visibly recedes into the distance rather than each slice sitting
   // directly behind the last.
-  DefaultYaw = 30.0;
-  DefaultPitch = -25.0;
-  DefaultZoom = 6.0;
+  DefaultYaw = -30.0;
+  DefaultPitch = 25.0;
+  DefaultZoom = 7.5;        // 6.0 before perspective: the nearer end is now larger
+  PerspectiveFovY = 20.0;   // degrees - narrow, see above
 
   // World-space extent of the rendered stack, shared by AddGraph/DrawSlice
   // (via the private world-mapping formulas), DrawAxisLines and
@@ -440,10 +534,19 @@ begin
   FMaxSeries := DefaultMaxSeries;
   FAnimate := False;
   FAnimationSpeed := DefaultAnimationSpeed;
-  SetLowColor(RGBToColor(0, 0, 139));       // dark blue
-  SetMidColor(RGBToColor(224, 176, 255));   // mauve
-  SetHighColor(RGBToColor(255, 0, 0));      // red
+  // azure -> amber -> red: all three bright against the black background
+  // (until 15 Oct 2026 dark blue -> mauve -> red, but the cubed fraction -
+  // see DrawSlice - puts most values near LowColor, and dark blue on black
+  // was nearly invisible; reported on demos/Benney)
+  SetLowColor(RGBToColor(40, 150, 255));    // azure
+  SetMidColor(RGBToColor(255, 200, 40));    // amber
+  SetHighColor(RGBToColor(255, 50, 50));    // red
   FShowAxes := True;
+  FAxisStyle := sasBox;
+  FFadeWithAge := False;
+  FPerspective := True;
+  FNewestAtBack := False;
+  FZAxisScale := 1;
   FUseFreqAxis := False;
   FXAxisMin := 0;
   FXAxisMax := 1;
@@ -544,6 +647,58 @@ begin
   FHighR := (Clr and $FF) / 255;
   FHighG := ((Clr shr 8) and $FF) / 255;
   FHighB := ((Clr shr 16) and $FF) / 255;
+  Invalidate;
+end;
+
+procedure TVMPlotStack.SetAxisStyle(AValue: TVMPlotStackAxisStyle);
+begin
+  if FAxisStyle = AValue then Exit;
+  FAxisStyle := AValue;
+  Invalidate;
+end;
+
+procedure TVMPlotStack.SetNewestAtBack(AValue: Boolean);
+begin
+  if FNewestAtBack = AValue then Exit;
+  FNewestAtBack := AValue;
+  ClearStack;     // the held slices' Ages mean the other thing
+end;
+
+procedure TVMPlotStack.SetZAxisScale(AValue: Double);
+begin
+  if (AValue <= 0) or (FZAxisScale = AValue) then Exit;
+  FZAxisScale := AValue;
+  RecomputeZTicks;
+  InvalidateTextures;
+  Invalidate;
+end;
+
+procedure TVMPlotStack.SetPerspective(AValue: Boolean);
+begin
+  if FPerspective = AValue then Exit;
+  FPerspective := AValue;
+  Invalidate;
+end;
+
+// World Z of a slice of the given Age: the newest (Age 0) at +HalfD,
+// nearest the camera, the oldest kept (Age MaxSeries) at -HalfD - see
+// DEPTH DIRECTION above
+function TVMPlotStack.AgeToZ(Age: Double): Double;
+begin
+  Result := (0.5 - Age / FMaxSeries) * StackDepth;
+end;
+
+// Perspective camera distance from the stack's centre that shows the same
+// half-height (FZoom) there as the orthographic view does
+function TVMPlotStack.CameraDistance: Double;
+begin
+  Result := FZoom / Tan(PerspectiveFovY / 2 * Pi / 180);
+end;
+
+procedure TVMPlotStack.SetFadeWithAge(AValue: Boolean);
+begin
+  if FFadeWithAge = AValue then Exit;
+  FFadeWithAge := AValue;
   Invalidate;
 end;
 
@@ -712,7 +867,7 @@ begin
 
     FPeakWX[FPeakCount] := (CandIdx[i] / denom - 0.5) * WorldWidth;
     FPeakWY[FPeakCount] := (CandVal[i] / FYScale) * HalfH;
-    FPeakWZ[FPeakCount] := (Slice.Age / FMaxSeries - 0.5) * StackDepth;
+    FPeakWZ[FPeakCount] := AgeToZ(Slice.Age);
 
     if FUseFreqAxis then
       XValue := FXAxisMin + (CandIdx[i] / denom) * (FXAxisMax - FXAxisMin)
@@ -783,6 +938,7 @@ var
   dAge: Double;
 begin
   if Length(FSlices) = 0 then Exit;
+  if FNewestAtBack then Exit;     // nothing ages in this mode
   dAge := FAnimationSpeed * (FTimer.Interval / 1000.0);
   for i := 0 to High(FSlices) do
     FSlices[i].Age := FSlices[i].Age + dAge;
@@ -866,7 +1022,8 @@ end;
 // waterfall display has.
 procedure TVMPlotStack.RecomputeZTicks;
 begin
-  FZTicks := ComputeTicks(0, FMaxSeries, 5);
+  // in caller units (ZAxisScale); positions divide it back out
+  FZTicks := ComputeTicks(0, FMaxSeries * FZAxisScale, 5);
 end;
 
 procedure TVMPlotStack.ResetView;
@@ -899,16 +1056,31 @@ begin
   else
     for i := 0 to n - 1 do NewSlice.Y[i] := Y[i, 0];
   NewSlice.N := n;
-  NewSlice.Age := 0;
 
-  if not FAnimate then
-    for i := 0 to High(FSlices) do
-      FSlices[i].Age := FSlices[i].Age + 1;
+  if FNewestAtBack then begin
+    // one step behind the last; when full, scroll forward by one
+    // (drop the front slice) - see STACKING ORDER
+    if Length(FSlices) >= FMaxSeries then begin
+      for i := 0 to High(FSlices) - 1 do begin
+        FSlices[i] := FSlices[i + 1];
+        FSlices[i].Age := FSlices[i].Age - 1;
+      end;
+      SetLength(FSlices, Length(FSlices) - 1);
+    end;
+    NewSlice.Age := Length(FSlices);
+    SetLength(FSlices, Length(FSlices) + 1);
+    FSlices[High(FSlices)] := NewSlice;
+  end else begin
+    NewSlice.Age := 0;
+    if not FAnimate then
+      for i := 0 to High(FSlices) do
+        FSlices[i].Age := FSlices[i].Age + 1;
 
-  SetLength(FSlices, Length(FSlices) + 1);
-  for i := High(FSlices) downto 1 do
-    FSlices[i] := FSlices[i - 1];
-  FSlices[0] := NewSlice;
+    SetLength(FSlices, Length(FSlices) + 1);
+    for i := High(FSlices) downto 1 do
+      FSlices[i] := FSlices[i - 1];
+    FSlices[0] := NewSlice;
+  end;
 
   TrimStack;
   RecomputeBounds;
@@ -972,29 +1144,27 @@ end;
 // dips below that base plane rather than the base plane trailing the
 // data's own minimum.
 //
-// wz anchors Age=0 (a just-added slice) at -HalfD and Age=FMaxSeries at
-// +HalfD - i.e. NEGATIVE Z is nearest the viewer/front of the stack,
-// POSITIVE Z is furthest/oldest, matching the axis-frame corner
-// DrawAxisLines/DrawAxisLabels place at Z=-HalfD (Age=0). The mirror-image
-// formula ((0.5-Age/FMaxSeries)*StackDepth) is what an earlier version of
-// this unit used, and animated backwards - a slice visibly drifted
-// towards the viewer as it aged rather than receding - because, under
-// this component's default orthographic camera (DefaultYaw/DefaultPitch
-// above), increasing world Z happens to project to a screen position
-// further from the viewer, not closer; which world-Z direction reads as
-// "away" is a fact about this specific camera's angles, not a fixed
-// convention, so don't re-derive this sign from the rotation math alone
-// without re-confirming against the actual rendered animation.
+// wz comes from AgeToZ: Age=0 (a just-added slice) at +HalfD, nearest
+// the camera, Age=FMaxSeries at -HalfD. This was the other way round
+// (-HalfD in front) until 15 Oct 2026, when the camera was a mirrored
+// orthographic one truly behind the stack, and an even earlier version
+// with this sign under THAT camera animated backwards (slices drifting
+// towards the viewer as they aged). The sign and the camera must change
+// together - see DEPTH DIRECTION above - and which way reads as "away"
+// is worth re-confirming on a rendered animation after touching either.
 procedure TVMPlotStack.DrawSlice(const Slice: TVMPlotStackSlice);
 var
   j: Integer;
   wx, wy, wz, intensity, denom, frac, yRange, t: Double;
   VR, VG, VB: array of Double;
 begin
-  intensity := 1 - Slice.Age / FMaxSeries;
-  if intensity <= 0 then Exit;
-  if intensity > 1 then intensity := 1;
-  wz := (Slice.Age / FMaxSeries - 0.5) * StackDepth;
+  if FFadeWithAge then begin
+    intensity := 1 - Slice.Age / FMaxSeries;
+    if intensity <= 0 then Exit;
+    if intensity > 1 then intensity := 1;
+  end else
+    intensity := 1;                 // no fade with age - see FADE
+  wz := AgeToZ(Slice.Age);
   if Slice.N > 1 then denom := Slice.N - 1 else denom := 1;
   yRange := FYMax - FYMin;
 
@@ -1059,7 +1229,7 @@ end;
 
 // Three white axis lines meeting at the stack's front-left corner - X=
 // -HalfW (index 0), Y=0 (value 0, the X-T base plane every ribbon's floor
-// sits in - see DrawSlice's own comment), Z=-HalfD (Age=0, the
+// sits in - see DrawSlice's own comment), Z=+HalfD (Age=0, the
 // just-added/nearest slice's position) - rather than through the data's
 // own centre, as TVMPlot3D's axes do: with the Index and Time axes lying
 // flat in that Y=0 plane, this corner frame reads as the actual ground
@@ -1075,21 +1245,121 @@ begin
   glLineWidth(1.5);
   glColor3f(1, 1, 1);
   glBegin(GL_LINES);
-    glVertex3d(-HalfW, -HalfH, -HalfD); glVertex3d(-HalfW, HalfH, -HalfD);
-    glVertex3d(-HalfW, 0, -HalfD); glVertex3d(HalfW, 0, -HalfD);
-    glVertex3d(-HalfW, 0, -HalfD); glVertex3d(-HalfW, 0, HalfD);
+    glVertex3d(-HalfW, -HalfH, HalfD); glVertex3d(-HalfW, HalfH, HalfD);
+    glVertex3d(-HalfW, 0, HalfD); glVertex3d(HalfW, 0, HalfD);
+    glVertex3d(-HalfW, 0, HalfD); glVertex3d(-HalfW, 0, -HalfD);
   glEnd;
 
   glPointSize(4);
   glColor3f(1, 1, 1);
   glBegin(GL_POINTS);
     for i := 0 to High(FYTicks) do
-      glVertex3d(-HalfW, (FYTicks[i] / FYScale) * HalfH, -HalfD);
+      glVertex3d(-HalfW, (FYTicks[i] / FYScale) * HalfH, HalfD);
     for i := 0 to High(FXTicks) do
-      glVertex3d((XValueToFrac(FXTicks[i]) - 0.5) * WorldWidth, 0, -HalfD);
+      glVertex3d((XValueToFrac(FXTicks[i]) - 0.5) * WorldWidth, 0, HalfD);
     for i := 0 to High(FZTicks) do
-      glVertex3d(-HalfW, 0, (FZTicks[i] / FMaxSeries - 0.5) * StackDepth);
+      glVertex3d(-HalfW, 0, AgeToZ(FZTicks[i] / FZAxisScale));
   glEnd;
+end;
+
+// The direction from the scene's centre towards the camera, in world
+// space: the rotation part of Paint's modelview is Rx(pitch).Ry(yaw), so
+// this is its transpose applied to eye +Z - the same as
+// TVMPlot3D.CameraWorldPos with unit distance.
+procedure TVMPlotStack.CameraDir(out vx, vy, vz: Double);
+var
+  yawRad, pitchRad: Double;
+begin
+  yawRad := FYaw * Pi / 180;
+  pitchRad := FPitch * Pi / 180;
+  vx := -Cos(pitchRad) * Sin(yawRad);
+  vy := Sin(pitchRad);
+  vz := Cos(pitchRad) * Cos(yawRad);
+end;
+
+// The plot box (AxisStyle = sasBox): translucent floor, back wall and side
+// wall with grid lines at every tick and a brighter edge frame, drawn
+// BEFORE the ribbons so they cover it - see AXIS STYLE. Records the
+// floor/side/front positions this frame for DrawAxisLabels.
+procedure TVMPlotStack.DrawAxisBox;
+const
+  PadX = 1.03;       // planes this far beyond the ribbons' extent
+  PadZ = 1.03;
+  PadYFrac = 0.06;   // of the value span, above and below
+var
+  i: Integer;
+  vx, vy, vz, yLo, yHi, pad, x0, x1, z0, z1, yFloor, yCeil, bx, bz, w: Double;
+begin
+  CameraDir(vx, vy, vz);
+  yLo := Min(0, FYMin / FYScale * HalfH);
+  yHi := Max(0, FYMax / FYScale * HalfH);
+  pad := PadYFrac * Max(yHi - yLo, 1e-6);
+  yLo := yLo - pad;
+  yHi := yHi + pad;
+  x0 := -HalfW * PadX; x1 := HalfW * PadX;
+  z0 := HalfD * PadZ; z1 := -HalfD * PadZ;     // z0 front (newest), z1 back
+  // floor and side wall on the side AWAY from the camera; the back wall
+  // always at the oldest end, since the draw order fixes which end is
+  // the front whatever the camera does
+  if vy >= 0 then begin yFloor := yLo; yCeil := yHi; end
+  else begin yFloor := yHi; yCeil := yLo; end;
+  if vx >= 0 then bx := x0 else bx := x1;
+  bz := z1;
+  FBoxX := bx; FBoxY := yFloor; FBoxFront := z0; FBoxTop := yHi;
+
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glColor4f(0.30, 0.30, 0.38, 0.35);
+  glBegin(GL_QUADS);
+    // floor
+    glVertex3d(x0, yFloor, z0); glVertex3d(x1, yFloor, z0);
+    glVertex3d(x1, yFloor, z1); glVertex3d(x0, yFloor, z1);
+    // side wall x = bx
+    glVertex3d(bx, yLo, z0); glVertex3d(bx, yLo, z1);
+    glVertex3d(bx, yHi, z1); glVertex3d(bx, yHi, z0);
+    // back wall z = bz
+    glVertex3d(x0, yLo, bz); glVertex3d(x1, yLo, bz);
+    glVertex3d(x1, yHi, bz); glVertex3d(x0, yHi, bz);
+  glEnd;
+
+  glLineWidth(1.0);
+  glColor4f(0.55, 0.55, 0.62, 0.8);
+  glBegin(GL_LINES);
+    for i := 0 to High(FXTicks) do begin
+      w := (XValueToFrac(FXTicks[i]) - 0.5) * WorldWidth;
+      if (w < x0) or (w > x1) then Continue;
+      glVertex3d(w, yFloor, z0); glVertex3d(w, yFloor, z1);   // floor, along Z
+      glVertex3d(w, yLo, bz);    glVertex3d(w, yHi, bz);      // back wall, vertical
+    end;
+    for i := 0 to High(FYTicks) do begin
+      w := (FYTicks[i] / FYScale) * HalfH;
+      if (w < yLo) or (w > yHi) then Continue;
+      glVertex3d(bx, w, z0); glVertex3d(bx, w, z1);           // side wall, along Z
+      glVertex3d(x0, w, bz); glVertex3d(x1, w, bz);           // back wall, along X
+    end;
+    for i := 0 to High(FZTicks) do begin
+      w := AgeToZ(FZTicks[i] / FZAxisScale);
+      if (w > z0) or (w < z1) then Continue;
+      glVertex3d(x0, yFloor, w); glVertex3d(x1, yFloor, w);   // floor, along X
+      glVertex3d(bx, yLo, w);    glVertex3d(bx, yHi, w);      // side wall, vertical
+    end;
+  glEnd;
+
+  // edge frame
+  glLineWidth(1.5);
+  glColor4f(0.80, 0.80, 0.86, 1.0);
+  glBegin(GL_LINE_LOOP);   // floor outline
+    glVertex3d(x0, yFloor, z0); glVertex3d(x1, yFloor, z0);
+    glVertex3d(x1, yFloor, z1); glVertex3d(x0, yFloor, z1);
+  glEnd;
+  glBegin(GL_LINES);
+    glVertex3d(bx, yLo, z0); glVertex3d(bx, yHi, z0);         // side wall's front edge
+    glVertex3d(bx, yCeil, z0); glVertex3d(bx, yCeil, z1);     // its top edge
+    glVertex3d(x0, yLo, bz); glVertex3d(x0, yHi, bz);         // back wall's sides
+    glVertex3d(x1, yLo, bz); glVertex3d(x1, yHi, bz);
+    glVertex3d(x0, yCeil, bz); glVertex3d(x1, yCeil, bz);     // and top edge
+  glEnd;
+  glDisable(GL_BLEND);
 end;
 
 // Projects a 3D world point to this frame's screen pixel coordinates by
@@ -1110,8 +1380,8 @@ end;
 procedure TVMPlotStack.WorldToScreen(wx, wy, wz: Double; VW, VH: Integer;
   out sx, sy: Double; out infront: Boolean);
 var
-  yawRad, pitchRad, aspect, halfW: Double;
-  x1, y1, z1, x2, y2, ndcX, ndcY: Double;
+  yawRad, pitchRad, aspect, halfW, f: Double;
+  x1, y1, z1, x2, y2, z2, ndcX, ndcY: Double;
 begin
   yawRad := FYaw * Pi / 180;
   pitchRad := FPitch * Pi / 180;
@@ -1122,13 +1392,23 @@ begin
 
   x2 := x1;
   y2 := y1 * Cos(pitchRad) - z1 * Sin(pitchRad);
-
-  infront := True;
+  z2 := y1 * Sin(pitchRad) + z1 * Cos(pitchRad);
 
   aspect := VW / VH;
-  halfW := FZoom * aspect;
-  ndcX := x2 / halfW;
-  ndcY := y2 / FZoom;
+  if FPerspective then begin
+    // Paint's glTranslatef(0,0,-D) then gluPerspective(FovY, aspect, ...)
+    z2 := z2 - CameraDistance;
+    infront := z2 < -0.1;
+    f := 1 / Tan(PerspectiveFovY / 2 * Pi / 180);
+    if not infront then z2 := -0.1;
+    ndcX := (f / aspect) * x2 / -z2;
+    ndcY := f * y2 / -z2;
+  end else begin
+    infront := True;
+    halfW := FZoom * aspect;
+    ndcX := x2 / halfW;
+    ndcY := y2 / FZoom;
+  end;
 
   sx := (ndcX * 0.5 + 0.5) * VW;
   sy := (ndcY * 0.5 + 0.5) * VH;
@@ -1287,9 +1567,19 @@ var
   i, VW, VH: Integer;
   sx, sy: Double;
   infront: Boolean;
+  // where the scales sit: the side the Value ticks run up (ax), the level
+  // the X and depth ticks lie at (ay), the front edge (az). The corner
+  // lines' frame for sasCentred, the box's outer edges for sasBox.
+  ax, ay, az, side: Double;
 begin
   VW := Width;
   VH := Height;
+  if FAxisStyle = sasBox then begin
+    ax := FBoxX; ay := FBoxY; az := FBoxFront;
+  end else begin
+    ax := -HalfW; ay := 0; az := HalfD;
+  end;
+  if ax < 0 then side := -1 else side := 1;
 
   glEnable(GL_TEXTURE_2D);
   glColor4f(1, 1, 1, 1);
@@ -1299,23 +1589,27 @@ begin
 
   if FShowAxes then begin
     for i := 0 to High(FYTicks) do begin
-      WorldToScreen(-HalfW, (FYTicks[i] / FYScale) * HalfH,
-        -HalfD, VW, VH, sx, sy, infront);
-      if infront then DrawTextTexture(FYTickTex[i], sx - 8, sy, 0, 1, 0.5);
+      WorldToScreen(ax, (FYTicks[i] / FYScale) * HalfH,
+        az, VW, VH, sx, sy, infront);
+      if infront then
+        if side < 0 then DrawTextTexture(FYTickTex[i], sx - 8, sy, 0, 1, 0.5)
+        else DrawTextTexture(FYTickTex[i], sx + 8, sy, 0, 0, 0.5);
     end;
     for i := 0 to High(FXTicks) do begin
-      WorldToScreen((XValueToFrac(FXTicks[i]) - 0.5) * WorldWidth, 0,
-        -HalfD, VW, VH, sx, sy, infront);
+      WorldToScreen((XValueToFrac(FXTicks[i]) - 0.5) * WorldWidth, ay,
+        az, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FXTickTex[i], sx, sy - 8, 0, 0.5, 1);
     end;
     for i := 0 to High(FZTicks) do begin
-      WorldToScreen(-HalfW, 0, (FZTicks[i] / FMaxSeries - 0.5) * StackDepth,
+      WorldToScreen(ax, ay, AgeToZ(FZTicks[i] / FZAxisScale),
         VW, VH, sx, sy, infront);
-      if infront then DrawTextTexture(FZTickTex[i], sx - 8, sy - 8, 0, 1, 1);
+      if infront then
+        if side < 0 then DrawTextTexture(FZTickTex[i], sx - 8, sy - 8, 0, 1, 1)
+        else DrawTextTexture(FZTickTex[i], sx + 8, sy - 8, 0, 0, 1);
     end;
 
     if FXAxisTitle <> '' then begin
-      WorldToScreen(0, -HalfH * 0.15, -HalfD, VW, VH, sx, sy, infront);
+      WorldToScreen(0, ay - HalfH * 0.15, az, VW, VH, sx, sy, infront);
       if infront then DrawTextTexture(FXAxisTitleTex, sx, sy - 8, 0, 0.5, 1);
     end;
     if FYAxisTitle <> '' then begin
@@ -1328,12 +1622,22 @@ begin
       // it. HAlign/VAlign stay centred (0.5,0.5): DrawTextTexture rotates
       // the quad about the (already-centred) anchor point, so this
       // remains centred on the axis either way.
-      WorldToScreen(-HalfW * 1.25, 0, -HalfD, VW, VH, sx, sy, infront);
-      if infront then DrawTextTexture(FYAxisTitleTex, sx, sy, 90, 0.5, 0.5);
+      if FAxisStyle = sasBox then begin
+        // horizontal, above the top of the value scale: the box reaches
+        // nearly to the window's side, where a rotated title beside the
+        // ticks was cut off
+        WorldToScreen(ax, FBoxTop, az, VW, VH, sx, sy, infront);
+        if infront then DrawTextTexture(FYAxisTitleTex, sx, sy + 10, 0, 0.5, 0);
+      end else begin
+        WorldToScreen(ax * 1.25, 0, az, VW, VH, sx, sy, infront);
+        if infront then DrawTextTexture(FYAxisTitleTex, sx, sy, 90, 0.5, 0.5);
+      end;
     end;
     if FZAxisTitle <> '' then begin
-      WorldToScreen(-HalfW, 0, 0, VW, VH, sx, sy, infront);
-      if infront then DrawTextTexture(FZAxisTitleTex, sx - 24, sy, 0, 1, 0.5);
+      WorldToScreen(ax, ay, 0, VW, VH, sx, sy, infront);
+      if infront then
+        if side < 0 then DrawTextTexture(FZAxisTitleTex, sx - 24, sy, 0, 1, 0.5)
+        else DrawTextTexture(FZAxisTitleTex, sx + 24, sy, 0, 0, 0.5);
     end;
   end;
 
@@ -1381,10 +1685,14 @@ begin
   // WorldWidth/ValueScale are all well under that).
   glMatrixMode(GL_PROJECTION);
   glLoadIdentity;
-  glOrtho(-FZoom * aspect, FZoom * aspect, -FZoom, FZoom, -100, 100);
+  if FPerspective then
+    gluPerspective(PerspectiveFovY, aspect, 0.5, CameraDistance + 100)
+  else
+    glOrtho(-FZoom * aspect, FZoom * aspect, -FZoom, FZoom, -100, 100);
 
   glMatrixMode(GL_MODELVIEW);
   glLoadIdentity;
+  if FPerspective then glTranslatef(0, 0, -CameraDistance);
   glRotatef(FPitch, 1, 0, 0);
   glRotatef(FYaw, 0, 1, 0);
 
@@ -1399,6 +1707,9 @@ begin
   // nearest) last - see this unit's own COMPOSITING rationale for why
   // this plain draw order alone is enough for a nearer graph to hide an
   // older one's overlapping features.
+  // the plot box goes in first, so every ribbon covers it - see AXIS STYLE
+  if FShowAxes and (FAxisStyle = sasBox) then DrawAxisBox;
+
   for i := High(FSlices) downto 0 do
     DrawSlice(FSlices[i]);
 
@@ -1415,7 +1726,7 @@ begin
   // the curve swings through that row of pixels. Drawing axes last keeps
   // them always legible, in front of every graph, regardless of how tall
   // the frontmost one gets.
-  if FShowAxes then DrawAxisLines;
+  if FShowAxes and (FAxisStyle = sasCentred) then DrawAxisLines;
 
   // --- pixel-space pass: main title, axis titles, tick labels - see
   // TVMPlot3D.Paint's own comment for why DrawAxisLabels runs against the
@@ -1462,8 +1773,11 @@ begin
   // TVMPlot3D.MouseMove's own comment (uVMPlot3D.pas) for the fuller
   // rationale and why this is a direct response to that report rather
   // than something re-confirmed here by actually dragging.
-  FYaw := FYaw - (X - FLastMouseX) * 0.5;
-  FPitch := EnsureRange(FPitch - (Y - FLastMouseY) * 0.5, -89.0, 89.0);
+  // + rather than the original -: the default camera was mirrored (see
+  // DEPTH DIRECTION), so the same drag now needs the opposite sign to move
+  // the picture the same way
+  FYaw := FYaw + (X - FLastMouseX) * 0.5;
+  FPitch := EnsureRange(FPitch + (Y - FLastMouseY) * 0.5, -89.0, 89.0);
   FLastMouseX := X;
   FLastMouseY := Y;
   Invalidate;

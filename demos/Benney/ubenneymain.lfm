@@ -1,0 +1,222 @@
+object fmBenney: TfmBenney
+  Left = 200
+  Height = 760
+  Top = 120
+  Width = 1280
+  Caption = 'Benney equation - liquid film on an inclined plane (newVM)'
+  ClientHeight = 760
+  ClientWidth = 1280
+  OnCloseQuery = FormCloseQuery
+  OnCreate = FormCreate
+  OnDestroy = FormDestroy
+  Position = poScreenCenter
+  object pnlControls: TPanel
+    Left = 0
+    Height = 76
+    Top = 0
+    Width = 1280
+    Align = alTop
+    BevelOuter = bvNone
+    ClientHeight = 76
+    ClientWidth = 1280
+    TabOrder = 0
+    object lblRe: TLabel
+      Left = 8
+      Height = 15
+      Top = 12
+      Width = 20
+      Caption = 'Re:'
+    end
+    object seRe: TFloatSpinEdit
+      Left = 34
+      Height = 23
+      Top = 8
+      Width = 70
+      DecimalPlaces = 2
+      Increment = 0.5
+      MaxValue = 50
+      MinValue = 0
+      TabOrder = 0
+      Value = 5
+    end
+    object lblWe: TLabel
+      Left = 116
+      Height = 15
+      Top = 12
+      Width = 24
+      Caption = 'We:'
+    end
+    object seWe: TFloatSpinEdit
+      Left = 146
+      Height = 23
+      Top = 8
+      Width = 80
+      DecimalPlaces = 1
+      Increment = 10
+      MaxValue = 10000
+      MinValue = 0
+      TabOrder = 1
+      Value = 250
+    end
+    object lblEps: TLabel
+      Left = 238
+      Height = 15
+      Top = 12
+      Width = 26
+      Caption = 'eps:'
+    end
+    object seEps: TFloatSpinEdit
+      Left = 270
+      Height = 23
+      Top = 8
+      Width = 80
+      DecimalPlaces = 3
+      Increment = 0.005
+      MaxValue = 1
+      MinValue = 0.001
+      TabOrder = 2
+      Value = 0.04
+    end
+    object lblTheta: TLabel
+      Left = 362
+      Height = 15
+      Top = 12
+      Width = 112
+      Caption = 'inclination (deg):'
+    end
+    object seTheta: TFloatSpinEdit
+      Left = 476
+      Height = 23
+      Top = 8
+      Width = 70
+      DecimalPlaces = 1
+      Increment = 1
+      MaxValue = 89
+      MinValue = 1
+      TabOrder = 3
+      Value = 18
+    end
+    object lblTime: TLabel
+      Left = 558
+      Height = 15
+      Top = 12
+      Width = 60
+      Caption = 'run to t ='
+    end
+    object seTime: TFloatSpinEdit
+      Left = 622
+      Height = 23
+      Top = 8
+      Width = 70
+      DecimalPlaces = 1
+      Increment = 5
+      MaxValue = 1000
+      MinValue = 0.5
+      TabOrder = 4
+      Value = 30
+    end
+    object lblSlices: TLabel
+      Left = 704
+      Height = 15
+      Top = 12
+      Width = 42
+      Caption = 'slices:'
+    end
+    object seSlices: TSpinEdit
+      Left = 750
+      Height = 23
+      Top = 8
+      Width = 60
+      Increment = 10
+      MaxValue = 200
+      MinValue = 2
+      TabOrder = 5
+      Value = 60
+    end
+    object btnRun: TButton
+      Left = 8
+      Height = 27
+      Top = 42
+      Width = 80
+      Caption = 'Run'
+      TabOrder = 6
+      OnClick = btnRunClick
+    end
+    object btnStop: TButton
+      Left = 96
+      Height = 27
+      Top = 42
+      Width = 80
+      Caption = 'Stop'
+      Enabled = False
+      TabOrder = 7
+      OnClick = btnStopClick
+    end
+    object btnReplay: TButton
+      Left = 184
+      Height = 27
+      Top = 42
+      Width = 80
+      Caption = 'Replay'
+      Enabled = False
+      TabOrder = 8
+      OnClick = btnReplayClick
+    end
+    object btnResetView: TButton
+      Left = 272
+      Height = 27
+      Top = 42
+      Width = 90
+      Caption = 'Reset view'
+      TabOrder = 9
+      OnClick = btnResetViewClick
+    end
+    object cbDeviation: TCheckBox
+      Left = 376
+      Height = 19
+      Top = 46
+      Width = 110
+      Caption = 'Plot h - h0'
+      Checked = True
+      State = cbChecked
+      TabOrder = 10
+      OnChange = cbDeviationChange
+    end
+    object ProgressBar1: TProgressBar
+      Left = 500
+      Height = 17
+      Top = 47
+      Width = 310
+      TabOrder = 11
+    end
+  end
+  object memInfo: TMemo
+    Left = 920
+    Height = 684
+    Top = 76
+    Width = 360
+    Align = alRight
+    Font.Name = 'Monospace'
+    ParentFont = False
+    ReadOnly = True
+    ScrollBars = ssAutoBoth
+    TabOrder = 1
+    WordWrap = False
+  end
+  object pnlPlot: TPanel
+    Left = 0
+    Height = 684
+    Top = 76
+    Width = 920
+    Align = alClient
+    BevelOuter = bvNone
+    TabOrder = 2
+  end
+  object tmrReplay: TTimer
+    Enabled = False
+    Interval = 80
+    OnTimer = tmrReplayTimer
+    Left = 40
+    Top = 120
+  end
+end

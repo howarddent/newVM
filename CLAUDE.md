@@ -1948,6 +1948,100 @@ packages. Compiled binaries and each demo's own `lib/` output are
   for the same reason `JetVent` does (a varying number of series).
   Verified by screenshot: `zeta = 0.1` peaks at 5.03 near `fn`, matching
   `1/(2 zeta sqrt(1 - zeta^2))`.
+- **`Benney`** (added 2026-10-15) — the 1-D Benney equation for a
+  liquid film on an inclined plane, ported from the user's Delphi/MtxVec
+  project `~/Benney/prjkapstest` (`ukapsmain.pas` plus
+  `RemiPropModel/kaps_Rentrop.PAS`), drawn as a waterfall on a
+  `TVMPlotStack`, one ribbon per output time with the newest in front.
+  There are three units:
+  - **`ukapsrentrop.pas`**: the Numerical Recipes Kaps-Rentrop stiff
+    integrator on `(N,1)` `TVMobj` columns. Each try builds
+    `(1/(gam h)) I - J` fresh. The first `LinearSolve` factorises it and
+    the other three stages reuse the cached LU (`dgetrs`). Changes from
+    the original:
+    - `OdeInt` returns `Stiff`'s failure. The original ignored it.
+    - It returns `HNext`, so a run split into output intervals keeps
+      its step size between them.
+    - There is no per-step `ConcatHorz` result matrix.
+    - Stopping goes through an `OnStep` callback rather than global
+      `Abandon`/`progress` variables.
+  - **`ubenneymodel.pas`**: the right-hand side and the central-difference
+    Jacobian (2N right-hand sides per Jacobian). Spectral derivatives use
+    `FFT_R2C` × a precomputed `(ik)^order` `TVMobjZ` × `FFT_C2R`, with the
+    Nyquist factor 0. That is exact against the original's
+    real-part-of-full-IFFT, whose odd-order Nyquist term is purely
+    imaginary.
+  - **`ubenneymain.pas`**: a `TThread` runs the integration and
+    `Synchronize`s each profile into the stack as it's reached. There are
+    spin edits for Re/We/eps/inclination/run time/slices (defaults are the
+    original's constants), plus Stop, Replay (the original's "Plot") and a
+    "Plot h − h0" check box (on by default, since the waves are a few per
+    cent of h). `--snapshot=<prefix>` runs, saves `<prefix>.bmp`, prints
+    the memo and exits.
+
+  **The wavenumbers are integers**, `0..N/2-1, -N/2..-1`, with no `2π/L`,
+  exactly as in the original. That treats the domain as 2π long. It is
+  kept deliberately: in scipy, the physically scaled version blows up (the
+  step size collapses at t ≈ 4), while the integer version gives the
+  travelling, slowly growing long wave. Verified against scipy Radau at
+  rtol 1e-6: the final h is 0.9558..1.0777 with the crest at x = 90.2,
+  against 0.9557..1.0774 at 90.2. A first comparison at BDF rtol 1e-3
+  disagreed, but it was the scipy run at that loose tolerance that was
+  wrong. The run takes 192 steps and about 16 s (heaptrc on), with no
+  leaks.
+  - **`TVMPlotStack` changes made for this demo** (same date):
+    - **`AxisStyle`**: `sasBox` (the new default) draws gridded,
+      translucent floor, back wall and side wall planes, like `TVMPlot3D`'s
+      `pasBox`, via `DrawAxisBox`. `sasCentred` is the old corner lines.
+      The planes are drawn **before** the ribbons, because the component
+      paints back to front with no depth test.
+    - **Which side the planes go on**: the stack is orthographic and
+      painted oldest first. So the floor and side wall go on the side of
+      the **true** camera direction (`CameraDir`), which is the far side
+      as the viewer perceives it. The back wall is always at the oldest
+      end.
+    - **Box-mode labels** run along the box's outer edges. The value
+      title sits horizontally above the value scale, because a rotated
+      title beside it was cut off at the window edge.
+    - **`FadeWithAge`** defaults to False: every slice is drawn at full
+      colour, so the earliest profiles stay readable. True restores the
+      old dimming with `Age`.
+    - Benney now sets `MaxSeries` to exactly the slice count. It used
+      `1.25×` only to keep t = 0 from fading out.
+    - **`Perspective`** (default True, same day): a real perspective
+      camera replaced the plain `glOrtho` view, in which the far end of a
+      deep stack looked *wider* than the near end. It's a narrow 20°
+      `gluPerspective` (`PerspectiveFovY`) at distance
+      `FZoom / tan(10°)`, so `FZoom` is still the half-height at the
+      centre and the wheel zoom is unchanged. `WorldToScreen` has a
+      matching perspective branch. `DefaultZoom` went from 6 to 7.5 so
+      the larger near end fits.
+    - **The geometry had to be made honest first.** The old orthographic
+      camera (yaw 30, pitch −25) was truly *below and behind* the stack.
+      The oldest-first draw order made the mirrored image read as seen
+      from above and in front. So depth is now `AgeToZ`, with the newest
+      slice at **+Z**, and the default camera is mirrored to yaw −30,
+      pitch +25. That leaves the orthographic picture identical, and
+      perspective then foreshortens the right end. Mouse drag signs were
+      flipped to feel the same. The box planes now go on the side away
+      from the camera.
+    - **`NewestAtBack`** (default False) and **`ZAxisScale`** (default
+      1), same day. True keeps the first graph at the front and puts each
+      later one a step further back: `AddGraph` appends with `Age` =
+      count held, so index order still runs front to back and `Paint`'s
+      back-to-front loop is unchanged. When `MaxSeries` are held, the
+      stack scrolls forward by one. `Animate`'s ageing is skipped.
+      Changing the mode clears the stack. Depth-axis labels are
+      `Age × ZAxisScale`, so Benney's read in time (`ZAxisTitle :=
+      'time'`, scale `dt`). Benney sets `NewestAtBack := True`, so t = 0
+      sits nearest the viewer.
+    - **Default colours** are now azure → amber → red
+      (`LowColor`/`MidColor`/`HighColor`). They were dark blue → mauve →
+      red. `DrawSlice` cubes the colour fraction, so most values sit near
+      `LowColor`, and dark blue on the black background was nearly
+      invisible. No program overrides the defaults.
+    - The PlotStack and SpectrumDemo programs pick up these defaults too
+      (`NewestAtBack` stays off there). Both still build.
 - **`BioSpectra`** — frequency spectra of three biological signals from
   PhysioNet: an ECG (MIT-BIH Arrhythmia record 100, MLII, 360 Hz), an EEG
   (MIT-BIH Polysomnographic record slp01a, C4-A1, 250 Hz) and an invasive
