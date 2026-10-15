@@ -148,7 +148,8 @@ message, not exceptions — they only fire because the `.lpi` enables
 unit-local `const s = 'Routine Name : '` prefix on the message) rather than
 introducing exception-based validation.
 
-`DataPtr` (on `TVMobj`/`TVMobjS`) and the equivalent raw-pointer access on
+`DataPtr` (on `TVMobj`/`TVMobjS`, and since 2026-10-15 on `TVMobjZ`,
+returning `PComplex16`) and the equivalent raw-pointer access on
 the other records exist specifically so sibling units can hand a raw buffer
 pointer straight into an MKL call without needing friend/private access —
 this is the established pattern for cross-unit interop; use it rather than
@@ -2039,6 +2040,14 @@ packages. Compiled binaries and each demo's own `lib/` output are
       family's 0.154 maximum, and the step size collapses - the same
       finite-time blow-up as the 0.2 bump, so the Re 5 wave is unstable
       once the growing film disturbances reach it.
+    - **Domain length** (same date): a "length" spin edit sets L, default
+      400 (x on -200 .. 200; `--length=<L>`), with the original's grid
+      spacing kept, N = 2.56 L (1024 points). The Gaussian bump sits 15
+      in from the left boundary (-Ax + 15, was a fixed -85). The
+      Jacobian is dense, so a step costs several times the L = 200 one:
+      the Re 3 solitary wave to t = 300 takes 268 steps and 100 s
+      (heaptrc on), crossing from x = -179 to 117 and tracking the exact
+      wave to 0.0041 - the same wave as on L = 200, as it should be.
     - **Overlay**: it is drawn on every fifth slice
       (`TVMPlotStack.SetSliceOverlay`, a white 1 px line drawn with its
       slice). On every slice it hid the ribbons.
@@ -2097,6 +2106,106 @@ packages. Compiled binaries and each demo's own `lib/` output are
       invisible. No program overrides the defaults.
     - The PlotStack and SpectrumDemo programs pick up these defaults too
       (`NewestAtBack` stays off there). Both still build.
+- **`Benney2D`** (added 2026-10-15) — the 2-D Benney equation for a
+  water film falling down an inclined plate, in physical units (mm, s),
+  on a Fourier (down the slope, periodic) x Chebyshev (across the plate)
+  tensor grid. Shown as an animated `TVMPlot3D` surface of h - hN in um,
+  next to a `TVMPlotStack` waterfall of the centre line; Replay and a
+  slider go back through the frames. `ubenney2dmodel.pas` holds the
+  physics and numerics (its header has the equations and every
+  decision), `ubenney2dmain.pas` the form, and `check2d.lpr` the console
+  checks (plain `fpc -O2 -Fu../.. -Fi../.. check2d.lpr`). Things worth
+  knowing:
+  - **The Benney equation can't do a 1 mm water film.** The request was
+    1 mm on a 30 cm plate. Checked with scipy BDF in 1-D, 20 % above
+    onset: 1 mm (Re 57, 1 deg), 0.5 mm and 0.3 mm (Re 9.4) all blow up
+    in finite time, while 0.2 mm on 11.2 deg (Re 5.1) and 0.14 mm are
+    stable. Even 1 mm at 0.92 deg, 1 % above onset, blows up from a
+    0.05 mm bump. The cause is the long-wave assumption: the
+    inertia/surface-tension balance sets a ~2.5 mm length at 1 mm. So the
+    default is 0.2 mm at 11.2 deg (1.2 x onset; 1.5 x already blows
+    up), 300 x 300 mm, and the memo warns above Re 5.5 or 1.4 x onset.
+    A 1 mm film needs a weighted-residual (Kapitza-Shkadov /
+    Ruyer-Quil-Manneville) model; the user chose the 0.2 mm Benney film.
+    Re is the flow rate over nu, g s hN^3/(3 nu^2), with onset at
+    (5/6) cot theta. A surface-velocity Re against that onset is off by
+    3/2 (a slip made and corrected while planning this).
+  - **Equation**: h_t + div q = 0, q_x = A H^3 + (I H^6 - G H^3) H_x +
+    S H^3 (lap H)_x, q_y = -G H^3 H_y + S H^3 (lap H)_y in H = h/hN.
+    Inertia acts downslope only. Side walls: no flux, h_y = h_yyy = 0.
+  - **Grid**: x by `FFT_R2C`/`FFT_C2R` row by row; y by the Chebyshev
+    matrix (Trefethen's `cheb`) in one `MatMult`. A field is a
+    (Ny+1, Nx) `TVMobj` with row j the x-line at y_j.
+  - **Time stepping is semi-implicit BDF2 (SBDF2), not Kaps-Rentrop**: a
+    dense Jacobian for ~8000 unknowns is out of the question. The
+    linearised operator is implicit, solved per x-Fourier mode with an
+    (Ny+1)^2 complex system (`LinearSolveZ`, LU cached), with the wall
+    conditions as replaced rows (0, Ny: D1; 1, Ny-1: D3). Checked in
+    numpy first: no spurious unstable modes. The step size is adaptive
+    (variable-step SBDF2, predictor error estimate). It only grows past
+    1.5 x and only shrinks on rejection, because each change costs a
+    refactorisation of every mode: hysteresis at 1..1.25 refactorised
+    231 times in 20 s and that was most of the run time. Surface tension
+    and gravity are implicit with factor beta = 1.5, raised as max H^3
+    nears it: beta = 1 blew up a 0.2 bump (SBDF2 needs H^3 < 4/3 beta).
+  - **Rough initial noise blows up**: gridpoint noise has an enormous
+    Chebyshev D4. The noise is a sum of low cos modes that already meet
+    the wall conditions.
+  - **Threads**: each right-hand side runs three phases, x half on a
+    worker (`TDerivWorker`), y half on the calling thread. Three things
+    had to be fixed before threading paid:
+    - sleeping-thread hand-offs cost ~115 us each, as much as the work,
+      so both sides now spin up to 2 ms on a flag before sleeping on the
+      event;
+    - MKL's and OpenBLAS's own thread pools fought the worker, so both
+      are set to one thread (`MKL_Set_Num_Threads(1)`, and
+      `openblas_set_num_threads` looked up through `CBLASLib`;
+      process-wide). Pinned to two cores the y half went from 3.0 s to
+      0.26 s;
+    - timing needs `clock_gettime`, since `GetTickCount64`'s
+      milliseconds summed microsecond phases into nonsense.
+    The halves are unequal (x ~4x y), so the gain is the y half: the
+    right-hand sides take 1.19 s threaded against 1.42 s serial
+    (pinned, 20 s of film). This is an i7-14650HX with performance
+    (CPUs 0-15) and efficiency (16-23) cores, and unpinned timings vary
+    up to 2x with where the threads land. Compare with
+    `taskset -c 2,4`. Threaded and serial give identical films.
+  - **Checks**: one mode's growth rate 3.709 /s against linear theory
+    3.702; the 0.2 bump's max H 1.0928/1.0631 at t = 10/20 s against
+    the numpy prototype's 1.093/1.062; no leaks (heaptrc). The default
+    120 s run takes about 27 s (heaptrc on) and ends with waves of a few
+    um with curved fronts across the plate.
+  - **Display**: the Chebyshev rows go onto 101 uniform rows by
+    barycentric interpolation (`UniformRows`), since `TVMPlot3D` assumes
+    an even grid. Each frame is scaled +-1.25 x its own largest
+    departure, about zero, and the scale is in the title. A scale fixed
+    for the run was set by the 40 um starting bump and left the later
+    5 um waves flat.
+  - **Excitation at x = 0** (same date): an optional source in H_t,
+    a c cos(2 pi t/T) g(x). g is a 5 mm Gaussian line source across the
+    plate with unit integral, and c = 3A is the linear wave speed. In
+    the kinematic limit a narrow source launches thickness (1/c) int s
+    dx, so a is the launched amplitude (the form takes um) and the
+    wavelength is c T. It is treated explicitly, like the nonlinear
+    terms: the source's modes are computed once and scaled by the cosine
+    in `NHat`, which now takes t. It is zero-mean in time. The controls
+    are a third row (check box, period, amplitude, and a label with the
+    wavelength against the fastest-growing one), plus a "Flat film"
+    start. Checked (`check2d`, flat film, 1 um, T = 1 s, t = 3 s): the
+    centre line between x = 20 and 200 mm is 0.0052 hN high against
+    0.005 (the 4 % is the linear growth on the way), with crossings
+    74.5 mm apart against c T = 76.2. **The domain is periodic**, so the
+    train comes back through the source after Lx/c (3.9 s). At T = 1 s,
+    300 mm holds 3.94 wavelengths, so each lap adds nearly in phase and
+    the train builds up (to about 6 um by 20 s from a 1 um source).
+    An absorbing zone before x = Lx would give a true inlet/outlet.
+    Options `--excite`, `--period`, `--amp`, `--start=<0..3>`.
+  - `--snapshot=<prefix>` (saves the window as BMP, prints the memo),
+    `--time`, `--film`, `--angle`, `--serial`.
+  - **`newVMComplex.pas` gained `TVMobjZ.DataPtr: PComplex16`**, mirroring
+    `TVMobj.DataPtr`, for this demo's per-row copies: `Element[]` would
+    be millions of asserted calls per simulated second. The full suite
+    still passes (327/327).
 - **`BioSpectra`** — frequency spectra of three biological signals from
   PhysioNet: an ECG (MIT-BIH Arrhythmia record 100, MLII, 360 Hz), an EEG
   (MIT-BIH Polysomnographic record slp01a, C4-A1, 250 Hz) and an invasive

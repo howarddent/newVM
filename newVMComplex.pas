@@ -152,6 +152,7 @@ type
       procedure Id;
       procedure linspace(Start, increment: TComplex16);
       function Transpose: TVMObjZ;
+      function DataPtr: PComplex16;   //raw buffer, as TVMobj.DataPtr - for loops over a whole matrix without Element's per-call overhead
       property Rows: TDimZ read frows;              //read-only dimension accessors
       property Cols: TDimZ read fcols;
       property LU: Boolean read fLUFactored;  //True once LinearSolveZ has cached an LU factorisation of this object
@@ -590,6 +591,11 @@ begin
   //directly: FData[i] = Start + i*increment.
   for i := 0 to high(fdata) do
     FData[i] := Cplx(start.re + i*increment.re, start.im + i*increment.im);
+end;
+
+function TVMobjZ.DataPtr: PComplex16;
+begin
+  result := @fdata[0];
 end;
 
 function TVMobjZ.Transpose:TVMObjZ;
