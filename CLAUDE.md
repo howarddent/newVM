@@ -1979,8 +1979,21 @@ packages. Compiled binaries and each demo's own `lib/` output are
     cent of h). `--snapshot=<prefix>` runs, saves `<prefix>.bmp`, prints
     the memo and exits.
 
-  **The wavenumbers are integers**, `0..N/2-1, -N/2..-1`, with no `2π/L`,
-  exactly as in the original. That treats the domain as 2π long. It is
+  **Wavenumbers since 2026-10-15 are `2πn/L`**, L = 200 (true d/dx), at
+  the user's request (`TBenneyParams.ScaleByLength`, default True). This
+  is a different problem from the original's. The 0.2 bump now sharpens
+  into a solitary wave travelling from x = −85 to about −48 by t = 30.
+  **At the original's Re = 5 it blows up**: the step size collapses at
+  t ≈ 3.5. scipy Radau at rtol 1e-6 blows up at the same time at N = 512
+  and N = 1024, with h passing 100, so it is the Benney equation's own
+  finite-time blow-up at strong instability, not a numerical fault. So
+  the Re default is now 3, still above the 2.56 threshold. At Re 3 the
+  run is 227 steps, final h 0.9801..1.1478, against scipy's max 1.147.
+  A failed run now says so in the memo (`FLastFlag`): `ThreadDone` used
+  to add the message and then `WriteInfo` cleared it straight away. The
+  notes below describe the original's scaling, kept as
+  `ScaleByLength := False`. **Original scaling:** the wavenumbers are
+  integers, `0..N/2-1, -N/2..-1`, with no `2π/L`. That treats the domain as 2π long. It is
   kept deliberately: in scipy, the physically scaled version blows up (the
   step size collapses at t ≈ 4), while the integer version gives the
   travelling, slowly growing long wave. Verified against scipy Radau at
@@ -1989,6 +2002,48 @@ packages. Compiled binaries and each demo's own `lib/` output are
   disagreed, but it was the scipy run at that loose tolerance that was
   wrong. The run takes 192 steps and about 16 s (heaptrc on), with no
   leaks.
+  - **Solitary waves** (same date, `TBenneyModel.SolitaryWave`; "start:
+    Solitary wave", or `--start=solitary`, plus `--re=<value>`). The
+    unknowns are `[H; c; q]` on the run's grid. The equations are
+    `F(H) − cH − q = 0` (the travelling wave integrated once), `H'(0) = 0`
+    (pins the crest-side point at x = 0) and `q = 1/3 − c` (flat film far
+    away). Newton uses a central-difference Jacobian and `LinearSolve`,
+    with step halving.
+    - **Why continuation**: the flat film solves those equations at every
+      c, so plain Newton slides onto it. Every attempt that held the mean
+      or the speed fixed found near-flat waves. Instead the height
+      `A = H(0) − 1` is fixed and Re is an unknown. The search starts
+      from A = 0.02 (a sech² guess), steps A by ×1.12 with secant
+      prediction until Re brackets the run's Re, interpolates, and does a
+      final solve at that Re.
+    - **The family**: height → 0 and width → ∞ at Re_c = 2.56; 0.0056 at
+      Re 3 (speed 1.0035, rippled, width 21); 0.105 at Re 5 (speed
+      1.069). It was not found past Re ≈ 5.64 (height 0.154), and the
+      memo says so outside that range. Matches a scipy prototype, where
+      each wave run forward kept its shape to 1e-5 over 20 time units.
+    - **The 0.2 starting bump** sits above every wave in the family,
+      which fits Re 5 blowing up from it while a 0.05 bump does not.
+    - **The Re 3 bump run** settles to a ~0.05 domain-filling wave train,
+      not a solitary wave: the flat film is unstable and the periodic
+      domain recirculates.
+    - **Starting from the wave**, the integration tracks
+      `Shift(H, c t)` (a spectral phase shift) to 2.4e-6 at Re 3 and
+      4.7e-3 at Re 5 over t = 30. The memo reports `max |h − H(x − c t)|`.
+    - **Start position**: the wave is solved with its crest at x = 0,
+      then shifted (`Shift`) to start one width (at least 15) in from the
+      left boundary, x = -85 at Re 4-5, so it can cross most of the
+      domain (`--time=<t>` sets the run time for snapshots). Over
+      t = 150, Re 3 tracks the exact wave to 0.0032 and Re 4 to 0.076
+      (height 0.038, so visibly disturbed). **Re 5 blows up at t = 72**:
+      the wave itself grows from 0.105 to 0.37 at x = -7, past the
+      family's 0.154 maximum, and the step size collapses - the same
+      finite-time blow-up as the 0.2 bump, so the Re 5 wave is unstable
+      once the growing film disturbances reach it.
+    - **Overlay**: it is drawn on every fifth slice
+      (`TVMPlotStack.SetSliceOverlay`, a white 1 px line drawn with its
+      slice). On every slice it hid the ribbons.
+    - **FPC gotcha hit again**: a local `J` (the Jacobian) next to a loop
+      counter `j` is a duplicate identifier; it is now `Jac`.
   - **`TVMPlotStack` changes made for this demo** (same date):
     - **`AxisStyle`**: `sasBox` (the new default) draws gridded,
       translucent floor, back wall and side wall planes, like `TVMPlot3D`'s

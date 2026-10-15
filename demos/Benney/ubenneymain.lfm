@@ -37,7 +37,7 @@ object fmBenney: TfmBenney
       MaxValue = 50
       MinValue = 0
       TabOrder = 0
-      Value = 5
+      Value = 3
     end
     object lblWe: TLabel
       Left = 116
@@ -132,6 +132,28 @@ object fmBenney: TfmBenney
       MinValue = 2
       TabOrder = 5
       Value = 60
+    end
+    object lblStart: TLabel
+      Left = 822
+      Height = 15
+      Top = 12
+      Width = 34
+      Caption = 'start:'
+    end
+    object cbStart: TComboBox
+      Left = 860
+      Height = 23
+      Top = 8
+      Width = 150
+      ItemHeight = 15
+      ItemIndex = 0
+      Items.Strings = (
+        'Gaussian bump'
+        'Solitary wave'
+      )
+      Style = csDropDownList
+      TabOrder = 12
+      Text = 'Gaussian bump'
     end
     object btnRun: TButton
       Left = 8

@@ -23,16 +23,32 @@ unit ubenneymain;
          step, so the stack's depth axis is uniform in time.
        - The parameters the original fixed as constants (Re, We, eps,
          the inclination, the run time) are spin edits, defaulting to its
-         values: Re 5, We 250, eps 0.04, theta = pi/10 (18 deg), 30 time
-         units, N = 512 points on -100 .. 100, a 0.2 bump at x = -85.
+         values - We 250, eps 0.04, theta = pi/10 (18 deg), 30 time
+         units, N = 512 points on -100 .. 100, a 0.2 bump at x = -85 -
+         except Re, 3 rather than its 5. With derivatives scaled by the
+         domain length (ubenneymodel, ScaleByLength) Re 5 blows up at
+         t ~ 3.5 - a genuine finite-time blow-up of the Benney equation,
+         the same time at N = 512 and 1024 in scipy, h passing 100 - while
+         Re 3, still above the instability threshold (5/6 cot theta =
+         2.56), runs to t = 30 with the bump growing into waves.
        - "Plot h - h0" (default on) draws the departure from the flat
          film: the waves here are a few per cent of h, invisible on
          ribbons drawn from h = 0.
+       - "start:" picks the initial condition: the original's Gaussian
+         bump, or the exact solitary wave for the chosen Re
+         (TBenneyModel.SolitaryWave, solved on the worker thread before
+         the integration). From the solitary wave every slice carries
+         that wave moved to x - c t as a white overlay
+         (TVMPlotStack.SetSliceOverlay), and the memo reports how far
+         the integration has drifted from it - a check on both
+         calculations, until the unstable flat film's own growth (the
+         film is unstable for Re > 2.56) eventually disturbs it.
      Stop sets the thread's Terminated flag, which the per-step callback
      turns into OdeInt's Stop - the original's Abandon flag.
 
      --snapshot=<prefix>: run with the defaults, save the window as
-     <prefix>.bmp, print the memo and exit.
+     <prefix>.bmp, print the memo and exit. --start=solitary starts from
+     the solitary wave, --re=<value> sets Re (with or without snapshot).
 
 *******************************************************************************}
 
@@ -59,7 +75,11 @@ type
     FProfile: TVMobj;
     FTime: Double;
     FSteps: Integer;
+    FSolitary: Boolean;
+    FStatus: string;
     FLastReport: QWord;
+    procedure SWProgress(const S: string);
+    procedure PostStatus;
     procedure Step(x: Double; var Stop: Boolean);
     procedure PostProfile;
     procedure PostProgress;
@@ -67,8 +87,14 @@ type
     procedure Execute; override;
   public
     Flag: TErrFlags;
+    // the solitary wave, when starting from one
+    SolOK: Boolean;
+    SolH: TVMobj;
+    SolC, SolAmp, SolWidth: Double;
+    SolX0: Double;                 // where its crest starts
+    SolMsg: string;
     constructor Create(AForm: TfmBenney; AModel: TBenneyModel;
-      ATotalTime: Double; ASlices: Integer);
+      ATotalTime: Double; ASlices: Integer; ASolitary: Boolean);
   end;
 
   { TfmBenney }
@@ -85,6 +111,8 @@ type
     lblEps: TLabel;
     lblTime: TLabel;
     lblSlices: TLabel;
+    lblStart: TLabel;
+    cbStart: TComboBox;
     memInfo: TMemo;
     pnlControls: TPanel;
     pnlPlot: TPanel;
@@ -114,6 +142,15 @@ type
     FReplayIndex: Integer;
     FStartTick: QWord;
     FSnapshot: string;
+    FLastFlag: TErrFlags;          // how the last run ended
+    FStatusText: string;           // progress line while running
+    // the solitary wave of the last run, if it started from one
+    FSolValid: Boolean;
+    FSolH: TVMobj;
+    FSolC, FSolAmp, FSolWidth, FSolX0: Double;
+    FSolMsg: string;
+    FSolTried: Boolean;
+    function OverlayAt(i: Integer): TVMobj;
     procedure ThreadDone(Sender: TObject);
     procedure SetupStack;
     procedure ShowProfile(i: Integer);
@@ -124,6 +161,7 @@ type
   public
     // called by the thread, through Synchronize
     procedure ProfileReady(const H: TVMobj; t: Double);
+    procedure Status(const S: string);
     procedure Progress(t: Double; Steps: Integer);
   end;
 
@@ -139,11 +177,23 @@ const
   FirstStep = 1e-5;      // and its h1
   MinStep = 0.0;         // and hmin
 
+// largest |element| of a vector
+function MaxAbs(const A: TVMobj): Double;
+var
+  i: Integer;
+  P: PDouble;
+begin
+  Result := 0;
+  P := A.DataPtr;
+  for i := 0 to A.Rows * A.Cols - 1 do Result := Max(Result, Abs(P[i]));
+end;
+
 { TBenneyThread }
 
 constructor TBenneyThread.Create(AForm: TfmBenney; AModel: TBenneyModel;
-  ATotalTime: Double; ASlices: Integer);
+  ATotalTime: Double; ASlices: Integer; ASolitary: Boolean);
 begin
+  FSolitary := ASolitary;
   FForm := AForm;
   FModel := AModel;
   FTotalTime := ATotalTime;
@@ -166,6 +216,17 @@ begin
   Stop := Terminated;
 end;
 
+procedure TBenneyThread.SWProgress(const S: string);
+begin
+  FStatus := S;
+  Synchronize(@PostStatus);
+end;
+
+procedure TBenneyThread.PostStatus;
+begin
+  FForm.Status(FStatus);
+end;
+
 procedure TBenneyThread.PostProfile;
 begin
   FForm.ProfileReady(FProfile, FTime);
@@ -182,7 +243,23 @@ var
   k: Integer;
   h, t0, t1: Double;
 begin
-  y := FModel.InitialProfile;
+  Flag := OK;
+  if FSolitary then
+  begin
+    FStatus := 'solving for the solitary wave...';
+    Synchronize(@PostStatus);
+    SolOK := FModel.SolitaryWave(SolH, SolC, SolAmp, SolWidth, SolMsg, @SWProgress);
+    if not SolOK then Exit;          // ThreadDone reports SolMsg
+    // SolitaryWave puts the crest at x = 0; start it near the left
+    // boundary instead, a width (at least 15) in, so it has nearly the
+    // whole domain to travel through. Shift is periodic, so the
+    // tail ahead of the crest simply wraps round.
+    SolX0 := -FModel.Params.Ax + Max(15, SolWidth);
+    SolH := FModel.Shift(SolH, SolX0);
+    y := CopyObj(SolH);
+  end
+  else
+    y := FModel.InitialProfile;
   FProfile := CopyObj(y);
   FTime := 0;
   Synchronize(@PostProfile);
@@ -219,6 +296,11 @@ begin
   SetupStack;
   WriteInfo(False, 0);
 
+  if Application.GetOptionValue('start') = 'solitary' then cbStart.ItemIndex := 1;
+  if Application.GetOptionValue('re') <> '' then
+    seRe.Value := StrToFloatDef(Application.GetOptionValue('re'), seRe.Value);
+  if Application.GetOptionValue('time') <> '' then
+    seTime.Value := StrToFloatDef(Application.GetOptionValue('time'), seTime.Value);
   FSnapshot := Application.GetOptionValue('snapshot');
   if FSnapshot <> '' then
     Application.QueueAsyncCall(@DoSnapshot, 0)
@@ -295,7 +377,10 @@ begin
   SetRunning(True);
   WriteInfo(True, 0);
 
-  FThread := TBenneyThread.Create(Self, FModel, seTime.Value, seSlices.Value);
+  FSolTried := cbStart.ItemIndex = 1;
+  FSolValid := False;
+  FStatusText := '';
+  FThread := TBenneyThread.Create(Self, FModel, seTime.Value, seSlices.Value, FSolTried);
   FThread.OnTerminate := @ThreadDone;
   FThread.Start;
 end;
@@ -311,9 +396,11 @@ var
   Steps: Integer;
 begin
   Steps := FThread.FSteps;
-  case FThread.Flag of
-    TooManySteps: memInfo.Lines.Add('Stopped: too many steps');
-    TooShortStep: memInfo.Lines.Add('Stopped: step size below the minimum');
+  FLastFlag := FThread.Flag;       // reported by WriteInfo
+  if FSolTried then
+  begin
+    FSolMsg := FThread.SolMsg;
+    FSolValid := FThread.SolOK;
   end;
   // OnTerminate runs in the main thread just before the thread frees
   // itself (FreeOnTerminate)
@@ -324,10 +411,40 @@ begin
     Application.QueueAsyncCall(@DoSnapshot, 2);
 end;
 
+procedure TfmBenney.Status(const S: string);
+begin
+  FStatusText := S;
+  // the wave is known as soon as the integration starts sending profiles
+  if Assigned(FThread) and FThread.SolOK and not FSolValid then
+  begin
+    FSolValid := True;
+    FSolH := CopyObj(FThread.SolH);
+    FSolC := FThread.SolC;
+    FSolAmp := FThread.SolAmp;
+    FSolWidth := FThread.SolWidth;
+    FSolX0 := FThread.SolX0;
+  end;
+  if Assigned(FThread) then WriteInfo(True, FThread.FSteps);
+end;
+
+function TfmBenney.OverlayAt(i: Integer): TVMobj;
+begin
+  Result := FModel.Shift(FSolH, FSolC * FTimes[i]);
+end;
+
 procedure TfmBenney.ProfileReady(const H: TVMobj; t: Double);
 var
   n: Integer;
 begin
+  if Assigned(FThread) and FThread.SolOK and not FSolValid then
+  begin
+    FSolValid := True;
+    FSolH := CopyObj(FThread.SolH);
+    FSolC := FThread.SolC;
+    FSolAmp := FThread.SolAmp;
+    FSolWidth := FThread.SolWidth;
+    FSolX0 := FThread.SolX0;
+  end;
   n := Length(FProfiles);
   SetLength(FProfiles, n + 1);
   SetLength(FTimes, n + 1);
@@ -349,6 +466,14 @@ begin
     FStack.AddGraph(AddScalar(FProfiles[i], -FModel.Params.h0))
   else
     FStack.AddGraph(FProfiles[i]);
+  // the solitary wave at this slice's time, as a white line over every
+  // fifth slice (on all of them it hid the ribbons); the stack holds
+  // exactly the run (MaxSeries = slices + 1), so slice i is stack index i
+  if FSolValid and (i mod 5 = 0) then
+    if cbDeviation.Checked then
+      FStack.SetSliceOverlay(i, AddScalar(OverlayAt(i), -FModel.Params.h0))
+    else
+      FStack.SetSliceOverlay(i, OverlayAt(i));
 end;
 
 procedure TfmBenney.ReplotAll;
@@ -423,17 +548,50 @@ begin
       memInfo.Lines.Add('  stable here - the bump decays');
     memInfo.Lines.Add('');
     memInfo.Lines.Add(Format('N = %d, periodic on x = %.0f .. %.0f', [P.N, -P.Ax, P.Ax]));
-    memInfo.Lines.Add('initial: h0 = 1 plus a 0.2 bump at x = -85');
+    if cbStart.ItemIndex = 1 then
+      memInfo.Lines.Add('initial: the solitary wave at this Re')
+    else
+      memInfo.Lines.Add('initial: h0 = 1 plus a 0.2 bump at x = -85');
     memInfo.Lines.Add('spectral derivatives (FFT_R2C/FFT_C2R)');
     memInfo.Lines.Add('Kaps-Rentrop stiff integrator, tol 1e-3,');
     memInfo.Lines.Add('Jacobian by central differences');
     memInfo.Lines.Add(Format('run to t = %.4g in %d slices', [seTime.Value, seSlices.Value]));
     memInfo.Lines.Add('');
+    if FSolValid then
+    begin
+      memInfo.Lines.Add('Solitary wave (white overlay):');
+      memInfo.Lines.Add(Format('  height %.4g above the film', [FSolAmp]));
+      memInfo.Lines.Add(Format('  speed c = %.5g, width %.3g', [FSolC, FSolWidth]));
+      memInfo.Lines.Add(Format('  crest starts at x = %.3g', [FSolX0]));
+      memInfo.Lines.Add('  (flat film 1 far away; F(H) - cH = q)');
+    end
+    else if FSolTried and (FSolMsg <> '') and not Running then
+    begin
+      memInfo.Lines.Add('Solitary wave: ' + FSolMsg);
+      memInfo.Lines.Add('  - nothing to integrate. Solitary waves');
+      memInfo.Lines.Add('  exist for about 2.6 < Re < 5.6 here.');
+    end;
+    if FSolValid or (FSolTried and Running) then memInfo.Lines.Add('');
     if Running then
-      memInfo.Lines.Add(Format('Running... %d steps, %.1f s', [Steps, (GetTickCount64 - FStartTick) / 1000]))
+    begin
+      if FStatusText <> '' then memInfo.Lines.Add(FStatusText);
+      memInfo.Lines.Add(Format('Running... %d steps, %.1f s', [Steps, (GetTickCount64 - FStartTick) / 1000]));
+    end
     else if Assigned(FModel) and (Length(FProfiles) > 0) then
     begin
-      memInfo.Lines.Add(Format('Done to t = %.4g: %d steps,', [FTimes[High(FTimes)], Steps]));
+      case FLastFlag of
+        OK: memInfo.Lines.Add(Format('Done to t = %.4g: %d steps,', [FTimes[High(FTimes)], Steps]));
+        Abandoned: memInfo.Lines.Add(Format('Stopped at t = %.4g: %d steps,', [FTimes[High(FTimes)], Steps]));
+      else
+        begin
+          // the step size collapsed: at strong instability the Benney
+          // equation itself blows up in finite time
+          memInfo.Lines.Add(Format('FAILED after t = %.4g: the step size', [FTimes[High(FTimes)]]));
+          memInfo.Lines.Add('  collapsed - the solution is blowing up');
+          memInfo.Lines.Add('  (try a lower Re or a smaller bump).');
+          memInfo.Lines.Add(Format('  %d steps,', [Steps]));
+        end;
+      end;
       memInfo.Lines.Add(Format('  %d right-hand sides, %.1f s', [FModel.Calls, (GetTickCount64 - FStartTick) / 1000]));
       YP := FProfiles[High(FProfiles)].DataPtr;
       mn := YP[0]; mx := YP[0]; im := 0;
@@ -445,14 +603,16 @@ begin
       xmax := FModel.X[im, 0];
       memInfo.Lines.Add(Format('  final h %.4f .. %.4f,', [mn, mx]));
       memInfo.Lines.Add(Format('  crest at x = %.1f', [xmax]));
+      if FSolValid then
+        memInfo.Lines.Add(Format('  max |h - H(x - c t)| = %.2g', [MaxAbs(FProfiles[High(FProfiles)] - OverlayAt(High(FProfiles)))]));
     end;
     memInfo.Lines.Add('');
     memInfo.Lines.Add('t = 0 at the front, later times behind.');
     memInfo.Lines.Add('Drag to rotate, wheel to zoom.');
     memInfo.Lines.Add('');
-    memInfo.Lines.Add('Note: like the original, derivatives');
-    memInfo.Lines.Add('use integer wavenumbers - the domain');
-    memInfo.Lines.Add('acts as 2 pi long (see ubenneymodel).');
+    memInfo.Lines.Add('Derivatives are true d/dx: wavenumbers');
+    memInfo.Lines.Add('2 pi n/L, L = 200. The original used n');
+    memInfo.Lines.Add('(a 2 pi domain) - ScaleByLength False.');
   finally
     memInfo.Lines.EndUpdate;
   end;

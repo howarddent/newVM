@@ -182,6 +182,10 @@ type
     Y: array of Double;
     N: Integer;
     Age: Double;
+    // optional second curve drawn over the ribbon as a white line (e.g.
+    // an analytical solution to compare against) - SetSliceOverlay;
+    // empty for none
+    Overlay: array of Double;
   end;
 
   // A title/axis-title/tick-label string rendered once to a GL texture -
@@ -301,6 +305,12 @@ type
     destructor Destroy; override;
     procedure Paint; override;
     procedure AddGraph(const Y: TVMobj);
+    // Draws Y as a white line over held slice Index (FSlices order: 0 is
+    // the front slice - the newest normally, the first with NewestAtBack),
+    // same length as that slice's data. SetSliceOverlay(i, ...) right
+    // after the AddGraph that made slice i is the usual pattern.
+    procedure SetSliceOverlay(Index: Integer; const Y: TVMobj);
+    procedure ClearOverlays;
     procedure ClearStack;
     procedure ResetView;
   published
@@ -1041,6 +1051,32 @@ end;
 // unit's own ANIMATE rationale for why Animate=True skips that - those
 // slices are already ageing continuously via FTimer), then inserts the
 // new slice at index 0 (Age=0, front/nearest).
+procedure TVMPlotStack.SetSliceOverlay(Index: Integer; const Y: TVMobj);
+const
+  s = 'TVMPlotStack.SetSliceOverlay : ';
+var
+  i, n: Integer;
+begin
+  if (Index < 0) or (Index > High(FSlices)) then Exit;
+  assert((Y.Rows = 1) or (Y.Cols = 1), s + 'Y must be a row or column vector');
+  n := Y.Rows * Y.Cols;
+  assert(n = FSlices[Index].N, s + 'overlay length must match the slice');
+  SetLength(FSlices[Index].Overlay, n);
+  if Y.Rows = 1 then
+    for i := 0 to n - 1 do FSlices[Index].Overlay[i] := Y[0, i]
+  else
+    for i := 0 to n - 1 do FSlices[Index].Overlay[i] := Y[i, 0];
+  Invalidate;
+end;
+
+procedure TVMPlotStack.ClearOverlays;
+var
+  i: Integer;
+begin
+  for i := 0 to High(FSlices) do SetLength(FSlices[i].Overlay, 0);
+  Invalidate;
+end;
+
 procedure TVMPlotStack.AddGraph(const Y: TVMobj);
 const
   s = 'TVMPlotStack.AddGraph : ';
@@ -1225,6 +1261,19 @@ begin
       glVertex3d(wx, wy, wz);
     end;
   glEnd;
+
+  // the overlay curve, white, drawn with this slice so that nearer
+  // ribbons still cover it in the painter's order
+  if Length(Slice.Overlay) = Slice.N then begin
+    glLineWidth(1.0);
+    glColor3d(intensity, intensity, intensity);
+    glBegin(GL_LINE_STRIP);
+      for j := 0 to Slice.N - 1 do begin
+        wx := (j / denom - 0.5) * WorldWidth;
+        glVertex3d(wx, (Slice.Overlay[j] / FYScale) * HalfH, wz);
+      end;
+    glEnd;
+  end;
 end;
 
 // Three white axis lines meeting at the stack's front-left corner - X=
