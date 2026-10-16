@@ -45,7 +45,7 @@ unit ufilmwrmmain;
      saves <prefix>.bmp (the window) and prints the memo; --time=<s>,
      --film=<mm>, --angle=<deg>, --serial (no transform thread),
      --excite, --period=<s>, --amp=<um>, --mod=<%>, --modn=<n>,
-     --absorb, --length=<mm>, --width=<mm>, --exag=<x> and
+     --absorb, --length=<mm>, --width=<mm>, --nx=<n>, --exag=<x> and
      --start=<0..3> (the start list's index) set the run.
 
 *******************************************************************************}
@@ -304,6 +304,8 @@ begin
     seModN.Value := StrToIntDef(Application.GetOptionValue('modn'), seModN.Value);
   if Application.HasOption('length') then
     seLength.Value := StrToIntDef(Application.GetOptionValue('length'), seLength.Value);
+  if Application.HasOption('nx') then
+    seNx.Value := StrToIntDef(Application.GetOptionValue('nx'), seNx.Value);
   if Application.HasOption('width') then
     seWidth.Value := StrToIntDef(Application.GetOptionValue('width'), seWidth.Value);
   if Application.HasOption('exag') then
