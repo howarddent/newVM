@@ -2126,7 +2126,7 @@ packages. Compiled binaries and each demo's own `lib/` output are
     default is 0.2 mm at 11.2 deg (1.2 x onset; 1.5 x already blows
     up), 300 x 300 mm, and the memo warns above Re 5.5 or 1.4 x onset.
     A 1 mm film needs a weighted-residual (Kapitza-Shkadov /
-    Ruyer-Quil-Manneville) model; the user chose the 0.2 mm Benney film.
+    Ruyer-Quil-Manneville) model - since built as `demos/FilmWRM`, below; the user chose the 0.2 mm Benney film for this demo.
     Re is the flow rate over nu, g s hN^3/(3 nu^2), with onset at
     (5/6) cot theta. A surface-velocity Re against that onset is off by
     3/2 (a slip made and corrected while planning this).
@@ -2250,6 +2250,88 @@ packages. Compiled binaries and each demo's own `lib/` output are
     `TVMobj.DataPtr`, for this demo's per-row copies: `Element[]` would
     be millions of asserted calls per simulated second. The full suite
     still passes (327/327).
+- **`FilmWRM`** (added 2026-10-16) — the 1 mm water film that
+  `Benney2D` can't do, by the **weighted-residual model** of Ruyer-Quil
+  & Manneville (2000), in its 3-D form (Scheid, Ruyer-Quil & Manneville
+  2006). The form is `Benney2D`'s with the model swapped
+  (`ufilmwrmmain.pas/.lfm`). The model is `ufilmwrmmodel.pas`, whose
+  header has the equations and every decision. The console checks are
+  `checkwrm.lpr`, built with plain `fpc -O2 -Fu../.. -Fi../..` and
+  calling `InitializeCBLAS`. Things worth knowing:
+  - **Model**: h, and the flow rates q (down the slope) and p (across),
+    each with its own equation. That is the "simplified" first-order
+    model: drag -5/2 nu q/h^2, inertia 9/7 q (Q.grad h)/h^2 - 8/7
+    (Q.grad) q/h - 9/7 q div Q/h, and 5/6 of gravity, hydrostatic
+    pressure and surface tension. The 3-D inertia terms are the 1-D
+    9/7, 17/7 pair in rotation-covariant form. The second-order
+    streamwise viscous terms are left out. The onset is exactly
+    Re_c = (5/6) cot theta, checked in numpy.
+  - **Defaults**: 1 mm on 2 deg, 300 x 300 mm: Re 114, 4.8 x onset,
+    fastest wave 69 mm, growth 1.1 /s, speed 246 mm/s. On 1 deg
+    (1.2 x onset) the waves grow too slowly to see on 300 mm. At
+    0.2 mm on 11.2 deg it gives 53.7 mm and 0.036 /s, against Benney's
+    53.4 mm and 0.037 /s.
+  - **Grid**: x is Fourier. y uses cosine series for h and q and a sine
+    series for p, on Ny+1 equally spaced points: the side walls are
+    free-slip mirrors. That is exact for this model and builds in
+    p = 0 and h_y = h_yyy = 0. Every derivative is a multiplier on the
+    modes. The y transforms are one `MatMult` with the (Ny+1)^2 cosine
+    or sine matrix, the complex modes read as a real array twice as
+    wide (dgemm instead of zgemm).
+  - **Stepping**: SBDF2 as in Benney2D, but the linearised operator is
+    3 x 3 per (kx, n) mode. So the ~8000 inverses are redone whenever
+    the step changes, with no step-change hysteresis. The error is
+    relative to the largest departure from flat: an absolute one in hN
+    let a 1e-6 test mode take 0.4 s steps and damped it. The default
+    Tol is 1e-4, which puts an oblique mode's growth 0.6 % low
+    (1e-3: 3 %, 1e-5: 0.2 %). The step stores F and N = F - L E, and
+    N is recomputed only when beta changes.
+  - **De-aliasing is required.** The model blew up in the numpy
+    prototype at 256 points once the step was small enough not to damp
+    the aliasing numerically (a first "converged" 256-point run at
+    dt 2e-3 was that damping). At 512 and 1024 points, and at half the
+    step, it converged. With the 2/3 rule applied to the right-hand
+    side and to the state (`Filter`), 256 points match them: crests
+    1.44 and troughs 0.39 hN at t = 4.5 s. After about 6 s the
+    individual waves differ between resolutions, since the waves
+    interact chaotically; their size doesn't.
+  - **`cmem`** in `FilmWRM.lpr`: every step makes dozens of ~130 kB
+    mode arrays. The RTL heap gives each one an mmap, and the page
+    faults cost as much as the arithmetic: 1 s of film took 3.6 s
+    against 2.6 s with cmem, with system time 1.35 s against 0.14 s.
+    For that reason the `.lpi` has no heaptrc. Leaks were checked
+    with a heaptrc build of `checkwrm`: none.
+  - **Threads**: 11 syntheses and 3 analyses per right-hand side, split
+    between the calling thread and a worker (`TFilmWorker`, a copy of
+    Benney2D's spin-then-sleep `TDerivWorker`). Results are identical
+    to serial.
+  - **Checks** (`checkwrm`):
+    - an oblique mode (kx = 4 waves, n = 2) grows at 1.054 against
+      linear theory's 1.061;
+    - a y-uniform 1-D bump gives 0.391 .. 1.438 hN at 4.5 s, against
+      the numpy prototype's 0.394 .. 1.446;
+    - p stays ~1e-13 for a y-uniform film, and mass is conserved;
+    - the modulated source gives a wall/centre ratio of 1.43. Benney2D
+      gave 1.5 = (1 + m)/(1 - m); here the transverse flow p spreads
+      the modulation;
+    - the source launches about half its nominal amplitude at
+      T = 0.3 s, because a mass source also drives the model's second,
+      strongly damped wave. The form's wavelength label uses the
+      dispersion relation (`ForcedK`), not 3u T.
+  - **A run** (default start: bump plus 0.1 % noise, threaded,
+    unpinned). 20 s of film took 9.3 min: 93882 steps (2305
+    rejected), with the step down to 1.8e-4 s at the end. By then the
+    film was 0.16 .. 1.88 hN, q reached 3.3 qN and |p| 1.0 qN: a
+    disordered 3-D field of humps, with one large 2-D front. The
+    thin troughs make the explicit part of the drag stiff
+    (2.5 nu/h^2 ~ 100 /s at 0.16 mm), which is what holds the step
+    down. The default run time is therefore 10 s.
+  - FPC gotchas hit: a method parameter `x` or local `P` beside
+    properties `X`/`P` is a duplicate identifier; `pp` and `PP`, or
+    `m` and `M`, are the same identifier; a field `FN` and a local
+    `Fn` collide too. A `for v in [0.1, 0.3, 1.0]` loop over real
+    constants compiled but crashed on its third pass, so use a typed
+    constant array.
 - **`BioSpectra`** — frequency spectra of three biological signals from
   PhysioNet: an ECG (MIT-BIH Arrhythmia record 100, MLII, 360 Hz), an EEG
   (MIT-BIH Polysomnographic record slp01a, C4-A1, 250 Hz) and an invasive
