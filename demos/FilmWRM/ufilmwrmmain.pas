@@ -41,12 +41,29 @@ unit ufilmwrmmain;
      about Lx/c - unless "absorbing zone" is ticked, which relaxes h, q
      and p to the flat film just before x = Lx.
 
+     Second case, "OpenFOAM inclined plane" (the "case" list): the
+     conditions of OpenFOAM's inclinedPlaneFilm tutorial - a 141 um
+     film entering a 64 x 64 mm plate on 30 deg over a 10 um precursor
+     film, round an 8 mm cylinder, under 1 m/s of air - by the same
+     model on finite volumes (ufilmplanemodel.pas: the spectral model
+     can't hold an inlet, an obstacle or a moving contact line). The
+     surface is then h itself in um, the cylinder a post to the top of
+     the box; Nx is the cells down the slope (square cells, Ny unused)
+     and the first-row controls set the film, incline and plate.
+     Selecting the case loads the tutorial's values; the default grid,
+     256 x 128 on the half plate, takes about a minute for the 2.5 s
+     on eight threads ("stepping on n threads"; unticked, one).
+     demos/InclinedPlane/filmplane.lpr runs the same model from the
+     command line and writes VTK frames for ParaView.
+
      Command line, for unattended checks: --snapshot=<prefix> runs,
      saves <prefix>.bmp (the window) and prints the memo; --time=<s>,
-     --film=<mm>, --angle=<deg>, --serial (no transform thread),
-     --excite, --period=<s>, --amp=<um>, --mod=<%>, --modn=<n>,
-     --absorb, --length=<mm>, --width=<mm>, --nx=<n>, --exag=<x> and
-     --start=<0..3> (the start list's index) set the run.
+     --frames=<n>, --film=<mm>, --angle=<deg>, --serial (no transform
+     thread), --excite, --period=<s>, --amp=<um>, --mod=<%>,
+     --modn=<n>, --absorb, --length=<mm>, --width=<mm>, --nx=<n>,
+     --exag=<x> and --start=<0..3> (the start list's index) set the
+     run; --case=1 picks the inclined plane, with --theta=<deg>,
+     --nocyl and --noshear.
 
 *******************************************************************************}
 
@@ -57,13 +74,20 @@ interface
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Spin,
-  newVM, uVMPlot3D, uVMPlotStack, ufilmwrmmodel;
+  newVM, uVMPlot3D, uVMPlotStack, ufilmwrmmodel, ufilmplanemodel;
 
 type
   TfmFilmWRM = class;
 
-  { The integration, off the GUI thread }
-  TFilmThread = class(TThread)
+  { A run off the GUI thread, of either case }
+  TRunThread = class(TThread)
+  public
+    Failed: Boolean;
+    FailMsg: string;
+  end;
+
+  { The spectral model's integration }
+  TFilmThread = class(TRunThread)
   private
     FForm: TfmFilmWRM;
     FModel: TFilmWRMModel;
@@ -79,10 +103,26 @@ type
   protected
     procedure Execute; override;
   public
-    Failed: Boolean;
-    FailMsg: string;
     constructor Create(AForm: TfmFilmWRM; AModel: TFilmWRMModel;
       const H0: TVMobj; ATotalTime: Double; AFrames: Integer);
+  end;
+
+  { The inclined-plane case's integration: frame by frame, each frame
+    the full plate's h in mm, cylinder cells -1 }
+  TPlaneThread = class(TRunThread)
+  private
+    FForm: TfmFilmWRM;
+    FModel: TFilmPlaneModel;
+    FTotalTime: Double;
+    FFrames: Integer;
+    FFrame: TVMobj;
+    FFrameTime: Double;
+    procedure PostFrame;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(AForm: TfmFilmWRM; AModel: TFilmPlaneModel;
+      ATotalTime: Double; AFrames: Integer);
   end;
 
   { TfmFilmWRM }
@@ -111,6 +151,12 @@ type
     seExag: TSpinEdit;
     seAmp: TFloatSpinEdit;
     cbStart: TComboBox;
+    lblCase: TLabel;
+    cbCase: TComboBox;
+    cbCylinder: TCheckBox;
+    cbShear: TCheckBox;
+    lblTheta: TLabel;
+    seTheta: TFloatSpinEdit;
     lblFilm: TLabel;
     lblAngle: TLabel;
     lblWidth: TLabel;
@@ -140,6 +186,7 @@ type
     procedure btnResetViewClick(Sender: TObject);
     procedure btnRunClick(Sender: TObject);
     procedure btnStopClick(Sender: TObject);
+    procedure cbCaseChange(Sender: TObject);
     procedure FormCloseQuery(Sender: TObject; var CanClose: Boolean);
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
@@ -152,9 +199,11 @@ type
     FSurface: TVMPlot3D;
     FStack: TVMPlotStack;
     FModel: TFilmWRMModel;
-    FThread: TFilmThread;
+    FPlane: TFilmPlaneModel;         // the inclined-plane case's model
+    FThread: TRunThread;
+    FPlaneRun: Boolean;              // the frames held are the plane case's
     FInterp: TVMobj;                 // grid rows -> display rows
-    FFrames: array of TVMobj;        // h - hN in um, (Nyd, Nx)
+    FFrames: array of TVMobj;        // h - hN in um, (Nyd, Nx); plane case: h in um
     FTimes: array of Double;
     FZBox: Double;                   // the surface box's half-height, um
     FShown: Integer;                 // the frame on the surface
@@ -166,6 +215,10 @@ type
     FRunTime: Double;                // wall time of the last run
     FUpdatingSlider: Boolean;
     function ReadParams: TFilmParams;
+    function ReadPlaneParams: TPlaneParams;
+    function PlaneCase: Boolean;
+    procedure RunPlane;
+    procedure WritePlaneInfo(Running: Boolean);
     procedure ApplyScale;
     procedure ThreadDone(Sender: TObject);
     procedure ShowFrame(i: Integer);
@@ -175,6 +228,7 @@ type
   public
     // called by the thread, through Synchronize
     procedure FrameReady(const H: TVMobj; t: Double);
+    procedure PlaneFrameReady(const H: TVMobj; t: Double);
     procedure Progress;
   end;
 
@@ -264,6 +318,57 @@ begin
   end;
 end;
 
+{ TPlaneThread }
+
+constructor TPlaneThread.Create(AForm: TfmFilmWRM; AModel: TFilmPlaneModel;
+  ATotalTime: Double; AFrames: Integer);
+begin
+  FForm := AForm;
+  FModel := AModel;
+  FTotalTime := ATotalTime;
+  FFrames := AFrames;
+  FreeOnTerminate := True;
+  inherited Create(False);
+end;
+
+procedure TPlaneThread.PostFrame;
+begin
+  FForm.PlaneFrameReady(FFrame, FFrameTime);
+end;
+
+procedure TPlaneThread.Execute;
+var
+  k: Integer;
+begin
+  try
+    FFrame := FModel.FullPlate(-1);
+    FFrameTime := 0;
+    Synchronize(@PostFrame);
+    // frame by frame, each step stopping exactly on the frame time, as
+    // filmplane.lpr does, so the two give the same frames
+    k := 1;
+    while (k <= FFrames) and not Terminated do
+    begin
+      if not FModel.AdvanceTo(FTotalTime * k / FFrames) then
+      begin
+        Failed := True;
+        FailMsg := 'the film went NaN';
+        Break;
+      end;
+      FFrame := FModel.FullPlate(-1);
+      FFrameTime := FModel.Time;
+      Synchronize(@PostFrame);
+      Inc(k);
+    end;
+  except
+    on E: Exception do
+    begin
+      Failed := True;
+      FailMsg := E.ClassName + ': ' + E.Message;
+    end;
+  end;
+end;
+
 { TfmFilmWRM }
 
 procedure TfmFilmWRM.FormCreate(Sender: TObject);
@@ -316,6 +421,34 @@ begin
     seAmp.Value := StrToFloatDef(Application.GetOptionValue('amp'), seAmp.Value);
   if Application.HasOption('start') then
     cbStart.ItemIndex := EnsureRange(StrToIntDef(Application.GetOptionValue('start'), 0), 0, 3);
+  // the inclined-plane case: its defaults first, then any options above
+  // that apply to it again over them
+  if Application.HasOption('case') and (StrToIntDef(Application.GetOptionValue('case'), 0) = 1) then
+  begin
+    cbCase.ItemIndex := 1;
+    cbCaseChange(nil);
+    if Application.HasOption('film') then
+      seFilm.Value := StrToFloatDef(Application.GetOptionValue('film'), seFilm.Value);
+    if Application.HasOption('angle') then
+      seAngle.Value := StrToFloatDef(Application.GetOptionValue('angle'), seAngle.Value);
+    if Application.HasOption('time') then
+      seTime.Value := StrToFloatDef(Application.GetOptionValue('time'), seTime.Value);
+    if Application.HasOption('length') then
+      seLength.Value := StrToIntDef(Application.GetOptionValue('length'), seLength.Value);
+    if Application.HasOption('width') then
+      seWidth.Value := StrToIntDef(Application.GetOptionValue('width'), seWidth.Value);
+    if Application.HasOption('nx') then
+      seNx.Value := StrToIntDef(Application.GetOptionValue('nx'), seNx.Value);
+    if Application.HasOption('exag') then
+      seExag.Value := StrToIntDef(Application.GetOptionValue('exag'), seExag.Value);
+  end;
+  if Application.HasOption('frames') then
+    seFrames.Value := StrToIntDef(Application.GetOptionValue('frames'), seFrames.Value);
+  if Application.HasOption('theta') then
+    seTheta.Value := StrToFloatDef(Application.GetOptionValue('theta'), seTheta.Value);
+  if Application.HasOption('nocyl') then cbCylinder.Checked := False;
+  if Application.HasOption('noshear') then cbShear.Checked := False;
+  SetRunning(False);
   FSnapshot := Application.GetOptionValue('snapshot');
   WriteInfo(False);
   if FSnapshot <> '' then
@@ -339,6 +472,7 @@ end;
 procedure TfmFilmWRM.FormDestroy(Sender: TObject);
 begin
   FreeAndNil(FModel);              // FormCloseQuery has seen the thread out
+  FreeAndNil(FPlane);
 end;
 
 procedure TfmFilmWRM.pnlRightResize(Sender: TObject);
@@ -366,35 +500,105 @@ begin
   Result.AbsorbRate := seRate.Value;
 end;
 
+function TfmFilmWRM.PlaneCase: Boolean;
+begin
+  Result := cbCase.ItemIndex = 1;
+end;
+
+{ The inclined-plane case's parameters: the plate L x W centred on the
+  cylinder, the inlet film and incline from the first row, Nx cells down
+  the slope and square cells across the computed half. }
+function TfmFilmWRM.ReadPlaneParams: TPlaneParams;
+var
+  dx: Double;
+begin
+  Result := DefaultPlaneParams;
+  Result.hN := seFilm.Value;
+  Result.Angle := seAngle.Value;
+  Result.X0 := -seLength.Value / 2;
+  Result.X1 := seLength.Value / 2;
+  Result.Wd := seWidth.Value / 2;
+  Result.Nx := seNx.Value;
+  dx := seLength.Value / seNx.Value;
+  Result.Ny := Max(4, Round(Result.Wd / dx));
+  Result.Theta := seTheta.Value;
+  Result.UseCyl := cbCylinder.Checked;
+  Result.UseShear := cbShear.Checked;
+  if not cbThreads.Checked then Result.Threads := 1;
+end;
+
+{ Switching case loads that case's conditions into the controls: the
+  OpenFOAM tutorial's for the inclined plane, the 1 mm film's for the
+  periodic plate. }
+procedure TfmFilmWRM.cbCaseChange(Sender: TObject);
+begin
+  if PlaneCase then
+  begin
+    seFilm.Value := 0.141;
+    seAngle.Value := 30;
+    seLength.Value := 64;
+    seWidth.Value := 64;
+    seNx.Value := 256;
+    seTime.Value := 2.5;
+    seFrames.Value := 125;
+    seExag.Value := 32;
+    cbThreads.Caption := Format('stepping on %d threads', [DefaultPlaneParams.Threads]);
+  end
+  else
+  begin
+    seFilm.Value := 1;
+    seAngle.Value := 2;
+    seLength.Value := 300;
+    seWidth.Value := 300;
+    seNx.Value := 256;
+    seNy.Value := 64;
+    seTime.Value := 10;
+    seFrames.Value := 100;
+    seExag.Value := 40;
+    cbThreads.Caption := 'transforms on two threads';
+  end;
+  SetRunning(Assigned(FThread));
+  ParamChange(nil);
+end;
+
 procedure TfmFilmWRM.ParamChange(Sender: TObject);
 begin
   if not Assigned(FThread) then WriteInfo(False);
 end;
 
 procedure TfmFilmWRM.SetRunning(Running: Boolean);
+var
+  Sp, Pl: Boolean;
 begin
+  // controls of the spectral model only, of the plane case only
+  Sp := (not Running) and not PlaneCase;
+  Pl := (not Running) and PlaneCase;
   btnRun.Enabled := not Running;
   btnStop.Enabled := Running;
   btnReplay.Enabled := (not Running) and (Length(FFrames) > 1);
   tbFrame.Enabled := (not Running) and (Length(FFrames) > 1);
+  cbCase.Enabled := not Running;
   seFilm.Enabled := not Running;
   seAngle.Enabled := not Running;
   seWidth.Enabled := not Running;
   seLength.Enabled := not Running;
   seNx.Enabled := not Running;
-  seNy.Enabled := not Running;
+  seNy.Enabled := Sp;              // the plane case's cells are square
   seTime.Enabled := not Running;
   seFrames.Enabled := not Running;
-  cbStart.Enabled := not Running;
+  cbStart.Enabled := Sp;
   cbThreads.Enabled := not Running;
-  cbExcite.Enabled := not Running;
-  sePeriod.Enabled := not Running;
-  seAmp.Enabled := not Running;
-  seMod.Enabled := not Running;
-  seModN.Enabled := not Running;
-  cbAbsorb.Enabled := not Running;
-  seZone.Enabled := not Running;
-  seRate.Enabled := not Running;
+  cbExcite.Enabled := Sp;
+  sePeriod.Enabled := Sp;
+  seAmp.Enabled := Sp;
+  seMod.Enabled := Sp;
+  seModN.Enabled := Sp;
+  cbAbsorb.Enabled := Sp;
+  seZone.Enabled := Sp;
+  seRate.Enabled := Sp;
+  cbCylinder.Enabled := Pl;
+  cbShear.Enabled := Pl;
+  seTheta.Enabled := Pl;
 end;
 
 procedure TfmFilmWRM.btnRunClick(Sender: TObject);
@@ -404,6 +608,12 @@ var
 begin
   if Assigned(FThread) then Exit;
   tmrReplay.Enabled := False;
+  if PlaneCase then
+  begin
+    RunPlane;
+    Exit;
+  end;
+  FPlaneRun := False;
   P := ReadParams;
   FreeAndNil(FModel);
   FModel := TFilmWRMModel.Create(P);
@@ -449,6 +659,77 @@ begin
   WriteInfo(True);
 end;
 
+{ The OpenFOAM inclined-plane case: the full plate as a surface of h in
+  um, x and y to scale, the cylinder a post up to the top of the box. }
+procedure TfmFilmWRM.RunPlane;
+var
+  PP: TPlaneParams;
+begin
+  PP := ReadPlaneParams;
+  FreeAndNil(FPlane);
+  FPlane := TFilmPlaneModel.Create(PP);
+  FPlaneRun := True;
+  SetLength(FFrames, 0);
+  SetLength(FTimes, 0);
+  FShown := -1;
+  FFailed := False;
+  FFailMsg := '';
+  FSurface.XAxisMin := FPlane.XC(0);
+  FSurface.XAxisMax := FPlane.XC(PP.Nx - 1);
+  FSurface.YAxisMin := -PP.Wd + FPlane.CellDy / 2;
+  FSurface.YAxisMax := PP.Wd - FPlane.CellDy / 2;
+  ApplyScale;
+  FStack.ClearStack;
+  FStack.Title := 'Centre line, y = 0 (the cylinder at 0)';
+  FStack.YAxisTitle := 'h (um)';
+  FStack.MaxSeries := seFrames.Value + 1;
+  FStack.ZAxisScale := seTime.Value / seFrames.Value;
+  FStack.XAxisMin := PP.X0;
+  FStack.XAxisMax := PP.X1;
+  FUpdatingSlider := True;
+  tbFrame.Max := seFrames.Value;
+  tbFrame.Position := 0;
+  FUpdatingSlider := False;
+  ProgressBar1.Position := 0;
+
+  FStartTick := GetTickCount64;
+  FThread := TPlaneThread.Create(Self, FPlane, seTime.Value, seFrames.Value);
+  FThread.OnTerminate := @ThreadDone;
+  SetRunning(True);
+  WriteInfo(True);
+end;
+
+procedure TfmFilmWRM.PlaneFrameReady(const H: TVMobj; t: Double);
+var
+  n, i, Ny: Integer;
+  F, Centre: TVMobj;
+  post: Double;
+begin
+  // h in um; the cylinder (cells of -1) stands up to the top of the box
+  post := FSurface.ZAxisMax;
+  F := H * 1000.0;
+  for i := 0 to F.Rows * F.Cols - 1 do
+    if F.DataPtr[i] < 0 then F.DataPtr[i] := post;
+  n := Length(FFrames);
+  SetLength(FFrames, n + 1);
+  SetLength(FTimes, n + 1);
+  FFrames[n] := F;
+  FTimes[n] := t;
+  // the row just above y = 0, the cylinder at 0
+  Ny := H.Rows div 2;
+  Centre := TVMobj.Create(1, H.Cols);
+  for i := 0 to H.Cols - 1 do
+    Centre.DataPtr[i] := Max(0, H.DataPtr[Ny * H.Cols + i]) * 1000;
+  FStack.AddGraph(Centre);
+  ShowFrame(n);
+  FUpdatingSlider := True;
+  tbFrame.Position := n;
+  FUpdatingSlider := False;
+  if Assigned(FThread) then
+    ProgressBar1.Position := Round(100 * t / seTime.Value);
+  WriteInfo(Assigned(FThread));
+end;
+
 procedure TfmFilmWRM.btnStopClick(Sender: TObject);
 begin
   if Assigned(FThread) then FThread.Terminate;
@@ -475,6 +756,8 @@ var
   F, Centre: TVMobj;
   P: TFilmParams;
 begin
+  FStack.Title := 'Centre line, y = 0';
+  FStack.YAxisTitle := 'h - hN (um)';
   P := FModel.Params;
   // h - hN in micrometres, on uniform y rows
   F := MatMult(FInterp, AddScalar(H, -1)) * (P.hN * 1000);
@@ -501,14 +784,33 @@ end;
 procedure TfmFilmWRM.ApplyScale;
 begin
   FZBox := 0.1 * Max(seLength.Value, seWidth.Value) * 1000 / seExag.Value;
-  FSurface.ZAxisMin := -FZBox;
-  FSurface.ZAxisMax := FZBox;
+  if FPlaneRun then
+  begin
+    // h itself, not h - hN: the same box height, from 0
+    FSurface.ZAxisMin := 0;
+    FSurface.ZAxisMax := 2 * FZBox;
+  end
+  else
+  begin
+    FSurface.ZAxisMin := -FZBox;
+    FSurface.ZAxisMax := FZBox;
+  end;
   FSurface.ZExaggeration := seExag.Value / 1000;
 end;
 
 procedure TfmFilmWRM.seExagChange(Sender: TObject);
+var
+  k, i: Integer;
+  old: Double;
 begin
+  old := FSurface.ZAxisMax;
   ApplyScale;
+  // the cylinder posts follow the box top
+  if FPlaneRun then
+    for k := 0 to High(FFrames) do
+      with FFrames[k] do
+        for i := 0 to Rows * Cols - 1 do
+          if DataPtr[i] = old then DataPtr[i] := FSurface.ZAxisMax;
   if (FShown >= 0) and (FShown <= High(FFrames)) then ShowFrame(FShown);
 end;
 
@@ -516,13 +818,22 @@ procedure TfmFilmWRM.ShowFrame(i: Integer);
 begin
   if (i < 0) or (i > High(FFrames)) then Exit;
   FShown := i;
-  FSurface.Title := Format('Film h - hN (um),  t = %.1f s,  heights x %d', [FTimes[i], seExag.Value]);
+  if FPlaneRun then
+  begin
+    FSurface.Title := Format('Film h (um),  t = %.2f s,  heights x %d', [FTimes[i], seExag.Value]);
+    lblFrame.Caption := Format('t = %.2f s', [FTimes[i]]);
+  end
+  else
+  begin
+    FSurface.Title := Format('Film h - hN (um),  t = %.1f s,  heights x %d', [FTimes[i], seExag.Value]);
+    lblFrame.Caption := Format('t = %.1f s', [FTimes[i]]);
+  end;
   FSurface.SetData(FFrames[i]);
-  lblFrame.Caption := Format('t = %.1f s', [FTimes[i]]);
 end;
 
 procedure TfmFilmWRM.Progress;
 begin
+  if FPlaneRun then Exit;
   if Assigned(FModel) then
     ProgressBar1.Position := Round(100 * FModel.Time / seTime.Value);
   WriteInfo(True);
@@ -571,6 +882,11 @@ var
   i: Integer;
   L: TStrings;
 begin
+  if PlaneCase or (Running and FPlaneRun) then
+  begin
+    WritePlaneInfo(Running);
+    Exit;
+  end;
   // the physics of the parameters on screen, from a model built for
   // them (cheap: nothing is stepped until a run)
   if Running and Assigned(FModel) then
@@ -709,6 +1025,104 @@ begin
   finally
     L.EndUpdate;
     if Own then M.Free;
+  end;
+end;
+
+{ The inclined-plane case's memo: the conditions, the model, and the
+  run's progress. }
+procedure TfmFilmWRM.WritePlaneInfo(Running: Boolean);
+var
+  PP: TPlaneParams;
+  M: TFilmPlaneModel;
+  Own: Boolean;
+  L: TStrings;
+  gsh, hmin, hmax, onset: Double;
+begin
+  // the conditions from a model built for the controls (cheap: nothing
+  // is stepped), the run's figures from the run's own
+  if Running and Assigned(FPlane) then
+  begin
+    M := FPlane;
+    Own := False;
+  end
+  else
+  begin
+    M := TFilmPlaneModel.Create(ReadPlaneParams);
+    Own := True;
+  end;
+  PP := M.Params;
+  lblExcite.Caption := '';
+  L := memInfo.Lines;
+  L.BeginUpdate;
+  try
+    L.Clear;
+    L.Add('OpenFOAM inclinedPlaneFilm case, by the');
+    L.Add('weighted-residual model on finite volumes');
+    L.Add('(ufilmplanemodel.pas), mm, s');
+    L.Add('');
+    L.Add(Format('plate %.0f x %.0f mm on %.3g deg, water at 300 K', [PP.X1 - PP.X0, 2 * PP.Wd, PP.Angle]));
+    if PP.UseCyl then
+      L.Add(Format('cylinder r = %.0f mm at the centre', [PP.RCyl]))
+    else
+      L.Add('no cylinder');
+    L.Add(Format('inlet film %.0f um held at x = %.0f mm;', [PP.hN * 1000, PP.X0]));
+    L.Add(Format('  the plate starts under a %.0f um precursor film', [PP.hB * 1000]));
+    onset := 5 / 6 / Tan(DegToRad(PP.Angle));
+    L.Add(Format('Re = q/nu = %.3g (onset of waves %.3g),', [M.qN / PlaneNuW, onset]));
+    L.Add(Format('  q %.3g mm^2/s, mean velocity %.3g mm/s', [M.qN, M.qN / PP.hN]));
+    L.Add(Format('  1-D front speed %.3g mm/s',
+      [M.qN * (1 - Power(PP.hB / PP.hN, 3)) / (PP.hN - PP.hB)]));
+    gsh := 5 / 6 * PlaneGrav * Sin(DegToRad(PP.Angle)) * PP.hN;
+    if PP.UseShear then
+    begin
+      L.Add(Format('air 1 m/s: Blasius shear, 5/4 tau/rho %.3g', [M.AirShear(0)]));
+      L.Add(Format('  mm^2/s^2 at x = 0 (gravity %.0f)', [gsh]));
+    end
+    else
+      L.Add('no air shear');
+    if PP.Theta > 0 then
+      L.Add(Format('disjoining pressure: contact angle %.0f deg', [PP.Theta]))
+    else
+      L.Add('contact line: the precursor film alone');
+    L.Add('');
+    L.Add(Format('grid: %d x %d cells on the half y >= 0, dx %.3g mm,', [PP.Nx, PP.Ny, M.CellDx]));
+    L.Add('  mirrored about y = 0; h at centres, q, p on faces');
+    L.Add(Format('explicit SSP-RK3 on %d thread(s); the step is', [M.Threads]));
+    L.Add('  held down by the drag');
+    L.Add('  5/2 nu/h^2 in the precursor (~2e-5 s late on)');
+    L.Add('walls and cylinder: free-slip, no flux, h_n = 0');
+    L.Add('Not OpenFOAM''s physics: laminar drag, not Manning;');
+    L.Add('  Blasius shear, not the coupled air; no random angle');
+    L.Add('demos/InclinedPlane/filmplane.lpr writes the same run');
+    L.Add('  as VTK frames for ParaView');
+    if Own then FreeAndNil(M);
+
+    if FPlaneRun and Assigned(FPlane) and (Length(FFrames) > 0) then
+    begin
+      M := FPlane;
+      L.Add('');
+      if Running then
+        L.Add(Format('Running... t = %.2f s, %.1f s', [M.Time, (GetTickCount64 - FStartTick) / 1000]))
+      else if FFailed then
+      begin
+        L.Add(Format('FAILED after t = %.2f s:', [M.Time]));
+        L.Add('  ' + FFailMsg);
+      end
+      else if FTimes[High(FTimes)] < seTime.Value - 1e-9 then
+        L.Add(Format('Stopped at t = %.2f s', [FTimes[High(FTimes)]]))
+      else
+        L.Add(Format('Done to t = %.4g s in %.1f s', [FTimes[High(FTimes)], FRunTime]));
+      M.HRange(hmin, hmax);
+      L.Add(Format('  %d steps, dt now %.3g s, clips %d', [M.Steps, M.LastDt, M.Clips]));
+      L.Add(Format('  h %.1f .. %.1f um, largest |U| %.1f mm/s', [hmin * 1000, hmax * 1000, M.MaxSpeed]));
+      L.Add(Format('  front (h > hN/2) at x = %.1f mm on y = 0,', [M.FrontX(0)]));
+      L.Add(Format('  %.1f mm at the wall; mass %.2f mm^3 (half)', [M.FrontX(PP.Ny - 1), M.Mass]));
+    end;
+    L.Add('');
+    L.Add('Surface: drag to rotate, wheel to zoom;');
+    L.Add('slider and Replay after a run.');
+  finally
+    L.EndUpdate;
   end;
 end;
 

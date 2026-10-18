@@ -2332,6 +2332,48 @@ packages. Compiled binaries and each demo's own `lib/` output are
     `Fn` collide too. A `for v in [0.1, 0.3, 1.0]` loop over real
     constants compiled but crashed on its third pass, so use a typed
     constant array.
+  - **OpenFOAM inclined-plane case** (2026-10-18, the "case" list,
+    `--case=1`): the conditions of OpenFOAM's `inclinedPlaneFilm`
+    tutorial: a 141 um film enters a 64 x 64 mm plate on 30 deg over a
+    10 um precursor film, flows round an 8 mm cylinder, and has 1 m/s of
+    air over it. It is the same weighted-residual model on finite volumes,
+    in `ufilmplanemodel.pas` (`TFilmPlaneModel`; its header has the
+    equations and the deliberate differences from OpenFOAM's
+    `kinematicThinFilm`).
+    - **Why not the spectral model**: it is periodic in x and linearised
+      about a flat film, so it can't hold an inlet, an obstacle or a
+      front where h falls 14-fold.
+    - **Grid and stepping**: staggered (h at cell centres, q and p on
+      faces) on the half plate y >= 0, mirrored about y = 0. Explicit
+      SSP-RK3, with the step held at ~2e-5 s by the drag in the
+      draining precursor.
+    - **Threads** (`TPlanePool`): each step is twelve phases: three per
+      right-hand side (the h ghost cells; Phi, gradients and div Q; the
+      fluxes) plus the stage update. Each phase is split by rows. A phase
+      reads only what earlier phases wrote, so any thread count gives
+      byte-identical frames (checked at 1, 2, 4 and 8 threads, and
+      against the ParaView run). Hand-offs spin, then sleep, like
+      `TFilmWorker`.
+      - The default is min(8, CPUs). On the i7-14650HX, 0.2 s of the
+        default grid takes 15.5 s on one thread and 2.1-2.3 s on eight;
+        16 gains little.
+      - The full 2.5 s in the GUI takes 61 s, against 427 s serial.
+      - FilmWRM's threads check box switches it (unticked: one thread);
+        `filmplane --threads=<n>`.
+      - **FPC 3.2.2's `TThread.ProcessorCount` is always 1 on Linux**, so
+        the CPU count comes from glibc's `sysconf(_SC_NPROCESSORS_ONLN)`.
+    - **`FilmWRM.lpi` builds at `-O3`** (added for this case). At
+      Lazarus's default `-O1` the stepping takes 1.7 times as long. An
+      `{$OPTIMIZATION LEVEL3}` in the unit does nothing; only the
+      project's level counts.
+    - **Display**: the surface is h itself in um, with the cylinder a
+      post up to the box top. Plain arrays and loops, since everything
+      is a stencil; only the frames are `TVMobj`.
+    - **`demos/InclinedPlane/filmplane.lpr`** is now a thin driver for
+      the same unit that writes the ParaView VTK frames used in
+      `~/OpenFOAM-cases/inclinedPlane`. Its frames are byte-identical to
+      those from before the move. Build:
+      `fpc -O3 -Fu../.. -Fi../.. -Fu../FilmWRM filmplane.lpr`.
 - **`BioSpectra`** — frequency spectra of three biological signals from
   PhysioNet: an ECG (MIT-BIH Arrhythmia record 100, MLII, 360 Hz), an EEG
   (MIT-BIH Polysomnographic record slp01a, C4-A1, 250 Hz) and an invasive

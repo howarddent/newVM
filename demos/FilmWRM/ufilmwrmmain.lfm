@@ -433,6 +433,71 @@ object fmFilmWRM: TfmFilmWRM
       TabOrder = 45
       Value = 30
     end
+    object lblCase: TLabel
+      Left = 448
+      Height = 15
+      Top = 116
+      Width = 34
+      Caption = 'case:'
+    end
+    object cbCase: TComboBox
+      Left = 486
+      Height = 23
+      Top = 112
+      Width = 330
+      ItemHeight = 15
+      ItemIndex = 0
+      Items.Strings = (
+        'Periodic plate (spectral model)'
+        'OpenFOAM inclined plane (finite volumes)'
+      )
+      OnChange = cbCaseChange
+      Style = csDropDownList
+      TabOrder = 46
+      Text = 'Periodic plate (spectral model)'
+    end
+    object cbCylinder: TCheckBox
+      Left = 828
+      Height = 19
+      Top = 114
+      Width = 80
+      Caption = 'cylinder'
+      Checked = True
+      OnChange = ParamChange
+      State = cbChecked
+      TabOrder = 47
+    end
+    object cbShear: TCheckBox
+      Left = 916
+      Height = 19
+      Top = 114
+      Width = 84
+      Caption = 'air shear'
+      Checked = True
+      OnChange = ParamChange
+      State = cbChecked
+      TabOrder = 48
+    end
+    object lblTheta: TLabel
+      Left = 1008
+      Height = 15
+      Top = 116
+      Width = 186
+      Caption = 'contact angle (deg, 0 = none):'
+    end
+    object seTheta: TFloatSpinEdit
+      Left = 1198
+      Height = 23
+      Top = 112
+      Width = 64
+      DecimalPlaces = 0
+      Increment = 5
+      MaxValue = 90
+      MinValue = 0
+      OnChange = ParamChange
+      TabOrder = 49
+      Value = 0
+    end
     object lblExcite: TLabel
       Left = 822
       Height = 15
