@@ -170,7 +170,8 @@ const
     [Maitre],                              // Thiopentone
     [Geller],                              // Midazolam
     [Dyck,Hannivoort],                     // Dexmedetomidine
-    [Domino]                               // Ketamine
+    [Domino],                              // Ketamine
+    [Arden]                                // Etomidate
   );
   // Drug B (the driven side of "Linked TCI") only ever makes sense as an
   // opioid/opioid-style adjunct co-administered alongside model A -
@@ -399,7 +400,7 @@ end;
 
 // Keeps LabelBolus/LabelBolusB's units in sync with whichever drug is
 // currently selected: mg for the hypnotics (Propofol/Midazolam/
-// Thiopentone/Ketamine), mcg for the McgDoseDrugs group Drug B is always
+// Thiopentone/Ketamine/Etomidate), mcg for the McgDoseDrugs group Drug B is always
 // drawn from. Called from cbDrugAChange/cbDrugBChange and once from
 // FormCreate (ItemIndex assignments made directly in code don't fire
 // OnChange, so FormCreate has to trigger this explicitly - same reasoning

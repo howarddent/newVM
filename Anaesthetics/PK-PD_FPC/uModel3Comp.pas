@@ -4,7 +4,7 @@ unit uModel3Comp;
 
     Implements various anaesthetic drug 3-compartment models, allowing
     calculation of plasma/effect-site drug concentrations for propofol,
-    remifentanil, and five other agents under various infusion regimens.
+    remifentanil, and seven other agents under various infusion regimens.
 
     Uses newVM.pas's TVMobj for the linear algebra (eigendecomposition,
     matrix exponentials via eigenvalues, LU-based linear solves), LMath's
@@ -70,9 +70,11 @@ const
 Type
   TCompartments = (V1=0,V2=1,V3=2);
   TDrugs = (Propofol=0,Fentanyl=1,Alfentanil=2,
-    Remifentanil=3,Thiopentone=4,Midazolam=5,Dexmedetomidine=6,Ketamine=7);
+    Remifentanil=3,Thiopentone=4,Midazolam=5,Dexmedetomidine=6,Ketamine=7,
+    Etomidate=8);
   TModels =(Marsh=0,Schafer=1,Scott=2,Schneider=3,Minto=4,
-    Maitre=5,Geller=6,Paedfusor=7,Eleveld=8,Dyck=9,Hannivoort=10,Domino=11);
+    Maitre=5,Geller=6,Paedfusor=7,Eleveld=8,Dyck=9,Hannivoort=10,Domino=11,
+    Arden=12);
   TModelParams = Record
     DrugName : String;
     ModelName : String;
@@ -139,9 +141,9 @@ Type
 
 const
   DrugNameStrings: Array [TDrugs] of string =('Propofol','Fentanyl','Alfentanil','Remifentanil',
-    'Thiopentone','Midazolam','Dexmedetomidine','Ketamine');
+    'Thiopentone','Midazolam','Dexmedetomidine','Ketamine','Etomidate');
   ModelNameStrings : Array [TModels] of String =('Marsh','Schafer','Scott','Schneider','Minto',
-    'Maitre','Geller','Paedfusor','Eleveld','Dyck','Hannivoort','Domino');
+    'Maitre','Geller','Paedfusor','Eleveld','Dyck','Hannivoort','Domino','Arden');
 
 implementation
 
@@ -1170,6 +1172,43 @@ begin
            end; {with}
          end; {case model}
        end; {Ketamine models}
+     end; {case drug}
+
+     Etomidate: begin
+       fmodelParams.ValidModels:=[Arden];
+       if not (Model in FmodelParams.ValidModels) then
+         raise exception.Create(modelNameStrings[Model]+'model Not applicable to Etomidate') ;
+       case model of
+         Arden: begin
+           // Arden, Holley & Stanski, Anesthesiology 65:19-27, 1986 - the
+           // only kinetic set in Stanpump's DRUGS.C (etomidate(),
+           // kinetic_set=1; see Anaesthetics/PK-PD_FPC/DRUGS.C), weight-scaled
+           // central volume and fixed rate constants. DRUGS.C's k41 (= ke0
+           // here) is 0.693/1.6 per minute, an effect-site equilibration
+           // half-time of 1.6 min, from the same paper. For 70 kg these give
+           // V1 6.3 l, Vss 4.2 l/kg, clearance 18 ml/kg/min and half-lives
+           // of 0.9 min, 9.5 min and 5.0 h. Dosed in mg, plasma in mcg/ml
+           // (DRUGS.C: infused "mg", concentration "ug" per ml), like the
+           // other mg-dosed hypnotics.
+           with fmodelParams do begin
+             DrugName:=DrugNameStrings[Drug];
+             ModelName:=ModelNameStrings[Model];
+             Plasma_units:='mcg/ml';
+             Compartment_Units:= 'mcg/ml';
+             V1 := 0.090*Actual_Weight;
+             k10 := 0.205;
+             k12 := 0.284;
+             k13 := 0.209;
+             k21 := 0.131;
+             k31 := 0.00479;
+             V2 := V1*k12/k21;
+             V3 := V1*k13/k31;
+             ke0 := 0.693/1.6;
+             Inf_Rate:=0;
+             Concentration:=2; // mg/ml, the standard 2 mg/ml preparation (DRUGS.C's default)
+           end; {with}
+         end; {case model}
+       end; {Etomidate models}
      end; {case drug}
    end;
 // Create Matrix for evaluation of first differentials. Can be used by

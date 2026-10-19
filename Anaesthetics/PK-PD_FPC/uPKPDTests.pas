@@ -31,6 +31,7 @@ type
     procedure TestIBWKnownValue;
     procedure TestMarshV1V2V3;
     procedure TestKetamineDominoV1V2V3;
+    procedure TestEtomidateArdenV1V2V3;
     procedure TestEleveldCe50KnownValue;
     procedure TestBolusInitialCondition;
     procedure TestEigenRoundTrip;
@@ -89,6 +90,25 @@ begin
     AssertTrue(Abs(M.fModelParams.V1 - V1) < Tol);
     AssertTrue(Abs(M.fModelParams.V2 - V1*0.592/0.247) < Tol);
     AssertTrue(Abs(M.fModelParams.V3 - V1*0.590/0.0146) < Tol);
+  finally
+    M.Free;
+  end;
+end;
+
+procedure TPKPDTests.TestEtomidateArdenV1V2V3;
+// Arden, Holley & Stanski, Anesthesiology 65:19-27, 1986 - see
+// Anaesthetics/PK-PD_FPC/DRUGS.C's etomidate()/kinetic_set=1.
+var
+  M : TM3Comp;
+  V1 : Double;
+begin
+  M := TM3Comp.Create(Etomidate, Arden, 70, 1.75, 35, Male);
+  try
+    V1 := 0.090*70;
+    AssertTrue(Abs(M.fModelParams.V1 - V1) < Tol);
+    AssertTrue(Abs(M.fModelParams.V2 - V1*0.284/0.131) < Tol);
+    AssertTrue(Abs(M.fModelParams.V3 - V1*0.209/0.00479) < Tol);
+    AssertTrue(Abs(M.fModelParams.ke0 - 0.693/1.6) < Tol);
   finally
     M.Free;
   end;
