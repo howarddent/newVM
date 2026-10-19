@@ -66,15 +66,19 @@ program filmplane;
   Build: fpc -O3 -Fu../.. -Fi../.. -Fu../FilmWRM filmplane.lpr
   Run:   ./filmplane [--out=<dir>] [--dx=<mm>] [--tend=<s>] [--dtout=<s>]
                      [--theta=<deg>] [--noshear] [--nocyl] [--flat]
-                     [--ny=<n>] [--threads=<n>]
+                     [--ny=<n>] [--threads=<n>] [--gpu]
                      (--ny=4 --nocyl is a 1-D front check)
+  --gpu steps the model on the GPU through OpenCL (ufilmplanecl.pas),
+  bit-identical to the CPU; without OpenCL or a double-precision device
+  it says why and runs on the CPU.
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
+{$I newVMConfig.inc}
 
 uses
   {$IFDEF UNIX} cthreads, {$ENDIF}
-  SysUtils, Math, cblas, ufilmplanemodel;
+  SysUtils, Math, cblas, ufilmplanemodel{$IFDEF HAVE_OPENCL}, ufilmplanecl{$ENDIF};
 
 var
   M: TFilmPlaneModel;
@@ -152,10 +156,21 @@ begin
   PP.Ny := Round(Opt('ny', Round(PP.Wd / Dx)));
 
   ForceDirectories(OutDir);
+  {$IFDEF HAVE_OPENCL}
+  if Flag('gpu') then M := TFilmPlaneCL.Create(PP) else
+  {$ENDIF}
   M := TFilmPlaneModel.Create(PP);
   try
     WriteLn(Format('plate %.0f x %.0f mm, %d x %d cells (dx %.3f, dy %.3f mm), cylinder %s, %d threads',
       [PP.X1 - PP.X0, PP.Wd, PP.Nx, PP.Ny, M.CellDx, M.CellDy, BoolToStr(PP.UseCyl, 'r = 8 mm', 'off'), M.Threads]));
+    {$IFDEF HAVE_OPENCL}
+    if M is TFilmPlaneCL then
+      with TFilmPlaneCL(M) do
+        if GPUReady then WriteLn('stepping on the GPU: ', DeviceName)
+        else WriteLn('GPU unavailable (', GPUError, '); stepping on the CPU');
+    {$ELSE}
+    if Flag('gpu') then WriteLn('built without OpenCL (HAVE_OPENCL); stepping on the CPU');
+    {$ENDIF}
     WriteLn(Format('water %.0f deg, inlet h %.3f mm, q %.3f mm^2/s (Re %.2f, onset %.2f), u %.1f mm/s; precursor %.3f mm',
       [PP.Angle, PP.hN, M.qN, M.qN / PlaneNuW, 5 / 6 / Tan(DegToRad(PP.Angle)), M.qN / PP.hN, PP.hB]));
     WriteLn(Format('1-D front speed (qN - qb)/(hN - b) = %.2f mm/s; air shear 5/4 tau/rho at x = 0: %.2f mm^2/s^2 (gravity 5/6 g s hN %.0f)',

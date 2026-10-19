@@ -2374,6 +2374,22 @@ packages. Compiled binaries and each demo's own `lib/` output are
       `~/OpenFOAM-cases/inclinedPlane`. Its frames are byte-identical to
       those from before the move. Build:
       `fpc -O3 -Fu../.. -Fi../.. -Fu../FilmWRM filmplane.lpr`.
+    - **GPU stepping, `filmplane --gpu`** (2026-10-19, **not yet run on
+      a GPU**): `ufilmplanecl.pas`, `TFilmPlaneCL`, a subclass that keeps
+      the state on the GPU through OpenCL (`OpenCLAPI.pas`, gated on
+      `HAVE_OPENCL`). Each step is the twelve phases as twelve kernels,
+      plus an h-range reduction whose few numbers are the only read-back
+      per step; h, q and p come back when `AdvanceTo` returns. The
+      kernels copy the CPU expressions operation for operation in double
+      precision with `FP_CONTRACT OFF`, with the CPU's folded constants
+      passed in as values, so the frames should be bit-identical to the
+      CPU's - the check to run first. For this, `TFilmPlaneModel`'s
+      fields became `protected` and `AdvanceTo`/`HRange` `virtual`.
+      Without OpenCL or `cl_khr_fp64` it says why and steps on the CPU.
+      The Windows laptop's only GPU, an Intel Iris Xe, has no FP64, so
+      only that fallback has been checked (frames byte-identical to a
+      plain CPU run); it is waiting for the P620. Expected 10-30x on a
+      discrete GPU, not measured.
 - **`BioSpectra`** — frequency spectra of three biological signals from
   PhysioNet: an ECG (MIT-BIH Arrhythmia record 100, MLII, 360 Hz), an EEG
   (MIT-BIH Polysomnographic record slp01a, C4-A1, 250 Hz) and an invasive

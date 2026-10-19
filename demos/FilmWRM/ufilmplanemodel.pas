@@ -145,7 +145,7 @@ type
   end;
 
   TFilmPlaneModel = class
-  private
+  protected   // TFilmPlaneCL (ufilmplanecl.pas) steps the same state on a GPU
     FP: TPlaneParams;
     Nx, Ny: Integer;
     Dx, Dy, gs, gc, FqN, PiB: Double;
@@ -195,10 +195,10 @@ type
     function StableDt: Double;
     // steps up to time t exactly (the last step shortened); False if the
     // film went NaN
-    function AdvanceTo(t: Double): Boolean;
+    function AdvanceTo(t: Double): Boolean; virtual;
     function Mass: Double;                       // mm^3, the computed half
     function FrontX(j: Integer): Double;         // furthest x with h > hN/2
-    procedure HRange(out hmin, hmax: Double);    // over the fluid cells
+    procedure HRange(out hmin, hmax: Double); virtual;   // over the fluid cells
     function MaxSpeed: Double;                   // largest |U|, mm/s
     // the full plate, mirrored about y = 0: (2 Ny, Nx), row 0 at
     // y = -Wd + dy/2, h in mm; cylinder cells hold SolidValue
