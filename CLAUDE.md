@@ -2448,6 +2448,46 @@ packages. Compiled binaries and each demo's own `lib/` output are
     duplicate identifier, and `U_{N-1}` inside a `{ }` header comment
     opens a nested comment. `--snapshot=<prefix>` and `--n=<N>` work as
     in Benney (on Windows the snapshot's GL area is blank).
+- **`Burgers`** (added 2026-10-19) — shock formation in the inviscid
+  Burgers equation `u_t + (u^2/2)_x = 0` on a periodic domain, by finite
+  volumes, as a `TVMPlotStack` waterfall like `KdV` (t = 0 in front).
+  `uburgersmodel.pas` (its header has the scheme), `uburgersmain.pas/.lfm`.
+  The user asked for the finite-volume scheme only. A Chebyshev method
+  like `KdV`'s works only up to the breaking time t* = -1/min u0', and
+  viscous Burgers with a Cole-Hopf check needs N far beyond low order for
+  a thin shock. Things worth knowing:
+  - **Scheme**: MUSCL reconstruction with no limiter (first-order
+    Godunov), minmod or MC (the default), and the exact Godunov flux
+    `max(f(max(uL,0)), f(min(uR,0)))`, valid for convex `f = u^2/2`,
+    whose transonic rarefaction gives 0, so no entropy fix is needed.
+    SSP-RK3 at CFL 0.5, two periodic ghost cells each side. Plain arrays
+    and loops; only the slices become `TVMobj`. It is explicit and fast
+    (a few hundred steps, ~15 ms), so there's no thread: Run computes
+    every slice, then a timer adds them to the stack one by one.
+  - **Exact solution: the Hopf-Lax formula**, `u = (x - y*)/t` with
+    `y*` minimising `U0(y) + (x - y)^2/(2t)`. It is the entropy solution
+    at every t, shocks included (the equal-area rule), with no shock
+    tracking. U0 is the mean times x plus a tabulated periodic
+    remainder. The minimum is sampled over `[x - umax t, x - umin t]`,
+    then polished by Newton on the characteristic `y + t u0(y) = x`,
+    kept within one sample.
+  - **Initial conditions**: `-a sin x` (a stationary shock at 0, t* = 1),
+    `a(1/2 - sin x)` (a moving shock), a Gaussian hump (one right-going
+    shock, decaying) and an N-wave `2ax exp(-x^2)` (two shocks moving
+    apart). The run time defaults per case, scaled by 1/a.
+  - **Checks**, all at the defaults (400 cells, MC):
+    - every shock is in the exact solution's cell;
+    - mass is conserved to all printed digits;
+    - the energy lost at the shock matches the exact solution's
+      (sine: 0.62269 against 0.62267);
+    - the sine's L1 error is 9e-5 at t = 3.
+    For the Gaussian, the L1 error at 200/400/800 cells is
+    0.087/0.042/0.026 first-order, 0.021/0.014/0.0045 minmod and
+    0.017/0.012/0.0035 MC. That is roughly first order, the most any
+    scheme gets once there is a shock.
+  - FPC gotchas hit again: a local `fp` beside the field `FP`, and
+    `F_{i+1/2}` in a `{ }` comment. `--snapshot=<prefix>`, `--ic=<0..3>`,
+    `--cells=<N>`, `--limiter=<0..2>`.
 - **`BioSpectra`** — frequency spectra of three biological signals from
   PhysioNet: an ECG (MIT-BIH Arrhythmia record 100, MLII, 360 Hz), an EEG
   (MIT-BIH Polysomnographic record slp01a, C4-A1, 250 Hz) and an invasive

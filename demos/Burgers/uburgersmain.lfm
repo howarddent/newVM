@@ -1,0 +1,221 @@
+object fmBurgers: TfmBurgers
+  Left = 200
+  Height = 760
+  Top = 120
+  Width = 1280
+  Caption = 'Inviscid Burgers equation - shock formation by finite volumes (newVM)'
+  ClientHeight = 760
+  ClientWidth = 1280
+  OnCreate = FormCreate
+  OnDestroy = FormDestroy
+  Position = poScreenCenter
+  object pnlControls: TPanel
+    Left = 0
+    Height = 76
+    Top = 0
+    Width = 1280
+    Align = alTop
+    BevelOuter = bvNone
+    ClientHeight = 76
+    ClientWidth = 1280
+    TabOrder = 0
+    object lblIC: TLabel
+      Left = 8
+      Height = 15
+      Top = 12
+      Width = 40
+      Caption = 'initial:'
+    end
+    object cbIC: TComboBox
+      Left = 52
+      Height = 23
+      Top = 8
+      Width = 170
+      ItemHeight = 15
+      ItemIndex = 0
+      Items.Strings = (
+        'Sine: stationary shock'
+        'Sine + mean: moving shock'
+        'Gaussian hump'
+        'N-wave (two shocks)'
+      )
+      Style = csDropDownList
+      TabOrder = 0
+      Text = 'Sine: stationary shock'
+      OnChange = cbICChange
+    end
+    object lblA: TLabel
+      Left = 234
+      Height = 15
+      Top = 12
+      Width = 58
+      Caption = 'amplitude:'
+    end
+    object seA: TFloatSpinEdit
+      Left = 296
+      Height = 23
+      Hint = 'a: times scale as 1/a'
+      Top = 8
+      Width = 64
+      DecimalPlaces = 2
+      Increment = 0.25
+      MaxValue = 10
+      MinValue = 0.1
+      ShowHint = True
+      TabOrder = 1
+      Value = 1
+    end
+    object lblCells: TLabel
+      Left = 372
+      Height = 15
+      Top = 12
+      Width = 34
+      Caption = 'cells:'
+    end
+    object seCells: TSpinEdit
+      Left = 408
+      Height = 23
+      Hint = 'number of finite-volume cells'
+      Top = 8
+      Width = 70
+      Increment = 100
+      MaxValue = 5000
+      MinValue = 20
+      ShowHint = True
+      TabOrder = 2
+      Value = 400
+    end
+    object lblLimiter: TLabel
+      Left = 490
+      Height = 15
+      Top = 12
+      Width = 40
+      Caption = 'limiter:'
+    end
+    object cbLimiter: TComboBox
+      Left = 534
+      Height = 23
+      Top = 8
+      Width = 180
+      ItemHeight = 15
+      ItemIndex = 2
+      Items.Strings = (
+        'none (first-order Godunov)'
+        'minmod'
+        'MC (monotonised central)'
+      )
+      Style = csDropDownList
+      TabOrder = 3
+      Text = 'MC (monotonised central)'
+    end
+    object lblTime: TLabel
+      Left = 726
+      Height = 15
+      Top = 12
+      Width = 58
+      Caption = 'run to t ='
+    end
+    object seTime: TFloatSpinEdit
+      Left = 788
+      Height = 23
+      Hint = ''
+      Top = 8
+      Width = 64
+      DecimalPlaces = 2
+      Increment = 0.5
+      MaxValue = 1000
+      MinValue = 0.1
+      ShowHint = True
+      TabOrder = 4
+      Value = 3
+    end
+    object lblSlices: TLabel
+      Left = 864
+      Height = 15
+      Top = 12
+      Width = 40
+      Caption = 'slices:'
+    end
+    object seSlices: TSpinEdit
+      Left = 908
+      Height = 23
+      Hint = 'number of output times'
+      Top = 8
+      Width = 60
+      Increment = 10
+      MaxValue = 200
+      MinValue = 2
+      ShowHint = True
+      TabOrder = 5
+      Value = 40
+    end
+    object btnRun: TButton
+      Left = 8
+      Height = 27
+      Top = 42
+      Width = 80
+      Caption = 'Run'
+      TabOrder = 6
+      OnClick = btnRunClick
+    end
+    object btnReplay: TButton
+      Left = 96
+      Height = 27
+      Top = 42
+      Width = 80
+      Caption = 'Replay'
+      Enabled = False
+      TabOrder = 7
+      OnClick = btnReplayClick
+    end
+    object btnResetView: TButton
+      Left = 184
+      Height = 27
+      Top = 42
+      Width = 90
+      Caption = 'Reset view'
+      TabOrder = 8
+      OnClick = btnResetViewClick
+    end
+    object cbExact: TCheckBox
+      Left = 290
+      Height = 19
+      Top = 46
+      Width = 110
+      Caption = 'Exact solution'
+      Checked = True
+      State = cbChecked
+      TabOrder = 9
+      OnChange = cbExactChange
+    end
+  end
+  object memInfo: TMemo
+    Left = 900
+    Height = 684
+    Top = 76
+    Width = 380
+    Align = alRight
+    Font.Name = 'Courier New'
+    ParentFont = False
+    ReadOnly = True
+    ScrollBars = ssAutoBoth
+    TabOrder = 1
+    WordWrap = False
+  end
+  object pnlPlot: TPanel
+    Left = 0
+    Height = 684
+    Top = 76
+    Width = 900
+    Align = alClient
+    BevelOuter = bvNone
+    TabOrder = 2
+  end
+  object tmrReplay: TTimer
+    Enabled = False
+    Interval = 60
+    OnTimer = tmrReplayTimer
+    Left = 40
+    Top = 120
+  end
+end
