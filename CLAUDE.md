@@ -2400,6 +2400,54 @@ packages. Compiled binaries and each demo's own `lib/` output are
       only that fallback has been checked (frames byte-identical to a
       plain CPU run); it is waiting for the P620. Expected 10-30x on a
       discrete GPU, not measured.
+- **`KdV`** (added 2026-10-19) — two solitons of different heights,
+  launched at the same time with the taller behind, passing through each
+  other under the Korteweg-de Vries equation `u_t + 6 u u_x + u_xxx = 0`,
+  shown as a `TVMPlotStack` waterfall like `Benney` (t = 0 in front).
+  `ukdvmodel.pas` (its header has the derivation), `ukdvmain.pas/.lfm`;
+  the integrator is `../Benney/ukapsrentrop.pas`, reached through
+  `OtherUnitFiles`, not copied. Things worth knowing:
+  - **One low-order Chebyshev polynomial over the whole domain**, at the
+    user's request, with barycentric interpolation throughout. The
+    boundary conditions u(-L) = u(L) = u_x(L) = 0 (u_x = 0 at the right
+    end, where it makes the energy flux dissipative) are **built into the
+    basis**, u = (1-x)^2 (1+x) q(x), with q the degree N-2 polynomial on
+    the N-1 interior points. Replacing collocation rows instead, the usual
+    trick, gave spurious eigenvalues with real parts of 1e7..1e10 in a
+    numpy prototype, and the run blew up at once. With the basis every
+    eigenvalue has a negative real part (checked to N = 256).
+  - **Barycentric**: the interior points are the zeros of U_(N-1), with
+    weights (-1)^j sin^2(pi j/N), so no products of differences are
+    needed. They give q's differentiation matrix, u's derivatives by the
+    product rule (matrices M1, M3), and the display, which is the same
+    s q evaluated on 401 uniform points (`InterpMatrix`, one `MatMult`
+    per slice).
+  - **How low an order**: KdV is scale invariant, so only the domain's
+    length in soliton widths matters. With heights 2 and 0.5 on
+    -20 .. 20 through the collision to t = 5.5, the largest error against
+    the exact solution is 0.004 at N = 128 (the default), 3e-4 at
+    N = 160, and 0.74 at N = 96; N = 64 and below fail. N = 384 on
+    -40 .. 40 gives 2e-5.
+  - **Exact solution**: the initial condition is Hirota's two-soliton
+    solution at t = 0, which also gives the exact answer at every slice
+    (a white overlay on every fifth, and the memo's max error). Its xi
+    are not both crest positions: the soliton on the right sits at
+    xi - ln(A)/ki, so the right-hand one's entered position is moved back
+    by that for the formula. The first run put the shorter soliton 2.2
+    ahead of where it was asked for, and the memo's phase-shift check
+    caught it. The memo now checks both crests against free motion plus
+    the predicted shifts (+1.10 and -2.20 at the defaults; both exact) and
+    the mass 2(k1 + k2) (5.9997 against 6).
+  - **Time stepping**: Kaps-Rentrop with the analytic Jacobian,
+    tolerance 1e-4, about 230 steps and under 1 s. **`OdeInt` gained
+    `ScaleFloor`** (default 1e-30, the old `Tiny`, so Benney is
+    unchanged), which is added to the error scale. KdV passes the taller
+    soliton's height: on the flat u ~ 0 background a purely relative test
+    asks for accuracy on nothing.
+  - FPC gotchas hit again: a local `Fx` beside the field `FX` is a
+    duplicate identifier, and `U_{N-1}` inside a `{ }` header comment
+    opens a nested comment. `--snapshot=<prefix>` and `--n=<N>` work as
+    in Benney (on Windows the snapshot's GL area is blank).
 - **`BioSpectra`** — frequency spectra of three biological signals from
   PhysioNet: an ECG (MIT-BIH Arrhythmia record 100, MLII, 360 Hz), an EEG
   (MIT-BIH Polysomnographic record slp01a, C4-A1, 250 Hz) and an invasive

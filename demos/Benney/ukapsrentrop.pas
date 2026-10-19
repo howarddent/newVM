@@ -66,10 +66,14 @@ function Stiff(var y, dydx: TVMobj; var x: Double; htry, eps: Double;
 
 { Integrates yStart from x1 to x2 to relative accuracy eps, first trying
   step h1 and never going below hmin. yStart is replaced by the solution
-  at x2. HNext returns the step size to try on a following interval. }
+  at x2. HNext returns the step size to try on a following interval.
+  ScaleFloor is added to every component's error scale |y| + |h dy/dx|:
+  the default keeps the test relative, while a floor of the solution's
+  typical size makes it absolute where y is near zero (demos/KdV, whose
+  flat background would otherwise demand relative accuracy on ~0). }
 function OdeInt(var yStart: TVMobj; x1, x2, eps, h1, hmin: Double;
   Derivs: TDerivs; Jacobn: TJacobn; OnStep: TStepEvent;
-  out HNext: Double): TErrFlags;
+  out HNext: Double; ScaleFloor: Double = 1e-30): TErrFlags;
 
 implementation
 
@@ -164,10 +168,9 @@ end;
 
 function OdeInt(var yStart: TVMobj; x1, x2, eps, h1, hmin: Double;
   Derivs: TDerivs; Jacobn: TJacobn; OnStep: TStepEvent;
-  out HNext: Double): TErrFlags;
+  out HNext: Double; ScaleFloor: Double): TErrFlags;
 const
   MaxStp = 1000;
-  Tiny = 1e-30;
 var
   nstp, i: Integer;
   x, h, hdid: Double;
@@ -182,11 +185,11 @@ begin
   for nstp := 1 to MaxStp do
   begin
     dydx := Derivs(x, yStart);
-    // scaling for the error test: |y| + |h dy/dx|, kept off zero
+    // scaling for the error test: |y| + |h dy/dx|, kept off zero by ScaleFloor
     yscal := TVMobj.Create(yStart.Rows, 1);
     YP := yStart.DataPtr; DP := dydx.DataPtr; SP := yscal.DataPtr;
     for i := 0 to yStart.Rows - 1 do
-      SP[i] := Abs(YP[i]) + Abs(h * DP[i]) + Tiny;
+      SP[i] := Abs(YP[i]) + Abs(h * DP[i]) + ScaleFloor;
     if (x + h - x2) * (x + h - x1) > 0 then h := x2 - x;   // don't overshoot x2
     Flag := Stiff(yStart, dydx, x, h, eps, yscal, hdid, HNext, Derivs, Jacobn);
     if Flag <> OK then Exit(Flag);
