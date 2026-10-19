@@ -2089,7 +2089,8 @@ packages. Compiled binaries and each demo's own `lib/` output are
       perspective then foreshortens the right end. Mouse drag signs were
       flipped to feel the same. The box planes now go on the side away
       from the camera.
-    - **`NewestAtBack`** (default False) and **`ZAxisScale`** (default
+    - **`NewestAtBack`** (default False then; True since 2026-10-19,
+      see below) and **`ZAxisScale`** (default
       1), same day. True keeps the first graph at the front and puts each
       later one a step further back: `AddGraph` appends with `Age` =
       count held, so index order still runs front to back and `Paint`'s
@@ -2104,8 +2105,17 @@ packages. Compiled binaries and each demo's own `lib/` output are
       red. `DrawSlice` cubes the colour fraction, so most values sit near
       `LowColor`, and dark blue on the black background was nearly
       invisible. No program overrides the defaults.
-    - The PlotStack and SpectrumDemo programs pick up these defaults too
-      (`NewestAtBack` stays off there). Both still build.
+    - The PlotStack and SpectrumDemo programs pick up these defaults too.
+      Both still build.
+    - **Benney's look is the component default** (2026-10-19, at the
+      user's request): `NewestAtBack` now defaults to True, and the
+      constructor's demo data is `DefaultMaxSeries` (40) profiles of a
+      sech² hump travelling left to right and growing, with a small
+      ripple ahead of it, filling the whole depth as Benney's slices do
+      (`MaxSeries` = slice count). SpectrumDemo, a live waterfall, sets
+      `NewestAtBack := False` explicitly; PlotStack takes the new
+      default. The IDE was rebuilt (`lazbuild --build-ide=`, Windows) so
+      the Form Designer shows it.
 - **`Benney2D`** (added 2026-10-15) — the 2-D Benney equation for a
   water film falling down an inclined plate, in physical units (mm, s),
   on a Fourier (down the slope, periodic) x Chebyshev (across the plate)

@@ -125,6 +125,7 @@ begin
   FPlot.YAxisTitle := 'Power (dB)';
   FPlot.ZAxisTitle := 'Time';
   FPlot.MaxSeries := 60;
+  FPlot.NewestAtBack := False; // live waterfall: newest enters at the front
   FPlot.ClearStack;   // discard the component's own default demo data
 
   FSquareWave := BuildSquareWave(SignalLength, SquareWaveBin, SquareWaveAmplitude);

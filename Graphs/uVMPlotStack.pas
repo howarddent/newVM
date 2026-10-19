@@ -119,7 +119,8 @@ unit uVMPlotStack;
      t = 0 profile is at the back). The vertical fade to black at each
      ribbon's own floor is part of the ribbon's look and stays either way.
 
-     STACKING ORDER (NewestAtBack, default False): False is the classic
+     STACKING ORDER (NewestAtBack, default True since 19 Oct 2026, the
+     way demos/Benney shows its time evolution): False is the classic
      waterfall above - each new graph enters at the FRONT and everything
      already there steps back. True turns it round for a time evolution
      read from the start: the first graph stays at the front and each
@@ -350,10 +351,11 @@ type
     // recedes naturally. False: the parallel (glOrtho) view, in which the
     // far end tends to look wider than the near one - see DefaultYaw
     property Perspective: Boolean read FPerspective write SetPerspective default True;
-    // False (default): each new graph enters at the front. True: the first
-    // stays at the front and each later one goes one step further back -
-    // see STACKING ORDER. Changing it clears the stack.
-    property NewestAtBack: Boolean read FNewestAtBack write SetNewestAtBack default False;
+    // True (default): the first graph stays at the front and each later
+    // one goes one step further back, as demos/Benney. False: each new
+    // graph enters at the front (a live waterfall) - see STACKING ORDER.
+    // Changing it clears the stack.
+    property NewestAtBack: Boolean read FNewestAtBack write SetNewestAtBack default True;
     // Depth-axis labels are Age x ZAxisScale (e.g. the time between
     // graphs), so the scale can read in the caller's units
     property ZAxisScale: Double read FZAxisScale write SetZAxisScale;
@@ -555,7 +557,7 @@ begin
   FAxisStyle := sasBox;
   FFadeWithAge := False;
   FPerspective := True;
-  FNewestAtBack := False;
+  FNewestAtBack := True;
   FZAxisScale := 1;
   FUseFreqAxis := False;
   FXAxisMin := 0;
@@ -575,7 +577,9 @@ begin
   FTimer.Enabled := False;
   FTimer.OnTimer := @TimerTick;
 
-  // Default demo data: a dozen phase-shifted decaying sine waves, built
+  // Default demo data: DefaultMaxSeries profiles of a hump travelling
+  // and slowly growing across a flat film, oldest at the front, so a
+  // fresh component looks like demos/Benney's waterfall. Built
   // and added via the same AddGraph path a real caller uses - see this
   // unit's header and TVMPlot3D.BuildDefaultDemoMatrix's own comment for
   // why this is a plain Math.Sin/Exp loop (TVMobj.Create/Element are
@@ -588,8 +592,8 @@ begin
   XAxisTitle := 'Index';
   YAxisTitle := 'Value';
   ZAxisTitle := 'Time';
-  for k := 0 to 11 do
-    AddGraph(BuildDefaultDemoSlice(k * 0.3));
+  for k := 0 to DefaultMaxSeries - 1 do
+    AddGraph(BuildDefaultDemoSlice(k / (DefaultMaxSeries - 1)));
 end;
 
 destructor TVMPlotStack.Destroy;
@@ -1132,21 +1136,28 @@ begin
   Invalidate;
 end;
 
-// Default demo data: a decaying sine wave, phase-shifted per call - see
-// the constructor's own comment for why this is deliberately a plain
-// Math.Sin/Exp loop with no MKL/IPP involvement.
+// Default demo data: one profile, at fraction Phase (0..1) of the run, of
+// a sech^2 hump travelling left to right across a flat film and growing
+// as it goes, with a small capillary ripple ahead of it - the look of
+// demos/Benney's solitary wave. See the constructor's own comment for why
+// this is deliberately a plain Math loop with no MKL/IPP involvement.
 function TVMPlotStack.BuildDefaultDemoSlice(Phase: Double): TVMobj;
 const
-  N = 60;
+  N = 200;
 var
   M: TVMobj;
   i: Integer;
-  x: Double;
+  x, c, a, s, ahead: Double;
 begin
   M := TVMobj.Create(1, N);
+  c := 40 + 110 * Phase;            // crest position, in points
+  a := 0.05 + 0.10 * Phase;         // crest height
   for i := 0 to N - 1 do begin
-    x := i / (N - 1) * 4 * Pi;
-    M[0, i] := Sin(x + Phase) * Exp(-0.15 * x);
+    x := (i - c) / 8;
+    s := 1 / Cosh(x);
+    ahead := 0;
+    if x > 0 then ahead := -0.25 * a * Exp(-0.35 * x) * Sin(1.6 * x);
+    M[0, i] := a * s * s + ahead - 0.04 * a;
   end;
   result := M;
 end;
