@@ -1,0 +1,147 @@
+object Form1: TForm1
+  Left = 300
+  Height = 820
+  Top = 120
+  Width = 1100
+  Caption = 'newVM oxygen entrainment demo'
+  ClientHeight = 820
+  ClientWidth = 1100
+  Position = poScreenCenter
+  LCLVersion = '4.99.0.0'
+  OnCreate = FormCreate
+  OnShow = FormShow
+  object pnlControls: TPanel
+    Left = 0
+    Height = 190
+    Top = 0
+    Width = 1100
+    Align = alTop
+    BevelOuter = bvNone
+    ClientHeight = 190
+    ClientWidth = 1100
+    TabOrder = 0
+    object lblSource: TLabel
+      Left = 8
+      Height = 15
+      Top = 10
+      Width = 120
+      Caption = 'Source O2 (%):'
+    end
+    object seSource: TFloatSpinEdit
+      Left = 150
+      Height = 23
+      Top = 6
+      Width = 80
+      DecimalPlaces = 1
+      Increment = 1
+      MaxValue = 100
+      MinValue = 21
+      TabOrder = 0
+      Value = 100
+      OnChange = ControlChange
+    end
+    object lblAmbient: TLabel
+      Left = 8
+      Height = 15
+      Top = 42
+      Width = 120
+      Caption = 'Room air O2 (%):'
+    end
+    object seAmbient: TFloatSpinEdit
+      Left = 150
+      Height = 23
+      Top = 38
+      Width = 80
+      DecimalPlaces = 1
+      Increment = 0.1
+      MaxValue = 30
+      MinValue = 0
+      TabOrder = 1
+      Value = 20.9
+      OnChange = ControlChange
+    end
+    object lblRmax: TLabel
+      Left = 8
+      Height = 15
+      Top = 74
+      Width = 120
+      Caption = 'Ratio axis to:'
+    end
+    object seRmax: TFloatSpinEdit
+      Left = 150
+      Height = 23
+      Top = 70
+      Width = 80
+      DecimalPlaces = 0
+      Increment = 5
+      MaxValue = 200
+      MinValue = 1
+      TabOrder = 2
+      Value = 30
+      OnChange = ControlChange
+    end
+    object lblRatio: TLabel
+      Left = 8
+      Height = 15
+      Top = 106
+      Width = 120
+      Caption = 'Your ratio (air:O2):'
+    end
+    object seRatio: TFloatSpinEdit
+      Left = 150
+      Height = 23
+      Top = 102
+      Width = 80
+      DecimalPlaces = 2
+      Increment = 0.1
+      MaxValue = 200
+      MinValue = 0
+      TabOrder = 3
+      Value = 5
+      OnChange = ControlChange
+    end
+    object cbVenturi: TCheckBox
+      Left = 8
+      Height = 19
+      Top = 136
+      Width = 200
+      Caption = 'Venturi valve ratings'
+      Checked = True
+      State = cbChecked
+      TabOrder = 4
+      OnChange = ControlChange
+    end
+    object cbLES: TCheckBox
+      Left = 8
+      Height = 19
+      Top = 162
+      Width = 200
+      Caption = 'Trachea jet LES (trachLESpeep)'
+      Checked = True
+      State = cbChecked
+      TabOrder = 5
+      OnChange = ControlChange
+    end
+    object memResults: TMemo
+      Left = 250
+      Height = 176
+      Top = 6
+      Width = 842
+      Anchors = [akTop, akLeft, akRight]
+      Font.Name = 'Monospace'
+      ParentFont = False
+      ReadOnly = True
+      ScrollBars = ssAutoVertical
+      TabOrder = 6
+    end
+  end
+  object pnlPlot: TPanel
+    Left = 0
+    Height = 630
+    Top = 190
+    Width = 1100
+    Align = alClient
+    BevelOuter = bvNone
+    TabOrder = 1
+  end
+end

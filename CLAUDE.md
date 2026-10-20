@@ -2846,6 +2846,20 @@ packages. Compiled binaries and each demo's own `lib/` output are
   fails at form load with "Error reading rgDegree.ChildSizing..." -
   caught only by screenshotting the running demo, not by the build;
   `AutoFill` alone lays the buttons out fine.
+- **`O2Entrainment`** (added 2026-10-20) — the O2 % delivered when an
+  oxygen jet entrains room air, `F = (Fs + Fa R)/(1 + R)`, against the
+  entrainment ratio R (volumes of air per volume of O2), on one
+  `TVMPlot2D`. The curve is one vector expression over a `linspace`, with
+  `1/(1 + R)` as `Exp(-Ln(...))` (no elementwise division). Spin edits set
+  the source and room-air O2 %, the axis range and a ratio of your own
+  (a green point plus an `AddXMarker` read-out). Blue diamonds are the six
+  Venturi valve ratings (24-60 %, nominal ratio `(100 - F)/(F - 21)`), and
+  black circles are the trachLESpeep LES's measured ratios (2.42 over
+  14-15 ms, 2.01 over 10-15 ms; 44.0 and 47.2 % if the jet were O2). The
+  LES points get no X marker of their own, because its caption collided
+  with the user's. The memo tabulates the valves and the inverse rule
+  `R = (Fs - F)/(F - Fa)`. `--snapshot=<file.png>` saves the plot, prints
+  the memo and exits.
 - **`SpectralDiff`** — Chebyshev spectral differentiation of
   `f(x) = exp(x)*sin(5x)` (the example function, from Trefethen's
   *Spectral Methods in MATLAB*) via `DCT1` (newVM.pas's FFTW-backed
