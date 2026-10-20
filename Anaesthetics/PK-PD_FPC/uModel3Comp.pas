@@ -61,7 +61,7 @@ unit uModel3Comp;
 
 interface
 uses
-  urkf, ubisect, utypes, Math, DateUtils, Sysutils, newVM, newVMComplex,
+  urkf, ubisect, Math, utypes, DateUtils, Sysutils, newVM, newVMComplex,
   uBodyStats, uKapsRentrop;
 
 const
