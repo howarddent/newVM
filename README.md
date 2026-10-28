@@ -77,10 +77,21 @@ from where.
 
 Other developers are welcome to use and extend this code.
 
-## Screenshot
+## Screenshots
 
 `Wave2D_FPC` (under `demos/Chebyshev/`), a Chebyshev-spectral solver for
 the 2D wave equation `u_tt = u_xx + u_yy`, rendered live via the
 `TVMPlot3D` component:
 
 ![2D Wave Equation demo](docs/images/wave2d.png)
+
+`JetFlow` (under `demos/`), a jet-ventilation calculator built on
+JetVent's cannula model: oxygen flow from the driving pressure and the
+jet's bore and length, whether the jet is choked, the highest Mach number
+and lowest temperature and pressure in the jet, its thrust, and the stall
+pressure into adult male, adult female and 7-year-old tracheas; any bore
+and length, or one of JetVent's six bench cannulae from a list. Here the
+Lindholm (2 mm, 9.5 cm) at 3.5 bar is choked and expands to Mach 1.31 at
+−55 °C outside it:
+
+![JetFlow jet-ventilation calculator](docs/images/jetflow.png)

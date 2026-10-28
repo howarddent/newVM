@@ -1,89 +1,106 @@
 object fmJetFlow: TfmJetFlow
   Left = 200
-  Height = 820
-  Top = 80
+  Height = 854
+  Top = 60
   Width = 640
   Caption = 'Jet Flow Calculator (oxygen) - Dr H Dent'
-  ClientHeight = 820
+  ClientHeight = 854
   ClientWidth = 640
   Position = poScreenCenter
   LCLVersion = '4.99.0.0'
   OnCreate = FormCreate
   object gbInput: TGroupBox
     Left = 8
-    Height = 158
+    Height = 192
     Top = 8
     Width = 624
     Align = alTop
     BorderSpacing.Around = 8
     Caption = 'Jet'
-    ClientHeight = 138
+    ClientHeight = 172
     ClientWidth = 620
     TabOrder = 0
-    object lblP: TLabel
+    object lblCannula: TLabel
       Left = 12
       Height = 17
       Top = 10
+      Width = 200
+      Caption = 'Cannula'
+    end
+    object cbCannula: TComboBox
+      Left = 280
+      Height = 30
+      Top = 4
+      Width = 320
+      ItemHeight = 0
+      OnChange = cbCannulaChange
+      Style = csDropDownList
+      TabOrder = 0
+    end
+    object lblP: TLabel
+      Left = 12
+      Height = 17
+      Top = 44
       Width = 200
       Caption = 'Driving pressure (bar gauge)'
     end
     object seP: TFloatSpinEdit
       Left = 280
       Height = 30
-      Top = 4
+      Top = 38
       Width = 120
       DecimalPlaces = 2
       Increment = 0.1
       MaxValue = 10
       MinValue = 0.05
       OnChange = InputChange
-      TabOrder = 0
+      TabOrder = 1
       Value = 2
     end
     object lblD: TLabel
       Left = 12
       Height = 17
-      Top = 44
+      Top = 78
       Width = 200
       Caption = 'Jet internal diameter (mm)'
     end
     object seD: TFloatSpinEdit
       Left = 280
       Height = 30
-      Top = 38
+      Top = 72
       Width = 120
       DecimalPlaces = 2
       Increment = 0.05
       MaxValue = 6
       MinValue = 0.2
       OnChange = InputChange
-      TabOrder = 1
+      TabOrder = 2
       Value = 2
     end
     object lblL: TLabel
       Left = 12
       Height = 17
-      Top = 78
+      Top = 112
       Width = 200
       Caption = 'Jet length (cm)'
     end
     object seL: TFloatSpinEdit
       Left = 280
       Height = 30
-      Top = 72
+      Top = 106
       Width = 120
       DecimalPlaces = 1
       Increment = 0.5
       MaxValue = 200
       MinValue = 0.5
       OnChange = InputChange
-      TabOrder = 2
+      TabOrder = 3
       Value = 10
     end
     object lblGas: TLabel
       Left = 12
       Height = 17
-      Top = 112
+      Top = 146
       Width = 400
       Caption = 'Gas: oxygen (O2) at 20 °C, discharging into 1 atm'
     end

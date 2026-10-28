@@ -1936,7 +1936,12 @@ packages. Compiled binaries and each demo's own `lib/` output are
   for oxygen at 20 C into 1 atm; out, the flow (`CalcFlow`), a choked
   indicator, the highest Mach number, lowest temperature and lowest
   pressure in the jet, and the thrust, with the working in a memo.
-  Recalculates on every change; `--p`/`--d`/`--l` set the inputs. Added
+  Recalculates on every change; `--p`/`--d`/`--l` set the inputs. A
+  cannula box (`--cannula=<1..6>`, 0 Custom) fills in the bore and length
+  of one of JetVent's six bench cannulae; editing either afterwards sets
+  it back to Custom unless the pair still matches one (`MatchCannula`,
+  with an `FUpdating` flag so the programmatic edits don't recalculate or
+  reset the box part-way). Added
   to `uJetCalcVM.pas` for it (JetVent unchanged in behaviour):
   `CreateCustom` (any bore and length, no measured data), `ResistanceK`
   and a `CalcFlow(DP, out Sonic)` overload exposing the Crane choking

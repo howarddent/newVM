@@ -8,6 +8,13 @@ unit ujetflowmain;
      (mm) and its length (cm); everything recalculates on each change.
      The gas is oxygen at 20 C into 1 atm, as in JetVent.
 
+     The cannula box fills in the bore and length of one of JetVent's six
+     bench cannulae (TJetCath; the Lindholm's 9.5 cm includes JetVent's
+     allowance for its 45 degree bend). Editing either value afterwards
+     sets the box back to "Custom" unless it still matches a cannula.
+     FUpdating stops the programmatic edits recalculating, or resetting
+     the box, part-way.
+
      For a cannula of that bore and length (TCatheter.CreateCustom in
      ../JetVent/uJetCalcVM.pas) it shows:
        - the flow, from JetVent's Crane 3-20 estimate (CalcFlow);
@@ -41,6 +48,10 @@ unit ujetflowmain;
      ratios, the exit and free-jet states and the two parts of the thrust,
      and a warning when K is outside the Crane A-22 table (1.2 .. 100).
 
+     Command line: --p=<bar gauge>, --d=<mm>, --l=<cm>, and
+     --cannula=<1..6> (JetVent's order: Lindholm, Cook, Biro, 14G, 16G,
+     18G; 0 is Custom), applied before --d and --l.
+
 *******************************************************************************}
 
 {$mode objfpc}{$H+}
@@ -62,6 +73,8 @@ type
     lblD: TLabel;
     lblL: TLabel;
     lblGas: TLabel;
+    lblCannula: TLabel;
+    cbCannula: TComboBox;
     seP: TFloatSpinEdit;
     seD: TFloatSpinEdit;
     seL: TFloatSpinEdit;
@@ -90,9 +103,15 @@ type
     seChild: TFloatSpinEdit;
     lblStallChild: TLabel;
     memo: TMemo;
+    procedure cbCannulaChange(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure InputChange(Sender: TObject);
   private
+    FUpdating: Boolean;
+    // bore (mm) and length (cm) of JetVent's cannulae, by TJetCath
+    FCanD, FCanL: array[TJetCath] of Double;
+    FCanName: array[TJetCath] of string;
+    procedure MatchCannula;
     procedure Recalculate;
   end;
 
@@ -110,18 +129,87 @@ const
 { TfmJetFlow }
 
 procedure TfmJetFlow.FormCreate(Sender: TObject);
+var
+  c: TJetCath;
+  Cath: TCatheter;
 begin
+  FUpdating := True;
+  cbCannula.Items.Clear;
+  cbCannula.Items.Add('Custom');
+  for c := Low(TJetCath) to High(TJetCath) do
+  begin
+    Cath := TCatheter.Create(c);
+    try
+      FCanD[c] := Cath.Diameter * 1000;
+      FCanL[c] := Cath.Length * 100;
+      FCanName[c] := Cath.Name;
+      cbCannula.Items.Add(Format('%s  (%.2f mm, %.1f cm)', [Cath.Name, FCanD[c], FCanL[c]]));
+    finally
+      Cath.Free;
+    end;
+  end;
+  cbCannula.ItemIndex := 0;
+  FUpdating := False;
+
+  if Application.HasOption('cannula') then
+  begin
+    cbCannula.ItemIndex := StrToIntDef(Application.GetOptionValue('cannula'), 0);
+    cbCannulaChange(nil);
+  end;
   if Application.HasOption('p') then
     seP.Value := StrToFloatDef(Application.GetOptionValue('p'), seP.Value);
   if Application.HasOption('d') then
     seD.Value := StrToFloatDef(Application.GetOptionValue('d'), seD.Value);
   if Application.HasOption('l') then
     seL.Value := StrToFloatDef(Application.GetOptionValue('l'), seL.Value);
+  MatchCannula;
   Recalculate;
+end;
+
+procedure TfmJetFlow.cbCannulaChange(Sender: TObject);
+var
+  c: TJetCath;
+begin
+  if cbCannula.ItemIndex <= 0 then Exit;   // Custom: keep the values
+  c := TJetCath(cbCannula.ItemIndex - 1);
+  FUpdating := True;
+  try
+    seD.Value := FCanD[c];
+    seL.Value := FCanL[c];
+  finally
+    FUpdating := False;
+  end;
+  Recalculate;
+end;
+
+{ Shows the cannula the bore and length match, or Custom }
+procedure TfmJetFlow.MatchCannula;
+var
+  c: TJetCath;
+  Found: Integer;
+begin
+  Found := 0;
+  for c := Low(TJetCath) to High(TJetCath) do
+    if (Abs(seD.Value - FCanD[c]) < 0.005) and (Abs(seL.Value - FCanL[c]) < 0.05) then
+    begin
+      Found := Ord(c) + 1;
+      Break;
+    end;
+  if cbCannula.ItemIndex <> Found then
+  begin
+    FUpdating := True;
+    try
+      cbCannula.ItemIndex := Found;
+    finally
+      FUpdating := False;
+    end;
+  end;
 end;
 
 procedure TfmJetFlow.InputChange(Sender: TObject);
 begin
+  if FUpdating then Exit;
+  if (Sender = seD) or (Sender = seL) then MatchCannula;
   Recalculate;
 end;
 
@@ -155,7 +243,11 @@ var
 begin
   P := seP.Value;
   if (P <= 0) or (seD.Value <= 0) or (seL.Value <= 0) then Exit;
-  Cath := TCatheter.CreateCustom('custom', seL.Value / 100, seD.Value / 1000);
+  if cbCannula.ItemIndex > 0 then
+    Cath := TCatheter.CreateCustom(FCanName[TJetCath(cbCannula.ItemIndex - 1)],
+      seL.Value / 100, seD.Value / 1000)
+  else
+    Cath := TCatheter.CreateCustom('Custom', seL.Value / 100, seD.Value / 1000);
   try
     K := Cath.ResistanceK;
     CritP := CalcCritPRatio(K, Y);
@@ -197,8 +289,8 @@ begin
       memo.Lines.Clear;
       memo.Lines.Add(Format('Oxygen: gamma %.2f, R %.1f J/(kg K), %.3f kg/m3 at 20 °C and 1 atm.',
         [Gamma_O2, R_O2, O2_Density_RT]));
-      memo.Lines.Add(Format('Cannula: %.2f mm bore, %.1f cm long (L/D %.0f)',
-        [seD.Value, seL.Value, Cath.Length / Cath.Diameter]));
+      memo.Lines.Add(Format('Cannula: %s, %.2f mm bore, %.1f cm long (L/D %.0f)',
+        [Cath.Name, seD.Value, seL.Value, Cath.Length / Cath.Diameter]));
       memo.Lines.Add(Format('Reynolds number (at 342 m/s, as JetVent): %d', [Cath.Reynolds_342]));
       memo.Lines.Add(Format('Resistance K = inlet 0.5 + f L/D + outlet 1 = %.2f', [K]));
       if (K < 1.2) or (K > 100) then
