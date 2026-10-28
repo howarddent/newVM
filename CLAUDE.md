@@ -1895,9 +1895,19 @@ packages. Compiled binaries and each demo's own `lib/` output are
     vectors; MtxVec's `PolyFit`/`PolyEval` cubic over the Crane A-22
     tables (critical pressure ratio and expansion factor `Y` against `K`,
     gamma 1.4) is `TPolynomial.Fit(..., 3)`/`Evaluate`, fitted once
-    lazily rather than per call. Same cubic on `K` directly as the
-    original, deliberately - a fit on `ln K` would interpolate the
-    1.2..100 table far better but would change the calculated flows.
+    lazily rather than per call. Since 2026-10-28 the cubic is on `ln K`
+    (K clamped to 1.2..100): the cubic on `K` was up to 0.045 off the
+    critical ratio where the cannulae sit (K 2-7), and a higher order on
+    `K` is no cure - only two table points above K 20, and a 5th-order
+    fit swings to 8 (7th: 650) between K 40 and 100.
+  - **Resistance (2026-10-28)**: `ResistanceK` = `InletK` + f L/D +
+    `BendExcessK` + outlet 1. `InletK` is 1.0 for the metal cannulae
+    (abrupt Luer step) and 0.5 for the Venflons (tapered hub). The
+    Lindholm is its overall 11 cm (was 9.5 cm, lengthened to stand in
+    for the bend) with a 45 degree bend, r/d 2 assumed, by Rennels &
+    Hudson's smooth-bend K less its arc-friction term. Venflon bores are
+    the user's measurements - keep them. Mean error against measured
+    flow: Lindholm +19 %, Biro +3 %, 14G +3 %, 16G -8 %, 18G -26 %.
   - **The Mach number is corrected.** The original used `(Q/A)/342`:
     ambient-density velocity over a fixed speed of sound (roughly air at
     room temperature; oxygen at 293 K is ~326 m/s, at a choked exit
@@ -1952,34 +1962,39 @@ packages. Compiled binaries and each demo's own `lib/` output are
   to `uJetCalcVM.pas` for it (JetVent unchanged in behaviour):
   `CreateCustom` (any bore and length, no measured data), `ResistanceK`
   and a `CalcFlow(DP, out Sonic)` overload exposing the Crane choking
-  test, `FreeJet` and `Thrust`. Things worth knowing:
+  test, `FreeJet` and `Thrust`. A selected bench cannula is built with
+  `TCatheter.Create`, not `CreateCustom`, so it keeps JetVent's per-
+  cannula inlet loss and the Lindholm's bend; a custom one is straight
+  with inlet loss 1.0. Things worth knowing:
   - **Two choking tests can disagree near the threshold**: Crane's
     pressure ratio against the critical one (inside `CalcFlow`) and the
     sonic exit from the mass flow (`ExitState`). The indicator follows the
     exit state, which the Mach number rests on: red for a sonic exit,
-    amber when only Crane says choked (Lindholm at 2 bar: exit Mach
-    0.986), green otherwise.
+    amber when only Crane says choked (Lindholm at 2.25 bar: exit Mach
+    0.996), green otherwise.
   - **The extremes are in the free jet when choked.** A sonic exit is
     under-expanded (exit pressure above ambient), so `FreeJet` expands it
     isentropically from the exit's stagnation pressure `p_e / (p/pt at
-    M=1)` (NACA 1135 `Eq44`) to ambient: Mach 1.35 and 215 K for a 14G
+    M=1)` (NACA 1135 `Eq44`) to ambient: Mach 1.36 and 214 K for a 14G
     Venflon at 3.5 bar, against the exit's 1 and 244 K. Unchoked, the
     exit values are the extremes. The lowest pressure is therefore always
     ambient; the form gives the exit pressure beside it. Shock-cell
     overshoot below ambient in a real under-expanded jet is not modelled.
-  - **Thrust** is the exit-plane `m V_e + (p_e - p_amb) A`: 0.49 N for
+  - **Thrust** is the exit-plane `m V_e + (p_e - p_amb) A`: 0.50 N for
     that 14G case, 0.10 N of it pressure thrust.
   - **Stall pressure into the trachea**: three editable diameters, adult
     male, adult female and 7-year-old child (defaults 20, 16, 10 mm -
     typical values, not from one reference), by JetVent's formula
     `rho Q^2 / (A_jet A_trachea) / 100` (`TCatheter.StallPressure`, a
     scalar twin of `Stall`). Chosen over thrust/area (also in the memo)
-    by checking both against the bench stall pressures into 22 mm: the
-    original is within a few per cent for Lindholm, Biro and 14G at
-    3.5 bar and 15-40 % low for Cook, 16G and 18G; thrust/area is
-    30-55 % low. The Cook's 15 mm data (75 cmH2O at 3.5 bar against
-    ~55) suggest it underestimates in narrow airways, which the memo
-    says.
+    by checking both against the bench stall pressures into 22 mm at
+    3.5 bar: the original is 4 % high for 14G, 10 % high for Biro,
+    11 % low for Lindholm and 18-33 % low for Cook, 16G and 18G;
+    thrust/area is 29-52 % low (Biro 9 %). The Cook's 15 mm data
+    (75 cmH2O at 3.5 bar against ~51) suggest it underestimates in
+    narrow airways, which the memo says. (Figures as of JetVent's
+    2026-10-28 resistance changes - bend, inlet, ln K Crane fit; before
+    them the first three were within a few per cent.)
 - **`Resonance`** — resonance and damping of the standard second-order
   system `H(s) = wn^2/(s^2 + 2 zeta wn s + wn^2)`, on two `TVMPlot2D`s
   stacked in a panel: the impulse response `h(t)` above and the

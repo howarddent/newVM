@@ -50,12 +50,12 @@ unit ujetflowmain;
          rho Q^2 / (A_jet A_trachea) / 100 (TCatheter.StallPressure).
          That is the jet's momentum at room density spread over the
          airway. Against the bench stall pressures into a 22 mm circuit
-         it is within a few per cent for the Lindholm, Biro and 14G
-         cannulae at 3.5 bar and 15-40 % low for the Cook, 16G and 18G;
-         thrust over the airway area, also in the memo, is 30-55 % low.
-         The Cook's 15 mm measurements are well above it (75 cmH2O at
-         3.5 bar against about 55), so in narrow airways it is likely to
-         underestimate.
+         at 3.5 bar it is 4 % high for the 14G, 10 % high for the Biro,
+         11 % low for the Lindholm and 18-33 % low for the Cook, 16G and
+         18G; thrust over the airway area, also in the memo, is 29-52 %
+         low (the Biro 9 %). The Cook's 15 mm measurements are well above
+         it (75 cmH2O at 3.5 bar against about 51), so in narrow airways
+         it is likely to underestimate.
      The memo has the working: Reynolds number, K, Crane's pressure
      ratios, the exit and free-jet states and the two parts of the thrust,
      and a warning when K is outside the Crane A-22 table (1.2 .. 100).
