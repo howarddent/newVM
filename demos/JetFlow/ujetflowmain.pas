@@ -9,9 +9,11 @@ unit ujetflowmain;
      The gas is oxygen at 20 C into 1 atm, as in JetVent.
 
      The cannula box fills in the bore and length of one of JetVent's six
-     bench cannulae (TJetCath; the Lindholm's 9.5 cm includes JetVent's
-     allowance for its 45 degree bend). Editing either value afterwards
-     sets the box back to "Custom" unless it still matches a cannula.
+     bench cannulae (TJetCath), and while it is selected the calculation
+     uses JetVent's whole definition of it - its inlet loss and, for the
+     Lindholm, its 45 degree bend. Editing either value afterwards
+     sets the box back to "Custom" unless it still matches a cannula; a
+     custom cannula is straight, with the metal cannulas' inlet loss.
      FUpdating stops the programmatic edits recalculating, or resetting
      the box, part-way.
 
@@ -289,8 +291,7 @@ begin
   P := seP.Value;
   if (P <= 0) or (seD.Value <= 0) or (seL.Value <= 0) then Exit;
   if cbCannula.ItemIndex > 0 then
-    Cath := TCatheter.CreateCustom(FCanName[TJetCath(cbCannula.ItemIndex - 1)],
-      seL.Value / 100, seD.Value / 1000)
+    Cath := TCatheter.Create(TJetCath(cbCannula.ItemIndex - 1))
   else
     Cath := TCatheter.CreateCustom('Custom', seL.Value / 100, seD.Value / 1000);
   try
@@ -352,7 +353,8 @@ begin
       memo.Lines.Add(Format('Cannula: %s, %.2f mm bore, %.1f cm long (L/D %.0f)',
         [Cath.Name, seD.Value, seL.Value, Cath.Length / Cath.Diameter]));
       memo.Lines.Add(Format('Reynolds number (at 342 m/s, as JetVent): %d', [Cath.Reynolds_342]));
-      memo.Lines.Add(Format('Resistance K = inlet 0.5 + f L/D + outlet 1 = %.2f', [K]));
+      memo.Lines.Add(Format('Resistance K = inlet %.1f + f L/D %.2f + bend %.2f + outlet 1 = %.2f',
+        [Cath.InletK, K - Cath.InletK - Cath.BendExcessK - 1, Cath.BendExcessK, K]));
       if (K < 1.2) or (K > 100) then
         memo.Lines.Add('  WARNING: K is outside the Crane A-22 table (1.2 .. 100); the critical '
           + 'pressure ratio and expansion factor are extrapolated.');
