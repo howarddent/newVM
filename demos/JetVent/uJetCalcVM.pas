@@ -21,14 +21,14 @@ unit uJetCalcVM;
      and Crane's compressible-flow formula with the net expansion factor Y.
      The two Crane A-22 tables (critical pressure ratio and Y against K,
      for gamma = 1.4) were interpolated by a MtxVec PolyFit/PolyEval
-     cubic; that is now TPolynomial.Fit(..., 3) and TPolynomial.Evaluate,
-     fitted once (lazily) and reused for every call rather than refitted
-     per call as before. Same cubic over the same table, so the same
-     numbers - the fit is on K directly, as the original was, although a
-     cubic spanning K = 1.2 .. 100 with most of the table below 20 is
-     not a close interpolant at the low end; fitting against ln K would
-     be better and is one line to change, but that would alter the
-     calculated flows against the Delphi version, so it is left alone.
+     cubic in K. That cubic was a poor interpolant where the cannulas
+     sit (K 2 - 7): the critical ratio up to 0.045 off the table, e.g.
+     0.715 at K = 6.6 where the table gives 0.745. A higher order in K
+     does not cure it - the table has only two points above K = 20, and
+     a 5th-order fit swings to 8 (7th order: 650) between K = 40 and 100.
+     The fit is now a cubic in ln K (TPolynomial.Fit, fitted once, lazily),
+     within 0.003 of the table's ln-K interpolation below K = 20 and 0.006
+     everywhere, with K clamped to the table's 1.2 .. 100.
 
      WHAT IS CORRECTED: THE MACH NUMBER
 
@@ -96,9 +96,31 @@ unit uJetCalcVM;
      CUSTOM CANNULAE
 
      CreateCustom builds a TCatheter of any length and bore, with no
-     measured data, for the JetFlow calculator (demos/JetFlow).
-     ResistanceK and the CalcFlow overload with Sonic expose the Crane
-     resistance coefficient and choking test inside CalcFlow.
+     measured data, for the JetFlow calculator (demos/JetFlow): straight,
+     with the metal cannulas' inlet loss of 1.0. ResistanceK and the
+     CalcFlow overload with Sonic expose the Crane resistance coefficient
+     and choking test inside CalcFlow.
+
+     BENDS
+
+     The original allowed for the Lindholm cannula's 45 degree bend by
+     lengthening it (9.5 cm). The bend now has its own loss: BendExcessK
+     adds Rennels & Hudson's smooth-bend coefficient (Pipe Flow, 2012,
+     eq 10.3),
+       K_b = f a r/d + (0.10 + 2.4 f) sin(a/2)
+             + 6.6 f (sqrt(sin(a/2)) + sin(a/2)) / (r/d)^(4a/pi),
+     less its first term f a r/d - the friction of the bend's arc, which
+     the f L/D term already counts when Length is the cannula's whole
+     centreline length, bend included. a is the bend angle (radians), r
+     its centreline radius, d the bore, f the same Darcy friction factor
+     as the straight run.
+
+     INLET LOSS
+
+     The original used an entry loss of 0.5 for every cannula. InletK is
+     now per cannula: 1.0 for the metal ones (Lindholm, Cook, Biro), whose
+     Luer fitting steps abruptly into the bore, and 0.5 for the Venflons,
+     whose hubs taper into the cannula. The bores are as measured.
 
      MASS FLOW
 
@@ -157,7 +179,9 @@ type
     procedure SetGeometry(ALength, ADiameter: Double);
   public
     Name: string;
-    Length, Diameter, Radius, Area: Double;
+    Length, Diameter, Radius, Area: Double;    // Length along the centreline, bends included
+    BendDeg, BendRD: Double;                     // bend angle (0 = straight) and radius / bore
+    InletK: Double;                              // entry loss at the hub
     Reynolds_342: Integer;
     MeasuredFlow, EntrainedFlow: TVMobj;                       // l/min, 1 x NumPressures
     MeasuredStallFlow, MeasuredStall22, MeasuredStall15: TVMobj; // l/min; cmH2O; cmH2O
@@ -165,7 +189,7 @@ type
     { any length and bore (m), no measured data }
     constructor CreateCustom(const AName: string; ALength, ADiameter: Double);
 
-    { Crane resistance coefficient: inlet + f L/D + outlet }
+    { Crane resistance coefficient: InletK + f L/D + bend excess + outlet }
     function ResistanceK: Double;
 
     { scalar, one driving pressure (bar gauge) -> jet flow l/min }
@@ -173,6 +197,8 @@ type
     { the same, with Crane's verdict: Sonic when the pressure ratio
       reaches the critical one }
     function CalcFlow(DP: Double; out Sonic: Boolean): Double; overload;
+    { the bend's loss beyond the friction of its arc - see the unit comment }
+    function BendExcessK: Double;
     { the same over a vector of driving pressures }
     function CalcFlows(const DP: TVMobj): TVMobj;
 
@@ -227,6 +253,7 @@ begin
   tabK  := TVMobj.Create(1, 12, [1.2, 1.5, 2.0, 3, 4, 6, 8, 10, 15, 20, 40, 100]);
   tabDP := TVMobj.Create(1, 12, [0.552, 0.576, 0.612, 0.662, 0.697, 0.737, 0.762, 0.784, 0.818, 0.839, 0.883, 0.926]);
   tabY  := TVMobj.Create(1, 12, [0.588, 0.606, 0.622, 0.639, 0.649, 0.671, 0.685, 0.695, 0.702, 0.710, 0.710, 0.710]);
+  tabK := Ln(tabK);
   CraneDP := TPolynomial.Fit(tabK, tabDP, 3);
   CraneY  := TPolynomial.Fit(tabK, tabY, 3);
   CraneFitted := True;
@@ -236,6 +263,7 @@ function CalcCritPRatio(k: Double; out Y: Double): Double;
 begin
   if not CraneFitted then
     FitCrane;
+  k := Ln(EnsureRange(k, 1.2, 100.0));
   Y := CraneY.Evaluate(k);
   Result := CraneDP.Evaluate(k);
 end;
@@ -250,11 +278,14 @@ end;
 
 constructor TCatheter.Create(Cath_Type: TJetCath);
 begin
+  InletK := 1.0;   // metal cannulas: the Luer fitting steps abruptly into the bore
   case Cath_Type of
     Lindholm:
       begin
-        Length := 9.5e-2;  // lengthened to compensate 45 degree bend
+        Length := 11.0e-2;  // overall, along the centreline
         Diameter := 2.0e-3;
+        BendDeg := 45;
+        BendRD := 2.0;      // ASSUMED: bend radius 4 mm, not measured
         MeasuredFlow      := TVMobj.Create(1, 7, [18.3, 30.8, 40.9, 50.7, 59.6, 68.4, 79.0]);
         EntrainedFlow     := TVMobj.Create(1, 7, [40, 66, 88, 113, 133, 150, 166]);
         MeasuredStallFlow := TVMobj.Create(1, 7, [16, 27, 38, 46, 63, 72, 82]);
@@ -284,7 +315,8 @@ begin
     IV_14:
       begin
         Length := 45e-3;
-        Diameter := 1.5e-3;
+        Diameter := 1.5e-3;   // measured
+        InletK := 0.5;   // the hub tapers smoothly into the cannula
         MeasuredFlow      := TVMobj.Create(1, 7, [14.4, 23.75, 31.6, 38.4, 44.7, 51.2, 57.6]);
         EntrainedFlow     := TVMobj.Create(1, 7, [37.7, 64, 80.7, 97, 111, 122, 134]);
         MeasuredStallFlow := TVMobj.Create(1, 7, [14, 23, 31, 40, 47, 55, 64]);
@@ -294,7 +326,8 @@ begin
     IV_16:
       begin
         Length := 45e-3;
-        Diameter := 1.35e-3;
+        Diameter := 1.35e-3;   // measured
+        InletK := 0.5;   // the hub tapers smoothly into the cannula
         MeasuredFlow      := TVMobj.Create(1, 7, [13.36, 20.62, 27.8, 33.9, 39.6, 45.7, 50.7]);
         EntrainedFlow     := TVMobj.Create(1, 7, [33, 57, 76, 88, 102, 112, 122]);
         MeasuredStallFlow := TVMobj.Create(1, 7, [11, 20, 28, 34, 41, 47, 52]);
@@ -304,7 +337,8 @@ begin
     IV_18:
       begin
         Length := 45e-3;
-        Diameter := 0.9e-3;
+        Diameter := 0.9e-3;   // measured
+        InletK := 0.5;   // the hub tapers smoothly into the cannula
         MeasuredFlow      := TVMobj.Create(1, 7, [7.0, 10.8, 14.3, 17.24, 20.28, 23.3, 26.38]);
         EntrainedFlow     := TVMobj.Create(1, 7, [28.7, 43.5, 54, 65, 66, 71, 79]);
         MeasuredStallFlow := TVMobj.Create(1, 7, [5.6, 8.5, 11.8, 14.6, 16, 20, 22]);
@@ -319,6 +353,7 @@ end;
 constructor TCatheter.CreateCustom(const AName: string; ALength, ADiameter: Double);
 begin
   Name := AName;
+  InletK := 1.0;
   SetGeometry(ALength, ADiameter);
 end;
 
@@ -331,13 +366,26 @@ begin
   Reynolds_342 := Round(342 * Diameter * O2_Density_RT / O2_dyn_Viscosity_RT);
 end;
 
-function TCatheter.ResistanceK: Double;
 const
-  k_inlet = 0.5;
   k_outlet = 1.0;
   Roughness = 1e-6;
+
+function TCatheter.BendExcessK: Double;
+var
+  f, a, s: Double;
 begin
-  Result := k_inlet + MoodyF(Diameter, Reynolds_342, Roughness) * Length / Diameter + k_outlet;
+  if BendDeg <= 0 then
+    Exit(0);
+  f := MoodyF(Diameter, Reynolds_342, Roughness);
+  a := DegToRad(BendDeg);
+  s := Sin(a / 2);
+  Result := (0.10 + 2.4 * f) * s + 6.6 * f * (Sqrt(s) + s) / Power(BendRD, 4 * a / Pi);
+end;
+
+function TCatheter.ResistanceK: Double;
+begin
+  Result := InletK + MoodyF(Diameter, Reynolds_342, Roughness) * Length / Diameter
+            + BendExcessK + k_outlet;
 end;
 
 function TCatheter.CalcFlow(DP: Double): Double;
