@@ -1941,7 +1941,14 @@ packages. Compiled binaries and each demo's own `lib/` output are
   of one of JetVent's six bench cannulae; editing either afterwards sets
   it back to Custom unless the pair still matches one (`MatchCannula`,
   with an `FUpdating` flag so the programmatic edits don't recalculate or
-  reset the box part-way). Added
+  reset the box part-way). With a cannula selected, a check box
+  (`--measured`) shows its bench jet flow beside the calculated one,
+  linear between JetVent's 0.5 .. 3.5 bar points and not extrapolated
+  outside them, plus the whole bench series against the calculated flows
+  in the memo; the results still all come from the calculated flow.
+  JetVent's Cook measured flows are a copy of the Lindholm's. FPC's
+  `Format` has no `+` flag (`%+.0f` prints garbage), hence `SignedPct`.
+  A local `Sel` beside the field `seL` is a duplicate identifier. Added
   to `uJetCalcVM.pas` for it (JetVent unchanged in behaviour):
   `CreateCustom` (any bore and length, no measured data), `ResistanceK`
   and a `CalcFlow(DP, out Sonic)` overload exposing the Crane choking

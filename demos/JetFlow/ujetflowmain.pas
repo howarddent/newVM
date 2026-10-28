@@ -15,6 +15,16 @@ unit ujetflowmain;
      FUpdating stops the programmatic edits recalculating, or resetting
      the box, part-way.
 
+     With a cannula selected, a check box shows its measured jet flow
+     beside the calculated one: JetVent's bench values at 0.5 .. 3.5 bar
+     (DrivingP), linearly interpolated to the driving pressure, with the
+     calculated flow's difference from it; and in the memo, the whole
+     bench series against the calculated flows. Outside 0.5 .. 3.5 bar it
+     says so rather than extrapolating. Only the display changes: every
+     result still comes from the calculated flow. (JetVent's Cook data
+     repeat the Lindholm's measured flows exactly, so the two show the
+     same bench values.)
+
      For a cannula of that bore and length (TCatheter.CreateCustom in
      ../JetVent/uJetCalcVM.pas) it shows:
        - the flow, from JetVent's Crane 3-20 estimate (CalcFlow);
@@ -50,7 +60,7 @@ unit ujetflowmain;
 
      Command line: --p=<bar gauge>, --d=<mm>, --l=<cm>, and
      --cannula=<1..6> (JetVent's order: Lindholm, Cook, Biro, 14G, 16G,
-     18G; 0 is Custom), applied before --d and --l.
+     18G; 0 is Custom), applied before --d and --l, and --measured.
 
 *******************************************************************************}
 
@@ -75,6 +85,8 @@ type
     lblGas: TLabel;
     lblCannula: TLabel;
     cbCannula: TComboBox;
+    cbMeasured: TCheckBox;
+    lblMeasured: TLabel;
     seP: TFloatSpinEdit;
     seD: TFloatSpinEdit;
     seL: TFloatSpinEdit;
@@ -111,6 +123,8 @@ type
     // bore (mm) and length (cm) of JetVent's cannulae, by TJetCath
     FCanD, FCanL: array[TJetCath] of Double;
     FCanName: array[TJetCath] of string;
+    FCanFlow: array[TJetCath, 0..NumPressures - 1] of Double;   // measured l/min
+    function MeasuredFlowAt(c: TJetCath; P: Double; out Flow: Double): Boolean;
     procedure MatchCannula;
     procedure Recalculate;
   end;
@@ -126,12 +140,20 @@ const
   KelvinToC = 273.15;
   PaPerCmH2O = 98.0665;
 
+{ a percentage with its sign, e.g. '+3 %' - FPC's Format has no '+' flag }
+function SignedPct(x: Double): string;
+begin
+  Result := Format('%.0f %%', [x]);
+  if Round(x) > 0 then Result := '+' + Result;
+end;
+
 { TfmJetFlow }
 
 procedure TfmJetFlow.FormCreate(Sender: TObject);
 var
   c: TJetCath;
   Cath: TCatheter;
+  i: Integer;
 begin
   FUpdating := True;
   cbCannula.Items.Clear;
@@ -143,12 +165,15 @@ begin
       FCanD[c] := Cath.Diameter * 1000;
       FCanL[c] := Cath.Length * 100;
       FCanName[c] := Cath.Name;
+      for i := 0 to NumPressures - 1 do
+        FCanFlow[c, i] := Cath.MeasuredFlow[0, i];
       cbCannula.Items.Add(Format('%s  (%.2f mm, %.1f cm)', [Cath.Name, FCanD[c], FCanL[c]]));
     finally
       Cath.Free;
     end;
   end;
   cbCannula.ItemIndex := 0;
+  cbMeasured.Checked := Application.HasOption('measured');
   FUpdating := False;
 
   if Application.HasOption('cannula') then
@@ -180,6 +205,22 @@ begin
     FUpdating := False;
   end;
   Recalculate;
+end;
+
+{ Measured jet flow of cannula c at P bar gauge, linear between the bench
+  pressures; False outside them }
+function TfmJetFlow.MeasuredFlowAt(c: TJetCath; P: Double; out Flow: Double): Boolean;
+var
+  i: Integer;
+  f: Double;
+begin
+  Flow := 0;
+  Result := (P >= DrivingP[0] - 1e-9) and (P <= DrivingP[NumPressures - 1] + 1e-9);
+  if not Result then Exit;
+  i := 0;
+  while (i < NumPressures - 2) and (P > DrivingP[i + 1]) do Inc(i);
+  f := (P - DrivingP[i]) / (DrivingP[i + 1] - DrivingP[i]);
+  Flow := FCanFlow[c, i] + f * (FCanFlow[c, i + 1] - FCanFlow[c, i]);
 end;
 
 { Shows the cannula the bore and length match, or Custom }
@@ -220,6 +261,10 @@ var
   Sonic: Boolean;
   E: TExitState;
   J: TFreeJetState;
+  SelCath: TJetCath;
+  ShowBench: Boolean;
+  Qm: Double;
+  i: Integer;
 
   // stall pressure into a trachea of diameter DMM (mm): the result label,
   // and a memo line with the thrust-based figure beside it
@@ -258,6 +303,21 @@ begin
     Momentum := E.MassFlow * E.Velocity;
 
     lblFlow.Caption := Format('%.1f l/min', [Q]);
+
+    cbMeasured.Enabled := cbCannula.ItemIndex > 0;
+    ShowBench := cbMeasured.Enabled and cbMeasured.Checked;
+    SelCath := Low(TJetCath);
+    if ShowBench then
+    begin
+      SelCath := TJetCath(cbCannula.ItemIndex - 1);
+      if MeasuredFlowAt(SelCath, P, Qm) then
+        lblMeasured.Caption := Format('measured %.1f l/min (calc. %s)',
+          [Qm, SignedPct(100 * (Q - Qm) / Qm)])
+      else
+        lblMeasured.Caption := 'measured: only at 0.5 - 3.5 bar';
+    end
+    else
+      lblMeasured.Caption := '';
 
     if E.Choked then
     begin
@@ -298,6 +358,16 @@ begin
           + 'pressure ratio and expansion factor are extrapolated.');
       memo.Lines.Add(Format('Crane: pressure ratio dP/P1 %.3f, critical %.3f -> %s; Y %.3f',
         [P / (P + 1), CritP, BoolToStr(Sonic, 'sonic', 'subsonic'), Y]));
+      if ShowBench then
+      begin
+        memo.Lines.Add('');
+        memo.Lines.Add(Format('Bench jet flow, %s (JetVent), against calculated:', [FCanName[SelCath]]));
+        memo.Lines.Add('  bar gauge  measured  calculated  difference');
+        for i := 0 to NumPressures - 1 do
+          memo.Lines.Add(Format('  %6.1f    %7.1f    %7.1f     %7s',
+            [DrivingP[i], FCanFlow[SelCath, i], Cath.CalcFlow(DrivingP[i]),
+             SignedPct(100 * (Cath.CalcFlow(DrivingP[i]) - FCanFlow[SelCath, i]) / FCanFlow[SelCath, i])]));
+      end;
       memo.Lines.Add('');
       memo.Lines.Add(Format('Flow %.2f l/min (at room conditions); mass flow %.3f g/s',
         [Q, 1000 * E.MassFlow]));
