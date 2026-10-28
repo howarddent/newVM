@@ -73,6 +73,33 @@ unit uJetCalcVM;
      pressure in particular is the original's formula), since those were
      not in question.
 
+     THE FREE JET (FreeJet)
+
+     A choked exit is under-expanded: its static pressure is above
+     ambient, and the jet goes on expanding outside the cannula, through
+     M = 1 to supersonic. FreeJet gives the ideally expanded state,
+     isentropic from the exit's stagnation pressure p0e = p_e / (p/pt at
+     M = 1, NACA 1135 Eq44) down to ambient:
+       M_j = sqrt(2/(gamma-1) * ((p0e/p_amb)^((gamma-1)/gamma) - 1)),
+       T_j = T0 * (T/Tt at M_j, Eq43).
+     That is the highest Mach number and lowest temperature in the jet;
+     an unchoked jet's are its exit values. A real under-expanded jet
+     overshoots in its shock cells, so its pressure dips below ambient
+     and its Mach number above M_j for a short way - not modelled.
+
+     THRUST
+
+     Thrust is the exit-plane momentum flux plus the pressure thrust of
+     an under-expanded exit: F = m V_e + (p_e - p_amb) A. Unchoked, p_e is
+     ambient and only m V_e remains.
+
+     CUSTOM CANNULAE
+
+     CreateCustom builds a TCatheter of any length and bore, with no
+     measured data, for the JetFlow calculator (demos/JetFlow).
+     ResistanceK and the CalcFlow overload with Sonic expose the Crane
+     resistance coefficient and choking test inside CalcFlow.
+
      MASS FLOW
 
      The original's "Mass flow kg/s x 1000" option actually computed
@@ -116,7 +143,18 @@ type
     Choked: Boolean;
   end;
 
+  { The jet after expanding to ambient pressure - see FreeJet }
+  TFreeJetState = record
+    Mach: Double;         // highest in the jet (> 1 if the exit is choked)
+    Temperature: Double;  // K, lowest in the jet
+    Velocity: Double;     // m/s
+    Pressure: Double;     // Pa, ambient
+    ExitStagPressure: Double;  // Pa, stagnation pressure at the exit
+  end;
+
   TCatheter = class
+  private
+    procedure SetGeometry(ALength, ADiameter: Double);
   public
     Name: string;
     Length, Diameter, Radius, Area: Double;
@@ -124,9 +162,17 @@ type
     MeasuredFlow, EntrainedFlow: TVMobj;                       // l/min, 1 x NumPressures
     MeasuredStallFlow, MeasuredStall22, MeasuredStall15: TVMobj; // l/min; cmH2O; cmH2O
     constructor Create(Cath_Type: TJetCath);
+    { any length and bore (m), no measured data }
+    constructor CreateCustom(const AName: string; ALength, ADiameter: Double);
+
+    { Crane resistance coefficient: inlet + f L/D + outlet }
+    function ResistanceK: Double;
 
     { scalar, one driving pressure (bar gauge) -> jet flow l/min }
-    function CalcFlow(DP: Double): Double;
+    function CalcFlow(DP: Double): Double; overload;
+    { the same, with Crane's verdict: Sonic when the pressure ratio
+      reaches the critical one }
+    function CalcFlow(DP: Double; out Sonic: Boolean): Double; overload;
     { the same over a vector of driving pressures }
     function CalcFlows(const DP: TVMobj): TVMobj;
 
@@ -138,8 +184,12 @@ type
     function ExitVelocity(const Flow: TVMobj): TVMobj;
     { stall pressure (cmH2O) jetting into a circuit of bore D (m) - original formula }
     function Stall(const Flow: TVMobj; D: Double): TVMobj;
+    { the same for one flow (l/min) }
+    function StallPressure(FlowLpm, D: Double): Double;
     { rho_amb * Q, in g/s }
     function MassFlow(const Flow: TVMobj): TVMobj;
+    { jet thrust (N) from an exit state, see the unit comment }
+    function Thrust(const E: TExitState): Double;
   end;
 
 { Crane A-22 for gamma = 1.4: critical pressure ratio and net expansion
@@ -147,6 +197,9 @@ type
 function CalcCritPRatio(k: Double; out Y: Double): Double;
 
 function DrivingPressures: TVMobj;
+
+{ the ideally expanded jet from an exit state }
+function FreeJet(const E: TExitState): TFreeJetState;
 
 implementation
 
@@ -260,25 +313,49 @@ begin
       end;
   end;
   Name := JetString[Cath_Type];
+  SetGeometry(Length, Diameter);
+end;
+
+constructor TCatheter.CreateCustom(const AName: string; ALength, ADiameter: Double);
+begin
+  Name := AName;
+  SetGeometry(ALength, ADiameter);
+end;
+
+procedure TCatheter.SetGeometry(ALength, ADiameter: Double);
+begin
+  Length := ALength;
+  Diameter := ADiameter;
   Radius := Diameter / 2;
   Area := Pi * Sqr(Radius);
   Reynolds_342 := Round(342 * Diameter * O2_Density_RT / O2_dyn_Viscosity_RT);
 end;
 
-function TCatheter.CalcFlow(DP: Double): Double;
-// Jet flow from the Darcy-Weisbach equation, Crane 3-20 - as the original
+function TCatheter.ResistanceK: Double;
 const
   k_inlet = 0.5;
   k_outlet = 1.0;
   Roughness = 1e-6;
+begin
+  Result := k_inlet + MoodyF(Diameter, Reynolds_342, Roughness) * Length / Diameter + k_outlet;
+end;
+
+function TCatheter.CalcFlow(DP: Double): Double;
+var
+  Sonic: Boolean;
+begin
+  Result := CalcFlow(DP, Sonic);
+end;
+
+function TCatheter.CalcFlow(DP: Double; out Sonic: Boolean): Double;
+// Jet flow from the Darcy-Weisbach equation, Crane 3-20 - as the original
 var
   kactual, Y, surd: Double;
   DPAbs, PRatio, CritP, Actual_DP: Double;
-  Sonic: Boolean;
 begin
   DPAbs := DP + 1;
   PRatio := DP / DPAbs;
-  kactual := k_inlet + MoodyF(Diameter, Reynolds_342, Roughness) * Length / Diameter + k_outlet;
+  kactual := ResistanceK;
   CritP := CalcCritPRatio(kactual, Y);   // is the flow choked?
   Sonic := PRatio >= CritP;
   if Sonic then Actual_DP := CritP * DPAbs else Actual_DP := DP;
@@ -344,6 +421,28 @@ begin
   Result.Temperature := Te;
 end;
 
+function FreeJet(const E: TExitState): TFreeJetState;
+var
+  g: Double;
+begin
+  g := Gamma_O2;
+  Result.Pressure := One_Bar;
+  if not E.Choked then
+  begin
+    // already at ambient pressure: the exit is the extreme
+    Result.Mach := E.Mach;
+    Result.Temperature := E.Temperature;
+    Result.Velocity := E.Velocity;
+    Result.ExitStagPressure := E.Pressure / Eq44(E.Mach, g);
+    Exit;
+  end;
+  // isentropic from the sonic exit's stagnation pressure down to ambient
+  Result.ExitStagPressure := E.Pressure / Eq44(1.0, g);
+  Result.Mach := Sqrt(2 / (g - 1) * (Power(Result.ExitStagPressure / One_Bar, (g - 1) / g) - 1));
+  Result.Temperature := R_Temp * Eq43(Result.Mach, g);
+  Result.Velocity := Result.Mach * Sqrt(g * R_O2 * Result.Temperature);
+end;
+
 function TCatheter.Mach(const Flow: TVMobj): TVMobj;
 var
   i: Integer;
@@ -369,6 +468,16 @@ begin
   CircuitArea := Pi * Sqr(D / 2);
   // area * v^2 * rho / (100 * circuit area), v at ambient density - the original
   Result := Sqr(Velocity(Flow)) * (Area * O2_Density_RT / (100 * CircuitArea));
+end;
+
+function TCatheter.Thrust(const E: TExitState): Double;
+begin
+  Result := E.MassFlow * E.Velocity + (E.Pressure - One_Bar) * Area;
+end;
+
+function TCatheter.StallPressure(FlowLpm, D: Double): Double;
+begin
+  Result := Area * Sqr(FlowLpm / (60000 * Area)) * O2_Density_RT / (100 * Pi * Sqr(D / 2));
 end;
 
 function TCatheter.MassFlow(const Flow: TVMobj): TVMobj;

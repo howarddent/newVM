@@ -1,0 +1,326 @@
+object fmJetFlow: TfmJetFlow
+  Left = 200
+  Height = 820
+  Top = 80
+  Width = 640
+  Caption = 'Jet Flow Calculator (oxygen) - Dr H Dent'
+  ClientHeight = 820
+  ClientWidth = 640
+  Position = poScreenCenter
+  LCLVersion = '4.99.0.0'
+  OnCreate = FormCreate
+  object gbInput: TGroupBox
+    Left = 8
+    Height = 158
+    Top = 8
+    Width = 624
+    Align = alTop
+    BorderSpacing.Around = 8
+    Caption = 'Jet'
+    ClientHeight = 138
+    ClientWidth = 620
+    TabOrder = 0
+    object lblP: TLabel
+      Left = 12
+      Height = 17
+      Top = 10
+      Width = 200
+      Caption = 'Driving pressure (bar gauge)'
+    end
+    object seP: TFloatSpinEdit
+      Left = 280
+      Height = 30
+      Top = 4
+      Width = 120
+      DecimalPlaces = 2
+      Increment = 0.1
+      MaxValue = 10
+      MinValue = 0.05
+      OnChange = InputChange
+      TabOrder = 0
+      Value = 2
+    end
+    object lblD: TLabel
+      Left = 12
+      Height = 17
+      Top = 44
+      Width = 200
+      Caption = 'Jet internal diameter (mm)'
+    end
+    object seD: TFloatSpinEdit
+      Left = 280
+      Height = 30
+      Top = 38
+      Width = 120
+      DecimalPlaces = 2
+      Increment = 0.05
+      MaxValue = 6
+      MinValue = 0.2
+      OnChange = InputChange
+      TabOrder = 1
+      Value = 2
+    end
+    object lblL: TLabel
+      Left = 12
+      Height = 17
+      Top = 78
+      Width = 200
+      Caption = 'Jet length (cm)'
+    end
+    object seL: TFloatSpinEdit
+      Left = 280
+      Height = 30
+      Top = 72
+      Width = 120
+      DecimalPlaces = 1
+      Increment = 0.5
+      MaxValue = 200
+      MinValue = 0.5
+      OnChange = InputChange
+      TabOrder = 2
+      Value = 10
+    end
+    object lblGas: TLabel
+      Left = 12
+      Height = 17
+      Top = 112
+      Width = 400
+      Caption = 'Gas: oxygen (O2) at 20 °C, discharging into 1 atm'
+    end
+  end
+  object gbResults: TGroupBox
+    Left = 8
+    Height = 236
+    Top = 174
+    Width = 624
+    Align = alTop
+    BorderSpacing.Left = 8
+    BorderSpacing.Right = 8
+    Caption = 'Results'
+    ClientHeight = 216
+    ClientWidth = 620
+    TabOrder = 1
+    object lblFlowCap: TLabel
+      Left = 12
+      Height = 17
+      Top = 14
+      Width = 120
+      Caption = 'Flow rate'
+    end
+    object lblFlow: TLabel
+      Left = 200
+      Height = 30
+      Top = 6
+      Width = 200
+      Caption = '-'
+      Font.Height = -24
+      Font.Style = [fsBold]
+      ParentFont = False
+    end
+    object shpChoked: TShape
+      Left = 12
+      Height = 24
+      Top = 50
+      Width = 24
+      Brush.Color = clLime
+      Shape = stCircle
+    end
+    object lblChoked: TLabel
+      Left = 48
+      Height = 17
+      Top = 54
+      Width = 300
+      Caption = '-'
+      Font.Style = [fsBold]
+      ParentFont = False
+    end
+    object lblMachCap: TLabel
+      Left = 12
+      Height = 17
+      Top = 94
+      Width = 180
+      Caption = 'Maximum Mach number'
+    end
+    object lblMach: TLabel
+      Left = 200
+      Height = 17
+      Top = 94
+      Width = 300
+      Caption = '-'
+    end
+    object lblTempCap: TLabel
+      Left = 12
+      Height = 17
+      Top = 124
+      Width = 180
+      Caption = 'Minimum temperature'
+    end
+    object lblTemp: TLabel
+      Left = 200
+      Height = 17
+      Top = 124
+      Width = 300
+      Caption = '-'
+    end
+    object lblPressCap: TLabel
+      Left = 12
+      Height = 17
+      Top = 154
+      Width = 180
+      Caption = 'Minimum pressure'
+    end
+    object lblPress: TLabel
+      Left = 200
+      Height = 17
+      Top = 154
+      Width = 300
+      Caption = '-'
+    end
+    object lblThrustCap: TLabel
+      Left = 12
+      Height = 17
+      Top = 184
+      Width = 180
+      Caption = 'Jet thrust'
+    end
+    object lblThrust: TLabel
+      Left = 200
+      Height = 17
+      Top = 184
+      Width = 300
+      Caption = '-'
+    end
+  end
+  object gbStall: TGroupBox
+    Left = 8
+    Height = 140
+    Top = 418
+    Width = 624
+    Align = alTop
+    BorderSpacing.Left = 8
+    BorderSpacing.Right = 8
+    BorderSpacing.Top = 8
+    Caption = 'Stall pressure into the trachea (airway occluded beyond the jet)'
+    ClientHeight = 120
+    ClientWidth = 620
+    TabOrder = 2
+    object lblAirway: TLabel
+      Left = 12
+      Height = 17
+      Top = 4
+      Width = 200
+      Caption = 'Tracheal diameter (mm)'
+      Font.Style = [fsItalic]
+      ParentFont = False
+    end
+    object lblStallHdr: TLabel
+      Left = 420
+      Height = 17
+      Top = 4
+      Width = 150
+      Caption = 'Stall pressure'
+      Font.Style = [fsItalic]
+      ParentFont = False
+    end
+    object lblMale: TLabel
+      Left = 12
+      Height = 17
+      Top = 32
+      Width = 200
+      Caption = 'Adult male'
+    end
+    object seMale: TFloatSpinEdit
+      Left = 280
+      Height = 30
+      Top = 26
+      Width = 120
+      DecimalPlaces = 1
+      Increment = 0.5
+      MaxValue = 40
+      MinValue = 2
+      OnChange = InputChange
+      TabOrder = 0
+      Value = 20
+    end
+    object lblStallMale: TLabel
+      Left = 420
+      Height = 17
+      Top = 32
+      Width = 190
+      Caption = '-'
+      Font.Style = [fsBold]
+      ParentFont = False
+    end
+    object lblFemale: TLabel
+      Left = 12
+      Height = 17
+      Top = 64
+      Width = 200
+      Caption = 'Adult female'
+    end
+    object seFemale: TFloatSpinEdit
+      Left = 280
+      Height = 30
+      Top = 58
+      Width = 120
+      DecimalPlaces = 1
+      Increment = 0.5
+      MaxValue = 40
+      MinValue = 2
+      OnChange = InputChange
+      TabOrder = 1
+      Value = 16
+    end
+    object lblStallFemale: TLabel
+      Left = 420
+      Height = 17
+      Top = 64
+      Width = 190
+      Caption = '-'
+      Font.Style = [fsBold]
+      ParentFont = False
+    end
+    object lblChild: TLabel
+      Left = 12
+      Height = 17
+      Top = 96
+      Width = 200
+      Caption = 'Child, 7 years'
+    end
+    object seChild: TFloatSpinEdit
+      Left = 280
+      Height = 30
+      Top = 90
+      Width = 120
+      DecimalPlaces = 1
+      Increment = 0.5
+      MaxValue = 40
+      MinValue = 2
+      OnChange = InputChange
+      TabOrder = 2
+      Value = 10
+    end
+    object lblStallChild: TLabel
+      Left = 420
+      Height = 17
+      Top = 96
+      Width = 190
+      Caption = '-'
+      Font.Style = [fsBold]
+      ParentFont = False
+    end
+  end
+  object memo: TMemo
+    Left = 8
+    Height = 244
+    Top = 388
+    Width = 624
+    Align = alClient
+    BorderSpacing.Around = 8
+    Font.Name = 'Monospace'
+    ParentFont = False
+    ReadOnly = True
+    ScrollBars = ssAutoVertical
+    TabOrder = 3
+  end
+end

@@ -1930,6 +1930,44 @@ packages. Compiled binaries and each demo's own `lib/` output are
     default FPC mode and `Dialogs`, and nothing here needs it.
     `VMPlotMaxSeries` had to rise from 10 to 16 for the 12 possible
     series (see `Graphs/uVMPlot2D.pas` above).
+- **`JetFlow`** (added 2026-10-28) — a calculator built on JetVent's
+  `uJetCalcVM.pas` (on the unit path via `OtherUnitFiles=../..;../JetVent`,
+  not copied): driving pressure (bar gauge), bore (mm) and length (cm) in,
+  for oxygen at 20 C into 1 atm; out, the flow (`CalcFlow`), a choked
+  indicator, the highest Mach number, lowest temperature and lowest
+  pressure in the jet, and the thrust, with the working in a memo.
+  Recalculates on every change; `--p`/`--d`/`--l` set the inputs. Added
+  to `uJetCalcVM.pas` for it (JetVent unchanged in behaviour):
+  `CreateCustom` (any bore and length, no measured data), `ResistanceK`
+  and a `CalcFlow(DP, out Sonic)` overload exposing the Crane choking
+  test, `FreeJet` and `Thrust`. Things worth knowing:
+  - **Two choking tests can disagree near the threshold**: Crane's
+    pressure ratio against the critical one (inside `CalcFlow`) and the
+    sonic exit from the mass flow (`ExitState`). The indicator follows the
+    exit state, which the Mach number rests on: red for a sonic exit,
+    amber when only Crane says choked (Lindholm at 2 bar: exit Mach
+    0.986), green otherwise.
+  - **The extremes are in the free jet when choked.** A sonic exit is
+    under-expanded (exit pressure above ambient), so `FreeJet` expands it
+    isentropically from the exit's stagnation pressure `p_e / (p/pt at
+    M=1)` (NACA 1135 `Eq44`) to ambient: Mach 1.35 and 215 K for a 14G
+    Venflon at 3.5 bar, against the exit's 1 and 244 K. Unchoked, the
+    exit values are the extremes. The lowest pressure is therefore always
+    ambient; the form gives the exit pressure beside it. Shock-cell
+    overshoot below ambient in a real under-expanded jet is not modelled.
+  - **Thrust** is the exit-plane `m V_e + (p_e - p_amb) A`: 0.49 N for
+    that 14G case, 0.10 N of it pressure thrust.
+  - **Stall pressure into the trachea**: three editable diameters, adult
+    male, adult female and 7-year-old child (defaults 20, 16, 10 mm -
+    typical values, not from one reference), by JetVent's formula
+    `rho Q^2 / (A_jet A_trachea) / 100` (`TCatheter.StallPressure`, a
+    scalar twin of `Stall`). Chosen over thrust/area (also in the memo)
+    by checking both against the bench stall pressures into 22 mm: the
+    original is within a few per cent for Lindholm, Biro and 14G at
+    3.5 bar and 15-40 % low for Cook, 16G and 18G; thrust/area is
+    30-55 % low. The Cook's 15 mm data (75 cmH2O at 3.5 bar against
+    ~55) suggest it underestimates in narrow airways, which the memo
+    says.
 - **`Resonance`** — resonance and damping of the standard second-order
   system `H(s) = wn^2/(s^2 + 2 zeta wn s + wn^2)`, on two `TVMPlot2D`s
   stacked in a panel: the impulse response `h(t)` above and the
