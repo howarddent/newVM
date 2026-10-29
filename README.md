@@ -77,6 +77,31 @@ from where.
 
 Other developers are welcome to use and extend this code.
 
+## Licence
+
+Copyright (C) 2026 Howard Dent.
+
+newVM is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option)
+any later version. It is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See [`LICENSE`](LICENSE)
+for the full text.
+
+Third-party material in this repository keeps its own licence, not this
+one: `LMath/`, `Delphi OOFEM/`, `demos/JetVent/naca1135.pas` and
+`rayfanno.pas` (public domain), `Anaesthetics/PK-PD/ut_dgls.pas`
+(J-P Moreau) and its DMath-derived `ubisect`/`usecant`/`uerrors`, the
+three Kaps-Rentrop integrators ported from *Numerical Recipes*
+(`Anaesthetics/PK-PD/kaps_Rentrop.PAS`, `Anaesthetics/PK-PD_FPC/uKapsRentrop.pas`,
+`demos/Benney/ukapsrentrop.pas`), whose terms are Numerical Recipes'
+own, the recorded data under `demos/BioSpectra/data/` (see its
+`README.md` for sources and terms), and the place, outline and county
+tables in `demos/CanterburyRain/*.inc` (GeoNames, CC BY 4.0; Natural
+Earth, public domain; ONS boundaries and Met Office averages, Open
+Government Licence).
+
 ## Screenshots
 
 `Wave2D_FPC` (under `demos/Chebyshev/`), a Chebyshev-spectral solver for
