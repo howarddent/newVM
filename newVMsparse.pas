@@ -1,3 +1,15 @@
+{
+  This file is part of newVM.
+  Copyright (C) 2026 Howard Dent
+  SPDX-License-Identifier: GPL-3.0-or-later
+
+  newVM is free software: you can redistribute it and/or modify it under
+  the terms of the GNU General Public License as published by the Free
+  Software Foundation, either version 3 of the License, or (at your
+  option) any later version. It is distributed WITHOUT ANY WARRANTY; see
+  the file LICENSE at the top of the repository for details.
+}
+
 unit newVMsparse;
 
 {*******************************************************************************
@@ -453,8 +465,16 @@ begin
   iparm[1] := 3;  //fill-in reordering: OpenMP-parallel nested dissection
                   //(pardisoinit's default, 2, is serial METIS - the
                   //analysis phase would otherwise run on one thread)
-  iparm[23] := 1; //two-level parallel factorisation - scales better than
-                  //the classic algorithm beyond ~8 OpenMP threads
+  //Two-level parallel factorisation - scales better than the classic
+  //algorithm beyond ~8 OpenMP threads, but ONLY for the unsymmetric type.
+  //With mtype=2 (real SPD) it does not merely fail to help, it pathologically
+  //degrades: a 2-D Laplacian that factorises in 9 ms with this left at
+  //pardisoinit's default still had not finished after 120 s at n=10,000 (and
+  //newVMsparsetest's n=160,000 SPD case ran over 30 min without completing).
+  //Isolated to this one flag - iparm[1] (reordering) makes no difference
+  //either way, and mtype=11 with iparm[23]=1 is fine (144 ms at n=160,000).
+  if not SymmetricPosDef then
+    iparm[23] := 1;
 
   n := A.Rows;
   SetLength(perm, n);
@@ -489,7 +509,7 @@ var
   dpar: array[0..127] of Double;
   tmp, bilu0, trvec, xvec, bvec: array of Double;
   RCI_request, itercount, ierr: Integer;
-  Ahandle, ILU0handle: Pointer;
+  Ahandle, ILU0handle, ILU0handleU: Pointer;
   descrGeneral, descrL, descrU: TMKLMatrixDescr;
   X: TVMobj;
 begin
@@ -573,6 +593,7 @@ begin
   dpar[0] := Tol;              //Fortran dpar(1): relative tolerance
 
   ILU0handle := nil;
+  ILU0handleU := nil;
   if UseILU0 then
   begin
     SetLength(bilu0, Length(A.FValues));
@@ -582,13 +603,28 @@ begin
       raise Exception.Create(s + 'dcsrilu0 (ILU0 factorisation) failed, code ' + IntToStr(ierr));
     SetLength(trvec, n);
 
-    //One Inspector-Executor handle over the packed L\U factors, reused for
-    //both triangular solves below via a different descr each time (L is
-    //implicitly unit-diagonal, U carries the real factorised diagonal).
+    //TWO Inspector-Executor handles over the same packed L\U factor buffer -
+    //one per triangular solve (L is implicitly unit-diagonal, U carries the
+    //real factorised diagonal). Both describe identical CSR data; only the
+    //descr each is optimised against differs.
+    //
+    //One shared handle would be the obvious choice (and was, originally), but
+    //setting BOTH sv hints on a single handle and then calling
+    //mkl_sparse_optimize segfaults inside MKL - reproduced deterministically
+    //on MKL 2026.1 at every matrix size tried, from n=4 to n=20000. Isolated
+    //to exactly that combination: one hint plus optimize is fine, and both
+    //hints WITHOUT optimize is fine - so it is the optimize step acting on
+    //two mutually contradictory triangular hints (lower/unit vs upper/
+    //non-unit) for the same handle that breaks. Splitting the hints across
+    //two handles keeps the inspector benefit below with no crash.
     st := mkl_sparse_d_create_csr(@ILU0handle, SPARSE_INDEX_BASE_ZERO, n, n,
       @A.FRowPtr[0], @A.FRowPtr[1], @A.FColInd[0], @bilu0[0]);
     if st <> SPARSE_STATUS_SUCCESS then
-      raise Exception.Create(s + 'mkl_sparse_d_create_csr(ILU0) failed, status ' + IntToStr(st));
+      raise Exception.Create(s + 'mkl_sparse_d_create_csr(ILU0 L) failed, status ' + IntToStr(st));
+    st := mkl_sparse_d_create_csr(@ILU0handleU, SPARSE_INDEX_BASE_ZERO, n, n,
+      @A.FRowPtr[0], @A.FRowPtr[1], @A.FColInd[0], @bilu0[0]);
+    if st <> SPARSE_STATUS_SUCCESS then
+      raise Exception.Create(s + 'mkl_sparse_d_create_csr(ILU0 U) failed, status ' + IntToStr(st));
     descrL.mtype := SPARSE_MATRIX_TYPE_TRIANGULAR; descrL.mode := SPARSE_FILL_MODE_LOWER; descrL.diag := SPARSE_DIAG_UNIT;
     descrU.mtype := SPARSE_MATRIX_TYPE_TRIANGULAR; descrU.mode := SPARSE_FILL_MODE_UPPER; descrU.diag := SPARSE_DIAG_NON_UNIT;
     //Inspector stage for the two triangular solves. Measured on this
@@ -599,8 +635,9 @@ begin
     //pattern to use more threads. Same "status not checked" policy as
     //Ahandle's hint above.
     mkl_sparse_set_sv_hint(ILU0handle, SPARSE_OPERATION_NON_TRANSPOSE, descrL, MaxIter);
-    mkl_sparse_set_sv_hint(ILU0handle, SPARSE_OPERATION_NON_TRANSPOSE, descrU, MaxIter);
     mkl_sparse_optimize(ILU0handle);
+    mkl_sparse_set_sv_hint(ILU0handleU, SPARSE_OPERATION_NON_TRANSPOSE, descrU, MaxIter);
+    mkl_sparse_optimize(ILU0handleU);
   end;
 
   { dfgmres_init lays out tmp's work blocks (ipar(16..21) offsets) for its
@@ -631,7 +668,7 @@ begin
            st := mkl_sparse_d_trsv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, ILU0handle, descrL, @tmp[ipar[21]-1], @trvec[0]);
            if st <> SPARSE_STATUS_SUCCESS then
              raise Exception.Create(s + 'mkl_sparse_d_trsv(L) failed, status ' + IntToStr(st));
-           st := mkl_sparse_d_trsv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, ILU0handle, descrU, @trvec[0], @tmp[ipar[22]-1]);
+           st := mkl_sparse_d_trsv(SPARSE_OPERATION_NON_TRANSPOSE, 1.0, ILU0handleU, descrU, @trvec[0], @tmp[ipar[22]-1]);
            if st <> SPARSE_STATUS_SUCCESS then
              raise Exception.Create(s + 'mkl_sparse_d_trsv(U) failed, status ' + IntToStr(st));
          end;
@@ -647,6 +684,7 @@ begin
 
   mkl_sparse_destroy(Ahandle);
   if ILU0handle <> nil then mkl_sparse_destroy(ILU0handle);
+  if ILU0handleU <> nil then mkl_sparse_destroy(ILU0handleU);
 
   X := TVMobj.Create(n, 1);
   for i := 0 to n-1 do X.DataPtr[i] := xvec[i];
