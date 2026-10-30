@@ -1301,6 +1301,116 @@ with and without the ILU0 preconditioner. The solve tests assert the
 since a known-value expectation rounded to fixed digits would be fragile
 where the residual is the actual contract.
 
+### `Delphi OOFEM/FEM4/Development/Examples/Defibrillation`
+
+Added 2026-10-30. Shows how the current of a 200 J monophasic shock
+spreads through a torso. The torso is **ThermEx1's trunk**, built from
+`uThermEx1`'s own interface tables (the project `uses` it, with
+`..\ThermEx1` on its search path): 334 x 167 mm, 0.78 m long, core,
+muscle, fat and skin as similar ellipses. It is meshed as ThermEx1 meshes
+a cylinder, but finer round the section (32 divisions a quadrant) and
+graded along it (6.5 mm through the chest). With the chest wall below
+that gives about 209k nodes and 249k elements. `uDefibModel.pas`'s header has the model, and
+`uDefibView.pas`'s header the picture. Things worth knowing:
+
+- **Solver.** `TThermalEngine`: `div(sigma grad phi) = 0` is
+  steady conduction, so "temperature" is volts and a node "heat source"
+  is amperes. One static PARDISO solve for 1 A takes about 1-2 min, most
+  of the start-up.
+- **Per-element conductivity tensors in FEM4** (added for the
+  anisotropic option). `TThermalEngine.SetElementConductivityTensor(Id,
+  Kxx, Kyy, Kzz, Kxy, Kxz, Kyz)` stores a symmetric tensor on that
+  element's `TElementData`; `SetMaterial` then calls
+  `TElement.SetConductivityTensor` or `ClearConductivityTensor` for every
+  element, which matters because assembly reuses one element object per
+  type across the mesh. `Brick_H8V1`/`W6V1`/`T4V1` form
+  `BT * CondB(B)` and skip the scalar `FConductivity` scaling when a
+  tensor is set. With no tensor set, results are unchanged
+  (Defibrillation's isotropic run reproduced every figure exactly). The
+  2-D and edge elements don't use it.
+- **Organs.** A tilted ellipsoid heart (myocardium round a blood cavity)
+  and two lungs. A core element takes an organ's tissue if its centroid
+  lies inside the organ, so organ surfaces staircase at element size.
+- **Chest wall and skeleton** (added later the same day, at the user's
+  request). ThermEx1's muscle is only 13 mm thick at the sides and half
+  that at the front, so an 18 mm wall of muscle conductivity is meshed
+  inside the core's ellipse as one more transfinite annulus (physical
+  volume 5). Its inner edge is a gmsh `Spline` through points offset
+  along the ellipse's normal (`WallPoint`), so the wall has constant
+  thickness. That only works below the ellipse's smallest radius of
+  curvature, b^2/a = 37 mm. The skeleton is assigned per element in the
+  wall's inner 11 mm (`DepthInCore`, a Newton solve for the nearest
+  point on the ellipse):
+  - twelve horizontal rib hoops of bone (0.02 S/m). `ChestStep` (6.5 mm)
+    and `ChestBottom` (56 layers) were chosen so each rib is exactly two
+    axial layers at a four-layer pitch;
+  - costal cartilage (0.18 S/m) at the front;
+  - ribs 8-10 stop either side of the midline and 11-12 at the sides;
+  - a sternum plate;
+  - a spine cylinder through core and wall.
+
+  The heart and lungs were shrunk to fit the 260 x 112 mm thoracic core.
+  `TDefibView.DrawSkeleton` draws them from the same rules, not from the
+  elements, with a "Skeleton" check box.
+- **Pads.** Each pad is a 1 mm sheet of 1e4 S/m bricks extruded on the
+  skin faces it covers, the same construction as ThermEx1's gown. That
+  makes it an equipotential without constraining the skin. 1 A goes into
+  the sternal pad, and the apex pad is penalty-held at 0 V. The sternal
+  pad's potential is then the resistance in ohms.
+- **Time.** Quasi-static. Tissue relaxes charge in microseconds, so the
+  field is the 1 A solution times I(t), an RLC damped sine (32 uF, 50 mH,
+  11 ohm; charged for 200 J into 50 ohm). The animation's "spread" is the
+  region above a chosen |J|. Don't add a diffusing or travelling front:
+  that would be wrong physics.
+- **Results.** 73 ohm transthoracic resistance (80 before the wall, which
+  replaced 0.15 S/m core with 0.25 S/m muscle), against the clinical
+  70-80. Peak 35 A at 1.24 ms, 212 J delivered. Power balance within
+  1.2 %. The skin current at the sternal pad comes to 1.01 A, counted over
+  the pad and 1 cm round it, because the current crowds in at the pad
+  edge.
+- **Heart share is still high.** About 12 % of the current crosses the
+  heart, against ~4 % in the literature, with myocardial fields of
+  25-86 V/cm at peak (mean 38). Without the wall and ribs it was 16 %,
+  and enlarging the lungs from 3 to 4.2 L changed nothing then. The
+  report lists what's still missing, chiefly the lean, armless, smooth
+  trunk.
+- **Anisotropic muscle** (`--anisotropic`, set before `Run`; it needs
+  its own solve). Muscle and chest wall get 0.52 S/m along fibres and
+  0.076 across (Epstein & Foster 1983), fibres horizontal and tangent to
+  the section's ellipses (`FibreDir`). `PostProcess` uses `CurrentFrom`
+  for J = -sigma grad phi and J.E for the power. It made things *worse*
+  against the literature, not better: 91 ohm (73 isotropic), heart share
+  15 % (12 %), myocardial field 28-78 V/cm at the monophasic peak. Across
+  the fibres includes up and down the trunk, so the wall spreads current
+  along the body less. That explanation is a reading of the numbers and
+  hasn't been checked separately.
+- **Biphasic shock** (`--biphasic`, or the Shock radio buttons in the
+  window): a generic biphasic truncated exponential, 100 uF straight
+  into the torso, phase 1 to 50 % tilt (t1 = tau ln 2), then reversed
+  for 2/3 t1. That always delivers 90.1 % of the stored energy, so V0 is
+  set for exactly 200 J at any resistance. In closed form, no RK4.
+  Isotropic: 2107 V, 28.9 A falling to 14.4 A over 5.05 ms, then -14.4
+  to -9.1 A over 3.37 ms. `Biphasic` can change after `Run`: `Run` saves
+  the report's line count before `ComputeWaveform` (`FShockStart`, with
+  `TraceLines` moved before it) and `SetBiphasic` truncates there and
+  redoes the waveform and heart sections without solving again.
+  `TPeak` is 0 for the biphasic shock.
+- **Current direction colours** (added 2026-10-30): field lines and the
+  cloud are yellow where the current heads towards the heart's apex
+  (`Heart.C + R[0]*U[0]`, since `U[0]` runs base to apex) and blue where
+  it heads away. The test is the sign of `I(t) J . (apex - P)`, with each
+  field-line segment's direction standing in for J, because the lines
+  were traced along J for +1 A. So the biphasic second phase shows the
+  colours swapped.
+- **Output files.** The mesh goes to `mesh/` in the project folder (23 MB,
+  ignored by the `Examples/*/[A-Za-z0-9]*` rule), not to `Examples/Data`,
+  where the msh would be untracked-but-visible.
+- **Command line.** `--no-plot` gives a headless report.
+  `--anisotropic` and `--biphasic` as above. `--snapshot=<prefix>`
+  saves the 3D view at 0.2, 0.5 ms, the peak, 4 and 8 ms via
+  `TDefibView.SaveToPNG`, plus the waveform and window. `--time=<ms>` saves
+  one frame instead.
+
 ### GPU backends: `newVMCL.pas`/`OpenCLAPI.pas` and `newVMMetal.pas`/`MetalAPI.pas`
 
 Two further companion units put a `TVMobj`-shaped type on the GPU, both
