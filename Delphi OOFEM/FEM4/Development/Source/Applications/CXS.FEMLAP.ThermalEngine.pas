@@ -110,6 +110,14 @@ type TThermalEngine = class(TObject)
 
     (*
     Description:
+      Give one element a full (symmetric) conductivity tensor, used in
+      place of its material's scalar conductivity by the 3D conduction
+      elements (H8, W6, T4). Call after AddElement, before solving.
+    *)
+    procedure SetElementConductivityTensor(ElementId : Integer; Kxx, Kyy, Kzz, Kxy, Kxz, Kyz : Double);
+
+    (*
+    Description:
       Call after adding mesh.
     Parameters:
     *)
@@ -1522,6 +1530,19 @@ begin
   Element.SpecificHeat := FMaterials[FElements[ElementId].MaterialId].Cp.GetValue(DependantVarFunc(-1, ElementId));
   Element.Conductivity := FMaterials[FElements[ElementId].MaterialId].k.GetValue(DependantVarFunc(-1, ElementId));
 
+  with FElements[ElementId] do
+    if HasCondTensor then
+      Element.SetConductivityTensor(CondTensorValue(0), CondTensorValue(1),
+        CondTensorValue(2), CondTensorValue(3), CondTensorValue(4), CondTensorValue(5))
+    else
+      Element.ClearConductivityTensor;
+
+end;
+
+procedure TThermalEngine.SetElementConductivityTensor(ElementId : Integer;
+  Kxx, Kyy, Kzz, Kxy, Kxz, Kyz : Double);
+begin
+  FElements[ElementId].SetCondTensor(Kxx, Kyy, Kzz, Kxy, Kxz, Kyz);
 end;
 
 procedure TThermalEngine.StaticSolve;

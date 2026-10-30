@@ -345,9 +345,12 @@ begin
 
   BT := B.Transpose;
 
-  FK := MatMult(BT, B);
+  FK := MatMult(BT, CondB(B));
 
-  FK := FK * (FVolume * FConductivity);
+  if FAnisotropic then
+    FK := FK * FVolume
+  else
+    FK := FK * (FVolume * FConductivity);
 
 end;
 

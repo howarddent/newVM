@@ -490,7 +490,7 @@ begin
 
     Ki := TVMobj.Create(8,8);
 
-    Ki := MatMult(BT, B);
+    Ki := MatMult(BT, CondB(B));
 
     Ki := Ki * (wxi[p] * weta[p] * wzeta[p] * DetJ);
 
@@ -498,7 +498,8 @@ begin
 
   end;
 
-  FK := FK * FConductivity;
+  if not FAnisotropic then
+    FK := FK * FConductivity;
 
 end;
 

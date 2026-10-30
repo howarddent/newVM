@@ -55,6 +55,15 @@ type TElement = class(TObject)
     FPoisson : Double;
     FThermalExpansion : Double;
 
+    // Anisotropic conductivity (3x3, symmetric), used in place of
+    // FConductivity by the 3D conduction elements when FAnisotropic.
+    FAnisotropic : Boolean;
+    FCondTensor : TVMobj;
+
+    // D*B when anisotropic, else B: the conduction elements form
+    // K = sum BT*(D*B) w detJ and only scale by FConductivity if not.
+    function CondB(const B : TVMobj) : TVMobj;
+
     // v1/v2/vc are (3,1) column vectors, matching this file's own local
     // convention for element-local 3-vectors - see the unit's own port
     // notes below (GlobalToLocal's header comment) for why.
@@ -100,6 +109,13 @@ type TElement = class(TObject)
 
     property TimeInterval: Double read FTimeInterval write FTimeInterval;
 
+    // Set a full conductivity tensor for the next Calc, or go back to the
+    // scalar Conductivity. Elements are reused across the mesh during
+    // assembly, so the engine sets or clears this for every element.
+    procedure SetConductivityTensor(Kxx, Kyy, Kzz, Kxy, Kxz, Kyz : Double);
+    procedure ClearConductivityTensor;
+    property Anisotropic : Boolean read FAnisotropic;
+
 end;
 
 implementation
@@ -116,6 +132,31 @@ var
 begin
   for j := 0 to 2 do
     M[RowIdx, j] := V[j, 0];
+end;
+
+function TElement.CondB(const B : TVMobj) : TVMobj;
+begin
+  if FAnisotropic then
+    Result := MatMult(FCondTensor, B)
+  else
+    Result := B;
+end;
+
+procedure TElement.SetConductivityTensor(Kxx, Kyy, Kzz, Kxy, Kxz, Kyz : Double);
+begin
+  FCondTensor := TVMobj.Create(3, 3);
+  FCondTensor[0, 0] := Kxx;
+  FCondTensor[1, 1] := Kyy;
+  FCondTensor[2, 2] := Kzz;
+  FCondTensor[0, 1] := Kxy;  FCondTensor[1, 0] := Kxy;
+  FCondTensor[0, 2] := Kxz;  FCondTensor[2, 0] := Kxz;
+  FCondTensor[1, 2] := Kyz;  FCondTensor[2, 1] := Kyz;
+  FAnisotropic := True;
+end;
+
+procedure TElement.ClearConductivityTensor;
+begin
+  FAnisotropic := False;
 end;
 
 procedure TElement.Calc;

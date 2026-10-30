@@ -135,6 +135,11 @@ type TElementData = class
     FNbRadiationBCs : Integer;
     FRadiationBCs : Array of RRadiationBC;
 
+    // Optional anisotropic conductivity: xx, yy, zz, xy, xz, yz. When set
+    // it replaces the material's scalar conductivity for this element.
+    FHasCondTensor : Boolean;
+    FCondTensor : Array[0..5] of Double;
+
     function GetSource(SIndex: Integer): RSource;
     function GetNodeId(NIndex: Integer): Integer;
     procedure SetNodeId(NIndex: Integer; const Value: Integer);
@@ -161,6 +166,11 @@ type TElementData = class
     procedure AddRadiation(LocType : NLocType; Index : Integer; DependantVarFunc : TDependantVarFunc; e, Tinf : TExpressionList);
 
     property MaterialId : Integer read FMaterialId write FMaterialId;
+
+    procedure SetCondTensor(Kxx, Kyy, Kzz, Kxy, Kxz, Kyz : Double);
+    procedure ClearCondTensor;
+    function CondTensorValue(i : Integer) : Double;
+    property HasCondTensor : Boolean read FHasCondTensor;
 
     property NbSources : Integer read FNbSources;
     property NbConvectiveBCs : Integer read FNbConvectiveBCs;
@@ -321,6 +331,27 @@ destructor TElementData.Destroy;
 begin
 
   inherited;
+end;
+
+procedure TElementData.SetCondTensor(Kxx, Kyy, Kzz, Kxy, Kxz, Kyz : Double);
+begin
+  FCondTensor[0] := Kxx;
+  FCondTensor[1] := Kyy;
+  FCondTensor[2] := Kzz;
+  FCondTensor[3] := Kxy;
+  FCondTensor[4] := Kxz;
+  FCondTensor[5] := Kyz;
+  FHasCondTensor := True;
+end;
+
+procedure TElementData.ClearCondTensor;
+begin
+  FHasCondTensor := False;
+end;
+
+function TElementData.CondTensorValue(i : Integer) : Double;
+begin
+  Result := FCondTensor[i];
 end;
 
 function TElementData.GetConvectiveBC(SIndex: Integer): RConvectiveBC;
