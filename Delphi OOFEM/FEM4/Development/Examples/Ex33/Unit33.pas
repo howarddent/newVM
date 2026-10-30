@@ -5,7 +5,7 @@ unit Unit33;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
   Dialogs, ExtCtrls, TAGraph, TASeries, StdCtrls, CXS.FEMLAP.Analytical;
 
 type

@@ -22,8 +22,6 @@ uses
   CXS.FEMLAP.Exceptions in '..\..\Source\System\CXS.FEMLAP.Exceptions.pas',
   CXS.FEMLAP.Extrapolation in '..\..\Source\Algebra\CXS.FEMLAP.Extrapolation.pas';
 
-{$R *.res}
-
 begin
   InitializeCBLAS;
   Application.Initialize;

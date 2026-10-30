@@ -20,8 +20,6 @@ uses
   CXS.FEMLAP.Exceptions in '..\..\Source\System\CXS.FEMLAP.Exceptions.pas',
   CXS.FEMLAP.ShellExec in '..\..\Source\System\CXS.FEMLAP.ShellExec.pas';
 
-{$R *.res}
-
 begin
   InitializeCBLAS;
   Application.Initialize;

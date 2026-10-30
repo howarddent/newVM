@@ -5,9 +5,9 @@ unit Unit11;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
   Dialogs, CXS.FEMLAP.Gmsh, StdCtrls, newVM, newVMsparse,
-  ShellApi, CXS.FEMLAP.ShellExec, CXS.FEMLAP.Brick_T4V1, CXS.FEMLAP.Brick_H8V1;
+  CXS.FEMLAP.ShellExec, CXS.FEMLAP.Brick_T4V1, CXS.FEMLAP.Brick_H8V1;
 
 type
   TForm1 = class(TForm)
@@ -25,6 +25,19 @@ var
 implementation
 
 {$R *.lfm}
+
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
 
 procedure TForm1.Button1Click(Sender: TObject);
 var
@@ -61,7 +74,7 @@ var
   // Output data
   v : TDoubleArray;
 
-  ExitCode : DWORD;
+  ExitCode : Cardinal;
 
 begin
 
@@ -69,9 +82,9 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\cube.geo', '-3'], ExitCode, 60000, True);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'cube.geo', '-3'], ExitCode, 60000, True);
 
-  Gmsh.OpenFile('..\Data\cube.msh');
+  Gmsh.OpenFile(DataDir + 'cube.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 
@@ -240,7 +253,7 @@ begin
   for i := 0 to Gmsh.NbNodes - 1 do
     v[i] := ug[i,0];
 
-  Gmsh.OpenFile('..\Data\cube.pos');
+  Gmsh.OpenFile(DataDir + 'cube.pos');
   Gmsh.WriteViewScalarNode('T', v);
   Gmsh.Close;
 
@@ -249,7 +262,7 @@ begin
 
   Gmsh.Free;
 
-  ShellExecute(Handle,'open', 'c:\gmsh\gmsh.exe', '..\Data\cube.pos', nil, SW_SHOWNORMAL) ;
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'cube.pos'], ExitCode);
 
 end;
 

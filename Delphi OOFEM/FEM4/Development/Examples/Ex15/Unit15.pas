@@ -5,8 +5,8 @@ unit Unit15;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
-  Dialogs, StdCtrls, ShellApi, Math, newVM, newVMsparse, CXS.FEMLAP.ShellExec,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, Math, newVM, newVMsparse, CXS.FEMLAP.ShellExec,
   CXS.FEMLAP.Gmsh, CXS.FEMLAP.Torsion, CXS.FEMLAP.Face_T3V1;
 
 type
@@ -25,6 +25,19 @@ var
 implementation
 
 {$R *.lfm}
+
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
 
 procedure TForm1.Button1Click(Sender: TObject);
 var
@@ -47,7 +60,7 @@ var
 
   s : String;
 
-  ExitCode : DWORD;
+  ExitCode : Cardinal;
 
 begin
 
@@ -55,9 +68,9 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\torsion.geo', '-3'], ExitCode, 60000, True);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'torsion.geo', '-3'], ExitCode, 60000, True);
 
-  Gmsh.OpenFile('..\Data\torsion.msh');
+  Gmsh.OpenFile(DataDir + 'torsion.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 

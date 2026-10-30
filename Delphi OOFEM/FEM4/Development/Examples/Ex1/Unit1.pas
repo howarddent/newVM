@@ -75,7 +75,10 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Gmsh.OpenFile('..\Data\example10.5.msh');
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  Gmsh.OpenFile('..' + PathDelim + 'Data' + PathDelim + 'example10.5.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 

@@ -5,7 +5,7 @@ unit Unit35;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
   Dialogs, newVMsparse,
   CXS.FEMLAP.Gmsh,
   CXS.FEMLAP.Node,
@@ -20,7 +20,6 @@ uses
   CXS.FEMLAP.EngineData,
   CXS.FEMLAP.ThermalEngine,
   CXS.FEMLAP.Expression,
-  ShellAPI,
   StdCtrls, ExtCtrls;
 
 type
@@ -55,6 +54,19 @@ implementation
 
 {$R *.lfm}
 
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
+
 procedure TForm35.Button1Click(Sender: TObject);
 var
 
@@ -66,7 +78,7 @@ var
 
   SectionArea, Perimeter, Thickness : Double;
 
-  ExitCode: DWORD;
+  ExitCode: Cardinal;
 
   NbNodes : Integer;
   Node : Array[0..7] of Integer;
@@ -95,7 +107,7 @@ var
 
   SR: TSearchRec;
   Files: TStringList;
-  FileList: String;
+  Args: array of String;
 
 begin
 
@@ -107,7 +119,7 @@ begin
 
   Caption := 'Loading mesh...';
 
-  Gmsh.OpenFile('..\Data\tamega\tamega.msh');
+  Gmsh.OpenFile(DataDir + 'tamega' + PathDelim + 'tamega.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 
@@ -285,7 +297,7 @@ begin
   try
     Files.Sorted := True;
 
-    if FindFirst('..\Data\tamega_*.pos', faAnyFile, SR) = 0 then
+    if FindFirst(DataDir + 'tamega_*.pos', faAnyFile, SR) = 0 then
     begin
       repeat
         Files.Add(SR.Name);
@@ -296,11 +308,13 @@ begin
     if Files.Count > 0 then
     begin
 
-      FileList := '';
+      SetLength(Args, Files.Count + 2);
       for k := 0 to Files.Count - 1 do
-        FileList := FileList + '..\Data\' + Files[k] + ' ';
+        Args[k] := DataDir + Files[k];
+      Args[Files.Count] := '-combine';
+      Args[Files.Count + 1] := '-noview';
 
-      ShellExecute(Handle, 'open', 'c:\gmsh\gmsh.exe', PChar(FileList + '-combine -noview'), nil, SW_SHOWNORMAL) ;
+      Sto_ShellExecute(GmshExecutable, Args, ExitCode);
 
     end
     else
@@ -384,7 +398,7 @@ begin
 
     end;
 
-    Gmsh.OpenFile('..\Data\tamega_' + Format('%.3d', [ThermalEngine.Step]) + '.pos');
+    Gmsh.OpenFile(DataDir + 'tamega_' + Format('%.3d', [ThermalEngine.Step]) + '.pos');
     Gmsh.WriteViewScalarNode('T', v);
     Gmsh.Close;
 

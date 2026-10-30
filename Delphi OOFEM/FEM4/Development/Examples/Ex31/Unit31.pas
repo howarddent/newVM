@@ -5,9 +5,9 @@ unit Unit31;
 interface
 
 uses
-  Windows, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
   Dialogs, StdCtrls, ExtCtrls,
-  newVM, newVMsparse, ShellApi, CXS.FEMLAP.ShellExec,
+  newVM, newVMsparse, CXS.FEMLAP.ShellExec,
   CXS.FEMLAP.Gmsh, CXS.FEMLAP.Assembly, CXS.FEMLAP.Analytical, CXS.FEMLAP.Penalty,
   CXS.FEMLAP.Face_T3V1, CXS.FEMLAP.Face_Q4V1, CXS.FEMLAP.Brick_T4V1, CXS.FEMLAP.Brick_H8V1, CXS.FEMLAP.Brick_W6V1,
   TAGraph, TASeries;
@@ -37,6 +37,19 @@ var
 implementation
 
 {$R *.lfm}
+
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
 
 procedure TForm31.Button1Click(Sender: TObject);
 var
@@ -78,7 +91,7 @@ var
   // Output data
   v : TDoubleArray;
 
-  ExitCode: DWORD;
+  ExitCode: Cardinal;
 
   // BC's
   diag : TVMobj;
@@ -137,7 +150,7 @@ begin
 
   MeshSize := StrToFloat(Edit1.Text);
 
-  Gmsh.OpenFile('..\Data\tvalid.geo');
+  Gmsh.OpenFile(DataDir + 'tvalid.geo');
   if ComboBox1.Text = 'TRI' then
     Gmsh.GenerateRectangle(Length, Width, MeshSize, GMSH_TRI)
   else if ComboBox1.Text = 'QUAD' then
@@ -152,11 +165,11 @@ begin
 
   Caption := 'Meshing...';
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\tvalid.geo', '-3'], ExitCode, 60000, True);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'tvalid.geo', '-3'], ExitCode, 60000, True);
 
   Caption := 'Loading mesh...';
 
-  Gmsh.OpenFile('..\Data\tvalid.msh');
+  Gmsh.OpenFile(DataDir + 'tvalid.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 
@@ -660,7 +673,7 @@ begin
 
   end;
 
-  Gmsh.OpenFile('..\Data\tvalid.pos');
+  Gmsh.OpenFile(DataDir + 'tvalid.pos');
   Gmsh.WriteViewScalarNode('T', v);
   Gmsh.Close;
 
@@ -682,7 +695,7 @@ begin
 
   if CheckBox2.Checked then
   begin
-    ShellExecute(Handle, 'open', 'c:\gmsh\gmsh.exe', '..\Data\tvalid.pos -noview', nil, SW_SHOWNORMAL);
+    Sto_ShellExecute(GmshExecutable, [DataDir + 'tvalid.pos', '-noview'], ExitCode);
   end;
 
 end;

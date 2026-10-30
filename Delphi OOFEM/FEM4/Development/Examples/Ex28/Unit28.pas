@@ -5,9 +5,9 @@ unit Unit28;
 interface
 
 uses
-  Windows, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
   Dialogs, StdCtrls, ExtCtrls, TAGraph, TASeries,
-  newVM, newVMsparse, ShellApi, CXS.FEMLAP.ShellExec,
+  newVM, newVMsparse, CXS.FEMLAP.ShellExec,
   CXS.FEMLAP.Gmsh, CXS.FEMLAP.Assembly, CXS.FEMLAP.Edge_B2V1, CXS.FEMLAP.Face_T3V1, CXS.FEMLAP.Face_Q4V1,
   ComCtrls, CXS.FEMLAP.Expression;
 
@@ -83,6 +83,19 @@ implementation
 
 {$R *.lfm}
 
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
+
 // Windows' ShellExecute (unlike a Unix shell) never expands wildcards in
 // its Parameters string - a literal 'eurocode_*.pos' argument reaches
 // gmsh.exe unexpanded, matches no real file, and gmsh opens with an
@@ -91,9 +104,10 @@ implementation
 // time order.
 procedure TForm28.Button1Click(Sender: TObject);
 var
+  ExitCode: Cardinal;
   SR: TSearchRec;
   Files: TStringList;
-  FileList: String;
+  Args: array of String;
   i: Integer;
 begin
 
@@ -101,7 +115,7 @@ begin
   try
     Files.Sorted := True;
 
-    if FindFirst('..\Data\eurocode_*.pos', faAnyFile, SR) = 0 then
+    if FindFirst(DataDir + 'eurocode_*.pos', faAnyFile, SR) = 0 then
     begin
       repeat
         Files.Add(SR.Name);
@@ -115,11 +129,13 @@ begin
       Exit;
     end;
 
-    FileList := '';
+    SetLength(Args, Files.Count + 2);
     for i := 0 to Files.Count - 1 do
-      FileList := FileList + '..\Data\' + Files[i] + ' ';
+      Args[i] := DataDir + Files[i];
+    Args[Files.Count] := '-combine';
+    Args[Files.Count + 1] := '-noview';
 
-    ShellExecute(Handle, 'open', 'c:\gmsh\gmsh.exe', PChar(FileList + '-combine -noview'), nil, SW_SHOWNORMAL) ;
+    Sto_ShellExecute(GmshExecutable, Args, ExitCode);
 
   finally
     Files.Free;
@@ -166,7 +182,7 @@ var
   // Output data
   v : TDoubleArray;
 
-  ExitCode: DWORD;
+  ExitCode: Cardinal;
 
   nIter : Integer;
 
@@ -196,7 +212,7 @@ begin
 
   MeshSize := StrToFloat(TxtMeshSize.Text);
 
-  Gmsh.OpenFile('..\Data\eurocode.geo');
+  Gmsh.OpenFile(DataDir + 'eurocode.geo');
   if CmbEleType.Text = 'TRI' then
     Gmsh.GenerateRectangle(StrToFloat(TxtWidth.Text)*0.5, StrToFloat(TxtHeight.Text)*0.5, MeshSize, GMSH_TRI)
    else if CmbEleType.Text = 'QUAD' then
@@ -205,11 +221,11 @@ begin
 
   Caption := 'Meshing...';
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\eurocode.geo', '-3'], ExitCode, 60000, True);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'eurocode.geo', '-3'], ExitCode, 60000, True);
 
   Caption := 'Loading mesh...';
 
-  Gmsh.OpenFile('..\Data\eurocode.msh');
+  Gmsh.OpenFile(DataDir + 'eurocode.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 
@@ -576,7 +592,7 @@ begin
 
     end;
 
-    Gmsh.OpenFile('..\Data\eurocode_' + Format('%.4d', [ti-1]) + '.pos');
+    Gmsh.OpenFile(DataDir + 'eurocode_' + Format('%.4d', [ti-1]) + '.pos');
     Gmsh.WriteViewScalarNode('T', v);
     Gmsh.Close;
 

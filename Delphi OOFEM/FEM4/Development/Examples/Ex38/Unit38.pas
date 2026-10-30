@@ -5,7 +5,7 @@ unit Unit38;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
   Dialogs, newVMsparse,
   CXS.FEMLAP.Gmsh,
   CXS.FEMLAP.Node,
@@ -20,7 +20,6 @@ uses
   CXS.FEMLAP.EngineData,
   CXS.FEMLAP.ThermalEngine,
   CXS.FEMLAP.Expression,
-  ShellAPI,
   StdCtrls, ExtCtrls;
 
 type
@@ -54,8 +53,22 @@ implementation
 
 {$R *.lfm}
 
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
+
 procedure TForm38.Button1Click(Sender: TObject);
 var
+  ExitCode: Cardinal;
 
   ii, jj : Integer;
 
@@ -76,7 +89,7 @@ var
 
   SR: TSearchRec;
   Files: TStringList;
-  FileList: String;
+  Args: array of String;
   fi : Integer;
 
 begin
@@ -93,7 +106,7 @@ begin
 
   Caption := 'Loading mesh...';
 
-  Gmsh.OpenFile('..\Data\building\building.msh');
+  Gmsh.OpenFile(DataDir + 'building' + PathDelim + 'building.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 
@@ -230,7 +243,7 @@ begin
   try
     Files.Sorted := True;
 
-    if FindFirst('..\Data\building_???.pos', faAnyFile, SR) = 0 then
+    if FindFirst(DataDir + 'building_???.pos', faAnyFile, SR) = 0 then
     begin
       repeat
         Files.Add(SR.Name);
@@ -241,11 +254,13 @@ begin
     if Files.Count > 0 then
     begin
 
-      FileList := '';
+      SetLength(Args, Files.Count + 2);
       for fi := 0 to Files.Count - 1 do
-        FileList := FileList + '..\Data\' + Files[fi] + ' ';
+        Args[fi] := DataDir + Files[fi];
+      Args[Files.Count] := '-combine';
+      Args[Files.Count + 1] := '-noview';
 
-      ShellExecute(Handle, 'open', 'c:\gmsh\gmsh.exe', PChar(FileList + '-combine -noview'), nil, SW_SHOWNORMAL) ;
+      Sto_ShellExecute(GmshExecutable, Args, ExitCode);
 
     end
     else
@@ -298,7 +313,7 @@ begin
 
     end;
 
-    Gmsh.OpenFile('..\Data\building_' + Format('%.3d', [ThermalEngine.Step]) + '.pos');
+    Gmsh.OpenFile(DataDir + 'building_' + Format('%.3d', [ThermalEngine.Step]) + '.pos');
     Gmsh.WriteViewScalarNode('T', v);
     Gmsh.Close;
 

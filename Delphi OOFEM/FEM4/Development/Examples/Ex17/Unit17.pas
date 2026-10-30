@@ -5,9 +5,8 @@ unit Unit17;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
-  Dialogs, StdCtrls, ShellApi,
-  newVM, newVMsparse,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, newVM, newVMsparse,
   CXS.FEMLAP.Gmsh, CXS.FEMLAP.Assembly, CXS.FEMLAP.Face_Q4V1, CXS.FEMLAP.ShellExec;
 
 type
@@ -26,6 +25,19 @@ var
 implementation
 
 {$R *.lfm}
+
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
 
 procedure TForm1.Button1Click(Sender: TObject);
 var
@@ -69,7 +81,7 @@ var
   // Output data
   v : TDoubleArray;
 
-  ExitCode : DWORD;
+  ExitCode : Cardinal;
 
 begin
 
@@ -77,9 +89,9 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\squareq.geo', '-3'], ExitCode, 60000, True);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'squareq.geo', '-3'], ExitCode, 60000, True);
 
-  Gmsh.OpenFile('..\Data\squareq.msh');
+  Gmsh.OpenFile(DataDir + 'squareq.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 
@@ -95,8 +107,19 @@ begin
 
     IsFixed[i] := False;
 
+    // Nodes 1 and 3 (the two corners not pinned to a single Dirichlet
+    // edge value - see the sequential-overwrite BC logic below) are
+    // deliberately left free rather than run through the boundary
+    // checks, but still need a reduced-system slot like any other free
+    // node: OldToNew must be assigned *before* incrementing n, or this
+    // slot is reserved (n advances past it) without ever being pointed
+    // to, and n's own row is instead written to Assembly.Add's
+    // uninitialised-array default OldToNew[i]=0 - producing an
+    // orphaned reduced row with no diagonal entry (PardisoSolve then
+    // refuses to factorise the matrix).
     if (i = 1) or (i = 3) then
     begin
+      OldToNew[i] := n;
       Inc(n);
       Continue;
     end;
@@ -216,7 +239,7 @@ begin
       v[i] := ug[OldToNew[i],0];
   end;
 
-  Gmsh.OpenFile('..\Data\squareq.pos');
+  Gmsh.OpenFile(DataDir + 'squareq.pos');
   Gmsh.WriteViewScalarNode('T', v);
   Gmsh.Close;
 
@@ -224,7 +247,7 @@ begin
 
   Gmsh.Free;
 
-  ShellExecute(Handle,'open', 'c:\gmsh\gmsh.exe', '..\Data\squareq.pos', nil, SW_SHOWNORMAL) ;
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'squareq.pos'], ExitCode);
 
 end;
 

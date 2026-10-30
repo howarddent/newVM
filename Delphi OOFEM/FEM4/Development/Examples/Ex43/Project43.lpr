@@ -31,8 +31,6 @@ uses
   CXS.FEMLAP.Extrapolation in '..\..\Source\Algebra\CXS.FEMLAP.Extrapolation.pas',
   CXS.FEMLAP.ShellExec in '..\..\Source\System\CXS.FEMLAP.ShellExec.pas';
 
-{$R *.res}
-
 begin
   InitializeCBLAS;
   Application.Initialize;

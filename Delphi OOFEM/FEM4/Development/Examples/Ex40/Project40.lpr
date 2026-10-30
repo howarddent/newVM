@@ -22,8 +22,6 @@ uses
   CXS.FEMLAP.Expression in '..\..\Source\Expression\CXS.FEMLAP.Expression.pas',
   CXS.FEMLAP.EngineData in '..\..\Source\Applications\CXS.FEMLAP.EngineData.pas';
 
-{$R *.res}
-
 begin
   InitializeCBLAS;
   Application.Initialize;

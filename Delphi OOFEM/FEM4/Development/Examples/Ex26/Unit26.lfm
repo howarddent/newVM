@@ -86,7 +86,6 @@ object Form26: TForm26
     Top = 45
     Width = 113
     Alignment = taRightJustify
-    NumbersOnly = True
     TabOrder = 3
     Text = '0.05'
   end
@@ -96,7 +95,6 @@ object Form26: TForm26
     Top = 18
     Width = 113
     Alignment = taRightJustify
-    NumbersOnly = True
     TabOrder = 4
     Text = '0.002'
   end

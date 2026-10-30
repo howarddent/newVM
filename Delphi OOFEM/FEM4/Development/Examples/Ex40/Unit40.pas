@@ -5,8 +5,9 @@ unit Unit40;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
-  Dialogs, ShellApi, StdCtrls, newVM, newVMsparse,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, newVM, newVMsparse,
+  CXS.FEMLAP.ShellExec,
   CXS.FEMLAP.Gmsh,
   CXS.FEMLAP.Assembly, CXS.FEMLAP.Penalty, CXS.FEMLAP.Face_T3V2, CXS.FEMLAP.Face_Q4V2,
   CXS.FEMLAP.EngineData,
@@ -47,8 +48,22 @@ implementation
 
 {$R *.lfm}
 
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
+
 procedure TForm1.Button1Click(Sender: TObject);
 var
+  ExitCode: Cardinal;
 
   i, j, n: Integer;
 
@@ -107,7 +122,7 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Gmsh.OpenFile('..\Data\example5.6_t.msh');
+  Gmsh.OpenFile(DataDir + 'example5.6_t.msh');
   Gmsh.ReadMesh();
   Gmsh.Close;
 
@@ -296,7 +311,7 @@ begin
 
   end;
 
-  Gmsh.OpenFile('..\Data\example5.6_t.pos');
+  Gmsh.OpenFile(DataDir + 'example5.6_t.pos');
   Gmsh.WriteViewScalarNode('Ux', ux);
   Gmsh.WriteViewScalarNode('Uy', uy, False);
   Gmsh.Close;
@@ -337,7 +352,7 @@ begin
 
   Gmsh.Free;
 
-  ShellExecute(Handle,'open', 'c:\gmsh\gmsh.exe', '..\Data\example5.6_t.pos', nil, SW_SHOWNORMAL) ;
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'example5.6_t.pos'], ExitCode);
 
 end;
 
@@ -352,7 +367,7 @@ var
 
   SectionArea, Perimeter, Thickness : Double;
 
-  ExitCode: DWORD;
+  ExitCode: Cardinal;
 
   NbNodes : Integer;
   Node : Array[0..4] of Integer;
@@ -384,7 +399,7 @@ begin
   Perimeter := 2 * Thickness + 2 * dy;
   SectionArea := Thickness * dy;
 
-  Gmsh.OpenFile('..\Data\example5.6_t.msh');
+  Gmsh.OpenFile(DataDir + 'example5.6_t.msh');
   Gmsh.ReadMesh();
   Gmsh.Close;
 
@@ -484,7 +499,7 @@ begin
 
   (******************** START POST-PROCESSING ********************)
 
-  ShellExecute(Handle, 'open', 'c:\gmsh\gmsh.exe', '..\Data\example5.6_t.pos -noview', nil, SW_SHOWNORMAL) ;
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'example5.6_t.pos', '-noview'], ExitCode);
 
   time1.Free;
 
@@ -521,7 +536,7 @@ begin
 
   Application.ProcessMessages;
 
-  Gmsh.OpenFile('..\Data\structuralengine.pos');
+  Gmsh.OpenFile(DataDir + 'structuralengine.pos');
 
   SetLength(ux, StructuralEngine.NbNodes);
   SetLength(uy, StructuralEngine.NbNodes);

@@ -73,6 +73,12 @@ Graphs/*/[A-Za-z]*
 SDR_Radio/[A-Za-z]*
 !SDR_Radio/*.*
 
+# Same for the FEM4 Examples/Ex<N>/ projects (43 standalone Lazarus GUI
+# projects, each producing an extensionless ProjectN binary) - same
+# ignore-extensionless-binary/keep-extension pattern as demos/ and Graphs/.
+Delphi OOFEM/FEM4/Development/Examples/*/[A-Za-z0-9]*
+!Delphi OOFEM/FEM4/Development/Examples/*/*.*
+
 # Windows demo binaries do have an extension (.exe), so the negations above
 # re-include them - this rule comes after those negations (later patterns
 # win) to actually exclude them, e.g. demos/SpectralDiff/SpectralDiff.exe.

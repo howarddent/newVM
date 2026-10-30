@@ -5,8 +5,8 @@ unit Unit6;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
-  Dialogs, ShellApi, StdCtrls, newVM, newVMsparse, CXS.FEMLAP.ShellExec,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, newVM, newVMsparse, CXS.FEMLAP.ShellExec,
   CXS.FEMLAP.Gmsh, CXS.FEMLAP.Assembly, CXS.FEMLAP.Penalty, CXS.FEMLAP.Edge_B2V1;
 
 type
@@ -25,6 +25,19 @@ var
 implementation
 
 {$R *.lfm}
+
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
 
 procedure TForm1.Button1Click(Sender: TObject);
 var
@@ -65,7 +78,7 @@ var
   // Output data
   v : TDoubleArray;
 
-  ExitCode : DWORD;
+  ExitCode : Cardinal;
 
 begin
 
@@ -73,9 +86,9 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\frame.geo', '-3'], ExitCode, 60000, True);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'frame.geo', '-3'], ExitCode, 60000, True);
 
-  Gmsh.OpenFile('..\Data\frame.msh');
+  Gmsh.OpenFile(DataDir + 'frame.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 
@@ -192,7 +205,7 @@ begin
   for i := 0 to Gmsh.NbNodes - 1 do
     v[i] := ug[i,0];
 
-  Gmsh.OpenFile('..\Data\frame.pos');
+  Gmsh.OpenFile(DataDir + 'frame.pos');
   Gmsh.WriteViewScalarNode('T', v);
   Gmsh.Close;
 
@@ -200,7 +213,7 @@ begin
 
   Gmsh.Free;
 
-  ShellExecute(Handle,'open', 'c:\gmsh\gmsh.exe', '..\Data\frame.pos', nil, SW_SHOWNORMAL) ;
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'frame.pos'], ExitCode);
 
 end;
 

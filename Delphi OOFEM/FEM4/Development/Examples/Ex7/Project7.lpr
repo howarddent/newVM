@@ -18,8 +18,6 @@ uses
   CXS.FEMLAP.Element_Face in '..\..\Source\Elements\CXS.FEMLAP.Element_Face.pas',
   CXS.FEMLAP.Exceptions in '..\..\Source\System\CXS.FEMLAP.Exceptions.pas';
 
-{$R *.res}
-
 begin
   InitializeCBLAS;
   Application.Initialize;

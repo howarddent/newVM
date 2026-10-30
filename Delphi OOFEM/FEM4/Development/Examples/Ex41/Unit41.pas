@@ -5,8 +5,8 @@ unit Unit41;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
-  Dialogs, ShellApi, StdCtrls, newVM, newVMsparse,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, newVM, newVMsparse,
   CXS.FEMLAP.Gmsh, CXS.FEMLAP.ShellExec,
   CXS.FEMLAP.Assembly, CXS.FEMLAP.Penalty, CXS.FEMLAP.Face_T3V2, CXS.FEMLAP.Face_Q4V2, ExtCtrls;
 
@@ -27,6 +27,19 @@ var
 implementation
 
 {$R *.lfm}
+
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
 
 procedure TForm41.Button1Click(Sender: TObject);
 var
@@ -74,7 +87,7 @@ var
 
   PenaltyMethod : Boolean;
 
-  ExitCode : DWORD;
+  ExitCode : Cardinal;
 
   GmshEleType: Integer;
 
@@ -86,7 +99,7 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Gmsh.OpenFile('..\Data\wall.geo');
+  Gmsh.OpenFile(DataDir + 'wall.geo');
 
   if RadioGroup1.ItemIndex = 0 then
     GmshEleType := GMSH_TRI
@@ -97,9 +110,9 @@ begin
 
   Gmsh.Close;
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\wall.geo', '-3'], ExitCode, 60000, True);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'wall.geo', '-3'], ExitCode, 60000, True);
 
-  Gmsh.OpenFile('..\Data\wall.msh');
+  Gmsh.OpenFile(DataDir + 'wall.msh');
   Gmsh.ReadMesh();
   Gmsh.Close;
 
@@ -314,7 +327,7 @@ begin
 
   end;
 
-  Gmsh.OpenFile('..\Data\wall.pos');
+  Gmsh.OpenFile(DataDir + 'wall.pos');
   Gmsh.WriteViewScalarNode('Ux', ux);
   Gmsh.WriteViewScalarNode('Uy', uy, False);
   Gmsh.Close;
@@ -324,7 +337,7 @@ begin
 
   Gmsh.Free;
 
-  ShellExecute(Handle,'open', 'c:\gmsh\gmsh.exe', '..\Data\wall.pos', nil, SW_SHOWNORMAL) ;
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'wall.pos'], ExitCode);
 
 end;
 

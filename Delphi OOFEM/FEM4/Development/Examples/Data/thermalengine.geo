@@ -1,5 +1,5 @@
 Mesh.MshFileVersion=1;
-cl = 0.003;
+cl = 0.02;
 dx = 1;
 dy = 0.1;
 dz = 0.1;
@@ -15,5 +15,5 @@ Line Loop(5) = {1,2,3,4};
 Plane Surface(6) = {5};
 Recombine Surface {6};
 Transfinite Surface {6} = {1,2,3,4};
-ext() = Extrude {0,0,dz} { Surface{6}; Layers { {34}, {1}}; Recombine; };
+ext() = Extrude {0,0,dz} { Surface{6}; Layers { {6}, {1}}; Recombine; };
 Physical Volume(7) = {ext(1)};

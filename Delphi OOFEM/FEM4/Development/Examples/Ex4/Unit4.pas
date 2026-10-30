@@ -5,8 +5,9 @@ unit Unit4;
 interface
 
 uses
-  Windows, SysUtils, Variants, Classes, Graphics, Controls, Forms,
-  Dialogs, ShellApi, StdCtrls, newVM, newVMsparse,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, newVM, newVMsparse,
+  CXS.FEMLAP.ShellExec,
   CXS.FEMLAP.Gmsh,
   CXS.FEMLAP.Assembly, CXS.FEMLAP.Penalty, CXS.FEMLAP.Face_T3V1;
 
@@ -28,8 +29,22 @@ implementation
 
 {$R *.lfm}
 
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
+
 procedure TForm1.Button1Click(Sender: TObject);
 var
+  ExitCode: Cardinal;
 
   i, j, n: Integer;
 
@@ -75,7 +90,7 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Gmsh.OpenFile('..\Data\example10.4.msh');
+  Gmsh.OpenFile(DataDir + 'example10.4.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 
@@ -196,7 +211,7 @@ begin
       v[i] := ug[OldToNew[i],0];
   end;
 
-  Gmsh.OpenFile('..\Data\example10.4.pos');
+  Gmsh.OpenFile(DataDir + 'example10.4.pos');
   Gmsh.WriteViewScalarNode('T', v);
   Gmsh.Close;
 
@@ -204,7 +219,7 @@ begin
 
   Gmsh.Free;
 
-  ShellExecute(Handle,'open', 'c:\gmsh\gmsh.exe', '..\Data\example10.4.pos', nil, SW_SHOWNORMAL) ;
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'example10.4.pos'], ExitCode);
 
 end;
 

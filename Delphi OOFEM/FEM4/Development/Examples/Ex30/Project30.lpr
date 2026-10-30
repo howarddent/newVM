@@ -8,8 +8,6 @@ uses
   Unit30 in 'Unit30.pas' {Form30},
   CXS.FEMLAP.Analytical in '..\..\Source\Analytical\CXS.FEMLAP.Analytical.pas';
 
-{$R *.res}
-
 begin
   InitializeCBLAS;
   Application.Initialize;

@@ -24,8 +24,6 @@ uses
   CXS.FEMLAP.Element_Brick in '..\..\Source\Elements\CXS.FEMLAP.Element_Brick.pas',
   CXS.FEMLAP.Exceptions in '..\..\Source\System\CXS.FEMLAP.Exceptions.pas';
 
-{$R *.res}
-
 begin
   InitializeCBLAS;
   Application.Initialize;

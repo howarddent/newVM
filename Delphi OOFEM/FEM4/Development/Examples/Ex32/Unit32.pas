@@ -5,9 +5,9 @@ unit Unit32;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
   Dialogs, StdCtrls,
-  newVM, newVMsparse, ShellApi, CXS.FEMLAP.ShellExec,
+  newVM, newVMsparse, CXS.FEMLAP.ShellExec,
   CXS.FEMLAP.Gmsh, CXS.FEMLAP.Assembly, CXS.FEMLAP.Edge_B2V1, CXS.FEMLAP.Face_T3V1, CXS.FEMLAP.Face_Q4V1, CXS.FEMLAP.Penalty,
   ExtCtrls, TAGraph, TASeries, TAChartAxis, TATransformations;
 
@@ -31,6 +31,19 @@ var
 implementation
 
 {$R *.lfm}
+
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
 
 procedure TForm32.FormCreate(Sender: TObject);
 var
@@ -94,7 +107,7 @@ var
   // Output data
   v : TDoubleArray;
 
-  ExitCode: DWORD;
+  ExitCode: Cardinal;
 
   nIter : Integer;
 
@@ -128,18 +141,18 @@ begin
   T1 := 100;
   Tinf := 250;
 
-  Gmsh.OpenFile('..\Data\vrad.geo');
+  Gmsh.OpenFile(DataDir + 'vrad.geo');
   Gmsh.GenerateRectangle(1, 1, MeshSize, GMSH_TRI);
   //Gmsh.GenerateRectangle(1, 1, MeshSize, GMSH_QUAD);
   Gmsh.Close;
 
   Caption := 'Meshing...';
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\vrad.geo', '-3'], ExitCode, 60000, True);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'vrad.geo', '-3'], ExitCode, 60000, True);
 
   Caption := 'Loading mesh...';
 
-  Gmsh.OpenFile('..\Data\vrad.msh');
+  Gmsh.OpenFile(DataDir + 'vrad.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 
@@ -402,11 +415,11 @@ begin
 
   end;
 
-  Gmsh.OpenFile('..\Data\vrad.pos');
+  Gmsh.OpenFile(DataDir + 'vrad.pos');
   Gmsh.WriteViewScalarNode('T', v);
   Gmsh.Close;
 
-  ShellExecute(Handle, 'open', 'c:\gmsh\gmsh.exe', '..\Data\vrad.pos -noview', nil, SW_SHOWNORMAL);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'vrad.pos', '-noview'], ExitCode);
 
   (******************** END ITERATION ********************)
 

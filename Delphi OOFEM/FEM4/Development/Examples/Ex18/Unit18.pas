@@ -5,9 +5,10 @@ unit Unit18;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
-  Dialogs, ShellApi, StdCtrls,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls,
   newVM, newVMsparse,
+  CXS.FEMLAP.ShellExec,
   CXS.FEMLAP.Gmsh, CXS.FEMLAP.Brick_H8V1, CXS.FEMLAP.Brick_W6V1;
 
 type
@@ -27,8 +28,22 @@ implementation
 
 {$R *.lfm}
 
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
+
 procedure TForm1.Button1Click(Sender: TObject);
 var
+  ExitCode: Cardinal;
 
   i, j, k, n: Integer;
 
@@ -69,7 +84,7 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Gmsh.OpenFile('..\Data\prism.msh');
+  Gmsh.OpenFile(DataDir + 'prism.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 
@@ -240,7 +255,7 @@ begin
   for i := 0 to Gmsh.NbNodes - 1 do
     v[i] := ug[i,0];
 
-  Gmsh.OpenFile('..\Data\prism.pos');
+  Gmsh.OpenFile(DataDir + 'prism.pos');
   Gmsh.WriteViewScalarNode('T', v);
   Gmsh.Close;
 
@@ -249,8 +264,8 @@ begin
 
   Gmsh.Free;
 
-  //ShellExecute(Handle,'open', 'gmsh', '..\Data\hexa.pos', nil, SW_SHOWNORMAL) ;
-  ShellExecute(Handle,'open', 'c:\gmsh\gmsh.exe', '..\Data\prism.pos', nil, SW_SHOWNORMAL) ;
+  //ShellExecute(Handle,'open', 'gmsh', DataDir + 'hexa.pos', nil, SW_SHOWNORMAL) ;
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'prism.pos'], ExitCode);
 
 end;
 

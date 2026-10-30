@@ -20,8 +20,6 @@ uses
   CXS.FEMLAP.ShellExec in '..\..\Source\System\CXS.FEMLAP.ShellExec.pas',
   CXS.FEMLAP.Extrapolation in '..\..\Source\Algebra\CXS.FEMLAP.Extrapolation.pas';
 
-{$R *.res}
-
 begin
   InitializeCBLAS;
   Application.Initialize;

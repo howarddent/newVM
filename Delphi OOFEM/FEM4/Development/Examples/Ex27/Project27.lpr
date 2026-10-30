@@ -7,8 +7,6 @@ uses
   Forms, cblas,
   Unit27 in 'Unit27.pas' {Form27};
 
-{$R *.res}
-
 begin
   InitializeCBLAS;
   Application.Initialize;

@@ -5,8 +5,8 @@ unit Unit23;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
-  Dialogs, StdCtrls, newVM, newVMsparse, ShellApi, CXS.FEMLAP.ShellExec,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, newVM, newVMsparse, CXS.FEMLAP.ShellExec,
   CXS.FEMLAP.Gmsh, CXS.FEMLAP.Assembly, CXS.FEMLAP.Analytical, CXS.FEMLAP.Brick_T4V1, CXS.FEMLAP.Brick_H8V1;
 
 type
@@ -25,6 +25,19 @@ var
 implementation
 
 {$R *.lfm}
+
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
 
 procedure TForm23.Button1Click(Sender: TObject);
 var
@@ -66,7 +79,7 @@ var
   // Output data
   v : TDoubleArray;
 
-  ExitCode: DWORD;
+  ExitCode: Cardinal;
 
   time, dt : Double;
 
@@ -81,7 +94,7 @@ var
 
   SR: TSearchRec;
   Files: TStringList;
-  FileList: String;
+  Args: array of String;
   i: Integer;
 
 begin
@@ -90,13 +103,13 @@ begin
 
   Gmsh := TGmsh.Create;
 
-  Gmsh.OpenFile('..\Data\tbeam3D.geo');
+  Gmsh.OpenFile(DataDir + 'tbeam3D.geo');
   Gmsh.GenerateBox(1, 0.1, 0.1, 0.15, GMSH_HEXA);
   Gmsh.Close;
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\tbeam3D.geo', '-3'], ExitCode, 60000, True);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'tbeam3D.geo', '-3'], ExitCode, 60000, True);
 
-  Gmsh.OpenFile('..\Data\tbeam3D.msh');
+  Gmsh.OpenFile(DataDir + 'tbeam3D.msh');
   Gmsh.ReadMesh;
   Gmsh.Close;
 
@@ -303,7 +316,7 @@ begin
 
     end;
 
-    Gmsh.OpenFile('..\Data\tbeam3D_' + Format('%.3d', [ti-1]) + '.pos');
+    Gmsh.OpenFile(DataDir + 'tbeam3D_' + Format('%.3d', [ti-1]) + '.pos');
     Gmsh.WriteViewScalarNode('T', v);
     Gmsh.Close;
 
@@ -347,7 +360,7 @@ begin
   try
     Files.Sorted := True;
 
-    if FindFirst('..\Data\tbeam3D_*.pos', faAnyFile, SR) = 0 then
+    if FindFirst(DataDir + 'tbeam3D_*.pos', faAnyFile, SR) = 0 then
     begin
       repeat
         Files.Add(SR.Name);
@@ -361,11 +374,13 @@ begin
       Exit;
     end;
 
-    FileList := '';
+    SetLength(Args, Files.Count + 2);
     for i := 0 to Files.Count - 1 do
-      FileList := FileList + '..\Data\' + Files[i] + ' ';
+      Args[i] := DataDir + Files[i];
+    Args[Files.Count] := '-combine';
+    Args[Files.Count + 1] := '-noview';
 
-    ShellExecute(Handle, 'open', 'c:\gmsh\gmsh.exe', PChar(FileList + '-combine -noview'), nil, SW_SHOWNORMAL) ;
+    Sto_ShellExecute(GmshExecutable, Args, ExitCode);
 
   finally
     Files.Free;

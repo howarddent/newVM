@@ -5,8 +5,8 @@ unit Unit43;
 interface
 
 uses
-  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
-  Dialogs, StdCtrls, ShellApi, newVM, newVMsparse,
+  SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, newVM, newVMsparse,
   CXS.FEMLAP.StructuralThermalEngine,
   CXS.FEMLAP.EngineData,
   CXS.FEMLAP.Expression,
@@ -42,6 +42,19 @@ implementation
 
 {$R *.lfm}
 
+const
+  // '..'+PathDelim+'Data'+PathDelim rather than a hardcoded '..\Data\' -
+  // PathDelim is '\' on Windows and '/' on Unix, so this resolves
+  // correctly on either platform instead of only Windows.
+  DataDir = '..' + PathDelim + 'Data' + PathDelim;
+{$IFDEF WINDOWS}
+  GmshExecutable = 'c:\gmsh\gmsh.exe';
+{$ELSE}
+  // Bare name, resolved via $PATH by TProcess itself (see
+  // CXS.FEMLAP.ShellExec.pas) - matches a normal `apt install gmsh`.
+  GmshExecutable = 'gmsh';
+{$ENDIF}
+
 procedure TForm43.Button1Click(Sender: TObject);
 var
 
@@ -60,7 +73,7 @@ var
 
   MaterialId : Integer;
 
-  ExitCode : DWORD;
+  ExitCode : Cardinal;
 
   EleType : NEleType;
 
@@ -88,7 +101,7 @@ begin
   Perimeter := 2 * Thickness + 2 * dy;
   SectionArea := Thickness * dy;
 
-  FGmsh.OpenFile('..\Data\thermalstructuralengine.geo');
+  FGmsh.OpenFile(DataDir + 'thermalstructuralengine.geo');
 
   if RadioGroup1.ItemIndex = 0 then
     FGmsh.GenerateRectangle(dx, dy, MeshSize, GMSH_TRI)
@@ -99,11 +112,11 @@ begin
 
   Caption := 'Meshing...';
 
-  Sto_ShellExecute('c:\gmsh\gmsh.exe', ['..\Data\thermalstructuralengine.geo', '-3', '-optimize'], ExitCode, 60000, True);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'thermalstructuralengine.geo', '-3', '-optimize'], ExitCode, 60000, True);
 
   Caption := 'Loading mesh...';
 
-  FGmsh.OpenFile('..\Data\thermalstructuralengine.msh');
+  FGmsh.OpenFile(DataDir + 'thermalstructuralengine.msh');
   FGmsh.ReadMesh;
   FGmsh.Close;
 
@@ -225,7 +238,7 @@ begin
 
   Application.ProcessMessages;
 
-  FGmsh.OpenFile('..\Data\thermalstructuralengine.pos');
+  FGmsh.OpenFile(DataDir + 'thermalstructuralengine.pos');
 
   FGmsh.ReWriteFile;
 
@@ -235,7 +248,7 @@ begin
 
   (******************** START POST-PROCESSING ********************)
 
-  ShellExecute(Handle, 'open', 'c:\gmsh\gmsh.exe', '..\Data\thermalstructuralengine.pos', nil, SW_SHOWNORMAL);
+  Sto_ShellExecute(GmshExecutable, [DataDir + 'thermalstructuralengine.pos'], ExitCode);
 
   restraint_ux.Free;
   restraint_uy.Free;
