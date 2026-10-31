@@ -429,7 +429,7 @@ var
   Asolve: TVMSparseMtx;
   pt: array[0..63] of Pointer;
   iparm: array[0..63] of Integer;
-  mtype, maxfct, mnum, phase, n, nrhs, msglvl, error: Integer;
+  mtype, maxfct, mnum, phase, n, nrhs, msglvl, error, solveError: Integer;
   perm: array of Integer;
   Bcopy, X: TVMobj;
   badRow: Integer;
@@ -487,14 +487,16 @@ begin
   pardiso(@pt[0], @maxfct, @mnum, @mtype, @phase, @n,
     @Asolve.FValues[0], @Asolve.FRowPtr[0], @Asolve.FColInd[0],
     @perm[0], @nrhs, @iparm[0], @msglvl, Bcopy.DataPtr, X.DataPtr, @error);
+  solveError := error; //the release call below overwrites error, and would
+                       //otherwise hide a failed solve as an all-zero X
 
   phase := -1; //release all internal PARDISO memory tied to pt, regardless of outcome
   pardiso(@pt[0], @maxfct, @mnum, @mtype, @phase, @n,
     @Asolve.FValues[0], @Asolve.FRowPtr[0], @Asolve.FColInd[0],
     @perm[0], @nrhs, @iparm[0], @msglvl, Bcopy.DataPtr, X.DataPtr, @error);
 
-  if error <> 0 then
-    raise Exception.Create(s + 'PARDISO reported error code ' + IntToStr(error));
+  if solveError <> 0 then
+    raise Exception.Create(s + 'PARDISO reported error code ' + IntToStr(solveError));
 
   result := X;
 end;
