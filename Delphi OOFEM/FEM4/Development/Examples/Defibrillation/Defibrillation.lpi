@@ -58,7 +58,7 @@
     </Target>
     <SearchPaths>
       <IncludeFiles Value="$(ProjOutDir)"/>
-      <OtherUnitFiles Value="..\ThermEx1;..\..\..\..\..;..\..\..\..\..\Graphs;..\..\Source\Algebra;..\..\Source\Analytical;..\..\Source\Applications;..\..\Source\Assembly;..\..\Source\Elements;..\..\Source\Expression;..\..\Source\Imposer;..\..\Source\Mesh;..\..\Source\System"/>
+      <OtherUnitFiles Value="..\ThermEx1;..\..\..\..\..\Anaesthetics\PK-PD_FPC;..\..\..\..\..;..\..\..\..\..\Graphs;..\..\Source\Algebra;..\..\Source\Analytical;..\..\Source\Applications;..\..\Source\Assembly;..\..\Source\Elements;..\..\Source\Expression;..\..\Source\Imposer;..\..\Source\Mesh;..\..\Source\System"/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
     <CodeGeneration>

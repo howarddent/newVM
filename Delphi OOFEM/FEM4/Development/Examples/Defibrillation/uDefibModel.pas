@@ -33,6 +33,31 @@ unit uDefibModel;
   sides, less in proportion at the front and back. Round the cone they
   keep those thicknesses all the way up, and only the core narrows.
 
+  THE BODY'S SIZE
+
+  Height and Weight (--height, --weight) change that man. The body's
+  fat-free mass is Al-Sallami's (uBodyStats.freeFatMass, a man of
+  BodyAge), which puts ThermEx1's 70 kg, 1.75 m man at 56 kg fat-free and
+  20 % fat. Only his 3.5 kg of subcutaneous fat is a compartment; the rest
+  of his fat is lumped into core and muscle. Another body is ThermEx1's
+  plus the differences in fat-free mass and in fat from that man:
+
+    lean   the trunk takes its mass share (50.8 %) of the change in
+           fat-free mass: skin in proportion to the DuBois surface area,
+           the rest shared between core and muscle as they already are
+    fat    the trunk's fat layer takes TrunkFatShare (half) of the change
+           in fat, since a man puts on fat mostly round the trunk
+    length the abdomen and thorax in proportion to height
+
+  The organs, ribs and pads keep their sizes and their distances below
+  the root of the neck. A 120 kg, 1.80 m man (BMI 37, 37 % fat) gets a
+  trunk of 60 litres, 425 x 306 mm at the waist, with 33 mm of fat at the
+  side against 3 mm. His resistance is 131 ohm against 71, the fat
+  taking 62 % of the power against 16 %, and the heart's share is 8.6 %
+  against 11.2 %, with a mean myocardial field at the peak of 18 V/cm
+  against 36. The fat is as thick over the chest as over the abdomen,
+  where real fat is thinner, so the resistance is likely too high.
+
   The mesh is ThermEx1's for a cylinder - an unstructured disc of core
   extruded into prisms inside structured annuli of hexahedra - with
   finer divisions round the section and along the chest, since the pads
@@ -210,7 +235,8 @@ uses
   CXS.FEMLAP.Expression,
   CXS.FEMLAP.ShellExec,
   CXS.FEMLAP.Gmsh,
-  uThermEx1;
+  uThermEx1,
+  uBodyStats;
 
 type
 
@@ -260,9 +286,20 @@ const
   (******************** THE TORSO ********************)
 
   TrunkAspect = 0.72;       // depth over breadth, at every level
-  AbdomenLength = 0.43;     // m, perineum to diaphragm
-  ThoraxLength = 0.25;      // m, diaphragm to the root of the neck
+  AbdomenLength = 0.43;     // m, perineum to diaphragm, at RefHeight
+  ThoraxLength = 0.25;      // m, diaphragm to the root of the neck, at RefHeight
   NeckRatio = 0.5;          // the neck root's section over the diaphragm's
+
+  // The body's size (see THE BODY'S SIZE in the header). ThermEx1's
+  // subject is BodyMass at RefHeight; any other size scales its trunk.
+  RefHeight = 1.75;         // m
+  BodyAge = 35;             // years, for the fat-free mass (Al-Sallami)
+  // The share of fat above the reference man's that goes on the trunk.
+  TrunkFatShare = 0.5;
+  MinHeight = 1.40;
+  MaxHeight = 2.20;
+  MinWeight = 40.0;
+  MaxWeight = 250.0;
 
   (******************** THE PADS ********************)
 
@@ -385,6 +422,9 @@ type
     // FB are the abdomen's, and the sections up the thorax are mapped
     // from these.
     FA, FB, FK, FLen, FCy : Double;
+    FAbdLen, FThxLen : Double;                    // m, at this height
+    FHeight, FWeight : Double;                    // m, kg
+    FFatFree : Double;                            // kg, the body's fat-free mass
     FOuter : Array[0..NbLayers - 1] of Double;    // s of each boundary
     FArc : TDoubleArray;                          // outer ellipse arc length table
     FCoreA, FCoreB : Double;                      // the core's boundary
@@ -532,6 +572,7 @@ type
     property A : Double read FA;
     property B : Double read FB;
     property Len : Double read FLen;
+    property ThoraxLen : Double read FThxLen;
     property Cy : Double read FCy;
     property CoreA : Double read FCoreA;
     property CoreB : Double read FCoreB;
@@ -558,6 +599,10 @@ type
     property Anisotropic : Boolean read FAnisotropic write FAnisotropic;
     // The left lung wrapped round the heart (default True; --no-wrap).
     property WrapLung : Boolean read FWrapLung write FWrapLung;
+    // The body's height (m) and weight (kg), set before Run; ThermEx1's
+    // 1.75 m and 70 kg by default (--height, --weight).
+    property Height : Double read FHeight write FHeight;
+    property Weight : Double read FWeight write FWeight;
 
     // Before or after Run. After it, the waveform and the report's shock
     // and heart sections are recomputed, without solving again.
@@ -651,6 +696,8 @@ begin
   FGmsh := TGmsh.Create;
 
   FWrapLung := True;
+  FHeight := RefHeight;
+  FWeight := BodyMass;
 
   FMeshDir := 'mesh' + PathDelim;
   FGeoFile := FMeshDir + 'defibrillation.geo';
@@ -727,8 +774,8 @@ begin
   P := FArc[ArcTableSize];
   D := ArcAt(T) - ArcAt(FPadAngle[Pad]);
   D := Sc * (D - P * Round(D / P));
-  if FLen - Z < ThoraxLength then
-    Slope := (1 - NeckRatio) / ThoraxLength * FA * Sqrt(Sqr(Cos(T)) + Sqr(FK * Sin(T)))
+  if FLen - Z < FThxLen then
+    Slope := (1 - NeckRatio) / FThxLen * FA * Sqrt(Sqr(Cos(T)) + Sqr(FK * Sin(T)))
   else
     Slope := 0;
   Result := (Abs(D) <= PadWidth / 2 + Margin) and
@@ -740,10 +787,10 @@ var
   h : Double;
 begin
   h := FLen - Z;
-  if h >= ThoraxLength then
+  if h >= FThxLen then
     Result := 1
   else
-    Result := NeckRatio + (1 - NeckRatio) * Max(0, h) / ThoraxLength;
+    Result := NeckRatio + (1 - NeckRatio) * Max(0, h) / FThxLen;
 end;
 
 function TDefibModel.SectionShift(Z : Double) : Double;
@@ -980,7 +1027,7 @@ procedure TDefibModel.SetupGeometry;
 var
   sg, l, i : Integer;
   CoreLeft, Rest, V, p1, T, dT, Area, I2, D, c, x, Pb, Ca, Cb, Ex, Ey, Nx_, Ny_, nl,
-    MuTop, Vabd, Slant, AreaNow : Double;
+    MuTop, Vabd, Slant, AreaNow, FFMRef, dFat, dLean, SkinNew, fc : Double;
   Mass : Array[0..NbLayers - 1] of Double;
 begin
 
@@ -1003,20 +1050,47 @@ begin
   Rest := BodyMass * Segments[SegTrunk].MassFrac - Mass[LayerSkin] - Mass[LayerFat];
   Mass[LayerMuscle] := Rest - CoreLeft;
 
+  // That is ThermEx1's subject. Another size changes it by the
+  // difference from it in fat-free mass and in fat: see THE BODY'S SIZE.
+  if (FHeight < MinHeight) or (FHeight > MaxHeight) then
+    raise Exception.CreateFmt('Height %.2f m is outside %.2f to %.2f m.',
+      [FHeight, MinHeight, MaxHeight]);
+  if (FWeight < MinWeight) or (FWeight > MaxWeight) then
+    raise Exception.CreateFmt('Weight %.0f kg is outside %.0f to %.0f kg.',
+      [FWeight, MinWeight, MaxWeight]);
+
+  FFatFree := freeFatMass(BodyAge, Male, FWeight, FHeight);
+  FFMRef := freeFatMass(BodyAge, Male, BodyMass, RefHeight);
+  dFat := (FWeight - FFatFree) - (BodyMass - FFMRef);
+
+  SkinNew := Mass[LayerSkin] * BSA(FWeight, FHeight) / BSA(BodyMass, RefHeight);
+  dLean := Segments[SegTrunk].MassFrac * (FFatFree - FFMRef) - (SkinNew - Mass[LayerSkin]);
+  fc := Mass[LayerCore] / (Mass[LayerCore] + Mass[LayerMuscle]);
+  Mass[LayerCore] := Mass[LayerCore] + fc * dLean;
+  Mass[LayerMuscle] := Mass[LayerMuscle] + (1 - fc) * dLean;
+  Mass[LayerSkin] := SkinNew;
+  Mass[LayerFat] := Mass[LayerFat] + TrunkFatShare * dFat;
+
+  if Mass[LayerFat] < 0.2 then
+    raise Exception.CreateFmt('A %.0f kg, %.2f m body leaves the trunk %.2f kg of fat ' +
+      '- too lean for this model.', [FWeight, FHeight, Mass[LayerFat]]);
+
   V := 0;
   for l := 0 to NbLayers - 1 do
     V := V + Mass[l] / Layers[l].Density;
 
   FVolume := V;
   FK := TrunkAspect;
-  FLen := AbdomenLength + ThoraxLength;
+  FAbdLen := AbdomenLength * FHeight / RefHeight;
+  FThxLen := ThoraxLength * FHeight / RefHeight;
+  FLen := FAbdLen + FThxLen;
 
   // The integral along the trunk of SectionScale^2, which times pi k a^2
   // is the volume, and of the shift over a.
-  I2 := AbdomenLength + ThoraxLength * (1 + NeckRatio + Sqr(NeckRatio)) / 3;
+  I2 := FAbdLen + FThxLen * (1 + NeckRatio + Sqr(NeckRatio)) / 3;
   FA := Sqrt(V / (Pi * FK * I2));
   FB := FK * FA;
-  D := FA * ThoraxLength * (1 - NeckRatio) / 2;
+  D := FA * FThxLen * (1 - NeckRatio) / 2;
 
   // Lying on the plane y = 0, as in ThermEx1.
   FCy := FB;
@@ -1061,10 +1135,10 @@ begin
   // Ramanujan's perimeter of the unit ellipse of axis ratio k; the
   // cone's side taken as sloping by its mean radius.
   p1 := Pi * (3 * (1 + FK) - Sqrt((3 + FK) * (1 + 3 * FK)));
-  Slant := Sqrt(1 + Sqr((1 - NeckRatio) * FA * (1 + FK) / 2 / ThoraxLength));
-  AreaNow := p1 * FA * (AbdomenLength + ThoraxLength * (1 + NeckRatio) / 2 * Slant);
-  Area := Segments[SegTrunk].AreaFrac * BodySurfaceArea;
-  Vabd := Pi * FK * Sqr(FA) * AbdomenLength;
+  Slant := Sqrt(1 + Sqr((1 - NeckRatio) * FA * (1 + FK) / 2 / FThxLen));
+  AreaNow := p1 * FA * (FAbdLen + FThxLen * (1 + NeckRatio) / 2 * Slant);
+  Area := Segments[SegTrunk].AreaFrac * BSA(FWeight, FHeight);
+  Vabd := Pi * FK * Sqr(FA) * FAbdLen;
 
   Ca := FCoreA - WallThickness;
   Cb := FCoreB - WallThickness;
@@ -1112,10 +1186,17 @@ begin
                         Vec3(0, 0, 1), 0.120, 0.062, 0.072);
 
   Say('THE TORSO - ThermEx1''s trunk as a thorax on an abdomen');
+  Say(Format('  a man of %.0f kg and %.2f m (BMI %.1f), %.0f kg of it fat-free and %.0f %% fat ' +
+    '(Al-Sallami)', [FWeight, FHeight, BMI(FWeight, FHeight), FFatFree,
+    100 * (1 - FFatFree / FWeight)]));
+  if not (SameValue(FWeight, BodyMass) and SameValue(FHeight, RefHeight)) then
+    Say(Format('  scaled from ThermEx1''s %.0f kg, %.2f m: fat-free mass changed by %.1f kg ' +
+      '(%.0f %% of it on the trunk), fat by %.1f kg (%.0f %% on the trunk)', [BodyMass, RefHeight,
+      FFatFree - FFMRef, 100 * Segments[SegTrunk].MassFrac, dFat, 100 * TrunkFatShare]));
   Say(Format('  abdomen  %.0f mm wide, %.0f mm deep, %.2f m long, %.1f litres',
-    [2000 * FA, 2000 * FB, AbdomenLength, 1000 * Vabd]));
+    [2000 * FA, 2000 * FB, FAbdLen, 1000 * Vabd]));
   Say(Format('  thorax   a truncated cone %.2f m long, from the abdomen''s section at ' +
-    'the diaphragm', [ThoraxLength]));
+    'the diaphragm', [FThxLen]));
   Say(Format('           to %.0f x %.0f mm at the root of the neck, %.1f litres',
     [2000 * NeckRatio * FA, 2000 * NeckRatio * FB, 1000 * (V - Vabd)]));
   Say(Format('  %.2f m long, %.1f litres, about %.2f m2 of skin (ThermEx1''s trunk %.2f)',
@@ -1551,7 +1632,7 @@ begin
     end;
 
     Vt[EleTissue[i]] := Vt[EleTissue[i]] + EleVol[i];
-    if FLen - EleC[i].Z < ThoraxLength then
+    if FLen - EleC[i].Z < FThxLen then
       Vthx := Vthx + EleVol[i];
 
   end;

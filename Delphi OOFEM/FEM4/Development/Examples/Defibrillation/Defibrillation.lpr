@@ -11,6 +11,7 @@ program Defibrillation;
   uDefibView.pas for what the picture shows.
 
   Usage:  Defibrillation [--no-plot] [--anisotropic] [--biphasic] [--no-wrap]
+                         [--height=<m>] [--weight=<kg>]
                          [--snapshot=<prefix>] [--time=<ms>]
 
     --no-plot            solve and report, no window
@@ -21,6 +22,10 @@ program Defibrillation;
                          window switches between them either way)
     --no-wrap            leave the left lung a plain ellipsoid, not wrapped
                          round the heart (for comparison)
+    --height=<m>         the man's height, 1.40 to 2.20 (default 1.75)
+    --weight=<kg>        and weight, 40 to 250 (default 70): the trunk is
+                         scaled from ThermEx1's 70 kg, 1.75 m man, his fat
+                         from Al-Sallami's fat-free mass (uBodyStats)
     --snapshot=<prefix>  open the window at --time (default: the peak
                          current), save the 3D view as <prefix>_view.png
                          and the waveform as <prefix>_wave.png, and exit
@@ -37,7 +42,7 @@ uses
   {$ENDIF}
   Interfaces,
   Forms, SysUtils, cblas,
-  uDefibModel, uDefibView, uDefibForm;
+  uThermEx1, uDefibModel, uDefibView, uDefibForm;
 
 const
   // ms; -1 is the peak.
@@ -47,6 +52,7 @@ var
   Model : TDefibModel;
   Form : TDefibForm;
   ShowPlot, Aniso, Bi, Wrap : Boolean;
+  BodyHeight, BodyWeight : Double;
   Snapshot : String;
   SnapTime : Double;
   DotFS : TFormatSettings;
@@ -66,6 +72,8 @@ begin
   Wrap := True;
   Snapshot := '';
   SnapTime := -1;
+  BodyHeight := RefHeight;
+  BodyWeight := BodyMass;
 
   for i := 1 to ParamCount do
   begin
@@ -82,10 +90,14 @@ begin
       Snapshot := Copy(Arg, 12, MaxInt)
     else if Copy(Arg, 1, 7) = '--time=' then
       SnapTime := StrToFloat(Copy(Arg, 8, MaxInt), DotFS) / 1000
+    else if Copy(Arg, 1, 9) = '--height=' then
+      BodyHeight := StrToFloat(Copy(Arg, 10, MaxInt), DotFS)
+    else if Copy(Arg, 1, 9) = '--weight=' then
+      BodyWeight := StrToFloat(Copy(Arg, 10, MaxInt), DotFS)
     else
     begin
       WriteLn('Usage: Defibrillation [--no-plot] [--anisotropic] [--biphasic] [--no-wrap] ' +
-        '[--snapshot=<prefix>] [--time=<ms>]');
+        '[--height=<m>] [--weight=<kg>] [--snapshot=<prefix>] [--time=<ms>]');
       Halt(1);
     end;
   end;
@@ -95,6 +107,8 @@ begin
   Model.Anisotropic := Aniso;
   Model.Biphasic := Bi;
   Model.WrapLung := Wrap;
+  Model.Height := BodyHeight;
+  Model.Weight := BodyWeight;
 
   try
 

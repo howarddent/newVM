@@ -364,7 +364,7 @@ begin
   // The spine, at the back, first: nothing here writes depth. Straight
   // up the abdomen, then leaning forward with the back of the core up
   // the cone.
-  Zd := M.Len - ThoraxLength;
+  Zd := M.Len - M.ThoraxLen;
   glColor4f(0.95, 0.92, 0.80, 0.30);
   for j := 0 to 31 do
     for sd := 0 to 1 do

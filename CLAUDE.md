@@ -1416,6 +1416,24 @@ knowing:
     kept as the default at the user's choice: an effective inflated-lung
     value (air makes inflated lung *less* conductive than deflated),
     within the published spread rather than a measurement.
+  - **Height and weight** (2026-11-01, `--height=<m>`, `--weight=<kg>`,
+    `TDefibModel.Height`/`Weight`, set before `Run`; defaults 1.75 m and
+    70 kg reproduce the old figures exactly). The fat-free mass is
+    Al-Sallami's `freeFatMass` from `Anaesthetics/PK-PD_FPC/uBodyStats.pas`
+    (on the `.lpi`'s unit path; age fixed at `BodyAge` 35, male), which
+    gives ThermEx1's man 56 kg fat-free, 20 % fat, though only his 3.5 kg
+    of subcutaneous fat is a compartment. A body is ThermEx1's trunk plus
+    the differences from that man: 50.8 % (the trunk's `MassFrac`) of the
+    change in fat-free mass, skin by DuBois area and the rest split between
+    core and muscle in their ratio, plus `TrunkFatShare` (0.5) of the change
+    in fat, all into the fat layer. Trunk lengths scale with height; organs,
+    ribs and pads keep their sizes and depths below the neck. **120 kg,
+    1.80 m** (BMI 37, 37 % fat): trunk 60 L, 425 x 306 mm at the waist,
+    fat 33 mm at the side (3 mm before). Resistance 131 ohm (71), fat 62 %
+    of the power (16 %), heart share 8.6 % (11.2 %), peak 23.6 A (35.5),
+    225 J, mean myocardial field 18 V/cm (36), range 10-56. The fat layer
+    is as thick over the chest as the abdomen, so the resistance is likely
+    too high; not checked against measured impedances in obese patients.
   `TDefibView.DrawSkeleton` draws the skeleton from the same rules, not
   from the elements, with a "Skeleton" check box.
 - **Pads.** Each pad is a 1 mm sheet of 1e4 S/m bricks extruded on the
