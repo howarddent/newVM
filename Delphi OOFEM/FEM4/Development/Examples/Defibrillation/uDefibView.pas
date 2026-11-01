@@ -32,7 +32,7 @@ unit uDefibView;
 
   The translucent surface is drawn in two passes - the faces turned away
   from the eye, then those turned towards it - which is exact for a
-  convex body like the trunk's elliptical cylinder.
+  convex body like the trunk's cone on its elliptical cylinder.
 
   Drag to turn, wheel to zoom. The world has the body along z, head
   towards +z, the front towards +y and the patient's left towards -x;
@@ -215,7 +215,7 @@ procedure TDefibView.DrawTorso(const Eye : TVec3);
 var
   Pass, i, j, k : Integer;
   M : TDefibModel;
-  cx, cy, cz, d, t, sh : Double;
+  cx, cy, cz, d, t, sh, Sc : Double;
   Ends : Array[0..1] of Double;
 begin
 
@@ -235,10 +235,11 @@ begin
       glColor4f(0.85, 0.12, 0.12, 0.10);
       glBegin(GL_TRIANGLE_FAN);
       glVertex3d(0, M.Cy, Ends[k]);
+      Sc := M.SectionScale(Ends[k]);
       for j := 0 to 96 do
       begin
         t := 2 * Pi * j / 96;
-        glVertex3d(M.A * Cos(t), M.Cy + M.B * Sin(t), Ends[k]);
+        glVertex3d(Sc * M.A * Cos(t), M.Cy + Sc * M.B * Sin(t), Ends[k]);
       end;
       glEnd;
     end;
@@ -251,7 +252,8 @@ begin
       cx := M.NX[M.Skin[i].N[0]];
       cy := M.NY[M.Skin[i].N[0]];
       cz := M.NZ[M.Skin[i].N[0]];
-      d := (Eye.X - cx) * M.Skin[i].Nx + (Eye.Y - cy) * M.Skin[i].Ny;
+      d := (Eye.X - cx) * M.Skin[i].Nx + (Eye.Y - cy) * M.Skin[i].Ny +
+           (Eye.Z - cz) * M.Skin[i].Nz;
 
       if (d > 0) <> (Pass = 1) then
         Continue;
@@ -348,7 +350,7 @@ const
 var
   M : TDefibModel;
   k, j, sd : Integer;
-  Z0, Z1, T, D, Ds, Yc, Zs0, Zs1 : Double;
+  Z0, Z1, T, D, Ds, Zd, Y0, Y1, Zs0, Zs1 : Double;
   P : TVec3;
   Cart : Boolean;
 begin
@@ -359,18 +361,25 @@ begin
 
   glBegin(GL_QUADS);
 
-  // The spine, at the back, first: nothing here writes depth.
-  Yc := M.Cy - M.CoreB + SpineInset;
+  // The spine, at the back, first: nothing here writes depth. Straight
+  // up the abdomen, then leaning forward with the back of the core up
+  // the cone.
+  Zd := M.Len - ThoraxLength;
   glColor4f(0.95, 0.92, 0.80, 0.30);
   for j := 0 to 31 do
-  begin
-    T := 2 * Pi * j / 32;
-    glVertex3d(SpineRadius * Cos(T), Yc + SpineRadius * Sin(T), 0);
-    glVertex3d(SpineRadius * Cos(T), Yc + SpineRadius * Sin(T), M.Len);
-    T := 2 * Pi * (j + 1) / 32;
-    glVertex3d(SpineRadius * Cos(T), Yc + SpineRadius * Sin(T), M.Len);
-    glVertex3d(SpineRadius * Cos(T), Yc + SpineRadius * Sin(T), 0);
-  end;
+    for sd := 0 to 1 do
+    begin
+      Zs0 := IfThen(sd = 0, 0, Zd);
+      Zs1 := IfThen(sd = 0, Zd, M.Len);
+      Y0 := M.Cy - M.CoreScale(Zs0) * M.CoreB + SpineInset;
+      Y1 := M.Cy - M.CoreScale(Zs1) * M.CoreB + SpineInset;
+      T := 2 * Pi * j / 32;
+      glVertex3d(SpineRadius * Cos(T), Y0 + SpineRadius * Sin(T), Zs0);
+      glVertex3d(SpineRadius * Cos(T), Y1 + SpineRadius * Sin(T), Zs1);
+      T := 2 * Pi * (j + 1) / 32;
+      glVertex3d(SpineRadius * Cos(T), Y1 + SpineRadius * Sin(T), Zs1);
+      glVertex3d(SpineRadius * Cos(T), Y0 + SpineRadius * Sin(T), Zs0);
+    end;
 
   for k := 0 to NbRibs - 1 do
   begin
@@ -378,7 +387,7 @@ begin
     for j := 0 to NSeg - 1 do
     begin
       T := 2 * Pi * (j + 0.5) / NSeg;
-      P := M.WallPoint(T, D);
+      P := M.WallPoint(T, D, (Z0 + Z1) / 2);
       if not M.RibPresent(k, P.X, P.Y) then
         Continue;
       if (P.Y > M.Cy) and (Abs(P.X) < SternumHalfWidth) and
@@ -389,26 +398,30 @@ begin
         glColor4f(0.70, 0.80, 0.95, 0.30)
       else
         glColor4f(0.95, 0.92, 0.80, 0.45);
-      P := M.WallPoint(2 * Pi * j / NSeg, D);
+      P := M.WallPoint(2 * Pi * j / NSeg, D, Z0);
       glVertex3d(P.X, P.Y, Z0);
+      P := M.WallPoint(2 * Pi * j / NSeg, D, Z1);
       glVertex3d(P.X, P.Y, Z1);
-      P := M.WallPoint(2 * Pi * (j + 1) / NSeg, D);
+      P := M.WallPoint(2 * Pi * (j + 1) / NSeg, D, Z1);
       glVertex3d(P.X, P.Y, Z1);
+      P := M.WallPoint(2 * Pi * (j + 1) / NSeg, D, Z0);
       glVertex3d(P.X, P.Y, Z0);
     end;
   end;
 
-  // The sternum: its front and back faces across the wall's rib layer.
+  // The sternum: its front and back faces across the wall's rib layer,
+  // leaning back up the cone.
   Zs0 := M.Len - SternumBottom;
   Zs1 := M.Len - SternumTop;
   glColor4f(0.95, 0.92, 0.80, 0.40);
   for sd := 0 to 1 do
   begin
-    P := M.WallPoint(Pi / 2, IfThen(sd = 0, Ds, WallThickness));
-    glVertex3d(-SternumHalfWidth, P.Y, Zs0);
-    glVertex3d(SternumHalfWidth, P.Y, Zs0);
-    glVertex3d(SternumHalfWidth, P.Y, Zs1);
-    glVertex3d(-SternumHalfWidth, P.Y, Zs1);
+    Y0 := M.WallPoint(Pi / 2, IfThen(sd = 0, Ds, WallThickness), Zs0).Y;
+    Y1 := M.WallPoint(Pi / 2, IfThen(sd = 0, Ds, WallThickness), Zs1).Y;
+    glVertex3d(-SternumHalfWidth, Y0, Zs0);
+    glVertex3d(SternumHalfWidth, Y0, Zs0);
+    glVertex3d(SternumHalfWidth, Y1, Zs1);
+    glVertex3d(-SternumHalfWidth, Y1, Zs1);
   end;
 
   glEnd;

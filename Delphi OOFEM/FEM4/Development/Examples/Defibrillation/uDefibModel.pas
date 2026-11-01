@@ -5,19 +5,42 @@ unit uDefibModel;
 
   THE TORSO
 
-  The trunk of ThermEx1 (Examples/ThermEx1/uThermEx1.pas), built from
-  that unit's own tables rather than copied numbers: the 70 kg, 1.75 m,
-  5 % fat adult, whose trunk is an elliptical cylinder holding 50.8 % of
-  the body mass and 34 % of its surface. Matching both gives 334 mm wide
-  by 167 mm deep and 0.78 m long, with four compartments as similar
-  ellipses - core, muscle, fat and skin - sized by their masses: core to
-  s = 148 mm, then 13 mm of muscle, 3 mm of fat and 2 mm of skin at the
-  sides (half that at front and back, the price of similar ellipses that
-  ThermEx1's header explains). The trunk is meshed the way ThermEx1
-  meshes it - an unstructured disc of core extruded into prisms inside
-  structured annuli of hexahedra - with finer divisions round the
-  section and along the chest, since the pads are local where ThermEx1's
-  heat flow was not.
+  The trunk of ThermEx1 (Examples/ThermEx1/uThermEx1.pas), its masses
+  taken from that unit's own tables rather than copied numbers: the
+  70 kg, 1.75 m, 5 % fat adult, whose trunk holds 50.8 % of the body
+  mass in four compartments - core, muscle, fat and skin. ThermEx1 makes
+  that trunk one elliptical cylinder; here it is a thorax on an abdomen,
+  shaped from adult male anthropometry:
+
+    abdomen  an elliptical cylinder AbdomenLength (0.43 m) from the
+             perineum to the diaphragm, its depth TrunkAspect (0.72) of
+             its breadth, as a man's waist is
+    thorax   a truncated cone ThoraxLength (0.25 m) long, its base the
+             diaphragm, where it meets the abdomen without a step, and
+             its apex the root of the neck, whose section is NeckRatio
+             (half) the diaphragm's
+
+  The diaphragm is taken as flat, at the mean of its dome and its
+  attachments to the costal margin. The size of the sections follows
+  from the trunk's volume, so the masses are ThermEx1's: 323 mm wide by
+  233 deep at the waist and 162 by 116 at the neck, 25.4 litres of
+  abdomen and 8.6 of thorax. The cone is
+  the thoracic cage and its wall; the shoulders and their broad girdle
+  of muscle above the upper chest are left out with the arms.
+
+  The compartments are similar ellipses sized by their masses, as in
+  ThermEx1: about 12 mm of muscle, 3 mm of fat and 2 mm of skin at the
+  sides, less in proportion at the front and back. Round the cone they
+  keep those thicknesses all the way up, and only the core narrows.
+
+  The mesh is ThermEx1's for a cylinder - an unstructured disc of core
+  extruded into prisms inside structured annuli of hexahedra - with
+  finer divisions round the section and along the chest, since the pads
+  are local where ThermEx1's heat flow was not. gmsh meshes that
+  cylinder, and each node is then moved onto the body (ToBody):
+  everything outside the core moves in by the same amount, and the core
+  and chest wall shrink to fit. So the elements stay what they were
+  meshed as, and only their size changes up the cone.
 
   For the current the core cannot stay one tissue: what the heart sees
   is decided by the low-conductivity lungs either side of it and the
@@ -26,9 +49,25 @@ unit uDefibModel;
   tissue:
 
     heart   an ellipsoid tilted down, forwards and to the left, its long
-            axis base to apex; myocardium 12 mm thick round a blood
-            cavity of the same shape
-    lungs   one either side, up under the clavicles
+            axis base to apex, resting just above the diaphragm;
+            myocardium 12 mm thick round a blood cavity of the same shape
+    lungs   one either side, from the apex of the cone down to the
+            diaphragm; the left one also wrapped LungWrapDepth round the
+            heart's left side, front and back (InLungWrap), leaving the
+            cardiac notch in front, the mediastinum behind and the
+            diaphragm below as core
+
+  The wrap matters little. The plain left lung already makes 69 % of
+  what lies within 10 mm of the heart, the wrap 71 %, and wrapping every
+  side but the diaphragm 88 % - and the heart's share of the current
+  goes from 12.9 % to 12.9 % and 12.7 % (with the lung at 0.08 S/m, as
+  it then was). Against the core's 0.15 the lung is too poor an
+  insulator, in a layer this thin, to steer the current round the heart.
+  The lung's own conductivity does more. 0.08, 0.04 (now the default,
+  for inflated lung) and 0.02 S/m give a heart share of 12.9, 11.2 and
+  9.3 % and a resistance of 66.2, 70.8 and 74.2 ohm. The mean myocardial
+  field falls from 42.5 to 36.1 and 30.3 V/cm, while its maximum, at the
+  heart's surface beside the lung, rises from 103 to 133 and 159 V/cm.
 
   At the 7 mm element size that staircases the organs' surfaces at
   element resolution and gives the ventricular wall one or two elements
@@ -37,23 +76,30 @@ unit uDefibModel;
 
   THE CHEST WALL AND SKELETON
 
-  ThermEx1's muscle is only 13 mm thick at the sides and half that at
-  the front, so an 18 mm chest wall (muscle, 0.25 S/m) is added inside
-  the core's boundary: a ring of constant thickness, meshed as one more
+  ThermEx1's muscle is only 12 mm thick at the sides and less at the
+  front, so an 18 mm chest wall (muscle, 0.25 S/m) is added inside the
+  core's boundary: a ring of constant thickness, meshed as one more
   structured annulus whose inner edge is a spline offset along the
-  ellipse's normal, leaving a 260 x 112 mm thoracic core. Its inner
-  11 mm carries the skeleton, assigned element by element:
+  ellipse's normal. It keeps that thickness up the cone, while the core
+  inside it narrows from 253 x 172 mm at the diaphragm to 92 x 56 at
+  the neck. A thicker wall shunts more current round the heart, but not
+  much: at 27 and 31 mm (the most the neck's curvature allows) the
+  heart's share falls from 12.9 to 11.8 and 11.6 %, and the resistance
+  from 66.2 to 60.8 and 59.7 ohm (lung at 0.08 S/m). Its inner 11 mm carries the skeleton, assigned element by
+  element:
 
     ribs       twelve horizontal hoops 13 mm high at a 26 mm pitch,
-               aligned with the chest's axial layers; bone, 0.02 S/m
+               aligned with the chest's axial layers, from just below the
+               root of the neck - the lower ones round the upper abdomen,
+               below the diaphragm, as they are; bone, 0.02 S/m
     cartilage  the front 120 mm of ribs 1 to 10, 0.18 S/m; ribs 8 to 10,
                below the sternum, stop either side of the midline, and
                the floating ribs 11 and 12 stop at the sides
-    sternum    a 36 mm plate at the front from 80 to 260 mm below the
-               top of the trunk
+    sternum    a 36 mm plate at the front from 30 to 210 mm below the
+               root of the neck
     spine      a 32 mm bone cylinder the length of the trunk, its axis
-               30 mm in front of the back of the core, through core and
-               wall alike
+               30 mm in front of the back of the core - so leaning
+               forward up the cone - through core and wall alike
 
   Real ribs slope down towards the front and are flattened, not
   rectangular; horizontal hoops get the gaps between them, which is
@@ -123,7 +169,11 @@ unit uDefibModel;
   studies), isotropic by default: see TissueSigma. Skin is the least
   certain - dry stratum corneum is orders of magnitude more resistive
   than the 0.1 S/m used for gelled skin - and the core outside the heart
-  and lungs lumps liver and gut into one 0.15 S/m.
+  and lungs lumps liver and gut into one 0.15 S/m. The lung's 0.04 S/m
+  is an effective value with the air included. Air makes inflated lung
+  less conductive than deflated, and published low-frequency values
+  spread by a factor of two or so either way, so 0.04 (and the earlier
+  0.08) are choices within that spread, not measurements.
 
   Anisotropic muscle (Anisotropic := True, --anisotropic): skeletal
   muscle conducts far better along its fibres than across them -
@@ -136,10 +186,13 @@ unit uDefibModel;
   own tensor sigma_T I + (sigma_L - sigma_T) f f^T, f the fibre
   direction at its centre, through TThermalEngine's
   SetElementConductivityTensor. Heart and lungs stay isotropic.
-  It raises the resistance from 73 to 91 ohm and the heart's share of
-  the current from 12 to 15 %: across the fibres, which includes up and
-  down the trunk, the wall now conducts less than a third as well, so
-  it spreads the current along the body less and more crosses the core.
+  It raises the resistance from 71 to 85 ohm and the heart's share of
+  the current from 11.2 to 12.6 % (66 to 80 ohm and 12.9 to 13.6 % with
+  the lung at 0.08 S/m): across the fibres, which includes up
+  and down the trunk, the wall now conducts less than a third as well,
+  so it spreads the current along the body less and more crosses the
+  core. (On ThermEx1's cylindrical trunk the change was larger, 12 to
+  15 %.)
 
   UNITS
 
@@ -172,7 +225,7 @@ const
 
   // S/m - see CONDUCTIVITIES in the header.
   TissueSigma : Array[TTissue] of Double =
-    (0.15, 0.25, 0.04, 0.10, 0.08, 0.25, 0.70, 0.25, 0.02, 0.18, 1.0E4);
+    (0.15, 0.25, 0.04, 0.10, 0.04, 0.25, 0.70, 0.25, 0.02, 0.18, 1.0E4);
 
   // The last tissue the report lists (the pads are not tissue).
   LastTissue = tiCartilage;
@@ -204,6 +257,13 @@ const
   // the heart against.
   DefibFieldVcm = 5.0;
 
+  (******************** THE TORSO ********************)
+
+  TrunkAspect = 0.72;       // depth over breadth, at every level
+  AbdomenLength = 0.43;     // m, perineum to diaphragm
+  ThoraxLength = 0.25;      // m, diaphragm to the root of the neck
+  NeckRatio = 0.5;          // the neck root's section over the diaphragm's
+
   (******************** THE PADS ********************)
 
   PadWidth = 0.080;         // m, round the trunk
@@ -212,11 +272,12 @@ const
 
   // Where the pads sit: the ellipse's parametric angle of the pad's
   // centre (90 deg is the front midline, below 90 the patient's right,
-  // 180 the left side) and the centre's depth below the top of the trunk.
+  // 180 the left side) and the centre's depth below the top of the trunk,
+  // the root of the neck.
   SternalAngleDeg = 65.0;
-  SternalDepth = 0.17;
+  SternalDepth = 0.10;
   ApexAngleDeg = 165.0;
-  ApexDepth = 0.33;
+  ApexDepth = 0.21;
 
   PadAnode = 0;             // sternal: 1 A in
   PadCathode = 1;           // apex: held at 0 V
@@ -226,8 +287,8 @@ const
   // A band of constant thickness inside the core's boundary: intercostal
   // and chest muscle, with the ribs, costal cartilages and sternum in
   // its inner part. It must stay thinner than the core ellipse's
-  // smallest radius of curvature, b^2/a = 37 mm, for the inner curve to
-  // be smooth.
+  // smallest radius of curvature, b^2/a, all the way up the cone - about
+  // 33 mm at the neck - for the inner curve to be smooth.
   WallThickness = 0.018;    // m
   WallDiv = 5;              // element divisions through it
   RibDepth = 0.011;         // m, the inner part of the wall the ribs take
@@ -238,30 +299,44 @@ const
   NbRibs = 12;
   RibLayers = 2;
   RibPitch = 4;
-  RibFirstLayer = 6;
+  RibFirstLayer = 3;
   NbTrueRibs = 10;          // ribs 11 and 12 float, stopping at the side
   FloatingRibX = 0.10;      // m, how far round the front they stop short
   CartilageX = 0.060;       // m, the front run of each rib that is cartilage
 
   // The sternum: a plate in the rib layer of the wall, at the front.
   SternumHalfWidth = 0.018;
-  SternumTop = 0.080;       // m below the top of the trunk
-  SternumBottom = 0.260;
+  SternumTop = 0.030;       // m below the top of the trunk
+  SternumBottom = 0.210;
 
   // The vertebral column: a cylinder through the whole trunk at the back.
   SpineRadius = 0.016;
   SpineInset = 0.030;       // m, its axis in front of the back of the core
+
+  // The left lung's wrap round the heart (see InLungWrap): how far out
+  // from the heart's surface it reaches; the x right of which it leaves
+  // the heart's front bare (the cardiac notch) and its back to the
+  // oesophagus and aorta; and the cosine, of the direction from the
+  // heart's centre to the vertical, below which the heart sits on the
+  // diaphragm instead.
+  LungWrapDepth = 0.025;
+  CardiacNotchX = -0.045;
+  WrapBackX = -0.030;
+  WrapFloorCos = -0.6;
+  // How far out from the heart the report's tally of its surroundings
+  // reaches.
+  HeartContact = 0.010;
 
   (******************** THE MESH ********************)
 
   CircDiv = 32;             // element divisions per quadrant round the section
   CoreMeshSize = 0.007;     // m, the core disc's triangles
 
-  // Along the trunk: coarse below the chest, fine through it, a little
-  // at the neck. The fine zone runs from ChestBottom to ChestTop below
-  // the top of the trunk.
-  ChestTop = 0.06;
-  ChestBottom = 0.424;      // 56 layers of ChestStep, so the ribs align
+  // Along the trunk: coarse below the chest, fine through it, a layer
+  // at the root of the neck. The fine zone runs from ChestBottom to
+  // ChestTop below the top of the trunk.
+  ChestTop = 0.02;
+  ChestBottom = 0.384;      // 56 layers of ChestStep, so the ribs align
   ChestStep = 0.0065;
   AbdomenStep = 0.024;
   NeckStep = 0.015;
@@ -306,11 +381,21 @@ type
 
     FMeshDir, FGeoFile, FMshFile : String;
 
-    // The trunk
+    // The trunk, as meshed: the cylinder of the abdomen's section. FA and
+    // FB are the abdomen's, and the sections up the thorax are mapped
+    // from these.
     FA, FB, FK, FLen, FCy : Double;
     FOuter : Array[0..NbLayers - 1] of Double;    // s of each boundary
     FArc : TDoubleArray;                          // outer ellipse arc length table
     FCoreA, FCoreB : Double;                      // the core's boundary
+    FVolume : Double;                             // m3, the whole trunk
+
+    // The wall's inner edge as meshed: the polar angle round the
+    // section's centre of its point at each parametric angle.
+    FInnerTh, FInnerT : TDoubleArray;
+
+    // The nodes as gmsh meshed them, on the cylinder.
+    FRefX, FRefY : TDoubleArray;
 
     FPadAngle, FPadZ : Array[0..1] of Double;
 
@@ -320,7 +405,7 @@ type
     FGridN : Array[0..2] of Integer;
     FCellStart, FCellItem : TIntegerArray;
 
-    FAnisotropic, FBiphasic : Boolean;
+    FAnisotropic, FBiphasic, FWrapLung : Boolean;
     FShockStart : Integer;    // the report's first line about the shock
     FRan : Boolean;
 
@@ -329,6 +414,18 @@ type
 
     function S(X, Y : Double) : Double;
     function ArcAt(T : Double) : Double;
+
+    // Depth of (X, Y) inside the meshed core ellipse along its normal,
+    // and the parametric angle T of the nearest point on it.
+    function FootInCore(X, Y : Double; out T : Double) : Double;
+
+    // The parametric angle at which the wall's inner edge, as meshed,
+    // lies at polar angle Theta round the section's centre.
+    function InnerTAt(Theta : Double) : Double;
+
+    // The point of the body that a node meshed at (X, Y, Z) on the
+    // cylinder stands for.
+    function ToBody(X, Y, Z : Double) : TVec3;
     function InPad(Pad : Integer; X, Y, Z : Double; Margin : Double) : Boolean;
     function RibAt(Z : Double) : Integer;
 
@@ -379,6 +476,12 @@ type
 
     Heart, Cavity : TOrgan;
     Lungs : Array[0..1] of TOrgan;
+    // The heart grown by LungWrapDepth: the left lung's wrap is the part
+    // of this shell on the heart's left, front and back (InLungWrap).
+    WrapShell : TOrgan;
+
+    // Volumes (m3) of each tissue within HeartContact of the heart.
+    ContactVol : Array[TTissue] of Double;
 
     Resistance : Double;             // ohm, pad to pad
 
@@ -412,6 +515,20 @@ type
 
     function OrganInside(const O : TOrgan; X, Y, Z : Double) : Boolean;
 
+    // Whether a point outside the heart lies in the left lung's wrap
+    // round it: within LungWrapDepth of the heart, on its left, except
+    // the cardiac notch in front, the mediastinum behind and the
+    // diaphragm below.
+    function InLungWrap(X, Y, Z : Double) : Boolean;
+
+    // The section at height Z: its size over the abdomen's (1 below the
+    // diaphragm, NeckRatio at the root of the neck), how far in that
+    // moves the skin and every compartment boundary outside the core,
+    // and the core's size over the abdomen's core.
+    function SectionScale(Z : Double) : Double;
+    function SectionShift(Z : Double) : Double;
+    function CoreScale(Z : Double) : Double;
+
     property A : Double read FA;
     property B : Double read FB;
     property Len : Double read FLen;
@@ -419,11 +536,14 @@ type
     property CoreA : Double read FCoreA;
     property CoreB : Double read FCoreB;
 
-    // The inner edge of the chest wall at parametric angle T of the core
-    // ellipse, Depth inside that ellipse along its normal.
-    function WallPoint(T, Depth : Double) : TVec3;
+    // The point at parametric angle T of the core ellipse at height Z,
+    // Depth inside that ellipse along its normal - so on the body; at
+    // Z = 0, in the abdomen, it is also the cylinder as meshed. The z of
+    // the result is Z.
+    function WallPoint(T, Depth, Z : Double) : TVec3;
 
-    // Depth of (X, Y) inside the core ellipse, along its normal.
+    // Depth of (X, Y) inside the core ellipse, along its normal - on the
+    // cylinder as meshed, before ToBody.
     function DepthInCore(X, Y : Double) : Double;
 
     // The z range of rib k (0 = the first rib), and whether rib k is
@@ -436,6 +556,8 @@ type
 
     // Set before Run, since it changes the solve.
     property Anisotropic : Boolean read FAnisotropic write FAnisotropic;
+    // The left lung wrapped round the heart (default True; --no-wrap).
+    property WrapLung : Boolean read FWrapLung write FWrapLung;
 
     // Before or after Run. After it, the waveform and the report's shock
     // and heart sections are recomputed, without solving again.
@@ -528,6 +650,8 @@ begin
   FLists := TList.Create;
   FGmsh := TGmsh.Create;
 
+  FWrapLung := True;
+
   FMeshDir := 'mesh' + PathDelim;
   FGeoFile := FMeshDir + 'defibrillation.geo';
   FMshFile := FMeshDir + 'defibrillation.msh';
@@ -591,17 +715,128 @@ end;
 
 // Whether (X, Y, Z) lies over pad Pad's footprint on the skin: within
 // half its width round the section, measured along the skin, and half
-// its height along the trunk, each widened by Margin.
+// its height along the trunk, each widened by Margin. The section at Z
+// is the abdomen's scaled by SectionScale, so the arc round it is too;
+// up the cone the height is measured along its slope at the point.
 function TDefibModel.InPad(Pad : Integer; X, Y, Z : Double; Margin : Double) : Boolean;
 var
-  T, D, P : Double;
+  T, D, P, Sc, Slope : Double;
 begin
   T := ArcTan2((Y - FCy) / FK, X);
+  Sc := SectionScale(Z);
   P := FArc[ArcTableSize];
   D := ArcAt(T) - ArcAt(FPadAngle[Pad]);
-  D := D - P * Round(D / P);
+  D := Sc * (D - P * Round(D / P));
+  if FLen - Z < ThoraxLength then
+    Slope := (1 - NeckRatio) / ThoraxLength * FA * Sqrt(Sqr(Cos(T)) + Sqr(FK * Sin(T)))
+  else
+    Slope := 0;
   Result := (Abs(D) <= PadWidth / 2 + Margin) and
-            (Abs(Z - FPadZ[Pad]) <= PadHeight / 2 + Margin);
+            (Abs(Z - FPadZ[Pad]) * Sqrt(1 + Sqr(Slope)) <= PadHeight / 2 + Margin);
+end;
+
+function TDefibModel.SectionScale(Z : Double) : Double;
+var
+  h : Double;
+begin
+  h := FLen - Z;
+  if h >= ThoraxLength then
+    Result := 1
+  else
+    Result := NeckRatio + (1 - NeckRatio) * Max(0, h) / ThoraxLength;
+end;
+
+function TDefibModel.SectionShift(Z : Double) : Double;
+begin
+  Result := (1 - SectionScale(Z)) * FA;
+end;
+
+function TDefibModel.CoreScale(Z : Double) : Double;
+begin
+  Result := (FCoreA - SectionShift(Z)) / FCoreA;
+end;
+
+function TDefibModel.InnerTAt(Theta : Double) : Double;
+var
+  lo, hi, mid : Integer;
+  f : Double;
+begin
+  lo := 0;
+  hi := High(FInnerTh);
+  while hi - lo > 1 do
+  begin
+    mid := (lo + hi) div 2;
+    if FInnerTh[mid] <= Theta then
+      lo := mid
+    else
+      hi := mid;
+  end;
+  f := (Theta - FInnerTh[lo]) / (FInnerTh[hi] - FInnerTh[lo]);
+  Result := FInnerT[lo] + EnsureRange(f, 0, 1) * (FInnerT[hi] - FInnerT[lo]);
+end;
+
+(*******************************************************************
+  From the cylinder gmsh meshed to the body. At height Z the outer
+  surface is the abdomen's ellipse scaled by SectionScale, which moves
+  it in by SectionShift along s - and every compartment boundary outside
+  the core moves in by the same, so the skin, fat and muscle keep their
+  thicknesses. The core ellipse is then the meshed one scaled by
+  CoreScale; the chest wall keeps its constant thickness inside it, each
+  point at the same depth below the same parametric angle; and the core
+  within the wall is scaled along each ray from the centre to fill the
+  wall's new inner edge. The three meet on their common boundaries, so
+  the map is continuous and no element is torn or folded, as long as
+  the wall stays thinner than the scaled core's radius of curvature,
+  which SetupGeometry checks.
+********************************************************************)
+function TDefibModel.ToBody(X, Y, Z : Double) : TVec3;
+var
+  px, py, sp, f, d, T, mu, nl, rw : Double;
+  Ex, Ey, Nx_, Ny_ : Double;
+
+  procedure AtT(TT : Double);
+  begin
+    Ex := FCoreA * Cos(TT);
+    Ey := FCoreB * Sin(TT);
+    Nx_ := FCoreB * Cos(TT);
+    Ny_ := FCoreA * Sin(TT);
+    nl := Sqrt(Nx_ * Nx_ + Ny_ * Ny_);
+    Nx_ := Nx_ / nl;
+    Ny_ := Ny_ / nl;
+  end;
+
+begin
+
+  px := X;
+  py := Y - FCy;
+  sp := S(X, Y);
+
+  if sp >= FCoreA then
+  begin
+    f := (sp - SectionShift(Z)) / sp;
+    Result := Vec3(f * px, FCy + f * py, Z);
+    Exit;
+  end;
+
+  mu := CoreScale(Z);
+
+  T := InnerTAt(ArcTan2(py, px));
+  AtT(T);
+  rw := Sqrt(Sqr(Ex - WallThickness * Nx_) + Sqr(Ey - WallThickness * Ny_));
+
+  if Sqrt(px * px + py * py) < rw then
+  begin
+    f := Sqrt(px * px + py * py) / rw;
+    Result := Vec3(f * (mu * Ex - WallThickness * Nx_),
+                   FCy + f * (mu * Ey - WallThickness * Ny_), Z);
+  end
+  else
+  begin
+    d := FootInCore(X, Y, T);
+    AtT(T);
+    Result := Vec3(mu * Ex - d * Nx_, FCy + mu * Ey - d * Ny_, Z);
+  end;
+
 end;
 
 function TDefibModel.OrganInside(const O : TOrgan; X, Y, Z : Double) : Boolean;
@@ -617,15 +852,34 @@ begin
   Result := q <= 1;
 end;
 
-function TDefibModel.WallPoint(T, Depth : Double) : TVec3;
+function TDefibModel.InLungWrap(X, Y, Z : Double) : Boolean;
 var
-  nx_, ny_, nl : Double;
+  D : TVec3;
+  dl : Double;
 begin
+  Result := False;
+  if not OrganInside(WrapShell, X, Y, Z) then
+    Exit;
+  D := Vec3(X - Heart.C.X, Y - Heart.C.Y, Z - Heart.C.Z);
+  dl := Sqrt(Dot(D, D));
+  if (dl > 0) and (D.Z / dl < WrapFloorCos) then
+    Exit;
+  if D.Y >= 0 then
+    Result := X < CardiacNotchX
+  else
+    Result := X < WrapBackX;
+end;
+
+function TDefibModel.WallPoint(T, Depth, Z : Double) : TVec3;
+var
+  nx_, ny_, nl, mu : Double;
+begin
+  mu := CoreScale(Z);
   nx_ := FCoreB * Cos(T);
   ny_ := FCoreA * Sin(T);
   nl := Sqrt(nx_ * nx_ + ny_ * ny_);
-  Result := Vec3(FCoreA * Cos(T) - Depth * nx_ / nl,
-                 FCy + FCoreB * Sin(T) - Depth * ny_ / nl, 0);
+  Result := Vec3(mu * FCoreA * Cos(T) - Depth * nx_ / nl,
+                 FCy + mu * FCoreB * Sin(T) - Depth * ny_ / nl, Z);
 end;
 
 // Newton on the parametric angle of the nearest point of the ellipse,
@@ -633,7 +887,14 @@ end;
 // near the boundary this is asked about.
 function TDefibModel.DepthInCore(X, Y : Double) : Double;
 var
-  px, py, T, c, sn, f, df, ab : Double;
+  T : Double;
+begin
+  Result := FootInCore(X, Y, T);
+end;
+
+function TDefibModel.FootInCore(X, Y : Double; out T : Double) : Double;
+var
+  px, py, c, sn, f, df, ab : Double;
   it : Integer;
 begin
   px := X;
@@ -700,18 +961,26 @@ begin
 end;
 
 (*******************************************************************
-  The trunk, from ThermEx1's tables, exactly as its SetupGeometry does
-  it: skin and fat shared out by surface area, the head's core what is
-  left of the head once its fixed muscle is taken, and the trunk taking
-  the rest of the body's core with its muscle the remainder. Then the
-  ellipse that matches both the trunk's volume and its share of the
-  surface, and the compartment boundaries as similar ellipses by
-  cumulative volume.
+  The trunk's compartment masses from ThermEx1's tables, exactly as its
+  SetupGeometry finds them: skin and fat shared out by surface area, the
+  head's core what is left of the head once its fixed muscle is taken,
+  and the trunk taking the rest of the body's core with its muscle the
+  remainder. Then the abdomen's ellipse, whose cylinder and the cone on
+  it hold the trunk's volume, and the compartment boundaries as similar
+  ellipses, from the skin in, each holding its compartment's volume
+  over the whole trunk.
+
+  With s the semi-major axis of a similar ellipse and SectionShift(z)
+  = (1 - SectionScale(z)) a, the shell between boundaries P and Q at
+  the abdomen (P > Q) holds pi k ((P^2 - Q^2) L - 2 (P - Q) D), D the
+  integral of the shift along the trunk; given P and the volume, that
+  is a quadratic for P - Q.
 ********************************************************************)
 procedure TDefibModel.SetupGeometry;
 var
   sg, l, i : Integer;
-  CoreLeft, Rest, V, Vcum, p1, T, dT, Area : Double;
+  CoreLeft, Rest, V, p1, T, dT, Area, I2, D, c, x, Pb, Ca, Cb, Ex, Ey, Nx_, Ny_, nl,
+    MuTop, Vabd, Slant, AreaNow : Double;
   Mass : Array[0..NbLayers - 1] of Double;
 begin
 
@@ -738,28 +1007,67 @@ begin
   for l := 0 to NbLayers - 1 do
     V := V + Mass[l] / Layers[l].Density;
 
-  FK := Segments[SegTrunk].Aspect;
-  Area := Segments[SegTrunk].AreaFrac * BodySurfaceArea;
+  FVolume := V;
+  FK := TrunkAspect;
+  FLen := AbdomenLength + ThoraxLength;
 
-  // Ramanujan's perimeter of the unit ellipse of axis ratio k.
-  p1 := Pi * (3 * (1 + FK) - Sqrt((3 + FK) * (1 + 3 * FK)));
-
-  FA := p1 * V / (Pi * FK * Area);
+  // The integral along the trunk of SectionScale^2, which times pi k a^2
+  // is the volume, and of the shift over a.
+  I2 := AbdomenLength + ThoraxLength * (1 + NeckRatio + Sqr(NeckRatio)) / 3;
+  FA := Sqrt(V / (Pi * FK * I2));
   FB := FK * FA;
-  FLen := V / (Pi * FA * FB);
+  D := FA * ThoraxLength * (1 - NeckRatio) / 2;
 
   // Lying on the plane y = 0, as in ThermEx1.
   FCy := FB;
 
-  Vcum := 0;
-  for l := 0 to NbLayers - 1 do
+  FOuter[NbLayers - 1] := FA;
+  for l := NbLayers - 1 downto 1 do
   begin
-    Vcum := Vcum + Mass[l] / Layers[l].Density;
-    FOuter[l] := Sqrt(Vcum / (Pi * FK * FLen));
+    c := Mass[l] / Layers[l].Density / (Pi * FK);
+    Pb := FOuter[l] * FLen - D;
+    x := (Pb - Sqrt(Sqr(Pb) - FLen * c)) / FLen;
+    FOuter[l - 1] := FOuter[l] - x;
   end;
 
   FCoreA := FOuter[LayerCore];
   FCoreB := FK * FOuter[LayerCore];
+
+  // The core at the root of the neck, and the chest wall inside it.
+  MuTop := CoreScale(FLen);
+  if MuTop * Sqr(FCoreB) / FCoreA <= WallThickness then
+    raise Exception.Create('The core at the root of the neck is too small for the ' +
+      'chest wall to keep its thickness: raise NeckRatio or thin the wall.');
+
+  // The wall's inner edge as meshed, by the polar angle of its points.
+  SetLength(FInnerT, ArcTableSize + 1);
+  SetLength(FInnerTh, ArcTableSize + 1);
+  for i := 0 to ArcTableSize do
+  begin
+    T := -Pi + 2 * Pi * i / ArcTableSize;
+    Ex := FCoreA * Cos(T);
+    Ey := FCoreB * Sin(T);
+    Nx_ := FCoreB * Cos(T);
+    Ny_ := FCoreA * Sin(T);
+    nl := Sqrt(Nx_ * Nx_ + Ny_ * Ny_);
+    FInnerT[i] := T;
+    FInnerTh[i] := ArcTan2(Ey - WallThickness * Ny_ / nl, Ex - WallThickness * Nx_ / nl);
+    if i = 0 then
+      FInnerTh[i] := -Pi
+    else if i = ArcTableSize then
+      FInnerTh[i] := Pi;
+  end;
+
+  // Ramanujan's perimeter of the unit ellipse of axis ratio k; the
+  // cone's side taken as sloping by its mean radius.
+  p1 := Pi * (3 * (1 + FK) - Sqrt((3 + FK) * (1 + 3 * FK)));
+  Slant := Sqrt(1 + Sqr((1 - NeckRatio) * FA * (1 + FK) / 2 / ThoraxLength));
+  AreaNow := p1 * FA * (AbdomenLength + ThoraxLength * (1 + NeckRatio) / 2 * Slant);
+  Area := Segments[SegTrunk].AreaFrac * BodySurfaceArea;
+  Vabd := Pi * FK * Sqr(FA) * AbdomenLength;
+
+  Ca := FCoreA - WallThickness;
+  Cb := FCoreB - WallThickness;
 
   // Arc length round the outer ellipse, for placing the pads.
   SetLength(FArc, ArcTableSize + 1);
@@ -777,11 +1085,12 @@ begin
   FPadAngle[PadCathode] := DegToRad(ApexAngleDeg);
   FPadZ[PadCathode] := FLen - ApexDepth;
 
-  // The organs. The heart's long axis runs from the base, up, back and
-  // to the right, to the apex, down, forward and to the left (-x).
-  // Sized to sit inside the chest wall, whose inner surface is only
-  // 56 mm from the section's centre front and back.
-  Heart := MakeOrgan('heart', Vec3(-0.025, FCy + 0.005, FLen - 0.29),
+  // The organs, in the body's own coordinates. The heart's long axis
+  // runs from the base, up, back and to the right, to the apex, down,
+  // forward and to the left (-x), and it rests on the diaphragm, where
+  // the cone is widest; inside the wall the section at its centre is
+  // about 210 x 140 mm.
+  Heart := MakeOrgan('heart', Vec3(-0.025, FCy + 0.012, FLen - 0.18),
                      Vec3(-0.60, 0.30, -0.75), 0.060, 0.042, 0.036);
 
   Cavity := Heart;
@@ -789,26 +1098,43 @@ begin
   for i := 0 to 2 do
     Cavity.R[i] := Heart.R[i] - 0.012;
 
-  // About 1.5 litres each before the heart and the spine take their
-  // share, filling the ribcage's width and depth either side of the
-  // mediastinum.
-  Lungs[0] := MakeOrgan('right lung', Vec3(0.075, FCy, FLen - 0.25),
-                        Vec3(0, 0, 1), 0.130, 0.055, 0.050);
-  Lungs[1] := MakeOrgan('left lung', Vec3(-0.075, FCy, FLen - 0.25),
-                        Vec3(0, 0, 1), 0.130, 0.055, 0.050);
+  WrapShell := Heart;
+  WrapShell.Name := 'lung wrap';
+  for i := 0 to 2 do
+    WrapShell.R[i] := Heart.R[i] + LungWrapDepth;
 
-  Say('THE TORSO - ThermEx1''s trunk');
-  Say(Format('  %.0f mm wide, %.0f mm deep, %.3f m long', [2000 * FA, 2000 * FB, FLen]));
-  Say('  compartment    kg     outer s, mm   sigma, S/m');
+  // Either side of the mediastinum, from the apex of the cone to the
+  // diaphragm, filling the ribcage's width and depth as it narrows -
+  // what lies outside the wall's inner edge stays wall.
+  Lungs[0] := MakeOrgan('right lung', Vec3(0.060, FCy - 0.005, FLen - 0.13),
+                        Vec3(0, 0, 1), 0.120, 0.062, 0.072);
+  Lungs[1] := MakeOrgan('left lung', Vec3(-0.060, FCy - 0.005, FLen - 0.13),
+                        Vec3(0, 0, 1), 0.120, 0.062, 0.072);
+
+  Say('THE TORSO - ThermEx1''s trunk as a thorax on an abdomen');
+  Say(Format('  abdomen  %.0f mm wide, %.0f mm deep, %.2f m long, %.1f litres',
+    [2000 * FA, 2000 * FB, AbdomenLength, 1000 * Vabd]));
+  Say(Format('  thorax   a truncated cone %.2f m long, from the abdomen''s section at ' +
+    'the diaphragm', [ThoraxLength]));
+  Say(Format('           to %.0f x %.0f mm at the root of the neck, %.1f litres',
+    [2000 * NeckRatio * FA, 2000 * NeckRatio * FB, 1000 * (V - Vabd)]));
+  Say(Format('  %.2f m long, %.1f litres, about %.2f m2 of skin (ThermEx1''s trunk %.2f)',
+    [FLen, 1000 * V, AreaNow, Area]));
+  Say('  compartment    kg   thick at the side, mm   sigma, S/m');
   for l := 0 to NbLayers - 1 do
-    Say(Format('  %-10s %7.2f %10.1f %12.3f',
-      [Layers[l].Name, Mass[l], 1000 * FOuter[l], TissueSigma[TTissue(l)]]));
+    if l = LayerCore then
+      Say(Format('  %-10s %7.2f   s %.1f at the diaphragm %7.3f',
+        [Layers[l].Name, Mass[l], 1000 * FOuter[l], TissueSigma[TTissue(l)]]))
+    else
+      Say(Format('  %-10s %7.2f %14.1f %16.3f',
+        [Layers[l].Name, Mass[l], 1000 * (FOuter[l] - FOuter[l - 1]), TissueSigma[TTissue(l)]]));
   Say(Format('  chest wall %.0f mm inside the core, %.2f S/m, with %d ribs ' +
     '(bone %.2f S/m,', [1000 * WallThickness, TissueSigma[tiWall], NbRibs,
     TissueSigma[tiBone]]));
-  Say(Format('    cartilage %.2f at the front), sternum and spine; ' +
-    'core inside it %.0f x %.0f mm', [TissueSigma[tiCartilage],
-    2000 * (FCoreA - WallThickness), 2000 * (FCoreB - WallThickness)]));
+  Say(Format('    cartilage %.2f at the front), sternum and spine; core inside it ' +
+    '%.0f x %.0f mm', [TissueSigma[tiCartilage], 2000 * Ca, 2000 * Cb]));
+  Say(Format('    at the diaphragm, %.0f x %.0f at the root of the neck',
+    [2000 * (MuTop * FCoreA - WallThickness), 2000 * (MuTop * FCoreB - WallThickness)]));
   Say(Format('  heart: myocardium %.2f S/m round blood %.2f; lungs %.2f S/m',
     [TissueSigma[tiMyocardium], TissueSigma[tiBlood], TissueSigma[tiLung]]));
   if FAnisotropic then
@@ -923,7 +1249,7 @@ begin
     for q := 0 to 3 do
       for j := 0 to CircDiv - 1 do
       begin
-        P := WallPoint(q * Pi / 2 + j * Pi / (2 * CircDiv), WallThickness);
+        P := WallPoint(q * Pi / 2 + j * Pi / (2 * CircDiv), WallThickness, 0);
         WriteLn(F, Format('Point(%d) = {%s,%s,0,cl};', [WPt(q, j), Num(P.X), Num(P.Y)]));
       end;
 
@@ -1074,22 +1400,31 @@ procedure TDefibModel.ClassifyElements;
 var
   i, j, nb, g, k : Integer;
   Nd : Array[0..7] of Integer;
-  c : TVec3;
-  Tot : Double;
+  c, rc, P : TVec3;
+  Tot, Vthx, Vwrap, Vc : Double;
   Vt : Array[TTissue] of Double;
   t : TTissue;
+  Contact : TOrgan;
+  Line : String;
+  CoreDir : Array[0..2] of Double;
 begin
 
+  // Each node from the cylinder gmsh meshed onto the body.
   NbNodes := FGmsh.NbNodes;
   SetLength(NX, NbNodes);
   SetLength(NY, NbNodes);
   SetLength(NZ, NbNodes);
+  SetLength(FRefX, NbNodes);
+  SetLength(FRefY, NbNodes);
 
   for i := 0 to NbNodes - 1 do
   begin
-    NX[i] := FGmsh.CoordX[i];
-    NY[i] := FGmsh.CoordY[i];
-    NZ[i] := FGmsh.CoordZ[i];
+    FRefX[i] := FGmsh.CoordX[i];
+    FRefY[i] := FGmsh.CoordY[i];
+    P := ToBody(FRefX[i], FRefY[i], FGmsh.CoordZ[i]);
+    NX[i] := P.X;
+    NY[i] := P.Y;
+    NZ[i] := P.Z;
   end;
 
   NbEle := FGmsh.NbElements;
@@ -1098,13 +1433,24 @@ begin
   SetLength(EleVol, NbEle);
 
   for t := Low(TTissue) to High(TTissue) do
+  begin
     Vt[t] := 0;
+    ContactVol[t] := 0;
+  end;
+  Vthx := 0;
+  Vwrap := 0;
+  for i := 0 to 2 do
+    CoreDir[i] := 0;
+  Contact := Heart;
+  for i := 0 to 2 do
+    Contact.R[i] := Heart.R[i] + HeartContact;
 
   for i := 0 to NbEle - 1 do
   begin
 
     nb := EleNodeCount(FGmsh.ElementType[i]);
     c := Vec3(0, 0, 0);
+    rc := Vec3(0, 0, 0);
 
     for j := 0 to nb - 1 do
     begin
@@ -1112,9 +1458,12 @@ begin
       c.X := c.X + NX[Nd[j]];
       c.Y := c.Y + NY[Nd[j]];
       c.Z := c.Z + NZ[Nd[j]];
+      rc.X := rc.X + FRefX[Nd[j]];
+      rc.Y := rc.Y + FRefY[Nd[j]];
     end;
 
     EleC[i] := Vec3(c.X / nb, c.Y / nb, c.Z / nb);
+    rc := Vec3(rc.X / nb, rc.Y / nb, 0);
 
     case nb of
       4 : EleVol[i] := TetVolume(Nd[0], Nd[1], Nd[2], Nd[3]);
@@ -1141,15 +1490,18 @@ begin
     else
       EleTissue[i] := TTissue(g);
 
-    // The spine first, through core and wall alike; then the bone and
-    // cartilage in the wall's inner part; then the organs, which only
-    // replace core, the heart winning over the lungs.
+    // The spine first, through core and wall alike, a set distance in
+    // front of the back of the core at each height; then the bone and
+    // cartilage in the wall's inner part, by depth in the wall as
+    // meshed, which ToBody keeps; then the organs, which only replace
+    // core, the heart winning over the lungs.
     if (EleTissue[i] in [tiCore, tiWall]) and
-       (Sqr(EleC[i].X) + Sqr(EleC[i].Y - (FCy - FCoreB + SpineInset)) <= Sqr(SpineRadius)) then
+       (Sqr(EleC[i].X) + Sqr(EleC[i].Y - (FCy - CoreScale(EleC[i].Z) * FCoreB + SpineInset))
+         <= Sqr(SpineRadius)) then
       EleTissue[i] := tiBone
     else if EleTissue[i] = tiWall then
     begin
-      if DepthInCore(EleC[i].X, EleC[i].Y) >= WallThickness - RibDepth then
+      if DepthInCore(rc.X, rc.Y) >= WallThickness - RibDepth then
       begin
         k := RibAt(EleC[i].Z);
         if (EleC[i].Y > FCy) and (Abs(EleC[i].X) < SternumHalfWidth) and
@@ -1172,10 +1524,35 @@ begin
         EleTissue[i] := tiMyocardium
       else if OrganInside(Lungs[0], EleC[i].X, EleC[i].Y, EleC[i].Z) or
               OrganInside(Lungs[1], EleC[i].X, EleC[i].Y, EleC[i].Z) then
+        EleTissue[i] := tiLung
+      else if FWrapLung and InLungWrap(EleC[i].X, EleC[i].Y, EleC[i].Z) then
+      begin
         EleTissue[i] := tiLung;
+        Vwrap := Vwrap + EleVol[i];
+      end;
+    end;
+
+    // What the heart touches.
+    if not (EleTissue[i] in [tiMyocardium, tiBlood]) and
+       OrganInside(Contact, EleC[i].X, EleC[i].Y, EleC[i].Z) then
+    begin
+      ContactVol[EleTissue[i]] := ContactVol[EleTissue[i]] + EleVol[i];
+      // The core it touches, by where: below, in front, behind.
+      if EleTissue[i] = tiCore then
+      begin
+        P := Vec3(EleC[i].X - Heart.C.X, EleC[i].Y - Heart.C.Y, EleC[i].Z - Heart.C.Z);
+        if P.Z < WrapFloorCos * Sqrt(Dot(P, P)) then
+          CoreDir[0] := CoreDir[0] + EleVol[i]
+        else if P.Y >= 0 then
+          CoreDir[1] := CoreDir[1] + EleVol[i]
+        else
+          CoreDir[2] := CoreDir[2] + EleVol[i];
+      end;
     end;
 
     Vt[EleTissue[i]] := Vt[EleTissue[i]] + EleVol[i];
+    if FLen - EleC[i].Z < ThoraxLength then
+      Vthx := Vthx + EleVol[i];
 
   end;
 
@@ -1186,17 +1563,35 @@ begin
     Say(Format('    %-11s %7.3f', [TissueName[t], 1000 * Vt[t]]));
     Tot := Tot + Vt[t];
   end;
-  Say(Format('    total       %7.3f  (the ellipse: %.3f)',
-    [1000 * Tot, 1000 * Pi * FA * FB * FLen]));
+  Say(Format('    total       %7.3f  (the trunk: %.3f), the thorax %.3f of it',
+    [1000 * Tot, 1000 * FVolume, 1000 * Vthx]));
+  if FWrapLung then
+    Say(Format('  the left lung wrapped round the heart, %.0f mm deep: %.3f litres of it',
+      [1000 * LungWrapDepth, 1000 * Vwrap]))
+  else
+    Say('  the left lung NOT wrapped round the heart (--no-wrap)');
+  Vc := 0;
+  for t := Low(TTissue) to High(TTissue) do
+    Vc := Vc + ContactVol[t];
+  Line := '';
+  for t := Low(TTissue) to High(TTissue) do
+    if ContactVol[t] > 0.005 * Vc then
+      Line := Line + Format('  %s %.0f %%', [TissueName[t], 100 * ContactVol[t] / Vc]);
+  Say(Format('  within %.0f mm of the heart:%s', [1000 * HeartContact, Line]));
+  if Vc > 0 then
+    Say(Format('    the core there: %.0f %% below it, %.0f %% in front, %.0f %% behind',
+      [100 * CoreDir[0] / Vc, 100 * CoreDir[1] / Vc, 100 * CoreDir[2] / Vc]));
 
 end;
 
 // Every skin element's face lying on the outer surface: all four nodes
-// in the outer quarter of the skin, as ThermEx1 finds its skin faces.
+// in the outer quarter of the skin as meshed, as ThermEx1 finds its skin
+// faces. The normal is the face's own, which up the cone leans out of
+// the horizontal.
 procedure TDefibModel.FindSurface;
 var
   i, f, j, n : Integer;
-  Thr, mx, my, mz, nx_, ny_, nl, ax, ay, az, bx, by, bz : Double;
+  Thr, mx, my, mz, nx_, ny_, nz_, nl, ax, ay, az, bx, by, bz : Double;
   OnSkin : Boolean;
   Fc : TSurfFace;
   Nd : Array[0..3] of Integer;
@@ -1223,7 +1618,7 @@ begin
       for j := 0 to 3 do
       begin
         Nd[j] := FGmsh.ElementNode[i, HexFace[f, j]];
-        if S(NX[Nd[j]], NY[Nd[j]]) < Thr then
+        if S(FRefX[Nd[j]], FRefY[Nd[j]]) < Thr then
           OnSkin := False;
         mx := mx + NX[Nd[j]] / 4;
         my := my + NY[Nd[j]] / 4;
@@ -1236,17 +1631,19 @@ begin
       for j := 0 to 3 do
         Fc.N[j] := Nd[j];
 
-      // Outward normal of the ellipse x^2/a^2 + (y-cy)^2/b^2 = 1.
-      nx_ := mx / Sqr(FA);
-      ny_ := (my - FCy) / Sqr(FB);
-      nl := Sqrt(nx_ * nx_ + ny_ * ny_);
-      Fc.Nx := nx_ / nl;
-      Fc.Ny := ny_ / nl;
-      Fc.Nz := 0;
-
+      // The cross product of the diagonals, turned outward.
       ax := NX[Nd[2]] - NX[Nd[0]]; ay := NY[Nd[2]] - NY[Nd[0]]; az := NZ[Nd[2]] - NZ[Nd[0]];
       bx := NX[Nd[3]] - NX[Nd[1]]; by := NY[Nd[3]] - NY[Nd[1]]; bz := NZ[Nd[3]] - NZ[Nd[1]];
-      Fc.Area := 0.5 * Sqrt(Sqr(ay * bz - az * by) + Sqr(az * bx - ax * bz) + Sqr(ax * by - ay * bx));
+      nx_ := ay * bz - az * by;
+      ny_ := az * bx - ax * bz;
+      nz_ := ax * by - ay * bx;
+      nl := Sqrt(nx_ * nx_ + ny_ * ny_ + nz_ * nz_);
+      Fc.Area := 0.5 * nl;
+      if nx_ * mx + ny_ * (my - FCy) < 0 then
+        nl := -nl;
+      Fc.Nx := nx_ / nl;
+      Fc.Ny := ny_ / nl;
+      Fc.Nz := nz_ / nl;
 
       Fc.Ele := i;
       Fc.Pad := -1;
@@ -1360,7 +1757,7 @@ begin
       if Outer[nd] < 0 then
         Outer[nd] := FEngine.AddNode(NX[nd] + Skin[i].Nx * PadThickness,
                                      NY[nd] + Skin[i].Ny * PadThickness,
-                                     NZ[nd]);
+                                     NZ[nd] + Skin[i].Nz * PadThickness);
     end;
 
     for j := 0 to 3 do
@@ -1581,7 +1978,8 @@ begin
              (NY[Skin[i].N[0]] + NY[Skin[i].N[2]]) / 2,
              (NZ[Skin[i].N[0]] + NZ[Skin[i].N[2]]) / 2, 0.01) then
     begin
-      Jn := -(EleJ[Skin[i].Ele].X * Skin[i].Nx + EleJ[Skin[i].Ele].Y * Skin[i].Ny);
+      Jn := -(EleJ[Skin[i].Ele].X * Skin[i].Nx + EleJ[Skin[i].Ele].Y * Skin[i].Ny +
+              EleJ[Skin[i].Ele].Z * Skin[i].Nz);
       PadI := PadI + Jn * Skin[i].Area;
     end;
 
@@ -1850,7 +2248,7 @@ begin
   Result := False;
   J := Vec3(0, 0, 0);
 
-  if (P.Z < 0) or (P.Z > FLen) or (S(P.X, P.Y) > FOuter[LayerSkin]) then
+  if (P.Z < 0) or (P.Z > FLen) or (S(P.X, P.Y) > FA - SectionShift(P.Z)) then
     Exit;
 
   ix := Trunc((P.X - FGridOrg.X) / FGridH);
@@ -1919,7 +2317,8 @@ begin
   for i := 0 to Length(Skin) - 1 do
     if Skin[i].Pad = PadAnode then
     begin
-      Jn := -(EleJ[Skin[i].Ele].X * Skin[i].Nx + EleJ[Skin[i].Ele].Y * Skin[i].Ny);
+      Jn := -(EleJ[Skin[i].Ele].X * Skin[i].Nx + EleJ[Skin[i].Ele].Y * Skin[i].Ny +
+              EleJ[Skin[i].Ele].Z * Skin[i].Nz);
       Tot := Tot + Max(0, Jn) * Skin[i].Area;
       Faces[nf] := i;
       Cum[nf] := Tot;
@@ -1951,6 +2350,7 @@ begin
 
     P.X := P.X - 0.0005 * Skin[i].Nx;
     P.Y := P.Y - 0.0005 * Skin[i].Ny;
+    P.Z := P.Z - 0.0005 * Skin[i].Nz;
 
     SetLength(Line, MaxSteps + 2);
     Line[0] := P;
@@ -1978,7 +2378,7 @@ begin
       Inc(n);
 
       // Arrived: at the skin, over the apex pad.
-      if (S(P.X, P.Y) > FOuter[LayerSkin] - 0.0015) and
+      if (S(P.X, P.Y) > FA - SectionShift(P.Z) - 0.0015) and
          InPad(PadCathode, P.X, P.Y, P.Z, 0.004) and (n > 5) then
       begin
         Done := True;
@@ -2076,13 +2476,12 @@ begin
   Say('  about 4 % of the transthoracic current crossing the heart, in dogs, and');
   Say('  defibrillation is usually taken to need some 5 V/cm through most of the');
   Say('  myocardium, which a 200 J shock clears with modest margin. The chest');
-  Say('  wall and ribs take the heart''s share from 16 % without them to the figure');
-  Say('  above: the wall shunts current round the ribcage, and the ribs push what');
-  Say('  enters through the gaps between them.');
+  Say('  wall and ribs lower the heart''s share: the wall shunts current round the');
+  Say('  ribcage, and the ribs push what enters through the gaps between them.');
   if FAnisotropic then
   begin
-    Say('  Anisotropic muscle raises both the resistance (73 ohm isotropic) and the');
-    Say('  heart''s share (12 % isotropic). Fibres round the trunk carry current');
+    Say('  Anisotropic muscle raises both the resistance (71 ohm isotropic) and the');
+    Say('  heart''s share (11.2 % isotropic). Fibres round the trunk carry current');
     Say('  well only round it: across them - inwards, and up and down the trunk -');
     Say('  the muscle now conducts 0.076 S/m instead of 0.25, so the wall stops');
     Say('  spreading current along the body and away from the heart, and more of');

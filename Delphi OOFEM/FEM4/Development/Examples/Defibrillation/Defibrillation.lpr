@@ -1,15 +1,16 @@
 program Defibrillation;
 
 { How the current of a 200 J monophasic defibrillator shock spreads
-  through a human torso. The torso is ThermEx1's trunk - the same
-  elliptical cylinder of core, muscle, fat and skin, built from that
-  unit's own tables - with a heart and lungs placed in its core and two
-  pads in the anterolateral position, solved for the current by
+  through a human torso. The torso is ThermEx1's trunk - its core,
+  muscle, fat and skin from that unit's own tables - shaped as a thorax,
+  a truncated cone from the diaphragm to the root of the neck, on an
+  abdomen, an elliptical cylinder. A heart and lungs are placed in its
+  core and two pads in the anterolateral position, solved for the current by
   TThermalEngine as a steady conduction problem. See the header of
   uDefibModel.pas for the model and what it leaves out, and of
   uDefibView.pas for what the picture shows.
 
-  Usage:  Defibrillation [--no-plot] [--anisotropic] [--biphasic]
+  Usage:  Defibrillation [--no-plot] [--anisotropic] [--biphasic] [--no-wrap]
                          [--snapshot=<prefix>] [--time=<ms>]
 
     --no-plot            solve and report, no window
@@ -18,6 +19,8 @@ program Defibrillation;
     --biphasic           start with the biphasic truncated exponential
                          shock rather than the monophasic damped sine (the
                          window switches between them either way)
+    --no-wrap            leave the left lung a plain ellipsoid, not wrapped
+                         round the heart (for comparison)
     --snapshot=<prefix>  open the window at --time (default: the peak
                          current), save the 3D view as <prefix>_view.png
                          and the waveform as <prefix>_wave.png, and exit
@@ -43,7 +46,7 @@ const
 var
   Model : TDefibModel;
   Form : TDefibForm;
-  ShowPlot, Aniso, Bi : Boolean;
+  ShowPlot, Aniso, Bi, Wrap : Boolean;
   Snapshot : String;
   SnapTime : Double;
   DotFS : TFormatSettings;
@@ -60,6 +63,7 @@ begin
   ShowPlot := True;
   Aniso := False;
   Bi := False;
+  Wrap := True;
   Snapshot := '';
   SnapTime := -1;
 
@@ -72,13 +76,15 @@ begin
       Aniso := True
     else if Arg = '--biphasic' then
       Bi := True
+    else if Arg = '--no-wrap' then
+      Wrap := False
     else if Copy(Arg, 1, 11) = '--snapshot=' then
       Snapshot := Copy(Arg, 12, MaxInt)
     else if Copy(Arg, 1, 7) = '--time=' then
       SnapTime := StrToFloat(Copy(Arg, 8, MaxInt), DotFS) / 1000
     else
     begin
-      WriteLn('Usage: Defibrillation [--no-plot] [--anisotropic] [--biphasic] ' +
+      WriteLn('Usage: Defibrillation [--no-plot] [--anisotropic] [--biphasic] [--no-wrap] ' +
         '[--snapshot=<prefix>] [--time=<ms>]');
       Halt(1);
     end;
@@ -88,6 +94,7 @@ begin
   Model := TDefibModel.Create;
   Model.Anisotropic := Aniso;
   Model.Biphasic := Bi;
+  Model.WrapLung := Wrap;
 
   try
 

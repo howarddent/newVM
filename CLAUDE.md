@@ -1304,14 +1304,37 @@ where the residual is the actual contract.
 ### `Delphi OOFEM/FEM4/Development/Examples/Defibrillation`
 
 Added 2026-10-30. Shows how the current of a 200 J monophasic shock
-spreads through a torso. The torso is **ThermEx1's trunk**, built from
-`uThermEx1`'s own interface tables (the project `uses` it, with
-`..\ThermEx1` on its search path): 334 x 167 mm, 0.78 m long, core,
-muscle, fat and skin as similar ellipses. It is meshed as ThermEx1 meshes
-a cylinder, but finer round the section (32 divisions a quadrant) and
-graded along it (6.5 mm through the chest). With the chest wall below
-that gives about 209k nodes and 249k elements. `uDefibModel.pas`'s header has the model, and
-`uDefibView.pas`'s header the picture. Things worth knowing:
+spreads through a torso. The torso holds **ThermEx1's trunk** masses,
+taken from `uThermEx1`'s own interface tables (the project `uses` it,
+with `..\ThermEx1` on its search path), with core, muscle, fat and skin
+as similar ellipses. Its shape is its own:
+- **Abdomen.** An elliptical cylinder 0.43 m long (`AbdomenLength`),
+  323 x 233 mm (`TrunkAspect` 0.72).
+- **Thorax.** A truncated cone 0.25 m long (`ThoraxLength`). Its base is
+  the diaphragm, where it meets the abdomen without a step. Its apex is
+  the root of the neck, at half the section (`NeckRatio`).
+
+The total length is 0.68 m and the volume is ThermEx1's 34.0 L.
+(Reshaped 2026-10-31 at the user's request. It was ThermEx1's single
+cylinder, 334 x 167 mm and 0.78 m long.)
+
+gmsh still meshes a cylinder, as ThermEx1 does, but finer round the
+section (32 divisions a quadrant) and graded along it (6.5 mm through
+the chest). `ToBody` then moves each node onto the body:
+- outside the core, everything moves in by `SectionShift(z)`, so skin,
+  fat and muscle keep their thickness up the cone;
+- the core ellipse scales by `CoreScale(z)`, and the chest wall keeps
+  its depth below each parametric angle;
+- the inner core is stretched along rays to fill the wall's new inner
+  edge (an angle table, `InnerTAt`).
+
+The three rules agree on their boundaries, so nothing tears. Tissue
+tests on depth in the wall use the meshed coordinates (`FRefX/FRefY`),
+and those on organs, spine, sternum and pads use the body's. Skin-face
+normals come from the faces themselves and have a z component on the
+cone. About 210k nodes and 264k elements. `uDefibModel.pas`'s header
+has the model, and `uDefibView.pas`'s header the picture. Things worth
+knowing:
 
 - **Solver.** `TThermalEngine`: `div(sigma grad phi) = 0` is
   steady conduction, so "temperature" is volts and a node "heat source"
@@ -1332,13 +1355,15 @@ that gives about 209k nodes and 249k elements. `uDefibModel.pas`'s header has th
   and two lungs. A core element takes an organ's tissue if its centroid
   lies inside the organ, so organ surfaces staircase at element size.
 - **Chest wall and skeleton** (added later the same day, at the user's
-  request). ThermEx1's muscle is only 13 mm thick at the sides and half
-  that at the front, so an 18 mm wall of muscle conductivity is meshed
+  request). ThermEx1's muscle is only 12 mm thick at the sides and less
+  at the front, so an 18 mm wall of muscle conductivity is meshed
   inside the core's ellipse as one more transfinite annulus (physical
   volume 5). Its inner edge is a gmsh `Spline` through points offset
-  along the ellipse's normal (`WallPoint`), so the wall has constant
-  thickness. That only works below the ellipse's smallest radius of
-  curvature, b^2/a = 37 mm. The skeleton is assigned per element in the
+  along the ellipse's normal (`WallPoint`, which takes a height and
+  gives the body's point, z = 0 being the meshed cylinder), so the wall
+  has constant thickness. That only works below the core ellipse's
+  smallest radius of curvature, b^2/a, which is smallest at the neck
+  (33 mm); `SetupGeometry` raises if it is not. The skeleton is assigned per element in the
   wall's inner 11 mm (`DepthInCore`, a Newton solve for the nearest
   point on the ellipse):
   - twelve horizontal rib hoops of bone (0.02 S/m). `ChestStep` (6.5 mm)
@@ -1349,9 +1374,50 @@ that gives about 209k nodes and 249k elements. `uDefibModel.pas`'s header has th
   - a sternum plate;
   - a spine cylinder through core and wall.
 
-  The heart and lungs were shrunk to fit the 260 x 112 mm thoracic core.
-  `TDefibView.DrawSkeleton` draws them from the same rules, not from the
-  elements, with a "Skeleton" check box.
+  The ribs start just below the root of the neck (`ChestTop` 0.02,
+  `RibFirstLayer` 3). Ribs 8-12 lie round the upper abdomen, below the
+  diaphragm, as real ribs do. The spine keeps 30 mm in front of the back
+  of the core, so it leans forward up the cone. The heart rests just
+  above the diaphragm (centre 0.18 m below the top). The lungs run from
+  the apex of the cone to the diaphragm (2.3 L together), and what
+  pokes outside the wall's inner edge stays wall.
+  - **Left lung wrapped round the heart** (2026-10-31, `InLungWrap`,
+    default on, `--no-wrap` to compare). A 25 mm shell round the heart
+    becomes lung on its left, leaving the cardiac notch in front, the
+    mediastinum behind and the diaphragm below as core. The report now
+    tallies what lies within 10 mm of the heart, with the core split by
+    side. **It changes almost nothing.** The plain ellipsoid already
+    gave 69 % lung contact, and the wrap gives 71 % (19 mL added). Wrapping
+    every side but the diaphragm (a test run, not kept) gives 88 %. The
+    heart share goes 12.9 / 12.9 / 12.7 %, resistance 66.2 / 66.2 /
+    66.8 ohm. At 0.08 S/m against the core's 0.15, a thin lung layer is
+    too weak an insulator to steer current round the heart, so the lungs'
+    placement is not why the share is high. The anisotropic and
+    biphasic runs were not repeated with the wrap.
+  - **A thicker chest wall** (2026-11-01, a test, not kept: only
+    `WallThickness` changed, with the wrap on). It thickens the wall
+    inwards, at the core's expense; the body's outline and masses are
+    unchanged. 18 / 27 / 31 mm (31 is just under the 33 mm curvature
+    limit) give heart share 12.9 / 11.8 / 11.6 %, resistance 66.2 / 60.8 /
+    59.7 ohm, mean myocardial field 42.5 / 40.7 / 40.4 V/cm, and the
+    wall's share of the power 21 / 30 / 32 %. At 31 mm the wall reaches
+    within 10 mm of the heart at the front. So the extra shunt helps only
+    a little, and this geometry can't take a wall thick enough to explain
+    a ~4 % share. A fatter or more muscular outer body, which would mean
+    changing ThermEx1's masses, wasn't tried.
+  - **Lung conductivity 0.04 S/m** (2026-11-01; it was 0.08, and the
+    wrap and wall tests above were run at 0.08). With the wrap on,
+    0.08 / 0.04 / 0.02 S/m give heart share 12.9 / 11.2 / 9.3 %,
+    resistance 66.2 / 70.8 / 74.2 ohm, peak 36.9 / 35.5 / 34.5 A, mean
+    myocardial field 42.5 / 36.1 / 30.3 V/cm, but maximum 103 / 133 /
+    159 V/cm (the heart's surface next to the lung). The strongest lever
+    tried so far, and it brings the resistance into the clinical 70-80
+    ohm, but even 0.02 S/m leaves the share over twice ~4 %. 0.04 was
+    kept as the default at the user's choice: an effective inflated-lung
+    value (air makes inflated lung *less* conductive than deflated),
+    within the published spread rather than a measurement.
+  `TDefibView.DrawSkeleton` draws the skeleton from the same rules, not
+  from the elements, with a "Skeleton" check box.
 - **Pads.** Each pad is a 1 mm sheet of 1e4 S/m bricks extruded on the
   skin faces it covers, the same construction as ThermEx1's gown. That
   makes it an equipotential without constraining the skin. 1 A goes into
@@ -1362,25 +1428,29 @@ that gives about 209k nodes and 249k elements. `uDefibModel.pas`'s header has th
   11 ohm; charged for 200 J into 50 ohm). The animation's "spread" is the
   region above a chosen |J|. Don't add a diffusing or travelling front:
   that would be wrong physics.
-- **Results.** 73 ohm transthoracic resistance (80 before the wall, which
-  replaced 0.15 S/m core with 0.25 S/m muscle), against the clinical
-  70-80. Peak 35 A at 1.24 ms, 212 J delivered. Power balance within
-  1.2 %. The skin current at the sternal pad comes to 1.01 A, counted over
-  the pad and 1 cm round it, because the current crowds in at the pad
-  edge.
-- **Heart share is still high.** About 12 % of the current crosses the
+- **Results** (lung 0.04 S/m). 71 ohm transthoracic resistance, against
+  the clinical 70-80. Peak 35.5 A at 1.25 ms, 211 J delivered. Power
+  balance within 1.3 %. (Lung 0.08: 66 ohm, 36.9 A, 209 J.) The skin current at the sternal pad comes to 0.995 A, counted
+  over the pad and 1 cm round it, because the current crowds in at the
+  pad edge. The pads are at 0.10 and 0.21 m below the root of the neck.
+  On the old cylinder it was 73 ohm (80 before the wall, which replaced
+  0.15 S/m core with 0.25 S/m muscle), peak 35 A, 212 J.
+- **Heart share is still high.** About 11.2 % of the current crosses the
   heart, against ~4 % in the literature, with myocardial fields of
-  25-86 V/cm at peak (mean 38). Without the wall and ribs it was 16 %,
-  and enlarging the lungs from 3 to 4.2 L changed nothing then. The
-  report lists what's still missing, chiefly the lean, armless, smooth
-  trunk.
+  18-133 V/cm at peak (mean 36); 12.9 % and 22-103 V/cm with the lung at
+  0.08. On the cylinder it was 12 %, 25-86
+  V/cm; without the wall and ribs, 16 %. Enlarging the lungs from 3 to
+  4.2 L changed nothing then. The report lists what's still missing,
+  chiefly the lean, armless, smooth trunk.
 - **Anisotropic muscle** (`--anisotropic`, set before `Run`; it needs
   its own solve). Muscle and chest wall get 0.52 S/m along fibres and
   0.076 across (Epstein & Foster 1983), fibres horizontal and tangent to
   the section's ellipses (`FibreDir`). `PostProcess` uses `CurrentFrom`
   for J = -sigma grad phi and J.E for the power. It made things *worse*
-  against the literature, not better: 91 ohm (73 isotropic), heart share
-  15 % (12 %), myocardial field 28-78 V/cm at the monophasic peak. Across
+  against the literature, not better: 85 ohm (71 isotropic), heart share
+  12.6 % (11.2 %), myocardial field 21-139 V/cm at the monophasic peak;
+  with the lung at 0.08, 80 ohm (66), 13.6 % (12.9 %), 25-102 V/cm.
+  On the old cylinder: 91 ohm (73), 15 % (12 %), 28-78 V/cm. Across
   the fibres includes up and down the trunk, so the wall spreads current
   along the body less. That explanation is a reading of the numbers and
   hasn't been checked separately.
@@ -1389,8 +1459,9 @@ that gives about 209k nodes and 249k elements. `uDefibModel.pas`'s header has th
   into the torso, phase 1 to 50 % tilt (t1 = tau ln 2), then reversed
   for 2/3 t1. That always delivers 90.1 % of the stored energy, so V0 is
   set for exactly 200 J at any resistance. In closed form, no RK4.
-  Isotropic: 2107 V, 28.9 A falling to 14.4 A over 5.05 ms, then -14.4
-  to -9.1 A over 3.37 ms. `Biphasic` can change after `Run`: `Run` saves
+  Isotropic, lung 0.04: 2107 V, 29.7 A falling to 14.9 A over 4.91 ms,
+  then -14.9 to -9.4 A over 3.27 ms (lung 0.08: 31.9 A to 15.9 A over
+  4.59 ms, then -15.9 to -10.0 A over 3.06 ms). `Biphasic` can change after `Run`: `Run` saves
   the report's line count before `ComputeWaveform` (`FShockStart`, with
   `TraceLines` moved before it) and `SetBiphasic` truncates there and
   redoes the waveform and heart sections without solving again.
