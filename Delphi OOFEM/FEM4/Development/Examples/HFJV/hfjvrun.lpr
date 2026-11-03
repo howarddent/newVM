@@ -27,6 +27,23 @@ program hfjvrun;
            for plot_impedance.py),
            --anim=<file> (only write one cycle of the wall's motion for
            anim_wall.py, nothing else),
+           --rua=<cmH2O/(L/s)> (1.0) and --kua=<cmH2O/(L/s)^2> (1.0), the
+           upper airway's laminar and turbulent loss (--kua=0 --rua=2 is
+           the earlier linear model), --glottis=<cm2> (0.8, the
+           glottis's aperture; 0 leaves it out),
+           --etal=<eta> and --etacw=<eta> (0.15 each), the lung's and
+           the chest wall's tissue hysteresivity (constant-phase tissue;
+           0 is the earlier constant tissue resistance),
+           --cwall=<Pa s/m> (0) and --cdia=<Pa s/m> (0), extra viscous
+           damping on the anterior wall and the FEM diaphragm,
+           --eab=<cmH2O/L> (8, the lumped E_di), the abdominal contents'
+           viscoelastic elastance at 0.25 Hz, as a constant-phase
+           foundation under both walls (0 leaves it out), --veeta=<eta>
+           (0.15) its hysteresivity,
+           --gas=<mL> (150), bowel gas, compressed adiabatically,
+           --abfat=<%> (20), fat as a percentage of the anterior wall
+           (20 mm of muscle plus fat) and of the contents (density, and
+           a softer foundation: fat taken as 0.3 x the lean stiffness),
            --alpha=<1/s> (5, abdominal drag), --steps (also time-step the
            chosen rate as a check), --harm=<n> (30, harmonics per cycle;
            VT within ~1 % of 60).
@@ -82,7 +99,9 @@ end;
 
 var
   Lumped, UseBox : Boolean;
-  Alpha : Double;
+  Alpha, CWall, CDia, EAb, VEEta, GasML, AbFat : Double;
+  // the abdomen as built, for the report
+  WallFat, WallMass, ContentsRho, KFound, AreaWall, AreaDia : Double;
   NHarm : Integer;
   Box : TAbdomenBox;
   Torso : TTorsoAbdomen;
@@ -90,6 +109,12 @@ var
   Sys : TDescriptorSystem;
   Th : TThorax;
   P0 : TThoraxParams;
+
+const
+  RhoFat = 900; RhoLean = 1060;  // kg/m3
+  WallMuscle = 0.020;            // m of lean tissue in the anterior wall
+  FatSoftness = 0.3;             // fat's stiffness / lean tissue's (assumed)
+  FatRef = 0.20;                 // the fat fraction EAb is calibrated at
 
 procedure BuildModel(const P : TThoraxParams);
 var
@@ -106,20 +131,26 @@ begin
     Exit;
   end;
   F := TAbdomenFluid.Create;
-  F.Rho := 1040;              // soft tissue and fat at 37 C
+  // fat and lean soft tissue at 37 C, AbFat % fat by volume
+  ContentsRho := AbFat * RhoFat + (1 - AbFat) * RhoLean;
+  F.Rho := ContentsRho;
   F.Alpha := Alpha;
+  F.VEEta := VEEta;
+  F.GasVolume := GasML * 1e-6;
+  // the wall: WallMuscle of lean tissue and fat making AbFat of it
+  WallFat := WallMuscle * AbFat / (1 - AbFat);
+  WallMass := RhoLean * WallMuscle + RhoFat * WallFat;
   // supine, anterior wall up: +z in the box, +y in the torso
   if UseBox then F.G := Vec3(0, 0, -9.81) else F.G := Vec3(0, -9.81, 0);
   SetLength(F.Surfaces, 3);
   with F.Surfaces[SurfWall] do
   begin
-    // the box's 25 kg/m2; the torso's wall is 35 mm of muscle and fat
-    Moving := True; Tension := 100; Damping := 0; Clamp := True;
-    if UseBox then Mass := 25 else Mass := 36;
+    Moving := True; Tension := 100; Damping := CWall; Clamp := True;
+    Mass := WallMass;
   end;
   with F.Surfaces[SurfDiaphragm] do
   begin
-    Moving := True; Mass := 4; Tension := 50; Damping := 0; Clamp := True;
+    Moving := True; Mass := 4; Tension := 50; Damping := CDia; Clamp := True;
   end;
   if UseBox then
   begin
@@ -133,6 +164,15 @@ begin
     F.SetMesh(X, Y, Z, Tets);
     F.FindBoundary(Torso.Classify);
   end;
+  // the foundation's stiffness: alone, it gives the contents the
+  // elastance EAb at FRef for a volume pushed in at the diaphragm and out
+  // at the wall (the two in series), softened by the fat
+  AreaWall := F.SurfaceArea(SurfWall);
+  AreaDia := F.SurfaceArea(SurfDiaphragm);
+  KFound := EAb * EUnit / (1 / AreaDia + 1 / AreaWall)
+    * ((1 - AbFat) + FatSoftness * AbFat) / ((1 - FatRef) + FatSoftness * FatRef);
+  F.Surfaces[SurfWall].VEStiff := KFound;
+  F.Surfaces[SurfDiaphragm].VEStiff := KFound;
   F.AddToSystem(Sys);
   Th.AddToSystem(Sys, F, SurfDiaphragm);
 end;
@@ -151,7 +191,7 @@ begin
   Sys.SolveFrequency(w, B, Zr, Xr, Xi);
   q2 := Sqr(Xr.DataPtr[Th.iQaw]) + Sqr(Xi.DataPtr[Th.iQaw]);
   Rrs := Xr.DataPtr[Th.iQaw] / q2 - Th.P.Rua * RUnit;
-  Xrs := -Xi.DataPtr[Th.iQaw] / q2 - w * Th.P.Iua * IUnit;
+  Xrs := -Xi.DataPtr[Th.iQaw] / q2 - w * Th.IuaSI;
 end;
 
 procedure Impedance;
@@ -161,7 +201,7 @@ var
   i : Integer;
   w, Rrs, Xrs : Double;
 begin
-  WriteLn('Impedance below the jet (and at the mouth, + upper airway), cmH2O/(L/s):');
+  WriteLn('Impedance below the jet (and at the mouth, + upper airway at zero flow), cmH2O/(L/s):');
   WriteLn('    f Hz      Rrs      Xrs    |   Rmouth   Xmouth');
   for i := 0 to High(Fs) do
   begin
@@ -169,7 +209,7 @@ begin
     ImpedanceAt(Fs[i], Rrs, Xrs);
     WriteLn(Format('  %6.1f  %7.2f  %7.2f    |  %7.2f  %7.2f',
       [Fs[i], Rrs / RUnit, Xrs / RUnit, (Rrs + Th.P.Rua * RUnit) / RUnit,
-       (Xrs + w * Th.P.Iua * IUnit) / RUnit]));
+       (Xrs + w * Th.IuaSI) / RUnit]));
   end;
   WriteLn;
 end;
@@ -189,7 +229,7 @@ begin
     f := 0.25 * i;
     ImpedanceAt(f, Rrs, Xrs);
     WriteLn(Fo, Format('%.2f,%.4f,%.4f,%.4f,%.4f', [f, Rrs / RUnit, Xrs / RUnit,
-      (Rrs + Th.P.Rua * RUnit) / RUnit, (Xrs + 2 * Pi * f * Th.P.Iua * IUnit) / RUnit]));
+      (Rrs + Th.P.Rua * RUnit) / RUnit, (Xrs + 2 * Pi * f * Th.IuaSI) / RUnit]));
     Write(#13'  ', i, ' of 80');
   end;
   WriteLn;
@@ -232,15 +272,29 @@ procedure WallWaves;
 const
   NX = 9;
 var
-  Xr, Xi : TVMobj;
+  Xr, Xi, Ur, Ui : TVMobj;
   i, k, best : Integer;
-  w, x, d, bd, amp, ph, hn, z0, z1, zk, yk : Double;
+  w, x, d, bd, amp, ph, hn, z0, z1, zk, yk, ar, ai, br, bi, yr, yi, S0 : Double;
+  Sr, Si : TDoubleArray;
   nd : Integer;
 begin
   w := 2 * Pi * P0.Freq;
-  HarmonicResponse(Sys, Th, w, Xr, Xi);
-  // the fundamental's complex amplitude is 2 c_1 times this response
-  hn := 2 * Sqrt(Sqr(Sin(2 * Pi * P0.Ti)) + Sqr(1 - Cos(2 * Pi * P0.Ti))) / (2 * Pi);
+  // the fundamental: 2 c_1 times the jet's response, plus the upper
+  // airway's turbulent loss's first harmonic times its own
+  UpperAirwaySource(Sys, Th, NHarm, nil, S0, Sr, Si);
+  HarmonicResponses(Sys, Th, w, Xr, Xi, Ur, Ui);
+  ar := 2 * Sin(2 * Pi * P0.Ti) / (2 * Pi);
+  ai := -2 * (1 - Cos(2 * Pi * P0.Ti)) / (2 * Pi);
+  br := 2 * Sr[1];
+  bi := 2 * Si[1];
+  for k := 0 to Sys.N - 1 do
+  begin
+    yr := ar * Xr.DataPtr[k] - ai * Xi.DataPtr[k] + br * Ur.DataPtr[k] - bi * Ui.DataPtr[k];
+    yi := ai * Xr.DataPtr[k] + ar * Xi.DataPtr[k] + bi * Ur.DataPtr[k] + br * Ui.DataPtr[k];
+    Xr.DataPtr[k] := yr;
+    Xi.DataPtr[k] := yi;
+  end;
+  hn := 1;
   WriteLn(Format('Anterior wall at the fundamental (%.2f Hz), midline, diaphragm to pelvis:', [P0.Freq]));
   if UseBox then
     WriteLn('    x mm   |eta| um   phase deg')
@@ -306,7 +360,7 @@ begin
   Cache := TResponseCache.Create;
   AssignFile(Fo, Fn);
   ReWrite(Fo);
-  WriteLn(Fo, 'rate_min,VT_mL,VTdi_mL,VD_mL,PAmean,PAmax,jet_mL,entrained_mL');
+  WriteLn(Fo, 'rate_min,VT_mL,VTdi_mL,VD_mL,PAmean,PAmax,jet_mL,entrained_mL,Ptmean,Ptmax');
   r := 40;
   while r <= 900 do
   begin
@@ -315,9 +369,9 @@ begin
     Th.P := P;
     C := CycleByHarmonics(Sys, Th, nh, 600, Cache);
     S := Summarise(C, Th);
-    WriteLn(Fo, Format('%d,%.3f,%.3f,%.1f,%.4f,%.4f,%.3f,%.3f',
+    WriteLn(Fo, Format('%d,%.3f,%.3f,%.1f,%.4f,%.4f,%.3f,%.3f,%.4f,%.4f',
       [r, 1000 * S.VT, 1000 * S.VTdi, 1000 * P.VD, S.PAmean, S.PAmax,
-       1000 * S.JetVol, 1000 * S.EntrainVol]));
+       1000 * S.JetVol, 1000 * S.EntrainVol, S.Ptmean, S.Ptmax]));
     Write(#13'  ', r, ' /min');
     Inc(r, 20);
   end;
@@ -335,9 +389,10 @@ procedure AnimFile(const Fn : String);
 const
   NS = 48;
 var
-  Xr, Xi : TVMobj;
-  n, k, j, a : Integer;
-  w, th_, ar, ai, yr, yi, t, Per : Double;
+  Xr, Xi, Ur, Ui : TVMobj;
+  n, k, j, a, it : Integer;
+  w, th_, ar, ai, br, bi, yr, yi, t, Per, S0 : Double;
+  Sr, Si : TDoubleArray;
   Eta : array of array of Double;
   VLt : array[0..NS - 1] of Double;
   tri : TIntegerArray;
@@ -346,13 +401,30 @@ begin
   Per := 1 / P0.Freq;
   SetLength(Eta, F.NbMovingDofs, NS);
   for j := 0 to NS - 1 do VLt[j] := 0;
+  // the upper airway's turbulent loss over the cycle, as harmonics of a
+  // forcing on its row (nothing when K_ua = 0)
+  it := UpperAirwaySource(Sys, Th, NHarm, nil, S0, Sr, Si);
+  if it > 0 then
+    WriteLn('  upper airway balanced in ', it, ' Newton iterations');
   for n := 1 to NHarm do
   begin
     w := 2 * Pi * P0.Freq * n;
     th_ := 2 * Pi * n * P0.Ti;
     ar := 2 * Sin(th_) / (2 * Pi * n);
     ai := -2 * (1 - Cos(th_)) / (2 * Pi * n);
-    HarmonicResponse(Sys, Th, w, Xr, Xi);
+    br := 2 * Sr[n];
+    bi := 2 * Si[n];
+    // X := (ar + i ai) X_jet + (br + i bi) X_ua
+    HarmonicResponses(Sys, Th, w, Xr, Xi, Ur, Ui);
+    for k := 0 to Sys.N - 1 do
+    begin
+      yr := ar * Xr.DataPtr[k] - ai * Xi.DataPtr[k] + br * Ur.DataPtr[k] - bi * Ui.DataPtr[k];
+      yi := ai * Xr.DataPtr[k] + ar * Xi.DataPtr[k] + bi * Ur.DataPtr[k] + br * Ui.DataPtr[k];
+      Xr.DataPtr[k] := yr;
+      Xi.DataPtr[k] := yi;
+    end;
+    ar := 1;
+    ai := 0;
     for j := 0 to NS - 1 do
     begin
       t := Per * j / NS;
@@ -395,6 +467,19 @@ begin
   WriteLn('Wrote ', Fn);
 end;
 
+procedure TissueLine(const What : String; K : TTissueKind; Eta : Double);
+var
+  R0, E0, R1, E1 : Double;
+begin
+  Th.TissueRE(K, P0.FRef, R0, E0);
+  Th.TissueRE(K, P0.Freq, R1, E1);
+  if Eta > 0 then
+    WriteLn(Format('%s: constant phase, eta %.2f: R %.3f, E %.1f at %.2f Hz; R %.3f, E %.1f at %.0f /min',
+      [What, Eta, R0, E0, P0.FRef, R1, E1, 60 * P0.Freq]))
+  else
+    WriteLn(Format('%s: constant R %.2f cmH2O/(L/s), E %.1f cmH2O/L', [What, R1, E1]));
+end;
+
 procedure StepCheck;
 var
   C : TCycle;
@@ -413,8 +498,20 @@ begin
   FormatSettings.DecimalSeparator := '.';
   Lumped := Flag('lumped');
   Alpha := Opt('alpha', 5);
+  CWall := Opt('cwall', 0);
+  CDia := Opt('cdia', 0);
+  EAb := Opt('eab', DefaultThoraxParams.Edi);
+  VEEta := Opt('veeta', 0.15);
+  GasML := Opt('gas', 150);
+  AbFat := Opt('abfat', 20) / 100;
+  Assert((AbFat >= 0) and (AbFat < 1), '--abfat must be 0 .. 99 %');
   P0 := DefaultThoraxParams;
   P0.DrivingP := Opt('dp', P0.DrivingP);
+  P0.Rua := Opt('rua', P0.Rua);
+  P0.Kua := Opt('kua', P0.Kua);
+  P0.GlottisArea := Opt('glottis', P0.GlottisArea);
+  P0.EtaL := Opt('etal', P0.EtaL);
+  P0.EtaCW := Opt('etacw', P0.EtaCW);
   P0.Freq := Opt('rate', 200) / 60;
   P0.Ti := 1 / (1 + Opt('ie', 1));
   P0.Cannula := TJetCath(Round(Opt('cannula', Ord(P0.Cannula))));
@@ -435,6 +532,33 @@ begin
   WriteLn(Format('Jet: %s cannula at %.2f bar: %.1f l/min while open (Crane %.1f), momentum %.1f cmH2O (formula %.1f)',
     [Th.Cath.Name, P0.DrivingP, 60000 * Th.QOn, 60000 * Th.QOnCalc, Th.DpOn / cmH2O, Th.DpOnCalc / cmH2O]));
   WriteLn('     ', Th.JetNote);
+  if P0.Kua > 0 then
+    WriteLn(Format('Upper airway (above and below the glottis): %.2f cmH2O/(L/s) + %.2f cmH2O/(L/s)^2 |Q| (turbulent), I %.3f',
+      [P0.Rua, P0.Kua, P0.Iua]))
+  else
+    WriteLn(Format('Upper airway: %.2f cmH2O/(L/s), linear, I %.3f', [P0.Rua, P0.Iua]));
+  if P0.GlottisArea > 0 then
+    WriteLn(Format('Glottis: %.2f cm2, %.2f cmH2O/(L/s)^2 |Q| (k %.2f), I %.4f cmH2O s2/L',
+      [P0.GlottisArea, Th.GlottisKSI * Sqr(Litre) / cmH2O, P0.GlottisK, Th.GlottisISI / IUnit]))
+  else
+    WriteLn('Glottis: none');
+  TissueLine('Lung tissue', tkLung, P0.EtaL);
+  TissueLine('Rib cage', tkRibCage, P0.EtaCW);
+  if Lumped then TissueLine('Diaphragm + abdomen', tkDiaphragm, P0.EtaCW)
+  else
+  begin
+    WriteLn(Format('Abdominal fat %.0f %%: wall %.0f mm muscle + %.1f mm fat, %.1f kg/m2; contents %.0f kg/m3',
+      [100 * AbFat, 1000 * WallMuscle, 1000 * WallFat, WallMass, ContentsRho]));
+    if KFound > 0 then
+      WriteLn(Format('Viscoelastic contents: %.1f cmH2O/L at %.2f Hz, eta %.2f: foundation %.0f Pa/m under wall (%.0f cm2) '
+        + 'and diaphragm (%.0f cm2), %d nodes x %d relaxations',
+        [EAb * ((1 - AbFat) + FatSoftness * AbFat) / ((1 - FatRef) + FatSoftness * FatRef), F.VEFRef, VEEta, KFound,
+         1e4 * AreaWall, 1e4 * AreaDia, F.VENodes, Length(F.VEBank.R)]))
+    else
+      WriteLn('Viscoelastic contents: none');
+    WriteLn(Format('Bowel gas: %.0f mL, compliance %.2e L/cmH2O; extra wall damping %.0f / %.0f Pa s/m',
+      [GasML, F.GasCompliance * cmH2O / Litre, CWall, CDia]));
+  end;
   if not IsNan(Th.BenchEntrained) then
     WriteLn(Format('     bench total (jet + entrained) flow, open circuit: %.0f l/min', [60000 * Th.BenchEntrained]));
   if Lumped then

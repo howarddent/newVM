@@ -45,6 +45,8 @@ interface
 uses SysUtils, newVM, newVMsparse;
 
 type
+  TVMobjArray = array of TVMobj;
+
   TTriplets = record
     R, C : TIntegerArray;
     V : TDoubleArray;
@@ -71,6 +73,9 @@ type
     { (i w E - A) X = B. Br, Bi and the results are (N,1). }
     procedure SolveFrequency(Omega : Double; const Br, Bi : TVMobj;
       out Xr, Xi : TVMobj);
+    { The same for several right-hand sides on one factorisation. }
+    procedure SolveFrequencyN(Omega : Double; const Br, Bi : array of TVMobj;
+      out Xr, Xi : TVMobjArray);
     function MulE(const X : TVMobj) : TVMobj;
     function MulA(const X : TVMobj) : TVMobj;
     property N : Integer read FN;
@@ -87,6 +92,9 @@ type
     destructor Destroy; override;
     { One step from X0 with forcing B0 at t and B1 at t + dt. }
     function Step(const X0, B0, B1 : TVMobj) : TVMobj;
+    { The step matrix's inverse applied to B: how the new state answers
+      to an extra forcing B on the step's right-hand side. }
+    function Solve(const B : TVMobj) : TVMobj;
     property Dt : Double read FDt;
   end;
 
@@ -200,6 +208,17 @@ end;
 procedure TDescriptorSystem.SolveFrequency(Omega : Double; const Br, Bi : TVMobj;
   out Xr, Xi : TVMobj);
 var
+  R, I : TVMobjArray;
+begin
+  SolveFrequencyN(Omega, [Br], [Bi], R, I);
+  Xr := R[0];
+  Xi := I[0];
+end;
+
+procedure TDescriptorSystem.SolveFrequencyN(Omega : Double; const Br, Bi : array of TVMobj;
+  out Xr, Xi : TVMobjArray);
+var
+  j : Integer;
   T : TTriplets;
   k, i, nn : Integer;
   R, C : TIntegerArray;
@@ -225,22 +244,24 @@ begin
     T.Add(i, i, 0);
   Trimmed(T, R, C, V);
   M := TripletsToSparse(2 * nn, 2 * nn, R, C, V);
-  B := TVMobj.Create(2 * nn, 1);
-  for i := 0 to nn - 1 do
-  begin
-    B[i, 0] := Br.DataPtr[i];
-    B[nn + i, 0] := Bi.DataPtr[i];
-  end;
+  SetLength(Xr, Length(Br));
+  SetLength(Xi, Length(Br));
   LU := TPardisoFactor.Create(M, 11);
   try
-    X := LU.Solve(B);
+    for j := 0 to High(Br) do
+    begin
+      B := TVMobj.Create(2 * nn, 1);
+      Move(Br[j].DataPtr[0], B.DataPtr[0], nn * SizeOf(Double));
+      Move(Bi[j].DataPtr[0], B.DataPtr[nn], nn * SizeOf(Double));
+      X := LU.Solve(B);
+      Xr[j] := TVMobj.Create(nn, 1);
+      Xi[j] := TVMobj.Create(nn, 1);
+      Move(X.DataPtr[0], Xr[j].DataPtr[0], nn * SizeOf(Double));
+      Move(X.DataPtr[nn], Xi[j].DataPtr[0], nn * SizeOf(Double));
+    end;
   finally
     LU.Free;
   end;
-  Xr := TVMobj.Create(nn, 1);
-  Xi := TVMobj.Create(nn, 1);
-  Move(X.DataPtr[0], Xr.DataPtr[0], nn * SizeOf(Double));
-  Move(X.DataPtr[nn], Xi.DataPtr[0], nn * SizeOf(Double));
 end;
 
 { TTrapezoidStepper }
@@ -294,6 +315,11 @@ begin
     else
       r[i] := e[i] / FDt + 0.5 * a[i] + 0.5 * (b0_[i] + b1_[i]);
   Result := FLU.Solve(Rhs);
+end;
+
+function TTrapezoidStepper.Solve(const B : TVMobj) : TVMobj;
+begin
+  Result := FLU.Solve(B);
 end;
 
 end.

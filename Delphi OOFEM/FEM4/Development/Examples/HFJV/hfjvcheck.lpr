@@ -38,7 +38,7 @@ program hfjvcheck;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Math, cblas, oneapi, newVM, newVMsparse, uDescriptor, uAbdomenFluid,
-  uAbdomenBox, uThorax, uHFJVSolve, uJetCalcVM;
+  uAbdomenBox, uThorax, uHFJVSolve, uJetCalcVM, uViscoelastic;
 
 function Projection(F : TAbdomenFluid; const Xv : TVMobj; k : Double) : Double;
 // amplitude of cos(k x) in eta over the top surface (weights = int N)
@@ -191,6 +191,14 @@ begin Result := Sqrt(a.re * a.re + a.im * a.im); end;
 function Zrli(R, I, E, w : Double) : TComplex16;
 begin Result := Cx(R, w * I - E / w); end;
 
+{ The thorax's tissue impedance plus i w I, SI. }
+function Tissue(Th : TThorax; K : TTissueKind; w, I : Double; Exact : Boolean = False) : TComplex16;
+var re, im : Double;
+begin
+  Th.TissueZ(K, w, re, im, Exact);
+  Result := Cx(re, im + w * I);
+end;
+
 procedure CheckC(const What : String; const Got, Want : TComplex16; RelTol : Double);
 var
   e : Double;
@@ -224,11 +232,11 @@ begin
     begin
       w := 2 * Pi * Fs[i];
       HarmonicResponse(Sys, Th, w, Xr, Xi);
-      Zua := Zrli(P.Rua * RUnit, P.Iua * IUnit, 0, w);
+      Zua := Zrli(P.Rua * RUnit, Th.IuaSI, 0, w);
       Zaw := Zrli(P.Raw * RUnit, P.Iaw * IUnit, 0, w);
-      ZL := Zrli(P.RL * RUnit, 0, P.EL * EUnit, w);
-      Zrc := Zrli(P.Rrc * RUnit, P.Irc * IUnit, P.Erc * EUnit, w);
-      Zdi := Zrli(P.Rdi * RUnit, P.Idi * IUnit, P.Edi * EUnit, w);
+      ZL := Tissue(Th, tkLung, w, 0);
+      Zrc := Tissue(Th, tkRibCage, w, P.Irc * IUnit);
+      Zdi := Tissue(Th, tkDiaphragm, w, P.Idi * IUnit);
       Zcw := CInv(CAdd(CInv(Zrc), CInv(Zdi)));
       ZA := CInv(CAdd(CInv(CAdd(ZL, Zcw)), Cx(0, w * P.VFRC * Litre / PAtm)));
       Qaw := CDiv(CAdd(CMul(Zua, Cx(Th.QOn, 0)), Cx(Th.DpOn, 0)), CAdd(CAdd(Zua, Zaw), ZA));
@@ -240,6 +248,38 @@ begin
       CheckC(Format('V_L  at %4.1f Hz (m3)', [Fs[i]]),
         Cx(Th.VL(Xr), Th.VL(Xi)), VLw, 1e-9);
     end;
+  finally
+    Th.Free; Sys.Free;
+  end;
+end;
+
+{ The relaxation bank against the constant-phase impedance it stands for. }
+procedure TissueCase;
+const
+  Fs : array[0..5] of Double = (0.1, 0.25, 1, 3.33, 15, 100);
+  Names : array[TTissueKind] of String = ('lung', 'rib cage', 'diaphragm');
+var
+  Sys : TDescriptorSystem;
+  Th : TThorax;
+  K : TTissueKind;
+  i : Integer;
+  w, R, E : Double;
+begin
+  WriteLn('Constant-phase tissue: the relaxation bank against A (i w)^-alpha:');
+  Sys := TDescriptorSystem.Create;
+  Th := TThorax.Create;
+  try
+    Th.AddToSystem(Sys, nil, 0);
+    for K := Low(TTissueKind) to High(TTissueKind) do
+      for i := 0 to High(Fs) do
+      begin
+        w := 2 * Pi * Fs[i];
+        CheckC(Format('%s Z at %5.2f Hz (Pa s/m3)', [Names[K], Fs[i]]),
+          Tissue(Th, K, w, 0), Tissue(Th, K, w, 0, True), 0.05);
+      end;
+    Th.TissueRE(tkLung, Th.P.FRef, R, E);
+    Check('lung elastance at FRef (cmH2O/L)', E, Th.P.EL, 0.05);
+    Check('lung resistance at FRef (cmH2O/(L/s))', R, Th.P.EtaL * Th.P.EL / (2 * Pi * Th.P.FRef), 0.05);
   finally
     Th.Free; Sys.Free;
   end;
@@ -264,21 +304,36 @@ begin
   Check(What + ' largest V_L difference / VT', 1 + d / vt, 1, 0.01);
 end;
 
-procedure LumpedCycleCase;
+procedure LumpedCycleCase(Turbulent : Boolean);
 var
   Sys : TDescriptorSystem;
   Th : TThorax;
   H, S : TCycle;
 begin
-  WriteLn('Steady cycle, lumped thorax, harmonics against stepping:');
   Sys := TDescriptorSystem.Create;
   Th := TThorax.Create;
   try
+    if Turbulent then
+      WriteLn(Format('Steady cycle, lumped thorax, turbulent upper airway (%.1f + %.1f |Q|) and '
+        + 'a %.1f cm2 glottis, harmonic balance against stepping:', [Th.P.Rua, Th.P.Kua, Th.P.GlottisArea]))
+    else
+    begin
+      // the earlier linear upper airway
+      Th.P.Kua := 0;
+      Th.P.Rua := 2.0;
+      Th.P.GlottisArea := 0;
+      WriteLn('Steady cycle, lumped thorax, linear upper airway, harmonics against stepping:');
+    end;
     Th.AddToSystem(Sys, nil, 0);
     H := CycleByHarmonics(Sys, Th, 200, 400);
     S := CycleByStepping(Sys, Th, 400, 200, 1e-6);
+    if Turbulent then
+      WriteLn(Format('  harmonic balance: %d Newton iterations', [H.UAIter]));
     WriteLn(Format('  stepping settled in %d cycles (last change %.1e of VT)', [S.Cycles, S.Change]));
     CompareCycles('', H, S);
+    Check('mean tracheal pressure (cmH2O)', Mean(S.Pt) / cmH2O, Mean(H.Pt) / cmH2O, 0.01);
+    Check('entrained volume (mL)', Summarise(S, Th).EntrainVol * 1000,
+      Summarise(H, Th).EntrainVol * 1000, 0.01);
   finally
     Th.Free; Sys.Free;
   end;
@@ -318,9 +373,11 @@ begin
     F.Surfaces[SurfDiaphragm].Moving := True;
     BuildBoxAbdomen(F, Box, 30, 1, 20);
     F.AddToSystem(SysF);
+    ThF.P.EtaCW := 0;   // the same plain rib cage in both
     ThF.AddToSystem(SysF, F, SurfDiaphragm);
     ThL.P.Edi := Rho * g / (Box.L * Box.W) / EUnit;
     ThL.P.Rdi := 0; ThL.P.Idi := 1e-9;
+    ThL.P.EtaCW := 0;   // a plain spring, as the exact solution has
     ThL.AddToSystem(SysL, nil, 0);
     WriteLn(Format('  equivalent E_di = %.1f cmH2O/L', [ThL.P.Edi]));
     w := 2 * Pi * 0.05;
@@ -335,6 +392,57 @@ begin
   end;
 end;
 
+{ The tank with the diaphragm at one end, quasi-statically, with a
+  viscoelastic foundation under the free surface and a litre of gas:
+  p is uniform and equal to p_pl, the surface rises by
+  p / (rho g + k_f i w Z(w)), and the gas gives C_g p more volume. }
+procedure VEGasCase;
+const
+  Rho = 1000; g = 9.81; Kf = 2e4;
+var
+  Box : TAbdomenBox;
+  F : TAbdomenFluid;
+  Sys : TDescriptorSystem;
+  Th : TThorax;
+  Xr, Xi : TVMobj;
+  w, zr, zi : Double;
+  pp, Want, Den : TComplex16;
+begin
+  WriteLn('FEM abdomen, viscoelastic surface and 1 L of gas, 0.05 Hz, against the quasi-static exact:');
+  Box := TAbdomenBox.Create;
+  Box.L := 0.3; Box.W := 0.03; Box.H := 0.2; Box.DiaphragmEnd := True;
+  F := TAbdomenFluid.Create;
+  Sys := TDescriptorSystem.Create;
+  Th := TThorax.Create;
+  try
+    F.Rho := Rho; F.Alpha := 0; F.G := Vec3(0, 0, -g);
+    F.GasVolume := 1e-3;
+    SetLength(F.Surfaces, 3);
+    F.Surfaces[SurfWall].Moving := True;
+    F.Surfaces[SurfWall].VEStiff := Kf;
+    F.Surfaces[SurfDiaphragm].Moving := True;
+    BuildBoxAbdomen(F, Box, 30, 1, 20);
+    F.AddToSystem(Sys);
+    Th.P.EtaCW := 0;
+    Th.AddToSystem(Sys, F, SurfDiaphragm);
+    w := 2 * Pi * 0.05;
+    HarmonicResponse(Sys, Th, w, Xr, Xi);
+    TissueImpedance(F.VEBank, w, zr, zi);
+    // surface: A / (rho g + k_f i w Z), Z = zr + i zi; plus C_g
+    Den := Cx(Rho * g - Kf * w * zi, Kf * w * zr);
+    Want := CAdd(CDiv(Cx(Box.L * Box.W, 0), Den), Cx(F.GasCompliance, 0));
+    pp := Cx(Xr.DataPtr[Th.iPpl], Xi.DataPtr[Th.iPpl]);
+    WriteLn(Format('  foundation |k_f i w Z| = %.0f Pa/m against rho g = %.0f; gas C_g = %.2e m3/Pa (%.0f %% of the surface''s)',
+      [CAbs(Cx(-Kf * w * zi, Kf * w * zr)), Rho * g, F.GasCompliance,
+       100 * F.GasCompliance / CAbs(CDiv(Cx(Box.L * Box.W, 0), Den))]));
+    CheckC('V_di / p_pl (m3/Pa)', CDiv(Cx(Th.Vdi(Xr), Th.Vdi(Xi)), pp), Want, 0.01);
+    CheckC('gas volume change / p_pl (m3/Pa)',
+      CDiv(Cx(Xr.DataPtr[F.GasDof], Xi.DataPtr[F.GasDof]), pp), Cx(-F.GasCompliance, 0), 0.01);
+  finally
+    Th.Free; Sys.Free; F.Free; Box.Free;
+  end;
+end;
+
 procedure AdultBoxCycleCase;
 var
   Box : TAbdomenBox;
@@ -343,7 +451,7 @@ var
   Th : TThorax;
   H, S : TCycle;
 begin
-  WriteLn('Steady cycle with the adult box abdomen, harmonics against stepping:');
+  WriteLn('Steady cycle with the adult box abdomen (viscoelastic contents, 150 mL of gas), harmonics against stepping:');
   Box := TAbdomenBox.Create;
   Box.L := 0.30; Box.W := 0.26; Box.H := 0.14; Box.DiaphragmEnd := True;
   F := TAbdomenFluid.Create;
@@ -353,9 +461,10 @@ begin
     F.Rho := 1040; F.Alpha := 5; F.G := Vec3(0, 0, -9.81);
     SetLength(F.Surfaces, 3);
     with F.Surfaces[SurfWall] do
-    begin Moving := True; Mass := 25; Tension := 100; Damping := 0; Clamp := True; end;
+    begin Moving := True; Mass := 25; Tension := 100; Damping := 0; Clamp := True; VEStiff := 3e4; end;
     with F.Surfaces[SurfDiaphragm] do
-    begin Moving := True; Mass := 4; Tension := 50; Damping := 0; Clamp := True; end;
+    begin Moving := True; Mass := 4; Tension := 50; Damping := 0; Clamp := True; VEStiff := 3e4; end;
+    F.GasVolume := 150e-6;
     BuildBoxAbdomen(F, Box, 12, 10, 6);
     F.AddToSystem(Sys);
     Th.AddToSystem(Sys, F, SurfDiaphragm);
@@ -373,9 +482,12 @@ begin
   InitializeCBLAS;
   TankCase('Tank 0.3 x 0.2 m, gravity only (free surface):', 0, 0, 30, 20);
   TankCase('Same tank, membrane m = 25 kg/m2, T = 100 N/m:', 25, 100, 30, 20);
+  TissueCase;
   LumpedThoraxCase;
-  LumpedCycleCase;
+  LumpedCycleCase(False);
+  LumpedCycleCase(True);
   TankDiaphragmCase;
+  VEGasCase;
   AdultBoxCycleCase;
   WriteLn;
   if Fails = 0 then WriteLn('All checks passed.')

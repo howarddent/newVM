@@ -1536,12 +1536,36 @@ solid, frequency and time domain both, and a FEM4 example. Units:
   the trachea (for the Cook, interpolated between 15 and 22 mm). Crane
   and the momentum formula are the fallback. The default is the user's
   "typical" setting: 2 bar, 200 /min, I:E 1:1, Biro.
+  - **Turbulent upper airway** (added 2026-11-03): Rohrer's
+    `R_ua Q + K_ua |Q| Q`, defaults R_ua 1.0 cmH2O/(L/s) and K_ua 1.0
+    cmH2O/(L/s)^2. These are assumed, chosen to match the old linear
+    2.0 at 1 L/s. The K term is the only nonlinearity, so it isn't put
+    in A: it is a forcing `-K|Q_ua|Q_ua` on the upper airway's row
+    (`UASource`, `UAPattern`). Impedances and the matrices see R_ua only
+    (small-signal at zero flow). `K_ua = 0` is the linear model;
+    `--kua=0 --rua=2` reproduces the earlier figures exactly.
 - `uHFJVSolve.pas`: the steady cycle by harmonic superposition (the
   mean taken at 1e-5 Hz, since at exactly zero frequency the volume
   constraint drops out) or by stepping, plus VT, VT/VD, f VT^2,
   pressures and entrainment. `TResponseCache` keeps each frequency's
   outputs so a sweep of rate solves each frequency once (harmonic 3 of
-  200 /min is harmonic 1 of 600): about half the solves.
+  200 /min is harmonic 1 of 600): about half the solves. It also holds
+  the response to a unit forcing on the upper airway's row, a second
+  right-hand side on the same factorisation
+  (`TDescriptorSystem.SolveFrequencyN`).
+  - **Harmonic balance for the turbulent upper airway**: only Q_ua is
+    solved self-consistently, on M = 8 NHarm samples:
+    `q = q_jet + L s(q)`, `s = -K|q|q`. L is circulant, built from the
+    upper airway's own transfer H_n. Newton with the dense M x M
+    Jacobian `I + 2K L diag|q|` converges in about 5 iterations. Every
+    other output then adds its response to s's harmonics.
+    `UpperAirwaySource` gives s's harmonics to callers that need whole
+    states (`AnimFile`, `WallWaves`).
+  - **Stepping is exact for the nonlinear system**: the old loss goes
+    into the right-hand side, and the new one is the linear step plus
+    `g s_new / 2`, with `g` the step matrix's response to the upper
+    airway's row (`TTrapezoidStepper.Solve`). Q_ua then satisfies
+    `q + c|q|q = q0`, solved in closed form.
 - `uAbdomenBox.pas`: a 0.30 x 0.26 x 0.14 m box abdomen (10.9 L,
   ThermEx1's core size), the first test geometry; `hfjvrun --box`.
 - `uTorsoAbdomen.pas` (the default abdomen): the abdominal cavity of
@@ -1577,17 +1601,22 @@ solid, frequency and time domain both, and a FEM4 example. Units:
 - `hfjvcheck.lpr`: checks against exact solutions, all passing:
   - tank sloshing with and without a membrane, within 2 %;
   - the lumped thorax against hand-combined impedances, to rounding;
-  - harmonics against stepping, lumped and with FEM;
+  - harmonics against stepping, lumped and with FEM; lumped also with
+    the turbulent upper airway (harmonic balance against exact
+    stepping: VT 0.08 %, mean alveolar pressure 0.004 %, mean tracheal
+    pressure 0.02 %, entrainment 0.04 %);
   - the FEM diaphragm against `E = rho g / A_top` quasi-statically,
     within 0.15 %.
 - `hfjvrun.lpr`: the impedance, a sweep of rate, and the anterior
   wall's wave along the midline, xiphoid to pubis on the torso (`--dp
-  --rate --ie --cannula --calculated --lumped --alpha --steps --harm
-  --box --height --weight --size`). 30 harmonics by default: on the
+  --rate --ie --cannula --calculated --lumped --rua --kua --alpha
+  --steps --harm --box --height --weight --size`). 30 harmonics by default: on the
   lumped model VT is within about 1 % of 60 harmonics (10: 2-3 %).
-  The torso at 12 mm (36251 unknowns) takes about 4.5 min with
-  `--steps`; stepping at 200 /min gives VT 188.6 mL against the
-  harmonics' 188.4. `--anim=<file>` instead writes one cycle of every
+  The torso at 12 mm (36251 unknowns) takes about 5.5 min with
+  `--steps`. Stepping at 200 /min gives VT 186.6 mL against the
+  harmonic balance's 186.3, with mean alveolar pressure 6.27 cmH2O both
+  ways (linear upper airway: 188.6 against 188.4, and 5.98).
+  `--anim=<file>` instead writes one cycle of every
   moving node's displacement (all harmonics, mean removed) and the lung
   volume, and `anim_wall.py <file> <out.gif>` animates it: the cavity
   with its surfaces pushed out along their normals (exaggerated) and
@@ -1606,10 +1635,153 @@ solid, frequency and time domain both, and a FEM4 example. Units:
   at 37-40 L/min from 100 to 400 /min and falls only to 35 by 900: the
   jet's own 22.5 L/min plus entrainment. VT falls below the 120 mL dead
   space at about 320 /min. The torso's dip near 180 /min is its
-  abdominal mode (the resistance peak above). Mean alveolar pressure comes
-  out the same at every rate (Ti (Q_on R_ua + dp_on)), because the upper
-  airway is linear. A turbulent K|Q| upper airway, not yet modelled,
-  would change that.
+  abdominal mode (the resistance peak above). These figures, and the
+  impedance, wall-wave and animation results above, are from before
+  the turbulent upper airway, so they match `--kua=0 --rua=2`. With
+  the linear upper airway, mean alveolar pressure is the same at every
+  rate (Ti (Q_on R_ua + dp_on)), 5.98 cmH2O.
+  - **With the turbulent upper airway** (the default since 2026-11-03),
+    on the torso, mean alveolar pressure is higher and varies with
+    rate: 6.20-6.31 cmH2O, highest at 100 /min. Mean tracheal pressure
+    is about 1.04 cmH2O against 0.75. VT is about 1 % lower (186.3 mL
+    at 200 /min) and entrainment 2-4 % lower. The difference is
+    modest because K_ua was chosen to give the old resistance at
+    1 L/s.
+  - **With the glottis** (0.8 cm2, the default since 2026-11-03,
+    `--glottis=0` to leave it out). It is an orifice in the upper airway
+    with loss `k rho |Q|Q / (2A^2)`, where k = 1.37 (Ishizaka-Flanagan)
+    and rho = 1.2 kg/m3. That is 1.31 cmH2O/(L/s)^2, added to K_ua, plus
+    an inertance rho L/A (1 cm deep: 0.0015 cmH2O s2/L) added to I_ua
+    (`TThorax.KuaSI`/`IuaSI`). Torso at 200 /min: VT 161.8 mL (stepping
+    162.0), entrainment 53 mL against 78, mean alveolar pressure 6.85
+    cmH2O, mean tracheal pressure 1.62. VE falls from 37-38 to 32-33
+    L/min across rates, and VT reaches the 120 mL dead space at about
+    270 /min rather than 315-320. Linear, turbulent and glottis sweeps
+    are `mesh/v_torso.csv`, `v_torso_turb.csv` and `v_torso_glottis.csv`,
+    plotted together in `ventilation_glottis.png`, with
+    `wall200_glottis.gif` for the animation. The animation's midline
+    envelope is about +-1.7 mm, against +-2 mm before. The impedance
+    below the jet is unchanged: the glottis is above the jet.
+  - **Mean subglottic (tracheal) pressure** against frequency:
+    `--vfile` now also writes `Ptmean` and `Ptmax`, and
+    `plot_pressure.py` plots them (`mesh/subglottic_pressure.png`).
+    With a linear upper airway it is exactly R_ua times the mean jet
+    flow, 0.75 cmH2O at every rate for any abdomen, because all the
+    jet's gas leaves through the mouth. Torso values:
+
+    | | range | at 200 /min | peak |
+    |---|---|---|---|
+    | turbulent | 0.88-1.08 | 1.04 | 100 /min |
+    | with the glottis | 1.38-1.69 | 1.62 | 100 /min |
+
+    Both rise to the peak and then fall slowly (1.48 at 900 /min with
+    the glottis). They also have the torso's ripple near its abdominal
+    mode (~180 /min); the lumped model is smooth.
+  - **Entrainment rate** against frequency: `plot_entrainment.py`
+    (`mesh/entrainment.png`) plots f x the volume entrained per cycle
+    (`entrained_mL`, the inward part of the upper-airway flow) and its
+    ratio to the jet's gas, with `--bench=35` drawing the Biro's bench
+    open-air entrainment at 2 bar (80 - 45 L/min while open) times Ti,
+    17.5 L/min. Torso at 200 /min: linear 15.9 L/min (ratio 0.71),
+    turbulent 15.6 (0.69), glottis 10.7 (0.47). Each peaks near
+    100 /min (18.5 / 17.6 / 12.1) and falls slowly to 12.8 / 12.7 / 8.9
+    at 900 /min. The glottis cuts it by about a third at every rate.
+  - **Constant-phase tissue and wall damping** (added 2026-11-03, now
+    the defaults). Lung tissue, rib cage and the lumped diaphragm are
+    Hantos's constant-phase tissue `Z = A (i w)^-alpha`, with
+    `alpha = (2/pi) atan(1/eta)`. Hysteresivity `eta` is 0.15 for both
+    `EtaL` and `EtaCW` (`--etal`, `--etacw`; 0 gives the old constant R).
+    E is the elastance at `FRef` 0.25 Hz. For the lung that gives
+    R 0.67 at 0.25 Hz but 0.064 at 200 /min, and E rising from 7.0 to
+    8.9. The fractional power is realised as a sum of positive
+    relaxations (`MakeTissue`). That sum comes from the integral
+    `(i w)^-alpha = (sin(alpha pi)/pi) int s^-alpha/(s + i w) ds`,
+    sampled 3 a decade from 1 mHz to 1 kHz: 18 unknowns
+    `tau_k p_k' + p_k = R_k Q` per tissue. The spectrum below the range
+    becomes a spring E_0 (0.59 E) and the part above a resistance R_inf.
+    It is passive, works in both domains, and is within 0.06 % of the
+    exact Z from 0.1 to 100 Hz (`hfjvcheck`'s `TissueCase`).
+    - **Stepping needs a mean correction**: the slowest relaxation is
+      160 s, so from rest stepping hadn't settled in 200 cycles. After
+      each cycle `CycleByStepping` shifts the state so its cycle mean is
+      the near-DC (1e-5 Hz) response to the cycle's mean forcing, jet
+      plus the trapezoidal mean of the turbulent loss. A periodic
+      trapezoidal cycle satisfies that exactly, so the steady state is
+      unchanged. It settles in 13-23 cycles.
+    - **Membrane damping**: `--cwall` 300 and `--cdia` 200 Pa s/m (were
+      0). They come from the lumped diaphragm/abdomen's constant-phase R
+      at 200 /min (0.073 cmH2O/(L/s)), split equally between the two
+      walls as c = R A / 2, since c/A adds in series through the
+      incompressible contents. They are viscous, so they are constant
+      in frequency.
+    - **Results, torso, glottis on, 200 /min**: VT 174.5 mL against
+      161.4 (stepping 174.2), VE 34.9 against 32.3 L/min, entrainment
+      13.4 against 10.7 L/min, mean P_t 1.75 against 1.62 cmH2O. VT
+      reaches the dead space at 300 /min (was 280). Below the jet, Rrs
+      now falls with frequency, from 2.4 at 0.25 Hz to 1.55 by 10 Hz,
+      instead of a flat 2.1-2.5. Resonance moves from 5.5 to 7.0 Hz.
+      Nearly all of the change is the tissue: the default wall damping
+      changes VT by under 1 %, and even 10 x (3000/2000) only smooths
+      the abdominal dip near 160 /min and the new VE peak near 740 /min.
+      The lighter tissue damping uncovers both. Sweeps are
+      `mesh/v_torso_tissue.csv`, `_cponly`, `_c1000`, `_c3000`, and
+      `z_torso_tissue.csv`; the plots are `mesh/*_tissue.png`. The
+      lumped model, its rib cage-diaphragm mode now lightly damped,
+      shows a Rrs bump at 5 Hz and dia % over 100 at 250-300 /min.
+  - **Viscoelastic contents, bowel gas, abdominal fat** (2026-11-03,
+    the defaults; the user chose storage and loss, and one fat % for
+    wall and contents). `uViscoelastic.pas` now holds `TTissue`/
+    `MakeTissue`/`TissueImpedance`, moved out of uThorax so
+    uAbdomenFluid can use them (uThorax uses uAbdomenFluid).
+    - **Contents**: a constant-phase viscoelastic (Winkler) foundation
+      under each moving surface (`TSurfaceProps.VEStiff`, Pa/m at
+      `VEFRef` 0.25 Hz; `VEEta` 0.15). The bank has unit stiffness, 2 a
+      decade from 10 mHz to 1 kHz, so 10 states per unclamped moving
+      node, shared by every surface: 3873 nodes, and the torso system
+      grows from 36k to 75k unknowns (a full `--steps` run took 44 min
+      with nine others running). It stands in for the contents' shear
+      stiffness, which potential flow lacks, but not its dependence on
+      wavelength. `hfjvrun` calibrates
+      `k_f = E_ab / (1/A_dia + 1/A_wall)`, the two in series through
+      the incompressible contents, with `--eab` (8 cmH2O/L, the lumped
+      `Edi`; 0 turns it off) and `--veeta`: 28.8 kPa/m on the torso,
+      about 2.9 rho g. It replaces the viscous wall damping, so
+      `--cwall`/`--cdia` now default to 0.
+    - **Bowel gas** (`GasVolume`, `--gas` 150 mL, adiabatic gamma 1.4 at
+      `GasPAbs`): spread uniformly. Two unknowns, dV_g and Q_g; the phi
+      rows gain `-(m_i/V) Q_g` and stay algebraic, and the gas row is
+      `C_g rho/V m.phi' = dV_g - C_g rho alpha/V m.phi`. C_g is
+      1.0e-4 L/cmH2O, against the respiratory system's ~0.05, so it is
+      negligible: 1000 mL changes VT at 200 /min by 0.6 %.
+    - **Fat** (`--abfat` 20 %, by volume): contents
+      `rho = f 900 + (1-f) 1060` (1028 at 20 %), and an anterior wall of
+      20 mm of muscle plus `20 f/(1-f)` mm of fat (5 mm, 25.7 kg/m2 at
+      20 %; it was a fixed 36). k_f is scaled by
+      `(1-f) + 0.3 f` relative to 20 %, fat taken as 0.3 x as stiff
+      (assumed). The torso's geometry still follows `--weight` alone.
+    - **Checks** (`hfjvcheck`, all passing): `VEGasCase`, the tank with
+      a massless diaphragm end, a foundation on the free surface and
+      1 L of gas at 0.05 Hz, against
+      `V_di/p_pl = A/(rho g + k_f i w Z) + C_g` (0.08 %) and
+      `dV_g/p_pl = -C_g` (0.06 %). The adult box cycle now has both and
+      still agrees, harmonics against stepping (VT 0.013 %). Torso at
+      200 /min: stepping 178.9 mL, the same as harmonic balance.
+    - **Results, torso at 200 /min**: VT 178.9 mL (173.5 without the
+      contents, 174.5 for the previous model), VE 35.8 L/min,
+      entrainment 13.9 L/min, mean P_t 1.79 cmH2O, and VT reaches the
+      dead space at 320 /min (was 300). The diaphragm now carries 69 %
+      of VT at 200 /min (48 % without), because the stiffer abdomen
+      moves its mode from 2.75 Hz (165 /min) to 3.75 Hz (225 /min),
+      close to the jet. Rrs peaks there at 1.95 against 2.50: the
+      foundation's loss damps the mode. Resonance is unchanged at 6.9 Hz.
+      A foundation of 2.9 rho g only raises the mode by 1.36 x: the
+      contents' added mass and the lung in series also set it. So it
+      does not reach the 4-8 Hz visceral resonance of whole-body
+      vibration. Fat 10 / 20 / 40 %: VT 179.7 / 178.9 / 177.0 mL. The
+      sweeps are `mesh/v_torso_ve.csv`, `_nove`, `_fat10`, `_fat40`,
+      `_gas0` and `_gas1000`, plus `z_torso_ve.csv` and `_nove`. The
+      plots are `mesh/*_ve.png` and the animation `wall200_ve.gif`,
+      whose largest wall motion is 2.4 mm.
 - `HFJVView` (`HFJVView.lpi`, `uWallAnim`/`uWallView`/`uHFJVViewForm`;
   `lazbuild --ws=gtk2`): `anim_wall.py`'s animation as a Lazarus program.
   It reads an `--anim` file (default `mesh/wall_anim_200.txt`) and draws

@@ -64,7 +64,7 @@ def main():
     ax.set_ylabel('reactance Xrs, cmH2O/(L/s)')
     ax.set_xlabel('frequency, Hz')
     ax.set_xlim(0, series[0][1]['f_Hz'].max())
-    ar.legend(frameon=False, loc='lower right', fontsize=9)
+    ar.legend(frameon=False, loc='upper right', fontsize=9)
 
     top = ar.secondary_xaxis('top', functions=(lambda f: 60 * f, lambda r: r / 60))
     top.set_xlabel('jet rate, breaths per minute')

@@ -17,6 +17,39 @@ unit uAbdomenFluid;
   left out: that is the main simplification, and the one a solid
   (u-p) formulation would remove.
 
+  VISCOELASTIC CONTENTS
+
+  The viscera are a soft viscoelastic solid, not a liquid: they resist a
+  wall's displacement elastically and lose a fixed fraction eta of that
+  energy each cycle. A moving surface may carry a constant-phase
+  viscoelastic foundation of stiffness VEStiff (Pa/m, at VEFRef), adding
+  to the membrane's outside load
+
+      k_f [E_0 eta + R_inf eta_t + sum_k s_k],   tau_k s_k' + s_k = R_k eta_t ,
+
+  the bank of uViscoelastic for unit stiffness, with VEEta its
+  hysteresivity. Its pressure is k_f (i w Z(w)) eta: storage rising
+  slowly with frequency and loss eta times it. The states are per moving
+  node (not clamped), VEPerDecade a decade from VEFMin to VEFMax, shared
+  by every surface, so a node where two surfaces meet needs one set.
+  It is local (a Winkler foundation): it stands in for the contents'
+  shear stiffness, which a potential flow lacks, without its dependence
+  on wavelength.
+
+  BOWEL GAS
+
+  GasVolume (m3) of gas spread uniformly through the contents, at
+  absolute pressure GasPAbs, compressed with polytropic exponent
+  GasGamma by the contents' mean dynamic pressure p_bar:
+
+      dV_g = -C_g p_bar ,  C_g = V_g / (gamma P_abs) ,
+      div u = Q_g / V   (uniform),  V_g' = Q_g .
+
+  So the phi rows become 0 = -K phi + S v - (m/V) Q_g, with m_i = int N_i,
+  and the volume the walls sweep is the gas's change. Two unknowns, the
+  gas volume change and its rate; the gas row is
+  C_g rho/V m.phi' = dV_g - C_g rho alpha/V m.phi.
+
   The boundary is divided into SURFACES, each with an id. A rigid
   surface (back, pelvis, pelvic floor) takes no flux, so waves reflect
   from it. A MOVING surface (anterior abdominal wall, diaphragm) carries
@@ -63,7 +96,7 @@ unit uAbdomenFluid;
 
 interface
 
-uses SysUtils, Math, newVM, newVMsparse, uDescriptor;
+uses SysUtils, Math, newVM, newVMsparse, uDescriptor, uViscoelastic;
 
 type
   TVec3 = record X, Y, Z : Double; end;
@@ -74,6 +107,7 @@ type
     Damping : Double;   // Pa s/m
     Tension : Double;   // N/m
     Clamp : Boolean;    // hold eta = 0 where this surface meets a rigid one
+    VEStiff : Double;   // Pa/m at VEFRef, viscoelastic foundation (0: none)
   end;
 
   { Called once per boundary triangle with its centroid and outward unit
@@ -93,12 +127,21 @@ type
     FClamped : TBooleanArray;
     FNodeNormal : array of TVec3;   // per moving dof
     FPhiBase, FEtaBase, FVBase : Integer;
+    FVE : TTissue;                  // unit-stiffness foundation bank
+    FVEIndex : TIntegerArray;       // moving dof -> foundation node, or -1
+    FVEBase, FVENodes : Integer;
+    FGasBase : Integer;             // dV_g, then Q_g; -1 without gas
     function NbMoving : Integer;
   public
     X, Y, Z : TDoubleArray;
     Rho, Alpha : Double;
+    VEEta, VEFRef, VEFMin, VEFMax : Double;
+    VEPerDecade : Integer;
+    GasVolume, GasGamma, GasPAbs : Double;
     G : TVec3;                      // gravity, m/s2, pointing down
     Surfaces : array of TSurfaceProps;
+
+    constructor Create;
 
     procedure SetMesh(const AX, AY, AZ : TDoubleArray; const ATets : TIntegerArray);
     { Finds the boundary faces, orients them outward and asks Classify
@@ -129,6 +172,14 @@ type
     property Clamped : TBooleanArray read FClamped;
     property TriNodes : TIntegerArray read FTri;
     property TriSurf : TIntegerArray read FTriSurf;
+    { The foundation bank for unit stiffness (after AddToSystem). }
+    property VEBank : TTissue read FVE;
+    property VENodes : Integer read FVENodes;
+    { The gas volume change's dof, or -1. }
+    property GasDof : Integer read FGasBase;
+    function GasCompliance : Double;
+    { Area of surface SurfId, m2 (after FindBoundary). }
+    function SurfaceArea(SurfId : Integer) : Double;
   end;
 
 function Vec3(AX, AY, AZ : Double) : TVec3;
@@ -153,6 +204,30 @@ end;
 function Cross(const A, B : TVec3) : TVec3;
 begin
   Result := Vec3(A.Y * B.Z - A.Z * B.Y, A.Z * B.X - A.X * B.Z, A.X * B.Y - A.Y * B.X);
+end;
+
+constructor TAbdomenFluid.Create;
+begin
+  inherited Create;
+  VEEta := 0.15; VEFRef := 0.25;
+  VEFMin := 1e-2; VEFMax := 1e3; VEPerDecade := 2;
+  GasVolume := 0; GasGamma := 1.4; GasPAbs := 101325;
+  FGasBase := -1;
+end;
+
+function TAbdomenFluid.GasCompliance : Double;
+begin
+  if GasVolume <= 0 then Exit(0);
+  Result := GasVolume / (GasGamma * GasPAbs);
+end;
+
+function TAbdomenFluid.SurfaceArea(SurfId : Integer) : Double;
+var
+  k : Integer;
+begin
+  Result := 0;
+  for k := 0 to Length(FTriSurf) - 1 do
+    if FTriSurf[k] = SurfId then Result := Result + FTriArea[k];
 end;
 
 function TAbdomenFluid.NbMoving : Integer;
@@ -286,7 +361,9 @@ var
   n : array[0..3] of Integer;
   D, Inv : array[0..2, 0..2] of Double;
   Gr : array[0..3, 0..2] of Double;
-  det, vol, m, c, T, gup, Ml, Kl, gmag : Double;
+  det, vol, m, c, T, gup, Ml, Kl, gmag, kf, Cg, Vt : Double;
+  q, nk, kk : Integer;
+  Mn : TDoubleArray;
   OnRigid, ClampSurf : TBooleanArray;
   E : array[0..2] of TVec3;
   sp : TSurfaceProps;
@@ -369,6 +446,39 @@ begin
           -vol * (Gr[i, 0] * Gr[j, 0] + Gr[i, 1] * Gr[j, 1] + Gr[i, 2] * Gr[j, 2]));
   end;
 
+  // bowel gas: phi rows get -(m/V) Q_g
+  FGasBase := -1;
+  if GasVolume > 0 then
+  begin
+    SetLength(Mn, FNbNodes);
+    for k := 0 to nt - 1 do
+    begin
+      for j := 0 to 3 do n[j] := FTets[4 * k + j];
+      D[0, 0] := X[n[1]] - X[n[0]]; D[0, 1] := Y[n[1]] - Y[n[0]]; D[0, 2] := Z[n[1]] - Z[n[0]];
+      D[1, 0] := X[n[2]] - X[n[0]]; D[1, 1] := Y[n[2]] - Y[n[0]]; D[1, 2] := Z[n[2]] - Z[n[0]];
+      D[2, 0] := X[n[3]] - X[n[0]]; D[2, 1] := Y[n[3]] - Y[n[0]]; D[2, 2] := Z[n[3]] - Z[n[0]];
+      vol := Abs(D[0, 0] * (D[1, 1] * D[2, 2] - D[1, 2] * D[2, 1])
+         - D[0, 1] * (D[1, 0] * D[2, 2] - D[1, 2] * D[2, 0])
+         + D[0, 2] * (D[1, 0] * D[2, 1] - D[1, 1] * D[2, 0])) / 6;
+      for j := 0 to 3 do Mn[n[j]] := Mn[n[j]] + vol / 4;
+    end;
+    Vt := 0;
+    for i := 0 to FNbNodes - 1 do Vt := Vt + Mn[i];
+    Cg := GasCompliance;
+    FGasBase := Sys.NewDofs(2);
+    // Q_g row: dV_g' = Q_g
+    Sys.AddE(FGasBase + 1, FGasBase, 1);
+    Sys.AddA(FGasBase + 1, FGasBase + 1, 1);
+    // gas row: C_g rho/V m.phi' = dV_g - C_g rho alpha/V m.phi
+    Sys.AddA(FGasBase, FGasBase, 1);
+    for i := 0 to FNbNodes - 1 do
+    begin
+      Sys.AddA(FPhiBase + i, FGasBase + 1, -Mn[i] / Vt);
+      Sys.AddE(FGasBase, FPhiBase + i, Cg * Rho * Mn[i] / Vt);
+      Sys.AddA(FGasBase, FPhiBase + i, -Cg * Rho * Alpha * Mn[i] / Vt);
+    end;
+  end;
+
   // eta' = v ; clamped nodes: 0 = -v
   for i := 0 to nm - 1 do
   begin
@@ -417,6 +527,63 @@ begin
     end;
   end;
   if gmag = 0 then ; // gravity may be off
+
+  // viscoelastic foundation: states per unclamped node of a VE surface
+  FVENodes := 0;
+  SetLength(FVEIndex, nm);
+  for i := 0 to nm - 1 do FVEIndex[i] := -1;
+  for k := 0 to nb - 1 do
+  begin
+    sp := Surfaces[FTriSurf[k]];
+    if not (sp.Moving and (sp.VEStiff > 0)) then Continue;
+    for j := 0 to 2 do
+    begin
+      a := FMovIndex[FTri[3 * k + j]];
+      if (not FClamped[a]) and (FVEIndex[a] < 0) then
+      begin
+        FVEIndex[a] := FVENodes;
+        Inc(FVENodes);
+      end;
+    end;
+  end;
+  if FVENodes = 0 then Exit;
+  FVE := MakeTissue(1, 0, VEEta, VEFRef, VEFMin, VEFMax, VEPerDecade);
+  nk := Length(FVE.R);
+  FVEBase := Sys.NewDofs(FVENodes * nk);
+  for a := 0 to nm - 1 do
+  begin
+    q := FVEIndex[a];
+    if q < 0 then Continue;
+    for kk := 0 to nk - 1 do
+    begin
+      b := FVEBase + q * nk + kk;
+      Sys.AddE(b, b, FVE.Tau[kk]);
+      Sys.AddA(b, b, -1);
+      Sys.AddA(b, FVBase + a, FVE.R[kk]);
+    end;
+  end;
+  for k := 0 to nb - 1 do
+  begin
+    sp := Surfaces[FTriSurf[k]];
+    if not (sp.Moving and (sp.VEStiff > 0)) then Continue;
+    kf := sp.VEStiff;
+    for i := 0 to 2 do
+    begin
+      a := FMovIndex[FTri[3 * k + i]];
+      if FClamped[a] then Continue;
+      for j := 0 to 2 do
+      begin
+        b := FMovIndex[FTri[3 * k + j]];
+        if FClamped[b] then Continue;
+        if i = j then Ml := FTriArea[k] / 6 else Ml := FTriArea[k] / 12;
+        Sys.AddA(FVBase + a, FEtaBase + b, -kf * Ml * FVE.E0);
+        Sys.AddA(FVBase + a, FVBase + b, -kf * Ml * FVE.Rinf);
+        q := FVEIndex[b];
+        for kk := 0 to nk - 1 do
+          Sys.AddA(FVBase + a, FVEBase + q * nk + kk, -kf * Ml);
+      end;
+    end;
+  end;
 end;
 
 function TAbdomenFluid.SurfaceWeights(SurfId : Integer) : TDoubleArray;

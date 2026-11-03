@@ -11,6 +11,8 @@ VE overstates the useful ventilation there.
 
 Usage: python3 plot_ventilation.py <out.png> <label>=<csv> [<label>=<csv> ...]
        [--setting=<text>]  (subtitle, default '2 bar, I:E 1:1, Biro cannula')
+       [--legend=<text>]   (legend title, default 'abdomen')
+       The first file sets the dead-space crossing that is shaded.
 """
 import sys
 import numpy as np
@@ -77,7 +79,7 @@ def main():
     at.set_ylabel('tidal volume VT, mL')
     at.set_xlabel('jet rate, breaths per minute')
     at.set_xlim(r[0], r[-1])
-    av.legend(frameon=False, loc='lower right', fontsize=9, title='abdomen',
+    av.legend(frameon=False, loc='lower right', fontsize=9, title=opts.get('legend', 'abdomen'),
               title_fontsize=9)
 
     fig.suptitle('Minute ventilation against jet rate, supine adult male\n'
