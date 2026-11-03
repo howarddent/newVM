@@ -1610,6 +1610,24 @@ solid, frequency and time domain both, and a FEM4 example. Units:
   out the same at every rate (Ti (Q_on R_ua + dp_on)), because the upper
   airway is linear. A turbulent K|Q| upper airway, not yet modelled,
   would change that.
+- `HFJVView` (`HFJVView.lpi`, `uWallAnim`/`uWallView`/`uHFJVViewForm`;
+  `lazbuild --ws=gtk2`): `anim_wall.py`'s animation as a Lazarus program.
+  It reads an `--anim` file (default `mesh/wall_anim_200.txt`) and draws
+  the cavity in OpenGL, the wall and diaphragm pushed along their normals
+  and coloured red-white-blue by displacement, rigid surfaces grey, with
+  a colour bar, the front midline's profile and envelope, and the lung
+  volume on `TVMPlot2D`s. Play/pause, a frame slider, exaggeration, fps
+  and a mesh overlay. Compute runs `hfjvrun --anim` beside it through
+  `TProcess` for the rate, pressure, I:E, cannula and abdomen in the
+  second row, writing `mesh/anim_r<rate>_dp<bar>_ie<E>_c<n>[_box].txt`
+  and loading it; a file that already exists is just loaded. The torso
+  takes about a minute, the box a few seconds. The default view is from
+  the patient's left with the head on the right, the same way round as
+  the midline plot. `--compute [--box]`, `--snapshot=<prefix>` and
+  `--frame=<n>` drive it from the command line. The display frame is
+  (across, along, up), a mirror of the body's coordinates, so the view
+  maps it back to a proper rotation, `(-along, up, across)`; shading is
+  a headlamp with `|n.L|`, since the triangles' winding isn't relied on.
 
 ### GPU backends: `newVMCL.pas`/`OpenCLAPI.pas` and `newVMMetal.pas`/`MetalAPI.pas`
 
