@@ -1500,6 +1500,117 @@ knowing:
   `TDefibView.SaveToPNG`, plus the waveform and window. `--time=<ms>` saves
   one frame instead.
 
+### `Delphi OOFEM/FEM4/Development/Examples/HFJV`
+
+Added 2026-11-03: high-frequency jet ventilation in a supine adult male,
+work in progress. Console programs so far, built with plain `fpc -O2
+-FUlib -Fu../../../../.. -Fi../../../../.. -Fu../../../../../demos/JetVent`
+(the JetVent path is for `uJetCalcVM`), plus, for anything using the torso,
+`-Fu../Defibrillation -Fu../ThermEx1 -Fu../../../../../Anaesthetics/PK-PD_FPC
+-Fu../../../../../Graphs` and `-Fu../../Source/<dir>` for each FEM4 source
+directory (for `TGmsh`; the full list is in `hfjvrun.lpr`'s header). The
+user's design choices are:
+supine, the abdomen an incompressible fluid rather than a viscoelastic
+solid, frequency and time domain both, and a FEM4 example. Units:
+
+- `uDescriptor.pas`: one sparse system `E x' = A x + b`, built from
+  triplets by every part. The frequency response `(iwE - A)X = B` is
+  solved as the real 2N block system. Time stepping is trapezoidal, with
+  algebraic rows imposed at the new time and the step matrix factorised
+  once (`TPardisoFactor`, added to `newVMsparse.pas` for this, with
+  tests).
+- `uAbdomenFluid.pas`: potential flow on P1 tetrahedra, with drag
+  alpha. Boundary surfaces are rigid (they reflect waves) or moving
+  membranes with mass, tension, damping and gravity `rho g_up`, which is
+  what makes the gravity waves. Volume is conserved through the constant
+  part of phi, so the diaphragm going down is the wall coming up.
+  `FindBoundary` orients faces from the tets. A moving node on a rigid
+  edge is clamped only if its surface says so: the tank checks' free
+  surface must not be.
+- `uThorax.pas`: lumped upper and lower airways, alveolar gas
+  compression, lung recoil and tissue resistance, pleural pressure, and
+  the rib cage. The diaphragm is lumped, or the FEM diaphragm with
+  `p_pl` coupled. The jet comes from JetVent's **bench data** (at the
+  user's request): measured flow interpolated in driving pressure, and
+  momentum pressure from the measured stall pressure scaled as 1/D^2 to
+  the trachea (for the Cook, interpolated between 15 and 22 mm). Crane
+  and the momentum formula are the fallback. The default is the user's
+  "typical" setting: 2 bar, 200 /min, I:E 1:1, Biro.
+- `uHFJVSolve.pas`: the steady cycle by harmonic superposition (the
+  mean taken at 1e-5 Hz, since at exactly zero frequency the volume
+  constraint drops out) or by stepping, plus VT, VT/VD, f VT^2,
+  pressures and entrainment. `TResponseCache` keeps each frequency's
+  outputs so a sweep of rate solves each frequency once (harmonic 3 of
+  200 /min is harmonic 1 of 600): about half the solves.
+- `uAbdomenBox.pas`: a 0.30 x 0.26 x 0.14 m box abdomen (10.9 L,
+  ThermEx1's core size), the first test geometry; `hfjvrun --box`.
+- `uTorsoAbdomen.pas` (the default abdomen): the abdominal cavity of
+  **Defibrillation's torso**, with a diaphragm dome and a pelvis. Its
+  header has the geometry. Things worth knowing:
+  - **Pull Defibrillation from GitHub first** (the user's instruction):
+    the GitHub version (thorax cone on an elliptical abdomen) was more
+    realistic than this machine's. `TDefibModel.SetupGeometry` was made
+    public for this, so the torso can be sized (ThermEx1's masses,
+    `--height`/`--weight`) without meshing Defibrillation itself.
+  - Defibrillation's coordinates are kept: y up from the back, so
+    supine gravity is `(0, -9.81, 0)`, not the box's -z.
+  - The cavity is the chest wall's inner edge (`WallPoint` at
+    `WallThickness`), with a lumbar ridge, the pelvis narrowing below
+    the iliac crest to the inlet and outlet, and a dome inserting 15 mm
+    above the costal margin (xiphoid, ribs 10 and 12 from Defibrillation's
+    skeleton) and rising 65 mm above Defibrillation's flat diaphragm.
+  - Surfaces by centroid: anterior wall (below the costal margin, above
+    pubis and iliac crest, round to the posterior axillary line),
+    diaphragm (above its rim), the rest rigid - including the rib band
+    between margin and insertion. The 1.75 m, 70 kg man: 9.96 L, wall
+    912 cm2, diaphragm 613 cm2.
+  - Meshing is gmsh's STL-remesh workflow (tutorial 13): `WriteSTL`
+    writes rings of points from the formulae, gmsh remeshes and fills
+    it (~36 s at 12 mm), and the msh is cached in `mesh/` under a tag
+    of height, weight and size. Two FPC traps: `TVec3` is declared in
+    both `uDefibModel` and `uAbdomenFluid` (put `uAbdomenFluid` last in
+    `uses`), and `Sto_ShellExecute`'s exit code is a `Cardinal`.
+  - The wall's mass is 36 kg/m2 (35 mm of muscle and fat) against the
+    box's 25.
+- `hfjvmesh.lpr`: builds the torso mesh and reports its landmarks,
+  volume and surface areas; writes `mesh/abdomen_surfaces.vtk`.
+- `hfjvcheck.lpr`: checks against exact solutions, all passing:
+  - tank sloshing with and without a membrane, within 2 %;
+  - the lumped thorax against hand-combined impedances, to rounding;
+  - harmonics against stepping, lumped and with FEM;
+  - the FEM diaphragm against `E = rho g / A_top` quasi-statically,
+    within 0.15 %.
+- `hfjvrun.lpr`: the impedance, a sweep of rate, and the anterior
+  wall's wave along the midline, xiphoid to pubis on the torso (`--dp
+  --rate --ie --cannula --calculated --lumped --alpha --steps --harm
+  --box --height --weight --size`). 30 harmonics by default: on the
+  lumped model VT is within about 1 % of 60 harmonics (10: 2-3 %).
+  The torso at 12 mm (36251 unknowns) takes about 4.5 min with
+  `--steps`; stepping at 200 /min gives VT 188.6 mL against the
+  harmonics' 188.4. `--anim=<file>` instead writes one cycle of every
+  moving node's displacement (all harmonics, mean removed) and the lung
+  volume, and `anim_wall.py <file> <out.gif>` animates it: the cavity
+  with its surfaces pushed out along their normals (exaggerated) and
+  coloured by displacement, the front midline's profile with its
+  envelope, and the lung volume. At 200 /min the midline's wall moves
+  up to 2 mm in two lobes, below and above ~330 mm, in antiphase.
+  `--zfile=<file>` writes the impedance at 0.25-20 Hz as CSV, and
+  `plot_impedance.py <out.png> <label>=<csv> ...` plots Rrs and Xrs
+  against frequency and rate for several abdomens. Resonance below the
+  jet: torso 5.5 Hz, box 4.5, lumped 4.9. The torso's resistance peaks
+  at 2.6 near 3 Hz (180 /min), its abdominal gravity-tension mode,
+  against the lumped model's smooth 2.2-2.5.
+  `--vfile=<file>` writes the cycle every 20 /min from 40 to 900 (20
+  harmonics, ~400 solves with the cache, ~9 min on the torso), and
+  `plot_ventilation.py` plots VE = f VT and VT against rate. VE is flat
+  at 37-40 L/min from 100 to 400 /min and falls only to 35 by 900: the
+  jet's own 22.5 L/min plus entrainment. VT falls below the 120 mL dead
+  space at about 320 /min. The torso's dip near 180 /min is its
+  abdominal mode (the resistance peak above). Mean alveolar pressure comes
+  out the same at every rate (Ti (Q_on R_ua + dp_on)), because the upper
+  airway is linear. A turbulent K|Q| upper airway, not yet modelled,
+  would change that.
+
 ### GPU backends: `newVMCL.pas`/`OpenCLAPI.pas` and `newVMMetal.pas`/`MetalAPI.pas`
 
 Two further companion units put a `TVMobj`-shaped type on the GPU, both

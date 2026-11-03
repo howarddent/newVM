@@ -128,6 +128,31 @@ function SparseMatMult(const A: TVMSparseMtx; const X: TVMobj): TVMobj;
   SymmetricPosDef picks PARDISO's mtype (2 vs 11) - see header comment. }
 function PardisoSolve(const A: TVMSparseMtx; const B: TVMobj; SymmetricPosDef: Boolean): TVMobj;
 
+{ A PARDISO factorisation kept for repeated solves against the same matrix
+  - time stepping with a fixed step, where PardisoSolve would refactorise
+  every step. Create analyses and factorises (phases 11, 22), Solve runs
+  phase 33 only, Free releases PARDISO's memory (phase -1). MType is
+  PARDISO's: 11 real unsymmetric (the safe choice), 2 real symmetric
+  positive definite or -2 real symmetric indefinite, the last two given
+  the full matrix (the upper triangle is extracted here). The matrix
+  arrays are copied, so A may change or go out of scope afterwards. }
+type
+  TPardisoFactor = class
+  private
+    FA: TVMSparseMtx;
+    pt: array[0..63] of Pointer;
+    iparm: array[0..63] of Integer;
+    FMType, FN: Integer;
+    FPerm: array of Integer;
+    procedure Call(Phase: Integer; B, X: PDouble; NRHS: Integer; out Error: Integer);
+  public
+    constructor Create(const A: TVMSparseMtx; MType: Integer = 11);
+    destructor Destroy; override;
+    { B (N,1) or (1,N); the result is (N,1). B is not changed. }
+    function Solve(const B: TVMobj): TVMobj;
+    property N: Integer read FN;
+  end;
+
 { Iterative sparse solve via MKL RCI ISS FGMRES, optionally ILU0-
   preconditioned. Same B/result shape convention as PardisoSolve. }
 function FGMRESSolve(const A: TVMSparseMtx; const B: TVMobj; UseILU0: Boolean = True; MaxIter: Integer = 500; Tol: Double = 1e-8; Restart: Integer = 150): TVMobj;
@@ -499,6 +524,97 @@ begin
     raise Exception.Create(s + 'PARDISO reported error code ' + IntToStr(solveError));
 
   result := X;
+end;
+
+{ TPardisoFactor }
+
+constructor TPardisoFactor.Create(const A: TVMSparseMtx; MType: Integer);
+const
+  s = 'TPardisoFactor.Create : ';
+var
+  badRow, err: Integer;
+  dummy: Double;
+begin
+  inherited Create;
+  assert(A.Rows = A.Cols, s+'A must be square');
+  assert((MType = 11) or (MType = 2) or (MType = -2), s+'MType must be 11, 2 or -2');
+  badRow := FindMissingDiagonalRow(A);
+  if badRow >= 0 then
+    raise Exception.Create(s + 'row ' + IntToStr(badRow) + ' of A has no ' +
+      'stored diagonal entry - PARDISO cannot factorise this matrix.');
+  FMType := MType;
+  FN := A.Rows;
+  if MType = 11 then
+  begin
+    //own copies, so the caller's arrays can't change under us
+    FA.FRows := A.FRows; FA.FCols := A.FCols;
+    FA.FRowPtr := Copy(A.FRowPtr);
+    FA.FColInd := Copy(A.FColInd);
+    FA.FValues := Copy(A.FValues);
+  end
+  else
+    FA := ExtractUpperCSR(A); //fresh arrays already
+
+  FillChar(pt, SizeOf(pt), 0);
+  FillChar(iparm, SizeOf(iparm), 0);
+  pardisoinit(@pt[0], @FMType, @iparm[0]);
+  iparm[34] := 1; //zero-based indexing
+  iparm[1] := 3;  //parallel nested dissection (see PardisoSolve)
+  if MType = 11 then
+    iparm[23] := 1 //two-level factorisation: unsymmetric only, see PardisoSolve
+  else if MType = -2 then
+  begin
+    iparm[10] := 1; //symmetric scaling and weighted matching, recommended
+    iparm[12] := 1; //for indefinite (saddle-point) systems
+  end;
+  SetLength(FPerm, FN);
+  dummy := 0;
+  Call(12, @dummy, @dummy, 1, err); //analysis + numerical factorisation
+  if err <> 0 then
+  begin
+    Call(-1, @dummy, @dummy, 1, badRow);
+    FN := 0;
+    raise Exception.Create(s + 'PARDISO factorisation failed, error code ' + IntToStr(err));
+  end;
+end;
+
+procedure TPardisoFactor.Call(Phase: Integer; B, X: PDouble; NRHS: Integer; out Error: Integer);
+var
+  maxfct, mnum, msglvl, n: Integer;
+begin
+  maxfct := 1; mnum := 1; msglvl := 0; n := FN;
+  Error := 0;
+  pardiso(@pt[0], @maxfct, @mnum, @FMType, @Phase, @n,
+    @FA.FValues[0], @FA.FRowPtr[0], @FA.FColInd[0],
+    @FPerm[0], @NRHS, @iparm[0], @msglvl, B, X, @Error);
+end;
+
+function TPardisoFactor.Solve(const B: TVMobj): TVMobj;
+const
+  s = 'TPardisoFactor.Solve : ';
+var
+  Bcopy: TVMobj;
+  err: Integer;
+begin
+  assert(B.Rows*B.Cols = FN, s+'B must be a vector of length N');
+  Bcopy := CopyObj(B);
+  result := TVMobj.Create(FN, 1);
+  Call(33, Bcopy.DataPtr, result.DataPtr, 1, err);
+  if err <> 0 then
+    raise Exception.Create(s + 'PARDISO reported error code ' + IntToStr(err));
+end;
+
+destructor TPardisoFactor.Destroy;
+var
+  err: Integer;
+  dummy: Double;
+begin
+  if FN > 0 then
+  begin
+    dummy := 0;
+    Call(-1, @dummy, @dummy, 1, err);
+  end;
+  inherited Destroy;
 end;
 
 function FGMRESSolve(const A: TVMSparseMtx; const B: TVMobj; UseILU0: Boolean; MaxIter: Integer; Tol: Double; Restart: Integer): TVMobj;

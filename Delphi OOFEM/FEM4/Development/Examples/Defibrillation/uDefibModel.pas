@@ -469,7 +469,6 @@ type
     function InPad(Pad : Integer; X, Y, Z : Double; Margin : Double) : Boolean;
     function RibAt(Z : Double) : Integer;
 
-    procedure SetupGeometry;
     procedure WriteGeoFile;
     procedure BuildMesh;
     procedure ClassifyElements;
@@ -542,6 +541,11 @@ type
 
     constructor Create;
     destructor Destroy; override;
+
+    // Sizes the body from ThermEx1's masses, Height and Weight, and
+    // places the organs - no meshing. Run calls it first; other models
+    // that share this torso (Examples/HFJV) call it alone.
+    procedure SetupGeometry;
 
     function Constant(NodeId, ElementId : Integer) : Double;
 

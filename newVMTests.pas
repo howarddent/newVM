@@ -600,6 +600,8 @@ type
     procedure TestPardisoSolveGeneralKnownValues;
     procedure TestFGMRESSolveMatchesPardiso;
     procedure TestFGMRESSolveNoPreconditionerMatchesPardiso;
+    procedure TestPardisoFactorReusedMatchesPardisoSolve;
+    procedure TestPardisoFactorSymmetricIndefinite;
   end;
   {$ENDIF}
 
@@ -4947,6 +4949,71 @@ begin
   AssertEquals(0.0, 4*X[0,0]+X[1,0]-B[0,0], DblTol);
   AssertEquals(0.0, 2*X[0,0]+5*X[1,0]+X[2,0]-B[1,0], DblTol);
   AssertEquals(0.0, 3*X[1,0]+6*X[2,0]-B[2,0], DblTol);
+end;
+
+procedure TVMSparseTests.TestPardisoFactorReusedMatchesPardisoSolve;
+var
+  A: TVMSparseMtx;
+  B, B2, Xd, Xf: TVMobj;
+  LU: TPardisoFactor;
+  i: Integer;
+begin
+  // one factorisation, two right-hand sides, in each of the three mtypes
+  BuildSPD4(A, B);
+  B2 := B * 2.0;
+  B2[3,0] := -1;
+  for i := 0 to 2 do
+  begin
+    case i of
+      0: LU := TPardisoFactor.Create(A, 11);
+      1: LU := TPardisoFactor.Create(A, 2);
+    else
+      LU := TPardisoFactor.Create(A, -2);
+    end;
+    try
+      Xd := PardisoSolve(A, B, True);
+      Xf := LU.Solve(B);
+      AssertEquals(Xd[0,0], Xf[0,0], DblTol);
+      AssertEquals(Xd[3,0], Xf[3,0], DblTol);
+      Xd := PardisoSolve(A, B2, True);
+      Xf := LU.Solve(B2);
+      AssertEquals(Xd[1,0], Xf[1,0], DblTol);
+      AssertEquals(Xd[2,0], Xf[2,0], DblTol);
+    finally
+      LU.Free;
+    end;
+  end;
+end;
+
+procedure TVMSparseTests.TestPardisoFactorSymmetricIndefinite;
+var
+  RowIdx, ColIdx: TIntegerArray;
+  Val: TDoubleArray;
+  A: TVMSparseMtx;
+  B, X: TVMobj;
+  LU: TPardisoFactor;
+begin
+  // saddle point [2 0 1; 0 2 1; 1 1 0] * x = [1;3;1] -> x = (0, 1, 1)
+  SetLength(RowIdx,7); SetLength(ColIdx,7); SetLength(Val,7);
+  RowIdx[0]:=0; ColIdx[0]:=0; Val[0]:=2;
+  RowIdx[1]:=0; ColIdx[1]:=2; Val[1]:=1;
+  RowIdx[2]:=1; ColIdx[2]:=1; Val[2]:=2;
+  RowIdx[3]:=1; ColIdx[3]:=2; Val[3]:=1;
+  RowIdx[4]:=2; ColIdx[4]:=0; Val[4]:=1;
+  RowIdx[5]:=2; ColIdx[5]:=1; Val[5]:=1;
+  RowIdx[6]:=2; ColIdx[6]:=2; Val[6]:=0; // stored zero diagonal
+  A := TripletsToSparse(3,3,RowIdx,ColIdx,Val);
+  B := TVMobj.Create(3,1);
+  B[0,0]:=1; B[1,0]:=3; B[2,0]:=1;
+  LU := TPardisoFactor.Create(A, -2);
+  try
+    X := LU.Solve(B);
+  finally
+    LU.Free;
+  end;
+  AssertEquals(0.0, X[0,0], DblTol);
+  AssertEquals(1.0, X[1,0], DblTol);
+  AssertEquals(1.0, X[2,0], DblTol);
 end;
 
 procedure TVMSparseTests.TestFGMRESSolveMatchesPardiso;
