@@ -1586,8 +1586,24 @@ solid, frequency and time domain both, and a FEM4 example. Units:
   - Surfaces by centroid: anterior wall (below the costal margin, above
     pubis and iliac crest, round to the posterior axillary line),
     diaphragm (above its rim), the rest rigid - including the rib band
-    between margin and insertion. The 1.75 m, 70 kg man: 9.96 L, wall
-    912 cm2, diaphragm 613 cm2.
+    between margin and insertion. The 1.75 m, 70 kg man: 10.08 L, wall
+    1005 cm2, diaphragm 613 cm2.
+  - **The pelvis is from published data** (2026-11-04, at the user's
+    request; it was my estimates, 9.96 L and wall 912 cm2): inlet
+    119.8 x 110.6 mm and outlet 99.6 x 86.5 mm, the male CT means of Zhou
+    et al., World J Gastrointest Oncol 2024;16:773 (139 men); iliac crest
+    12.28 % of stature above the perineum (215 mm), from ANSUR II's
+    public male data (iliocristale less crotch height, 4082 men); brim
+    at the pubis plus half the inlet's AP times sin 60 deg. The pubis
+    and floor heights, the floor's depth and how far back the inlet and
+    outlet sit are still estimates, and the narrower mid-pelvis
+    (interspinous 90.8 mm) is left out. The msh tag is now
+    `abdomen_p2_...`. Torso at 200 /min: VT 177.0 mL (stepping 177.0)
+    against 178.9, VE 35.4 against 35.8 L/min, entrainment 13.5 against
+    13.9, the abdominal Rrs peak 3.5 Hz against 3.75; the dead-space
+    crossing and the resonance (6.9 Hz) are unchanged. The midline wave
+    peaks lower, near 220 mm, with a small antiphase lobe above 370 mm.
+    `mesh/*_pelvis.png`, `wall200_pelvis.gif`.
   - Meshing is gmsh's STL-remesh workflow (tutorial 13): `WriteSTL`
     writes rings of points from the formulae, gmsh remeshes and fills
     it (~36 s at 12 mm), and the msh is cached in `mesh/` under a tag

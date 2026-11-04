@@ -26,7 +26,8 @@ unit uTorsoAbdomen;
     pelvis    below the iliac crest the section narrows smoothly to the
               pelvic inlet at the brim and to the outlet at the pelvic
               floor (ellipses PelvisInlet, PelvisOutlet), moving back
-              towards the sacrum as it goes; the floor is a shallow bowl;
+              towards the sacrum as it goes; the floor is a shallow bowl
+              (see THE PELVIS for where its sizes come from);
     diaphragm a dome over the costal margin. Its rim, where it inserts,
               is Apposition above the lower edge of the rib cage; the
               dome rises from the rim to DomeRise above the trunk's flat
@@ -38,6 +39,29 @@ unit uTorsoAbdomen;
   sternum (the xiphoid), at the sides the bottom of rib 10 (the last
   that reaches the front), behind the bottom of rib 12. Between them
   it follows a sharp inverted V, as the margin does.
+
+  THE PELVIS
+
+  The bony pelvis's sizes are male CT pelvimetry, the means of 139 men in
+  Zhou XC, Ke FY, Dhamija G, Chen H, Wang Q, "Study on sex differences
+  and potential clinical value of three-dimensional computerized
+  tomography pelvimetry in rectal cancer patients", World J Gastrointest
+  Oncol 2024;16(3):773-786, doi:10.4251/wjgo.v16.i3.773:
+    inlet   transverse (iliopectineal lines) 119.8 mm,
+            AP (top of symphysis to promontory) 110.6 mm;
+    outlet  intertuberous 99.6 mm (median),
+            AP (bottom of symphysis to coccyx tip) 86.5 mm (median).
+  The iliac crest's height above the perineum is ANSUR II's (the 2012
+  US Army survey, 4082 men, public data): iliocristale height less
+  crotch height, 215.7 +- 21.9 mm, 12.3 % of stature.
+  The brim is one level here, though the inlet slopes up from the pubis
+  to the promontory: it is put halfway up that slope, the inlet's AP
+  diameter times sin 60 deg (the textbook pelvic inclination) over two,
+  above the pubis. Still estimates, not from a source: the heights of
+  the pubis and pelvic floor above the perineum, the floor's depth, how
+  far back the inlet and outlet lie, and the mid-pelvis, which is left
+  out (its interspinous 90.8 mm is the narrowest width, between inlet
+  and outlet).
 
   SURFACES
 
@@ -130,8 +154,11 @@ const
   {$ENDIF}
   // pelvis, 1.75 m man: half-axes (m) of the inlet and outlet, and how far
   // back of the abdomen's section centre each lies
-  InletA = 0.066;  InletB = 0.058;  InletBack = 0.012;
-  OutletA = 0.052; OutletB = 0.046; OutletBack = 0.022;
+  // (Zhou et al. 2024's male means, see THE PELVIS; the Backs are estimates)
+  InletA = 0.0599; InletB = 0.0553; InletBack = 0.012;
+  OutletA = 0.0498; OutletB = 0.0432; OutletBack = 0.022;
+  PelvicInclination = 60;      // deg, the inlet plane to the transverse plane
+  CrestFraction = 0.1228;      // iliac crest above the perineum / stature (ANSUR II)
   SpineHalfWidth = 0.050;
   Apposition = 0.015;          // m, diaphragm insertion above the costal margin
 
@@ -153,8 +180,8 @@ begin
   FScale := Height / RefHeight_;
   ZFloor := 0.045 * FScale;
   ZPubis := 0.100 * FScale;
-  ZBrim := 0.140 * FScale;
-  ZCrest := 0.250 * FScale;
+  ZBrim := ZPubis + InletB * Sin(DegToRad(PelvicInclination)) * FScale;
+  ZCrest := CrestFraction * Height;
   FloorDepth := 0.015 * FScale;
   DomeRise := 0.065 * FScale;
   DomePower := 2.5;
@@ -398,7 +425,7 @@ var
   Map : TIntegerArray;
 begin
   ForceDirectories(MeshDir);
-  Tag := Format('abdomen_h%.0f_w%.0f_s%.0f', [100 * FBody.Height, FBody.Weight, 1000 * MeshSize]);
+  Tag := Format('abdomen_p2_h%.0f_w%.0f_s%.0f', [100 * FBody.Height, FBody.Weight, 1000 * MeshSize]);
   Stl := MeshDir + Tag + '.stl';
   Geo := MeshDir + Tag + '.geo';
   Msh := MeshDir + Tag + '.msh';
