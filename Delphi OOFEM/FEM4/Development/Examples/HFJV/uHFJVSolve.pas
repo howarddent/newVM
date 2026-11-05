@@ -35,6 +35,16 @@ unit uHFJVSolve;
   add their own response to s's harmonics. H_n costs a second
   right-hand side on each frequency's factorisation, kept in the cache.
 
+  THE JET PUMP'S FALLOFF (uThorax) is on the same row: an extra
+  resistance R_j to Q_ua while the jet is on, s = -K |q| q - on(t) R_j q.
+  It is linear in q but time-varying, so it couples the harmonics just
+  as the turbulent loss does and goes into the same balance, the
+  Jacobian gaining L diag(on R_j). At a sample on the jet's edge on(t)
+  is 1/2, the square wave's Fourier value there. The tracheal pressure
+  is p_t - on R_j Q_ua (uThorax.TrachealP), the correction added as its
+  harmonics from the balance's samples, so that its ringing at the
+  jet's edges cancels the tracheal node's own.
+
   BY STEPPING. The trapezoidal stepper from rest, cycle after cycle,
   until one cycle repeats the last. Independent of the harmonics, so the
   two check each other. The turbulent loss is trapezoidal too: its old
@@ -42,7 +52,13 @@ unit uHFJVSolve;
   linear step plus g times half the new value, where g is the step
   matrix's answer to a unit forcing on the upper airway's row. Q_ua then
   satisfies q + c |q| q = q_0 (c = K g_ua / 2), a quadratic solved in
-  closed form, so the stepping is exact for the nonlinear system.
+  closed form, so the stepping is exact for the nonlinear system. The
+  jet pump's falloff, with the jet's on/off taken mid-step as the jet's
+  own forcing is, adds b q (b = on R_j g_ua / 2): (1 + b) q + c |q| q = q_0.
+  A resistance switched with the jet is a discontinuous coefficient, not
+  just a forcing, so with it the stepping is first order in the step
+  (the mean tracheal pressure 2.5 % off at 200 steps a cycle, 0.3 % at
+  1600), where the harmonic balance is not.
 
   THE FIGURES OF MERIT. The tidal volume VT is the swing in lung volume.
   At these frequencies it is near or below the dead space, so gas
@@ -254,29 +270,48 @@ begin
   ci := -(1 - Cos(th_)) / (2 * Pi * n);
 end;
 
+{ The jet's on-fraction at time t: 1 while on, 0 while off, 1/2 within
+  a hair of an edge (where a sampled square wave's Fourier sum lands). }
+function OnFrac(Th : TThorax; t : Double) : Double;
+var
+  ph : Double;
+const
+  Eps = 1e-9;
+begin
+  ph := Frac(t * Th.P.Freq);
+  if ph < 0 then ph := ph + 1;
+  if (ph < Eps) or (ph > 1 - Eps) or (Abs(ph - Th.P.Ti) < Eps) then Exit(0.5);
+  if ph < Th.P.Ti then Result := 1 else Result := 0;
+end;
+
 { Harmonic balance on Q_ua: see the header. }
 function BalanceUA(Th : TThorax; NHarm : Integer; const Resp : TRespArray;
-  out S0 : Double; out Sr, Si : TDoubleArray) : Integer;
+  out S0 : Double; out Sr, Si, PCr, PCi : TDoubleArray) : Integer;
 const
   MaxIter = 60;
 var
   M, n, k, j, it : Integer;
   w, Kt, Per, cr, ci, t, mx, step : Double;
-  q, qj, l, sv : TDoubleArray;
+  q, qj, l, sv, onR : TDoubleArray;
   Jac, Rhs : TVMobj;
   Done : Boolean;
 begin
   SetLength(Sr, NHarm + 1);
   SetLength(Si, NHarm + 1);
+  SetLength(PCr, NHarm + 1);
+  SetLength(PCi, NHarm + 1);
   S0 := 0;
   Result := 0;
   Kt := Th.KuaSI;
-  if Kt <= 0 then
+  if not Th.UANonlinear then
     Exit;
   M := 8 * NHarm;
   w := 2 * Pi * Th.P.Freq;
   Per := 1 / Th.P.Freq;
   SetLength(q, M); SetLength(qj, M); SetLength(l, M); SetLength(sv, M);
+  SetLength(onR, M);
+  for k := 0 to M - 1 do
+    onR[k] := OnFrac(Th, Per * k / M) * Th.RJet;
   // the jet's Q_ua, and L's first column
   for k := 0 to M - 1 do
   begin
@@ -299,7 +334,7 @@ begin
   begin
     Result := it;
     for k := 0 to M - 1 do
-      sv[k] := -Kt * Abs(q[k]) * q[k];
+      sv[k] := -Kt * Abs(q[k]) * q[k] - onR[k] * q[k];
     Jac := TVMobj.Create(M, M);
     Rhs := TVMobj.Create(M, 1);
     mx := 0;
@@ -309,7 +344,7 @@ begin
       for j := 0 to M - 1 do
       begin
         Rhs.DataPtr[k] := Rhs.DataPtr[k] + l[(k - j + M) mod M] * sv[j];
-        Jac.DataPtr[k * M + j] := 2 * Kt * l[(k - j + M) mod M] * Abs(q[j]);
+        Jac.DataPtr[k * M + j] := l[(k - j + M) mod M] * (2 * Kt * Abs(q[j]) + onR[j]);
       end;
       Jac.DataPtr[k * M + k] := Jac.DataPtr[k * M + k] + 1;
       mx := Max(mx, Abs(q[k]));
@@ -332,7 +367,7 @@ begin
     raise Exception.Create('BalanceUA : the upper airway''s harmonic balance did not converge');
   // s's harmonics
   for k := 0 to M - 1 do
-    sv[k] := -Kt * Abs(q[k]) * q[k];
+    sv[k] := -Kt * Abs(q[k]) * q[k] - onR[k] * q[k];
   for n := 0 to NHarm do
   begin
     Sr[n] := 0; Si[n] := 0;
@@ -346,19 +381,35 @@ begin
     Si[n] := Si[n] / M;
   end;
   S0 := Sr[0];
+  // and the tracheal pressure's correction -on R_j q, on the same samples
+  // so its Gibbs ringing cancels the tracheal node's own at the edges
+  for n := 0 to NHarm do
+  begin
+    PCr[n] := 0; PCi[n] := 0;
+    for k := 0 to M - 1 do
+    begin
+      t := Per * k / M;
+      PCr[n] := PCr[n] - onR[k] * q[k] * Cos(n * w * t);
+      PCi[n] := PCi[n] + onR[k] * q[k] * Sin(n * w * t);
+    end;
+    PCr[n] := PCr[n] / M;
+    PCi[n] := PCi[n] / M;
+  end;
 end;
 
 function UpperAirwaySource(Sys : TDescriptorSystem; Th : TThorax; NHarm : Integer;
   Cache : TResponseCache; out S0 : Double; out Sr, Si : TDoubleArray) : Integer;
+var
+  PCr, PCi : TDoubleArray;
 begin
-  if Th.KuaSI <= 0 then
+  if not Th.UANonlinear then
   begin
     SetLength(Sr, NHarm + 1);
     SetLength(Si, NHarm + 1);
     S0 := 0;
     Exit(0);
   end;
-  Result := BalanceUA(Th, NHarm, AllResponses(Sys, Th, NHarm, Cache), S0, Sr, Si);
+  Result := BalanceUA(Th, NHarm, AllResponses(Sys, Th, NHarm, Cache), S0, Sr, Si, PCr, PCi);
 end;
 
 function CycleByHarmonics(Sys : TDescriptorSystem; Th : TThorax;
@@ -368,7 +419,7 @@ var
   w, cr, ci, Per, cs, sn, S0 : Double;
   Acc : TCycle;
   Resp : TRespArray;
-  Sr, Si : TDoubleArray;
+  Sr, Si, PCr, PCi : TDoubleArray;
 
   // adds Re((ar + i ai) X exp(i wn t)) at every sample, X being the
   // response whose outputs start at R[o]; every output is linear in X,
@@ -410,13 +461,24 @@ begin
     AddHarm(Resp[n], 0, 2 * cr, 2 * ci, w);
   end;
   // the upper airway's turbulent loss
-  Acc.UAIter := BalanceUA(Th, NHarm, Resp, S0, Sr, Si);
+  Acc.UAIter := BalanceUA(Th, NHarm, Resp, S0, Sr, Si, PCr, PCi);
   if Acc.UAIter > 0 then
   begin
     AddHarm(Resp[0], 14, S0, 0, 0);
     for n := 1 to NHarm do
       AddHarm(Resp[n], 14, 2 * Sr[n], 2 * Si[n], 2 * Pi * Th.P.Freq * n);
   end;
+  // the tracheal node's unknown carries the jet pump's falloff
+  if Acc.UAIter > 0 then
+    for k := 0 to NS - 1 do
+    begin
+      Acc.Pt[k] := Acc.Pt[k] + PCr[0];
+      for n := 1 to NHarm do
+      begin
+        w := 2 * Pi * Th.P.Freq * n;
+        Acc.Pt[k] := Acc.Pt[k] + 2 * (PCr[n] * Cos(w * Acc.T[k]) - PCi[n] * Sin(w * Acc.T[k]));
+      end;
+    end;
   Acc.Cycles := 0; Acc.Change := 0;
   Result := Acc;
 end;
@@ -426,7 +488,8 @@ function CycleByStepping(Sys : TDescriptorSystem; Th : TThorax;
 var
   St : TTrapezoidStepper;
   X, B0, B1, G : TVMobj;
-  dt, t, vt, mx, mn, ch, Kt, c, q0, q, sNew, sOld, sSum, onSum : Double;
+  dt, t, vt, mx, mn, ch, Kt, c, b, gua, q0, q, sNew, sOld, sSum, onSum, onMid : Double;
+  NL : Boolean;
   cyc, k, i : Integer;
   Prev, XSum : TDoubleArray;
   Dr, Di : TVMobjArray;
@@ -442,8 +505,10 @@ begin
     // how the new state answers to the turbulent loss at the new time
     // (half of it, the trapezoidal weight): q + c |q| q = q_0
     G := St.Solve(Th.UAPattern(Sys));
-    c := 0.5 * Kt * G.DataPtr[Th.iQua];
-    if (Kt > 0) and (c <= 0) then
+    gua := G.DataPtr[Th.iQua];
+    c := 0.5 * Kt * gua;
+    NL := Th.UANonlinear;
+    if NL and (gua <= 0) then
       raise Exception.Create('CycleByStepping : the upper airway''s step response has the wrong sign');
     // near-DC responses to the jet's pattern and to a unit loss, at the
     // harmonic method's mean frequency
@@ -459,20 +524,26 @@ begin
       begin
         Result.T[k] := k * dt;
         Sample(Result, k, Th, X);
+        Result.Pt[k] := Th.TrachealP(Result.Pt[k], Result.Qua[k], OnFrac(Th, k * dt));
         for i := 0 to Sys.N - 1 do XSum[i] := XSum[i] + X.DataPtr[i];
         // the forcing is sampled mid-step, so an edge falls between steps
         B1 := Th.Forcing(Sys, t + 0.5 * dt);
-        if Th.JetOn(t + 0.5 * dt) then onSum := onSum + 1;
-        if Kt > 0 then
+        if Th.JetOn(t + 0.5 * dt) then onMid := 1 else onMid := 0;
+        onSum := onSum + onMid;
+        if NL then
         begin
           // the old loss on the right-hand side (B0's half of it)
           B0 := Th.Forcing(Sys, t + 0.5 * dt);
-          sOld := Th.UASource(X.DataPtr[Th.iQua]);
+          sOld := Th.UASource(X.DataPtr[Th.iQua], onMid);
           B0.DataPtr[Th.iQua] := sOld;
           X := St.Step(X, B0, B1);
           q0 := X.DataPtr[Th.iQua];
-          q := Sign(q0) * (Sqrt(1 + 4 * c * Abs(q0)) - 1) / (2 * c);
-          sNew := Th.UASource(q);
+          b := 1 + 0.5 * onMid * Th.RJet * gua;
+          if c > 0 then
+            q := Sign(q0) * (Sqrt(Sqr(b) + 4 * c * Abs(q0)) - b) / (2 * c)
+          else
+            q := q0 / b;
+          sNew := Th.UASource(q, onMid);
           for i := 0 to Sys.N - 1 do
             X.DataPtr[i] := X.DataPtr[i] + 0.5 * sNew * G.DataPtr[i];
           sSum := sSum + 0.5 * (sOld + sNew);

@@ -20,7 +20,10 @@ program hfjvrun;
 
   Options: --dp=<bar> (2), --rate=<per min> (200), --ie=<I:E as E/I> (1),
            --cannula=<0..5> (2, Biro: Lindholm, Cook, Biro, 14G, 16G, 18G),
-           --calculated (Crane flow instead of the bench), --lumped,
+           --calculated (Crane flow instead of the bench), --nopump (the
+           jet's pressure rise held at the stall pressure, the earlier
+           model, rather than falling to 0 at the bench's open-air
+           entrainment), --lumped,
            --vfile=<file> (only write the cycle every 20 /min, 40-900, as
            CSV for plot_ventilation.py; 20 harmonics unless --harm),
            --zfile=<file> (only write the impedance, 0.25-20 Hz, as CSV
@@ -649,6 +652,7 @@ begin
   P0.Ti := 1 / (1 + Opt('ie', 1));
   P0.Cannula := TJetCath(Round(Opt('cannula', Ord(P0.Cannula))));
   if Flag('calculated') then P0.JetSource := jsCalculated;
+  if Flag('nopump') then P0.JetPump := False;
 
   UseBox := Flag('box');
   NHarm := Round(Opt('harm', 30));
@@ -665,6 +669,11 @@ begin
   WriteLn(Format('Jet: %s cannula at %.2f bar: %.1f l/min while open (Crane %.1f), momentum %.1f cmH2O (formula %.1f)',
     [Th.Cath.Name, P0.DrivingP, 60000 * Th.QOn, 60000 * Th.QOnCalc, Th.DpOn / cmH2O, Th.DpOnCalc / cmH2O]));
   WriteLn('     ', Th.JetNote);
+  if Th.RJet > 0 then
+    WriteLn(Format('     jet pump: %.1f cmH2O at no entrainment, 0 at %.1f l/min (bench, open air): falloff %.1f cmH2O/(L/s)',
+      [Th.DpOn / cmH2O, 60000 * Th.QFree, Th.RJet / RUnit]))
+  else
+    WriteLn('     jet pump: constant pressure rise (stall)');
   if P0.Kua > 0 then
     WriteLn(Format('Upper airway (above and below the glottis): %.2f cmH2O/(L/s) + %.2f cmH2O/(L/s)^2 |Q| (turbulent), I %.3f',
       [P0.Rua, P0.Kua, P0.Iua]))

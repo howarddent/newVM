@@ -21,6 +21,7 @@ unit uThorax;
    upper airway     I_ua Q_ua' = p_t - R_ua Q_ua - K_ua |Q_ua| Q_ua   (Q_ua out of the mouth)
    tracheal node    0 = Q_j - Q_ua - Q_aw                     (algebraic)
    lower airways    I_aw Q_aw' = p_t + dp_j - p_A - R_aw Q_aw
+                    (dp_j = dp_on - R_j Q_s while the jet is on: below)
    alveolar gas     C_g p_A' = Q_aw - Q_L ,  Q_L = Q_rc + Q_di
    lung tissue      0 = p_A - p_pl - E_L V_L - R_L Q_L       (algebraic)
    rib cage         V_rc' = Q_rc ; I_rc Q_rc' = p_pl - E_rc V_rc - R_rc Q_rc
@@ -85,6 +86,32 @@ unit uThorax;
   jsCalculated uses Crane's flow and the momentum formula
   rho Q^2/(A_jet A_trachea) instead, which JetFlow found 4-33 % off the
   bench depending on the cannula.
+
+  THE JET PUMP'S CHARACTERISTIC (JetPump, default on). A jet pump's
+  pressure rise falls as it entrains more: from the stall pressure at no
+  entrained flow to nothing at its free entrainment. Taken as the line
+  through those two points,
+
+      dp_j = dp_on - R_j Q_s ,   R_j = dp_on / Q_free ,
+
+  with Q_s = -Q_ua the gas entrained through the upper airway and Q_free
+  the bench's open-air entrainment (total less jet flow) at the same
+  driving pressure. Using the open-air figure as the zero-pressure end is
+  an assumption: the bench gives no entrainment into a tube against no
+  back pressure. Q_s < 0 (gas pushed out of the mouth while the jet is
+  on) extends the line, a pressure rise above stall. Without bench
+  entrainment (outside 0.5 - 3.5 bar) R_j is 0, the constant stall
+  pressure of the earlier model, as is JetPump off.
+
+  The R_j term is time-varying (only while the jet is on), so it is not
+  put into A either. It sits in the lower airway's branch, but a
+  pressure source can be moved through the tracheal node, whose only
+  other branches are the upper airway and the jet's ideal flow source:
+  in the upper airway's row it is -R_j Q_s = R_j Q_ua, an extra
+  resistance R_j to the upper airway's flow while the jet is on, and the
+  tracheal node's unknown then reads p_t + R_j Q_ua. So the solvers
+  treat it as part of the upper airway's forcing (UASource), and take
+  R_j Q_ua back off the tracheal pressure when they sample it.
 
   THE TISSUES: CONSTANT PHASE
 
@@ -173,6 +200,7 @@ type
     DrivingP : Double;      // bar gauge
     Freq : Double;          // Hz
     Ti : Double;            // inspiratory fraction of the cycle
+    JetPump : Boolean;      // dp_j falls with entrained flow (see the header)
   end;
 
   TThorax = class
@@ -192,6 +220,8 @@ type
     BenchEntrained : Double; // bench total (jet + entrained) flow, m3/s, NaN if outside
     JetSonic : Boolean;
     JetNote : String;       // which source was used, and why
+    QFree : Double;         // bench open-air entrainment, m3/s (NaN outside the bench)
+    RJet : Double;          // the jet pump's falloff dp_on / Q_free, Pa s/m3 (0: constant dp_on)
 
     constructor Create;
     destructor Destroy; override;
@@ -215,9 +245,15 @@ type
       glottis, Pa s2/m6, and its whole inertance, Pa s2/m3. }
     function KuaSI : Double;
     function IuaSI : Double;
-    { The turbulent loss as a forcing on the upper airway's row, Pa, at
-      flow Q (m3/s): -K_ua |Q| Q. }
-    function UASource(Q : Double) : Double;
+    { The turbulent loss and the jet pump's falloff as a forcing on the
+      upper airway's row, Pa, at flow Q (m3/s) with the jet on for the
+      fraction On (0, 1, or 1/2 at an edge): -K_ua |Q| Q - On R_j Q. }
+    function UASource(Q, On : Double) : Double;
+    { Whether the upper airway's forcing is non-zero: K_ua > 0 or R_j > 0. }
+    function UANonlinear : Boolean;
+    { The tracheal pressure from the tracheal node's unknown pt (see the
+      header): pt - On R_j Q_ua. }
+    function TrachealP(pt, Qua, On : Double) : Double;
     { A unit forcing on the upper airway's row. }
     function UAPattern(Sys : TDescriptorSystem) : TVMobj;
     { Lung and diaphragm volume (m3) from a state vector. }
@@ -264,6 +300,7 @@ begin
     DrivingP := 2.0;
     Freq := 200 / 60;
     Ti := 0.5;
+    JetPump := True;
   end;
 end;
 
@@ -343,6 +380,12 @@ begin
     else
       JetNote := 'calculated (Crane flow, momentum formula)';
   end;
+  // the pump's characteristic, through stall and the open-air entrainment
+  QFree := BenchEntrained - QOnBench;
+  if P.JetPump and not IsNan(QFree) and (QFree > 0) and (DpOn > 0) then
+    RJet := DpOn / QFree
+  else
+    RJet := 0;
 end;
 
 procedure TThorax.AddToSystem(Sys : TDescriptorSystem; Fluid : TAbdomenFluid; DiaSurf : Integer);
@@ -522,9 +565,19 @@ begin
   Result := P.Iua * IUnit + GlottisISI;
 end;
 
-function TThorax.UASource(Q : Double) : Double;
+function TThorax.UASource(Q, On : Double) : Double;
 begin
-  Result := -KuaSI * Abs(Q) * Q;
+  Result := -KuaSI * Abs(Q) * Q - On * RJet * Q;
+end;
+
+function TThorax.UANonlinear : Boolean;
+begin
+  Result := (KuaSI > 0) or (RJet > 0);
+end;
+
+function TThorax.TrachealP(pt, Qua, On : Double) : Double;
+begin
+  Result := pt - On * RJet * Qua;
 end;
 
 function TThorax.UAPattern(Sys : TDescriptorSystem) : TVMobj;

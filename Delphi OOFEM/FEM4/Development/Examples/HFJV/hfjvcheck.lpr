@@ -37,7 +37,7 @@ program hfjvcheck;
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, Math, cblas, oneapi, newVM, newVMsparse, uDescriptor, uAbdomenFluid,
+  SysUtils, StrUtils, Math, cblas, oneapi, newVM, newVMsparse, uDescriptor, uAbdomenFluid,
   uAbdomenBox, uThorax, uHFJVSolve, uJetCalcVM, uViscoelastic;
 
 function Projection(F : TAbdomenFluid; const Xv : TVMobj; k : Double) : Double;
@@ -304,7 +304,7 @@ begin
   Check(What + ' largest V_L difference / VT', 1 + d / vt, 1, 0.01);
 end;
 
-procedure LumpedCycleCase(Turbulent : Boolean);
+procedure LumpedCycleCase(Turbulent, Pump : Boolean);
 var
   Sys : TDescriptorSystem;
   Th : TThorax;
@@ -313,9 +313,19 @@ begin
   Sys := TDescriptorSystem.Create;
   Th := TThorax.Create;
   try
+    Th.P.JetPump := Pump;
     if Turbulent then
       WriteLn(Format('Steady cycle, lumped thorax, turbulent upper airway (%.1f + %.1f |Q|) and '
-        + 'a %.1f cm2 glottis, harmonic balance against stepping:', [Th.P.Rua, Th.P.Kua, Th.P.GlottisArea]))
+        + 'a %.1f cm2 glottis%s, harmonic balance against stepping:', [Th.P.Rua, Th.P.Kua, Th.P.GlottisArea,
+        StrUtils.IfThen(Pump, ' and the jet pump''s falloff', '')]))
+    else if Pump then
+    begin
+      // linear upper airway: the jet pump's falloff alone (time-varying, linear)
+      Th.P.Kua := 0;
+      Th.P.Rua := 2.0;
+      Th.P.GlottisArea := 0;
+      WriteLn('Steady cycle, lumped thorax, linear upper airway with the jet pump''s falloff, harmonic balance against stepping:');
+    end
     else
     begin
       // the earlier linear upper airway
@@ -326,8 +336,13 @@ begin
     end;
     Th.AddToSystem(Sys, nil, 0);
     H := CycleByHarmonics(Sys, Th, 200, 400);
-    S := CycleByStepping(Sys, Th, 400, 200, 1e-6);
-    if Turbulent then
+    // the jet pump switches a resistance on and off, a discontinuous
+    // coefficient, which makes trapezoidal stepping first order: finer steps
+    if Pump then
+      S := CycleByStepping(Sys, Th, 1600, 200, 1e-6)
+    else
+      S := CycleByStepping(Sys, Th, 400, 200, 1e-6);
+    if Turbulent or Pump then
       WriteLn(Format('  harmonic balance: %d Newton iterations', [H.UAIter]));
     WriteLn(Format('  stepping settled in %d cycles (last change %.1e of VT)', [S.Cycles, S.Change]));
     CompareCycles('', H, S);
@@ -484,8 +499,9 @@ begin
   TankCase('Same tank, membrane m = 25 kg/m2, T = 100 N/m:', 25, 100, 30, 20);
   TissueCase;
   LumpedThoraxCase;
-  LumpedCycleCase(False);
-  LumpedCycleCase(True);
+  LumpedCycleCase(False, False);
+  LumpedCycleCase(False, True);
+  LumpedCycleCase(True, True);
   TankDiaphragmCase;
   VEGasCase;
   AdultBoxCycleCase;

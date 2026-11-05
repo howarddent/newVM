@@ -1817,6 +1817,38 @@ solid, frequency and time domain both, and a FEM4 example. Units:
   volume, and 6.41 Hz sweeps 3 mL/mm. Ritz values far from the shift
   don't converge, so read only those flagged converged. FPC trap hit
   again: a parameter `Fn` hides the field `FN`.
+- **Jet pump characteristic** (2026-11-05, the default; `--nopump`
+  for the old constant stall pressure). The jet's pressure rise falls
+  linearly with entrained flow, from the stall pressure (scaled to the
+  trachea) at none to 0 at the bench's open-air entrainment (total less
+  jet flow): `dp_j = dp_on - R_j Q_s`, `R_j = dp_on / Q_free`
+  (`TThorax.RJet`, `QFree`). Biro at 2 bar: 10.5 cmH2O, 0 at 35 L/min,
+  R_j 17.9 cmH2O/(L/s). The open-air end point is an assumption: there is
+  no bench entrainment into a tube against no back pressure.
+  - **How it's solved**: R_j acts only while the jet is on, so it is
+    time-varying. Moved through the tracheal node (whose other branches
+    are the upper airway and the jet's ideal flow source), it becomes an
+    extra resistance R_j on Q_ua while the jet is on: part of the upper
+    airway's forcing (`UASource(Q, On)`), in the same harmonic balance as
+    the turbulent loss (the Jacobian gains `L diag(on R_j)`, on = 1/2 on
+    an edge sample). The tracheal node's unknown then reads
+    `p_t + on R_j Q_ua`, so the true p_t is taken back off: in harmonics
+    as the correction's own Fourier series from the balance's samples (so
+    its edge ringing cancels the node's; sampling it at the output points
+    instead put the mean 1.2 % off), in stepping by `TrachealP`.
+  - **Stepping is first order with the pump**: a resistance switched
+    with the jet is a discontinuous coefficient, not just a forcing.
+    Mean tracheal pressure 0.769 / 0.759 / 0.7545 / 0.7523 cmH2O at
+    200 / 400 / 800 / 1600 steps a cycle against the exact 0.75 (harmonic
+    balance gets it exactly). `hfjvcheck`'s pump cases step at 1600; a
+    new lumped case has the pump on a linear upper airway. All pass.
+  - **Results, torso at 200 /min** (against the same model without it,
+    `v_torso_p2.csv`): VT 138.6 mL (177.0), entrained 27.7 mL per cycle
+    (67.6), entrainment ratio 0.25 (0.60), 5.5 L/min (13.5), mean
+    alveolar pressure 4.99 cmH2O (7.00), mean tracheal 1.36 (1.77). VE
+    28 L/min (35.5). VT reaches the 120 mL dead space at about 235 /min
+    (320). Impedance unchanged (the pump acts only while the jet is on).
+    `mesh/v_torso_pump.csv`, `mesh/*_pump.png`.
 - `HFJVView` (`HFJVView.lpi`, `uWallAnim`/`uWallView`/`uHFJVViewForm`;
   `lazbuild --ws=gtk2`): `anim_wall.py`'s animation as a Lazarus program.
   It reads an `--anim` file (default `mesh/wall_anim_200.txt`) and draws
