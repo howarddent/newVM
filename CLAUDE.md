@@ -1798,6 +1798,25 @@ solid, frequency and time domain both, and a FEM4 example. Units:
       `_gas0` and `_gas1000`, plus `z_torso_ve.csv` and `_nove`. The
       plots are `mesh/*_ve.png` and the animation `wall200_ve.gif`,
       whose largest wall motion is 2.4 mm.
+- **Modes, exactly** (2026-11-04): `hfjvrun --eigdump=<prefix>
+  --eig=<Hz> [--krylov=<m>]` writes E and A as triplets
+  (`TDescriptorSystem.WriteTriplets`), the dofs and wall/diaphragm
+  volume weights, and an 80-vector shift-invert Arnoldi basis on
+  `OP = (i w0 E - A)^-1 E`. It is factorised once by PARDISO
+  (`TDescriptorSystem.FactorFrequency`, now shared with
+  `SolveFrequencyN`) and takes 26 s on the torso. scipy's `splu` on the
+  same 86k system hadn't finished after 10 min. `eig_modes.py <prefix>
+  <Hz>` turns it into eigenvalues `lambda = i w0 - 1/nu`, checks each by
+  its residual `|Ax - lambda Ex|/|Ax|`, and labels it by the volume it
+  sweeps per mm of peak wall motion. Torso at 3.5 Hz, residuals about
+  1e-15: **the abdominal mode is f_n 3.528 Hz, zeta 0.1805 (Q 2.8)**,
+  24 mL/mm at wall and diaphragm alike (incompressible). A fit to the
+  Rrs bump gave 0.14-0.20. The next volume-coupled mode is 5.28 Hz,
+  zeta 0.096, 11 mL/mm and 71 % on the wall: the Rrs ripple near
+  5.25 Hz. Modes at 4.21, 5.00 and 5.82 Hz sweep little or no net
+  volume, and 6.41 Hz sweeps 3 mL/mm. Ritz values far from the shift
+  don't converge, so read only those flagged converged. FPC trap hit
+  again: a parameter `Fn` hides the field `FN`.
 - `HFJVView` (`HFJVView.lpi`, `uWallAnim`/`uWallView`/`uHFJVViewForm`;
   `lazbuild --ws=gtk2`): `anim_wall.py`'s animation as a Lazarus program.
   It reads an `--anim` file (default `mesh/wall_anim_200.txt`) and draws

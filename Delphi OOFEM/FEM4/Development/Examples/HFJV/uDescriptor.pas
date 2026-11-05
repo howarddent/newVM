@@ -70,6 +70,12 @@ type
     function IsAlgebraic(i : Integer) : Boolean;
     { Builds the sparse E and A from the triplets; called automatically. }
     procedure Build;
+    { E's and A's triplets (duplicates unsummed) as text, for analysis
+      outside: 'N n', then 'E i j v' and 'A i j v' lines, 0-based. }
+    { (i Omega E - A) as the real 2N block system [[-A, -Omega E],
+      [Omega E, -A]] on (Xr; Xi), factorised; the caller frees it. }
+    function FactorFrequency(Omega : Double) : TPardisoFactor;
+    procedure WriteTriplets(const FileName : String);
     { (i w E - A) X = B. Br, Bi and the results are (N,1). }
     procedure SolveFrequency(Omega : Double; const Br, Bi : TVMobj;
       out Xr, Xi : TVMobj);
@@ -193,6 +199,21 @@ begin
   FBuilt := True;
 end;
 
+procedure TDescriptorSystem.WriteTriplets(const FileName : String);
+var
+  Fo : TextFile;
+  k : Integer;
+begin
+  AssignFile(Fo, FileName);
+  ReWrite(Fo);
+  WriteLn(Fo, 'N ', FN);
+  for k := 0 to FE.Count - 1 do
+    WriteLn(Fo, Format('E %d %d %.17e', [FE.R[k], FE.C[k], FE.V[k]]));
+  for k := 0 to FA.Count - 1 do
+    WriteLn(Fo, Format('A %d %d %.17e', [FA.R[k], FA.C[k], FA.V[k]]));
+  CloseFile(Fo);
+end;
+
 function TDescriptorSystem.MulE(const X : TVMobj) : TVMobj;
 begin
   Build;
@@ -215,17 +236,13 @@ begin
   Xi := I[0];
 end;
 
-procedure TDescriptorSystem.SolveFrequencyN(Omega : Double; const Br, Bi : array of TVMobj;
-  out Xr, Xi : TVMobjArray);
+function TDescriptorSystem.FactorFrequency(Omega : Double) : TPardisoFactor;
 var
-  j : Integer;
   T : TTriplets;
   k, i, nn : Integer;
   R, C : TIntegerArray;
   V : TDoubleArray;
   M : TVMSparseMtx;
-  B, X : TVMobj;
-  LU : TPardisoFactor;
 begin
   Build;
   nn := FN;
@@ -244,9 +261,21 @@ begin
     T.Add(i, i, 0);
   Trimmed(T, R, C, V);
   M := TripletsToSparse(2 * nn, 2 * nn, R, C, V);
+  Result := TPardisoFactor.Create(M, 11);
+end;
+
+procedure TDescriptorSystem.SolveFrequencyN(Omega : Double; const Br, Bi : array of TVMobj;
+  out Xr, Xi : TVMobjArray);
+var
+  j, nn : Integer;
+  B, X : TVMobj;
+  LU : TPardisoFactor;
+begin
+  Build;
+  nn := FN;
   SetLength(Xr, Length(Br));
   SetLength(Xi, Length(Br));
-  LU := TPardisoFactor.Create(M, 11);
+  LU := FactorFrequency(Omega);
   try
     for j := 0 to High(Br) do
     begin

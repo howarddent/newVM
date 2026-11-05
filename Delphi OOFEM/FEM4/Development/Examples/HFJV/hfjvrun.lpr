@@ -27,6 +27,11 @@ program hfjvrun;
            for plot_impedance.py),
            --anim=<file> (only write one cycle of the wall's motion for
            anim_wall.py, nothing else),
+           --eigdump=<prefix> (only write E and A as triplets to
+           <prefix>.txt, and the dofs and surface weights eig_modes.py
+           needs to <prefix>_dofs.txt; with --eig=<Hz>, also a
+           shift-invert Krylov basis about i 2 pi <Hz> for eig_modes.py,
+           --krylov=<m> vectors (80), to <prefix>_kry<Hz>.bin),
            --rua=<cmH2O/(L/s)> (1.0) and --kua=<cmH2O/(L/s)^2> (1.0), the
            upper airway's laminar and turbulent loss (--kua=0 --rua=2 is
            the earlier linear model), --glottis=<cm2> (0.8, the
@@ -467,6 +472,134 @@ begin
   WriteLn('Wrote ', Fn);
 end;
 
+procedure EigDump(const Prefix : String);
+// E, A and what labels a mode: the thorax's dofs, and per moving dof its
+// node and its volume weight on the wall and on the diaphragm
+var
+  Fo : TextFile;
+  ww, wd : TDoubleArray;
+  k : Integer;
+begin
+  Sys.WriteTriplets(Prefix + '.txt');
+  ww := F.SurfaceWeights(SurfWall);
+  wd := F.SurfaceWeights(SurfDiaphragm);
+  AssignFile(Fo, Prefix + '_dofs.txt');
+  ReWrite(Fo);
+  WriteLn(Fo, 'iQua ', Th.iQua, ' iPt ', Th.iPt, ' iQaw ', Th.iQaw, ' iPA ', Th.iPA,
+    ' iPpl ', Th.iPpl, ' iVrc ', Th.iVrc, ' iQrc ', Th.iQrc, ' iVdi ', Th.iVdi, ' iQdi ', Th.iQdi);
+  WriteLn(Fo, 'etabase ', F.EtaBase, ' moving ', F.NbMovingDofs);
+  for k := 0 to F.NbMovingDofs - 1 do
+    WriteLn(Fo, Format('%d %d %.10e %.10e %.6f %.6f %.6f', [F.MovNode[k], Ord(F.Clamped[k]),
+      ww[k], wd[k], F.X[F.MovNode[k]], F.Y[F.MovNode[k]], F.Z[F.MovNode[k]]]));
+  CloseFile(Fo);
+  WriteLn('Wrote ', Prefix, '.txt and ', Prefix, '_dofs.txt (', Sys.N, ' unknowns)');
+end;
+
+procedure KrylovFile(const Fn : String; f0 : Double; m : Integer);
+// Arnoldi on OP = (i w0 E - A)^-1 E, complex, with full
+// reorthogonalisation: OP V_m = V_(m+1) H. OP's eigenvalues nu give the
+// system's lambda = i w0 + 1/nu nearest the shift. Writes N, m, H and
+// V (complex doubles, column by column) for eig_modes.py.
+var
+  LU : TPardisoFactor;
+  N, j, i, k, pass : Integer;
+  Vr, Vi : array of TDoubleArray;
+  Hr, Hi : array of array of Double;
+  B, X, Er, Ei, Tr, Ti : TVMobj;
+  wr, wi : TDoubleArray;
+  cr, ci, nrm : Double;
+  Fo : File;
+  w0 : Double;
+  procedure ApplyOp(const xr, xi : TDoubleArray; var yr, yi : TDoubleArray);
+  var q : Integer;
+  begin
+    Tr := TVMobj.Create(N, 1); Ti := TVMobj.Create(N, 1);
+    Move(xr[0], Tr.DataPtr[0], N * SizeOf(Double));
+    Move(xi[0], Ti.DataPtr[0], N * SizeOf(Double));
+    Er := Sys.MulE(Tr); Ei := Sys.MulE(Ti);
+    B := TVMobj.Create(2 * N, 1);
+    Move(Er.DataPtr[0], B.DataPtr[0], N * SizeOf(Double));
+    Move(Ei.DataPtr[0], B.DataPtr[N], N * SizeOf(Double));
+    X := LU.Solve(B);
+    SetLength(yr, N); SetLength(yi, N);
+    for q := 0 to N - 1 do
+    begin
+      yr[q] := X.DataPtr[q]; yi[q] := X.DataPtr[N + q];
+    end;
+  end;
+  function Norm2(const ar, ai : TDoubleArray) : Double;
+  var q : Integer;
+  begin
+    Result := 0;
+    for q := 0 to N - 1 do Result := Result + Sqr(ar[q]) + Sqr(ai[q]);
+    Result := Sqrt(Result);
+  end;
+begin
+  N := Sys.N;
+  w0 := 2 * Pi * f0;
+  WriteLn(Format('Shift-invert Arnoldi about %.3f Hz, %d vectors', [f0, m]));
+  LU := Sys.FactorFrequency(w0);
+  try
+    SetLength(Vr, m + 1); SetLength(Vi, m + 1);
+    SetLength(Hr, m + 1, m); SetLength(Hi, m + 1, m);
+    // start: OP applied to a fixed pseudo-random vector, which removes
+    // the algebraic (infinite-eigenvalue) part
+    RandSeed := 777;
+    SetLength(wr, N); SetLength(wi, N);
+    for k := 0 to N - 1 do begin wr[k] := Random - 0.5; wi[k] := Random - 0.5; end;
+    ApplyOp(wr, wi, Vr[0], Vi[0]);
+    nrm := Norm2(Vr[0], Vi[0]);
+    for k := 0 to N - 1 do begin Vr[0][k] := Vr[0][k] / nrm; Vi[0][k] := Vi[0][k] / nrm; end;
+    for j := 0 to m - 1 do
+    begin
+      ApplyOp(Vr[j], Vi[j], wr, wi);
+      for pass := 1 to 2 do
+        for i := 0 to j do
+        begin
+          // c = V_i^H w
+          cr := 0; ci := 0;
+          for k := 0 to N - 1 do
+          begin
+            cr := cr + Vr[i][k] * wr[k] + Vi[i][k] * wi[k];
+            ci := ci + Vr[i][k] * wi[k] - Vi[i][k] * wr[k];
+          end;
+          for k := 0 to N - 1 do
+          begin
+            wr[k] := wr[k] - (cr * Vr[i][k] - ci * Vi[i][k]);
+            wi[k] := wi[k] - (cr * Vi[i][k] + ci * Vr[i][k]);
+          end;
+          Hr[i][j] := Hr[i][j] + cr; Hi[i][j] := Hi[i][j] + ci;
+        end;
+      nrm := Norm2(wr, wi);
+      Hr[j + 1][j] := nrm; Hi[j + 1][j] := 0;
+      SetLength(Vr[j + 1], N); SetLength(Vi[j + 1], N);
+      for k := 0 to N - 1 do begin Vr[j + 1][k] := wr[k] / nrm; Vi[j + 1][k] := wi[k] / nrm; end;
+      Write(#13'  vector ', j + 1, ' of ', m);
+    end;
+    WriteLn;
+  finally
+    LU.Free;
+  end;
+  AssignFile(Fo, Fn);
+  ReWrite(Fo, 1);
+  BlockWrite(Fo, N, SizeOf(Integer));
+  BlockWrite(Fo, m, SizeOf(Integer));
+  BlockWrite(Fo, f0, SizeOf(Double));
+  for i := 0 to m do
+    for j := 0 to m - 1 do
+    begin
+      BlockWrite(Fo, Hr[i][j], SizeOf(Double));
+      BlockWrite(Fo, Hi[i][j], SizeOf(Double));
+    end;
+  for j := 0 to m - 1 do
+  begin
+    BlockWrite(Fo, Vr[j][0], N * SizeOf(Double));
+    BlockWrite(Fo, Vi[j][0], N * SizeOf(Double));
+  end;
+  CloseFile(Fo);
+  WriteLn('Wrote ', Fn);
+end;
+
 procedure TissueLine(const What : String; K : TTissueKind; Eta : Double);
 var
   R0, E0, R1, E1 : Double;
@@ -581,6 +714,15 @@ begin
   if StrOpt('zfile') <> '' then
   begin
     ImpedanceFile(StrOpt('zfile'));
+    Th.Free; Sys.Free; F.Free; Box.Free; Torso.Free;
+    Exit;
+  end;
+  if (not Lumped) and (StrOpt('eigdump') <> '') then
+  begin
+    EigDump(StrOpt('eigdump'));
+    if Opt('eig', 0) > 0 then
+      KrylovFile(Format('%s_kry%.2f.bin', [StrOpt('eigdump'), Opt('eig', 0)]),
+        Opt('eig', 0), Round(Opt('krylov', 80)));
     Th.Free; Sys.Free; F.Free; Box.Free; Torso.Free;
     Exit;
   end;
