@@ -1816,7 +1816,8 @@ solid, frequency and time domain both, and a FEM4 example. Units:
   5.25 Hz. Modes at 4.21, 5.00 and 5.82 Hz sweep little or no net
   volume, and 6.41 Hz sweeps 3 mL/mm. Ritz values far from the shift
   don't converge, so read only those flagged converged. FPC trap hit
-  again: a parameter `Fn` hides the field `FN`.
+  again: a parameter `Fn` hides the field `FN`. `eig_modes.py` now keeps
+  real roots (overdamped modes: zeta 1, f_d 0, f_n = decay rate / 2 pi).
 - **Jet pump characteristic** (2026-11-05, the default; `--nopump`
   for the old constant stall pressure). The jet's pressure rise falls
   linearly with entrained flow, from the stall pressure (scaled to the
@@ -1849,6 +1850,30 @@ solid, frequency and time domain both, and a FEM4 example. Units:
     28 L/min (35.5). VT reaches the 120 mL dead space at about 235 /min
     (320). Impedance unchanged (the pump acts only while the jet is on).
     `mesh/v_torso_pump.csv`, `mesh/*_pump.png`.
+- **Drag follows abdominal fat** (2026-11-05, the default; `--alpha=<1/s>`
+  overrides, and `--alpha=5` reproduces every figure above). The user's
+  measurements: the abdominal gravity wave is overdamped in slim patients
+  and oscillatory only with excess intra-abdominal fat, obese 180-220 /min
+  with zeta 0.2-0.5. A sweep of the exact modes showed that body size,
+  wall mass, contents density and foundation stiffness as modelled barely
+  move zeta; only the drag does (both 120 kg at 40 % fat and 67 kg at 10 %:
+  alpha 5/20/40 /s gives zeta about 0.17/0.46/0.8, overdamped from about
+  55-60 /s, f_n rising from 3.6 to ~5 Hz near critical). So `DragForFat`
+  in `hfjvrun.lpr` sets alpha = 70 /s at `--abfat` 20 % or less, falling
+  log-linearly to 15 /s at 40 % and held beyond. The anchors (which fat
+  fraction counts as slim or obese) are my choice, not measured. Checks:
+  the default 70 kg man's abdominal mode becomes a real root (decay
+  13.8 /s); 30 % fat (32 /s) gives f_n 3.88 Hz, zeta 0.71; the 1.80 m
+  120 kg torso at 40 % gives f_n 3.69, f_d 3.44 Hz (206 /min), zeta 0.36.
+  Default man at 200 /min, alpha 5 -> 70: VT 177.0 -> 179.5 mL, the
+  diaphragm's share of VT 69 -> 14 %, entrainment 67.6 -> 72.2 mL; the Rrs
+  bump near 3 Hz goes, Rrs now falling smoothly 2.11 -> 1.55 from 1 to
+  10 Hz; the midline wall at the fundamental falls from 1.75 mm peak low
+  in the abdomen to 0.38 mm just below the costal margin (these cycle
+  figures were run before the jet pump, i.e. as with `--nopump`). Why fat would
+  lower the drag (lubricated, less tightly packed bowel) is a reading, not
+  modelled. The sweeps, plots, animations and earlier figures were not
+  rerun.
 - `HFJVView` (`HFJVView.lpi`, `uWallAnim`/`uWallView`/`uHFJVViewForm`;
   `lazbuild --ws=gtk2`): `anim_wall.py`'s animation as a Lazarus program.
   It reads an `--anim` file (default `mesh/wall_anim_200.txt`) and draws

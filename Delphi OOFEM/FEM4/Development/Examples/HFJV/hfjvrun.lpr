@@ -52,7 +52,11 @@ program hfjvrun;
            --abfat=<%> (20), fat as a percentage of the anterior wall
            (20 mm of muscle plus fat) and of the contents (density, and
            a softer foundation: fat taken as 0.3 x the lean stiffness),
-           --alpha=<1/s> (5, abdominal drag), --steps (also time-step the
+           --alpha=<1/s>, the abdominal drag; by default it follows
+           --abfat (DragForFat: 70 /s at 20 % fat or less, overdamping the
+           abdominal mode as measured in slim patients, falling
+           log-linearly to 15 /s at 40 %, zeta ~0.35 as measured in obese
+           ones, and held there above), --steps (also time-step the
            chosen rate as a check), --harm=<n> (30, harmonics per cycle;
            VT within ~1 % of 60).
   Abdomen: the gmsh torso (uTorsoAbdomen, Defibrillation's trunk) by
@@ -123,6 +127,21 @@ const
   WallMuscle = 0.020;            // m of lean tissue in the anterior wall
   FatSoftness = 0.3;             // fat's stiffness / lean tissue's (assumed)
   FatRef = 0.20;                 // the fat fraction EAb is calibrated at
+  // the drag's calibration (measured: overdamped when slim; obese, 180-220
+  // /min with zeta 0.2-0.5). From the abdominal mode's eigenvalues on the
+  // 1.80 m 120 kg torso at 40 % fat: alpha 5/10/20/40 /s gives zeta
+  // 0.17/0.27/0.45/0.79, f_n 3.6-4.2 Hz; and on 1.75 m 67 kg at 10 %:
+  // 0.18/0.48/0.83 at 5/20/40, 0.96 at 50, overdamped at 70. Body size and
+  // fat as otherwise modelled barely move zeta, so the drag carries it.
+  DragLean = 70;  FatLean = 0.20;   // 1/s, at and below this fat fraction
+  DragObese = 15; FatObese = 0.40;  // 1/s, zeta ~0.35; at and above
+
+function DragForFat(f : Double) : Double;
+// log-linear in the fat fraction between the two calibration points
+begin
+  f := EnsureRange(f, FatLean, FatObese);
+  Result := DragLean * Power(DragObese / DragLean, (f - FatLean) / (FatObese - FatLean));
+end;
 
 procedure BuildModel(const P : TThoraxParams);
 var
@@ -633,7 +652,6 @@ begin
   InitializeCBLAS;
   FormatSettings.DecimalSeparator := '.';
   Lumped := Flag('lumped');
-  Alpha := Opt('alpha', 5);
   CWall := Opt('cwall', 0);
   CDia := Opt('cdia', 0);
   EAb := Opt('eab', DefaultThoraxParams.Edi);
@@ -641,6 +659,7 @@ begin
   GasML := Opt('gas', 150);
   AbFat := Opt('abfat', 20) / 100;
   Assert((AbFat >= 0) and (AbFat < 1), '--abfat must be 0 .. 99 %');
+  Alpha := Opt('alpha', DragForFat(AbFat));
   P0 := DefaultThoraxParams;
   P0.DrivingP := Opt('dp', P0.DrivingP);
   P0.Rua := Opt('rua', P0.Rua);

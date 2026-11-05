@@ -58,7 +58,9 @@ def main():
     out = []
     for k in range(m):
         l = lam[k]
-        if l.imag <= 0 or l.imag / 2 / np.pi > fmax:
+        # keep real roots (an overdamped mode: zeta 1, f_d 0, and f_n is
+        # its decay rate over 2 pi); drop only the conjugate twins
+        if l.imag < -1e-9 or abs(l) / 2 / np.pi > fmax:
             continue
         x = V @ Y[:, k]
         Ax, Ex = A @ x, E @ x
