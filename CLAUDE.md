@@ -1104,23 +1104,33 @@ matrix, plus a direct (PARDISO) and an iterative (RCI ISS FGMRES) sparse
 solver over it. Like `newVMI.pas` it's a companion to the four-way family
 rather than a member of it, but for a different reason: `newVMI.pas` is
 excluded because BLAS/LAPACK/VML have no integer datatype, whereas this
-unit is excluded because **sparse solvers are MKL-exclusive** — there is
-no OpenBLAS/ArmPL/Accelerate equivalent for PARDISO or the RCI ISS
-routines, unlike the dense BLAS/LAPACK/VML calls the other units share.
-Two consequences follow from that, and they're the main thing to know
-before touching this file:
+unit needs a **sparse** solver, which the dense BLAS/LAPACK/VML backends
+the other units share do not provide. It has **two** backends, and which
+one a machine gets is decided by `newVMConfig.inc`:
 
-- The whole unit is gated on `{$IFDEF HAVE_MKL}` end to end — its
-  `OneAPI.pas` bindings, its entry in `newVMTests.pas`'s `uses` clause,
-  the `TVMSparseTests` class, its implementation, and its `RegisterTest`
-  call.
-- **There is no `PUREPASCAL` fallback**, and deliberately so — unlike
-  every routine in `newVM.pas`/`newVMSingle.pas`/`newVMComplex.pas`/
-  `newVMComplexSingle.pas` (see the `newVMConfig.inc` section above).
-  Don't add `{$IFDEF PUREPASCAL}` bodies here by analogy with those
-  units: a hand-rolled sparse direct solver is a different order of
-  undertaking from `PurePascalLU`, and the unit simply doesn't exist on
-  a machine without MKL.
+- **MKL** (`HAVE_MKL`) — PARDISO and RCI ISS FGMRES, the original and
+  still the only backend on Linux/Windows.
+- **Accelerate** (`HAVE_ACCELERATE_SPARSE`, Darwin) — added 2026-11-07,
+  because Intel ships neither MKL nor IPP for AArch64 and the whole unit
+  therefore failed to compile on Apple Silicon. See the "Accelerate
+  sparse back end" subsection below.
+
+Three things to know before touching this file:
+
+- Every routine that calls into MKL is gated `{$IFDEF HAVE_MKL}` with the
+  Accelerate body in the `{$ELSE}`, the same side-by-side convention the
+  four `TVMobj*` units use for `PUREPASCAL` — except that the Accelerate
+  bodies live in their own include file, `newVMsparseAccel.inc`, pulled in
+  at the end of the implementation, since together they run to several
+  hundred lines and would otherwise bury the MKL ones.
+- `newVMTests.pas`'s four gates are now
+  `{$IF DEFINED(HAVE_MKL) OR DEFINED(HAVE_ACCELERATE_SPARSE)}`, so
+  `TVMSparseTests` runs on either backend.
+- **There is still no `PUREPASCAL` fallback**, and deliberately so. Don't
+  add `{$IFDEF PUREPASCAL}` bodies here by analogy with the dense units: a
+  hand-rolled sparse *direct* solver is a different order of undertaking
+  from `PurePascalLU`. Both backends are real libraries; on a machine with
+  neither, the unit simply doesn't exist.
 
 Written for the `Delphi OOFEM/FEM4` port (most of that tree's `Examples/`
 `uses` it), but it has no dependency on it — it's a general-purpose
@@ -1296,7 +1306,137 @@ below): `pardisoinit`/`pardiso`, `dfgmres_init`/`dfgmres_check`/
 **Tests**: `TVMSparseTests` in `newVMTests.pas` (8 tests) — duplicate
 merging in `TripletsToSparse`, `SparseDiag`, `SetDiagonal`, `SparseAdd`,
 `PardisoSolve` in both symmetric and general modes, and `FGMRESSolve`
-with and without the ILU0 preconditioner. The solve tests assert the
+with and without the ILU0 preconditioner.
+
+#### Accelerate sparse back end (`AccelerateSparse.pas`, `newVMsparseAccel.inc`)
+
+Added 2026-11-07 so `newVMsparse.pas` builds on Apple Silicon. Apple's
+Sparse Solve API is a genuine PARDISO equivalent for the direct half —
+supernodal, multithreaded, fill-reducing-ordered, and honestly **double
+precision**, which matters because the obvious-looking alternative, Metal,
+is not: Apple GPUs have no fp64 at all (which is why `newVMMetal.pas` is
+built on `newVMSingle`), and a sparse supernodal factorisation is the
+wrong shape for a GPU anyway. The mapping is close to one-for-one:
+
+| PARDISO | Accelerate |
+|---|---|
+| `mtype 2` (real SPD) | `SparseFactorizationCholesky` |
+| `mtype -2` (real symmetric indefinite) | `SparseFactorizationLDLT` |
+| `mtype 11` (real unsymmetric) | `SparseFactorizationLU` |
+| phase 11 / 22 / 33 / -1 | symbolic / numeric factor, solve, destroy |
+
+Five things that cost real debugging time, in the order they bite:
+
+- **The public C API is unusable from Pascal; the private one is fine.**
+  `SparseFactor`/`SparseSolve`/`SparseCleanup` in `<Sparse/Solve.h>` are
+  C11 `_Generic` macros over inline wrappers taking their matrix arguments
+  **by value** — neither a macro nor a by-value aggregate parameter is
+  something an `external` declaration can name. Those wrappers all resolve
+  to exported `_Sparse*` entry points that take pointers instead, and
+  those are what `AccelerateSparse.pas` binds. They are versioned
+  `API_AVAILABLE` symbols, not an implementation detail.
+- **`SparseAttributes_t` is four bytes, not two.** Its sixteen used bits
+  suggest a `Word`, but the `unsigned int _reserved: 11` member gives the
+  whole bitfield unit `int`'s 4-byte alignment. At two bytes every field
+  after `attributes` lands two bytes early in three different structures.
+  `SparseOpaqueSymbolicFactorization` also opens with a `status` field
+  that's easy to miss. Both were found by printing `sizeof`/`offsetof`
+  from C, which is the only reliable way to do this — and the unit now
+  carries `SizeOf` assertions in its `initialization` so a future SDK
+  change stops the build rather than corrupting memory silently.
+- **The private factor entry points do not allocate.** The inline public
+  wrapper `malloc`s `factorStorage` (`symbolicFactor.factorSize_Double`)
+  and `workspace` (`workspaceSize_Double`) before calling
+  `_SparseNumericFactor*`; passing `nil` for either crashes inside the
+  library. The workspace is scratch and freed as soon as factorisation
+  returns, the factor storage must live exactly as long as the
+  factorisation. `SparseSolve` separately needs
+  `solveWorkspaceRequiredStatic + nrhs*solveWorkspaceRequiredPerRHS`.
+  (Expect a startling workspace size — 16 MB for a 3x3 Cholesky. That is
+  genuinely what Accelerate asks for; C reports the same.)
+- **The FPU-exception trap, for the third time in this repo.** With the
+  layout correct and storage allocated, both factorisations returned
+  status 0 and the crash moved to `_SparseSolveOpaque_Double` as a bare
+  `EAccessViolation` — which reads exactly like a remaining layout or
+  lifetime bug and sent one whole debugging pass chasing offsets. It
+  isn't: FPC's default AArch64 FPCR leaves FP exception trapping armed,
+  and Accelerate's kernels, like Apple's AGX driver (`MetalAPI.pas`) and
+  MKL's complex LAPACKE solve before them, never expected that. The
+  giveaway was that the identical private-API sequence on identical data
+  ran correctly from clang-compiled C. `AccelerateSparse.pas`'s
+  `initialization` now calls `SetExceptionMask` once. **Check this first**
+  whenever a native numerical library crashes inside its own float code.
+- **Accelerate is CSC, `TVMSparseMtx` is CSR.** `ToCSC` (in
+  `newVMsparseAccel.inc`) is an O(NonZeros) counting sort; because CSR
+  walks rows in ascending order the entries land sorted by row within each
+  column for free. Its `LowerOnly` flag extracts the lower triangle for
+  the symmetric factorisations, the mirror of `ExtractUpperCSR`'s job on
+  the MKL path. The CSC arrays are **referenced, not copied**, by
+  Accelerate's `SparseMatrixStructure`, which is why `TPardisoFactor`
+  holds its `TAccelCSC` as a field rather than a local.
+
+**`FGMRESSolve` is hand-written here, and the direct solve is not.**
+Accelerate does ship `_SparseCGSolve`/`_SparseGMRESSolve`, but they are
+unusable from this unit for two independent reasons: their preconditioner
+set is None/User/Diagonal/DiagScaling with **no ILU(0)**, and the operator
+and user preconditioner are passed as Objective-C **blocks**, which FPC
+cannot construct in Delphi mode. So `newVMsparseAccel.inc` implements
+right-preconditioned GMRES(m) with Givens rotations plus an ILU(0) on CSR
+(IKJ ordering, factors packed into one `L\U` buffer sharing A's pattern,
+the same packing `dcsrilu0` produces). Right- rather than left-
+preconditioning is load-bearing: it makes the Arnoldi least-squares
+residual equal to the *true* residual, so the stopping test needs no extra
+matrix-vector product and means the same thing as MKL's `dfgmres`, whose
+tolerance is relative to the **initial** residual. This does not
+contradict the "don't hand-roll a sparse solver here" rule above — that
+rule is about the direct solver, which is precisely what is *not*
+hand-rolled.
+
+**`SetMKLThreads`/`GetMKLThreads` are advisory on this backend.**
+Accelerate exposes no runtime global thread control (`VECLIB_MAXIMUM_THREADS`
+is read once at load time), so they keep the MKL names and the
+set-it/read-it-back contract — `newVMsparsetest` checks exactly that — but
+do not change how many threads Accelerate actually uses. The reported
+default is the physical core count from libc's `sysctlbyname`, because
+FPC 3.2.4's `System.CPUCount` returns **1** on this Darwin/AArch64 build,
+the same wrong answer `TThread.ProcessorCount` gives on Linux.
+
+**Detection**: `newvmconfigure.lpr` probes the five `_Sparse*` symbols
+this backend binds, not just the framework — Accelerate is on every Mac,
+but `SparseFactorizationLU` and its entry points only exist from **macOS
+15.5** (Cholesky and LDLT go back to 10.13), so a framework-presence check
+would pass on an older machine that then has no unsymmetric solve.
+
+**`pivotTolerance` and `zeroTolerance` are NOT "0 means library default".**
+This is the single nastiest trap in the whole backend, because getting it
+wrong fails *silently*. `pivotTolerance` is threshold partial pivoting's
+threshold (clamped to [0,0.5]); at **0 the factorisation accepts any pivot,
+including an exact zero**, and returns a factorisation full of infinities
+with status `SparseStatusOK`. The right values are Accelerate's own -
+`pivotTolerance` 0.01, `zeroTolerance` 2.2204460492503131e-20 - read out
+of the live `_SparseDefaultNumericFactorOptions_Double` rather than
+guessed. A 2x2 `[[0,1],[1,0]]`, nonsingular but needing one row
+interchange, solved to `NaN` until this was fixed; `newVMsparsetest`'s
+`ZeroDiagonalPivot` is the regression test, and it is the only case in
+that file that needs to pivot at all - which is why the first round of
+testing (a 3x3 and a 2-D Laplacian, both strongly diagonally dominant)
+passed and the bug escaped. What caught it was FEM4's **HFJV**, whose
+`uDescriptor.FactorFrequency` deliberately adds an **explicit zero
+diagonal entry to every row** of its frequency-domain block system (so
+that a sparse direct solver has a diagonal slot everywhere) - i.e.
+precisely the case where pivoting is not optional. It surfaced as `NaN`
+impedances in `hfjvcheck` rather than as any error.
+
+**Verified** on an M4 Max, macOS 26.6: `newVMsparsetest`'s 28 checks all
+pass — `PardisoSolve` SPD and unsymmetric at residual ~3e-16 on the
+160,000-unknown case (49 ms and 205 ms), `FGMRESSolve` with ILU(0) at
+6.7e-11 and without at 1.6e-9 — and the full `newVMtest` suite is 329/329
+with `TVMSparseTests`' 10 tests now running on this backend. Beyond the
+unit tests, FEM4's **HFJV** example builds and runs against this backend:
+`hfjvcheck`'s whole verification suite passes (tank sloshing, lumped
+thorax impedances, harmonics against time stepping, the FEM diaphragm,
+viscoelastic contents and bowel gas), and `hfjvrun` completes both the
+box and the gmsh torso abdomen. The solve tests assert the
 **residual** `A*X - B ≈ 0` row by row rather than hard-coded `X` values,
 since a known-value expectation rounded to fixed digits would be fragile
 where the residual is the actual contract.

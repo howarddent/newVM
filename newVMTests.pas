@@ -92,7 +92,7 @@ uses
   OneAPI, newVM, newVMSingle, newVMComplex, newVMComplexSingle, newVMI, newPolymath
   {$IFDEF HAVE_OPENCL}, OpenCLAPI, newVMCL{$ENDIF}
   {$IFDEF HAVE_METAL}, MetalAPI, newVMMetal{$ENDIF}
-  {$IFDEF HAVE_MKL}, newVMsparse{$ENDIF};
+  {$IF DEFINED(HAVE_MKL) OR DEFINED(HAVE_ACCELERATE_SPARSE)}, newVMsparse{$ENDIF};
 
 type
 
@@ -589,7 +589,7 @@ type
     above, this class, its implementation, and its RegisterTest call) -
     same "probe once at config time, degrade gracefully" contract
     TVMobjCLTests/TVMobjMTLTests use for their own optional backends. }
-  {$IFDEF HAVE_MKL}
+  {$IF DEFINED(HAVE_MKL) OR DEFINED(HAVE_ACCELERATE_SPARSE)}
   TVMSparseTests = class(TTestCase)
   published
     procedure TestTripletsToSparseMergesDuplicates;
@@ -4811,7 +4811,7 @@ begin
 end;
 {$ENDIF}
 
-{$IFDEF HAVE_MKL}
+{$IF DEFINED(HAVE_MKL) OR DEFINED(HAVE_ACCELERATE_SPARSE)}
 // Same 4x4 SPD tridiagonal / 3x3 general-unsymmetric known-value systems
 // used to validate newVMsparse.pas empirically against real MKL during
 // development - see newVMsparse.pas's own header comment.
@@ -5372,7 +5372,7 @@ initialization
   {$IFDEF HAVE_METAL}
   RegisterTest(TVMobjMTLTests);
   {$ENDIF}
-  {$IFDEF HAVE_MKL}
+  {$IF DEFINED(HAVE_MKL) OR DEFINED(HAVE_ACCELERATE_SPARSE)}
   RegisterTest(TVMSparseTests);
   {$ENDIF}
 

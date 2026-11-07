@@ -210,11 +210,44 @@ begin
   end;
 end;
 
+{ Accelerate's sparse SOLVERS need a symbol-level probe, not just the
+  framework presence ProbeLibrary gives: Accelerate is on every Mac, but
+  _SparseSymbolicFactorLU/_SparseNumericFactorLU_Double (the unsymmetric
+  path newVMsparse.pas's PardisoSolve mtype-11 equivalent needs) were only
+  added in macOS 15.5. Cholesky and LDLT go back to 10.13, so a machine
+  older than 15.5 would pass a framework check and then fail to link, or
+  link and lack the unsymmetric solve. Probing the exact names this build
+  will bind is the only honest test. }
+function ProbeSymbols(const Candidates, Symbols: array of string; out FoundAs: string): Boolean;
+var
+  i, j: Integer;
+  h: TLibHandle;
+  ok: Boolean;
+begin
+  Result := False;
+  FoundAs := '';
+  for i := 0 to High(Candidates) do begin
+    h := LoadLibrary(Candidates[i]);
+    if h <> NilHandle then begin
+      ok := True;
+      for j := 0 to High(Symbols) do
+        if GetProcedureAddress(h, Symbols[j]) = nil then begin ok := False; Break; end;
+      UnloadLibrary(h);
+      if ok then begin
+        Result := True;
+        FoundAs := Candidates[i];
+        Exit;
+      end;
+    end;
+  end;
+end;
+
 var
   OutFile: TextFile;
   HaveMKL, HaveIPPCore, HaveIPPVM, HaveIPPS, HaveIPP, HaveOpenBLAS, HaveFFTWD, HaveFFTWS, HaveFFTW,
   HaveAccelerate, HaveArmPL, HaveBLAS, HaveLAPACKE, HaveOpenCLLib, HaveclFFTLib, HaveOpenCL,
   HaveMetalLib, HaveMPSGraphLib, HaveMetal: Boolean;
+  HaveAccelSparse: Boolean;
   FoundName: string;
 
   procedure Report(const Label_: string; Found: Boolean; const Via: string);
@@ -283,6 +316,13 @@ begin
     Format('metal=%s mpsgraph=%s aarch64=%s', [BoolToStr(HaveMetalLib,True), BoolToStr(HaveMPSGraphLib,True),
       {$IFDEF CPUAARCH64}'True'{$ELSE}'False'{$ENDIF}]));
 
+  HaveAccelSparse := ProbeSymbols(AccelerateCandidates,
+    ['_SparseSymbolicFactorLU', '_SparseNumericFactorLU_Double',
+     '_SparseSymbolicFactorSymmetric', '_SparseNumericFactorSymmetric_Double',
+     '_SparseSolveOpaque_Double'], FoundName);
+  Report('Accelerate sparse solvers (Cholesky/LDLT/LU, gates newVMsparse.pas on Darwin)',
+    HaveAccelSparse, FoundName);
+
   WriteLn;
   WriteLn('Writing newVMConfig.inc ...');
 
@@ -315,6 +355,7 @@ begin
   if HaveFFTW       then WriteLn(OutFile, '{$DEFINE HAVE_FFTW}       // libfftw3+libfftw3f both found');
   if HaveOpenCL     then WriteLn(OutFile, '{$DEFINE HAVE_OPENCL}     // OpenCL.dll+clFFT.dll both found - gates newVMCL.pas/TVMobjCL and its test registration');
   if HaveMetal      then WriteLn(OutFile, '{$DEFINE HAVE_METAL}      // Metal+MetalPerformanceShadersGraph found on Apple Silicon - gates newVMMetal.pas/TVMobjMTL and its test registration');
+  if HaveAccelSparse then WriteLn(OutFile, '{$DEFINE HAVE_ACCELERATE_SPARSE} // Accelerate sparse solvers found - lets newVMsparse.pas build without MKL');
   WriteLn(OutFile);
   WriteLn(OutFile, '// Derived: true when a LAPACKE_* implementation is available from EITHER');
   WriteLn(OutFile, '// MKL or Arm Performance Libraries (ArmPL exports a standard LAPACKE_* ABI');
@@ -387,4 +428,8 @@ begin
     WriteLn('HAVE_METAL is active - newVMMetal.pas/TVMobjMTL will build and its tests will run.')
   else
     WriteLn('HAVE_METAL is inactive - newVMMetal.pas/TVMobjMTL is excluded from the build (not Apple Silicon, or Metal/MetalPerformanceShadersGraph not found).');
+  if HaveAccelSparse then
+    WriteLn('HAVE_ACCELERATE_SPARSE is active - newVMsparse.pas builds on Accelerate (Cholesky/LDLT/LU) instead of MKL PARDISO.')
+  else
+    WriteLn('HAVE_ACCELERATE_SPARSE is inactive - without MKL, newVMsparse.pas is excluded from the build.');
 end.

@@ -59,8 +59,14 @@ unit newVMsparse;
 
 interface
 
+{ Must precede the uses clause: HAVE_ACCELERATE_SPARSE decides whether
+  AccelerateSparse is used at all, and a define introduced after the clause
+  is parsed comes too late to affect it. }
+{$I newVMConfig.inc}
+
 uses
-  Classes, SysUtils, Math, OneAPI, newVM;
+  Classes, SysUtils, Math, OneAPI, newVM
+  {$IFDEF HAVE_ACCELERATE_SPARSE}, AccelerateSparse{$ENDIF};
 
 type
   { Generic dynamic-array aliases - Dew MtxVec's Math387 unit declared
@@ -72,6 +78,18 @@ type
     plain FPC dynamic arrays underneath. }
   TIntegerArray = array of Integer;
   TDoubleArray = array of Double;
+{$IFDEF HAVE_ACCELERATE_SPARSE}
+  { A matrix in the compressed-COLUMN form Accelerate's sparse solvers
+    take, converted from TVMSparseMtx's CSR by ToCSC below. Held by value
+    in TPardisoFactor because Accelerate's SparseMatrixStructure only
+    POINTS at these three arrays - it never copies them - so they must
+    outlive the factorisation that was built from them. }
+  TAccelCSC = record
+    ColStart: array of Int64;     //length Cols+1 (C long, 64-bit)
+    RowIdx: array of LongInt;     //length NonZeros (C int, 32-bit)
+    Values: array of Double;
+  end;
+{$ENDIF}
   TBooleanArray = array of Boolean;
   PBooleanArray = ^TBooleanArray;
 
@@ -140,11 +158,23 @@ type
   TPardisoFactor = class
   private
     FA: TVMSparseMtx;
+    FMType, FN: Integer;
+  {$IFDEF HAVE_MKL}
     pt: array[0..63] of Pointer;
     iparm: array[0..63] of Integer;
-    FMType, FN: Integer;
     FPerm: array of Integer;
     procedure Call(Phase: Integer; B, X: PDouble; NRHS: Integer; out Error: Integer);
+  {$ELSE}
+    { Accelerate's two-stage factorisation, the direct analogue of PARDISO's
+      pt/iparm pair: FSym is phase 11's output and FNum phase 22's, kept
+      alive together so Solve is phase 33 alone. FStore is the factor
+      storage this unit allocates itself (the private entry points, unlike
+      the inline public ones, do not allocate it) and must therefore free. }
+    FSym: SparseOpaqueSymbolicFactorization;
+    FNum: SparseOpaqueFactorization_Double;
+    FStore: Pointer;
+    FCSC: TAccelCSC;
+  {$ENDIF}
   public
     constructor Create(const A: TVMSparseMtx; MType: Integer = 11);
     destructor Destroy; override;
@@ -169,6 +199,7 @@ function GetMKLThreads: Integer;
 
 implementation
 
+{$IFDEF HAVE_MKL}
 procedure SetMKLThreads(NumThreads: Integer);
 begin
   if NumThreads < 0 then NumThreads := 0; //MKL treats 0 as "reset to default"
@@ -179,6 +210,53 @@ function GetMKLThreads: Integer;
 begin
   result := MKL_Get_Max_Threads;
 end;
+{$ELSE}
+{ Accelerate has no global thread-count control to match MKL's: its sparse
+  solvers pick their own parallelism internally, and the only documented
+  lever is the VECLIB_MAXIMUM_THREADS environment variable, which is read
+  once at load time and so cannot be changed by a call like this one. These
+  two therefore keep the MKL names and the MKL contract as seen by a caller
+  - set a value, read the same value back, 0 restores the default - but the
+  setting is ADVISORY on this platform: it does not change how many threads
+  Accelerate actually uses. Kept rather than removed because they are part
+  of this unit's published interface and FEM4 calls them; a caller reading
+  GetMKLThreads to size its own work would be misled on Darwin, so don't.
+  The default reported is the physical core count, which is what MKL would
+  report on the same machine. }
+var
+  GAccelThreads: Integer = 0;   //0 = default
+
+{ FPC 3.2.4's System.CPUCount returns 1 on this Darwin/AArch64 build - the
+  same wrong answer TThread.ProcessorCount gives on Linux (see the
+  Defibrillation/HFJV notes in CLAUDE.md) - so the core count comes
+  straight from libc's sysctlbyname, which is correct on every Mac. }
+function sysctlbyname(name: PAnsiChar; oldp: Pointer; oldlenp: PNativeUInt;
+  newp: Pointer; newlen: NativeUInt): LongInt; cdecl; external name 'sysctlbyname';
+
+function AccelDefaultThreads: Integer;
+var
+  n: LongInt;
+  len: NativeUInt;
+begin
+  n := 0; len := SizeOf(n);
+  if (sysctlbyname('hw.physicalcpu', @n, @len, nil, 0) = 0) and (n > 0) then
+    result := n
+  else
+    result := 1;
+end;
+
+procedure SetMKLThreads(NumThreads: Integer);
+begin
+  if NumThreads < 0 then NumThreads := 0;
+  GAccelThreads := NumThreads;
+end;
+
+function GetMKLThreads: Integer;
+begin
+  if GAccelThreads > 0 then result := GAccelThreads
+  else result := AccelDefaultThreads;
+end;
+{$ENDIF}
 
 { TVMSparseMtx }
 
@@ -379,9 +457,101 @@ begin
   SetLength(result.FValues, dst);
 end;
 
+{$IFNDEF HAVE_MKL}
+{ CSR -> CSC, the one adaptation Accelerate's sparse API forces on this
+  unit: SparseMatrixStructure is compressed-COLUMN (columnStarts/rowIndices)
+  while TVMSparseMtx is compressed-row. A counting sort over the column
+  indices, O(NonZeros), and since CSR walks rows in order the entries land
+  in each column sorted ascending by row - which is the invariant
+  Accelerate wants and the mirror of the one TripletsToSparse maintains.
+
+  LowerOnly additionally drops everything above the diagonal, for the
+  symmetric factorisations: Accelerate takes one triangle, exactly as
+  PARDISO's mtype 2/-2 do, so this is the direct counterpart of
+  ExtractUpperCSR above (lower rather than upper because the CSC of a
+  symmetric matrix's lower triangle is what the Cholesky/LDLT path wants).
+
+  columnStarts is Int64 (C long) while rowIndices is LongInt (C int) - the
+  widths really are different, see AccelerateSparse.pas. }
+function ToCSC(const A: TVMSparseMtx; LowerOnly: Boolean): TAccelCSC;
+var
+  i, r, c, k, nnz, dst: Integer;
+  cursor: array of Integer;
+begin
+  SetLength(result.ColStart, A.Cols + 1);
+  SetLength(cursor, A.Cols + 1);
+  for i := 0 to A.Cols do begin result.ColStart[i] := 0; cursor[i] := 0; end;
+
+  //Pass 1: count entries per column.
+  nnz := 0;
+  for r := 0 to A.Rows - 1 do
+    for k := A.FRowPtr[r] to A.FRowPtr[r+1] - 1 do
+    begin
+      c := A.FColInd[k];
+      if LowerOnly and (r < c) then Continue;   //keep the lower triangle
+      Inc(cursor[c]);
+      Inc(nnz);
+    end;
+
+  //Prefix sum into ColStart, with cursor left as a per-column write head.
+  dst := 0;
+  for c := 0 to A.Cols - 1 do
+  begin
+    result.ColStart[c] := dst;
+    Inc(dst, cursor[c]);
+    cursor[c] := result.ColStart[c];
+  end;
+  result.ColStart[A.Cols] := dst;
+
+  //Pass 2: scatter. Rows are visited in ascending order, so each column's
+  //row indices come out ascending with no sort.
+  SetLength(result.RowIdx, nnz);
+  SetLength(result.Values, nnz);
+  for r := 0 to A.Rows - 1 do
+    for k := A.FRowPtr[r] to A.FRowPtr[r+1] - 1 do
+    begin
+      c := A.FColInd[k];
+      if LowerOnly and (r < c) then Continue;
+      result.RowIdx[cursor[c]] := r;
+      result.Values[cursor[c]] := A.FValues[k];
+      Inc(cursor[c]);
+    end;
+end;
+
+{ Fills an Accelerate SparseMatrix_Double view onto an already-built
+  TAccelCSC. The CSC arrays are referenced, not copied, so C must outlive
+  every call that uses the returned record. }
+function AccelMatrix(const C: TAccelCSC; Rows, Cols: Integer;
+  Symmetric: Boolean): SparseMatrix_Double;
+begin
+  result.structure.rowCount := Rows;
+  result.structure.columnCount := Cols;
+  result.structure.columnStarts := @C.ColStart[0];
+  result.structure.rowIndices := @C.RowIdx[0];
+  result.structure.blockSize := 1;
+  if Symmetric then
+    result.structure.attributes := MakeAttributes(SparseSymmetric, SparseLowerTriangle)
+  else
+    result.structure.attributes := MakeAttributes(SparseOrdinary);
+  result.data := @C.Values[0];
+end;
+
+{ A single (n,1) right-hand side or solution, as the DenseMatrix form
+  _SparseSolveOpaque_Double takes. }
+function AccelVector(P: PDouble; n: Integer): DenseMatrix_Double;
+begin
+  result.rowCount := n;
+  result.columnCount := 1;
+  result.columnStride := n;
+  result.attributes := MakeAttributes(SparseOrdinary);
+  result.data := P;
+end;
+{$ENDIF}
+
 function SparseMatMult(const A: TVMSparseMtx; const X: TVMobj): TVMobj;
 const
   s = 'Function SparseMatMult : ';
+{$IFDEF HAVE_MKL}
 var
   n, st: Integer;
   Ahandle: Pointer;
@@ -410,6 +580,32 @@ begin
   if st <> SPARSE_STATUS_SUCCESS then
     raise Exception.Create(s + 'mkl_sparse_d_mv failed, status ' + IntToStr(st));
 end;
+{$ELSE}
+{ Plain CSR sparse matrix-vector product. Accelerate's Sparse BLAS has
+  SparseMultiply, but only as a C11 _Generic macro over by-value aggregate
+  parameters - the same reason AccelerateSparse.pas binds the private
+  _Sparse* entry points rather than the public inline layer - and a CSR
+  SpMV is a dozen lines that need no binding at all. Row-major CSR means
+  each row's entries are contiguous, so this is the natural loop order. }
+var
+  n, r, k: Integer;
+  acc: Double;
+  Xp, Rp: PDouble;
+begin
+  assert(A.Cols = X.Rows*X.Cols, s+'X''s length must equal A.Cols');
+  n := A.Rows;
+  result := TVMobj.Create(n, 1);
+  Xp := X.DataPtr;
+  Rp := result.DataPtr;
+  for r := 0 to n - 1 do
+  begin
+    acc := 0.0;
+    for k := A.FRowPtr[r] to A.FRowPtr[r+1] - 1 do
+      acc := acc + A.FValues[k] * Xp[A.FColInd[k]];
+    Rp[r] := acc;
+  end;
+end;
+{$ENDIF}
 
 { Both PARDISO's own mtype=2/11 factorisation and the RCI FGMRES/dcsrilu0
   path (see FGMRESSolve below) require every row to carry an explicitly
@@ -447,6 +643,7 @@ begin
   end;
 end;
 
+{$IFDEF HAVE_MKL}
 function PardisoSolve(const A: TVMSparseMtx; const B: TVMobj; SymmetricPosDef: Boolean): TVMobj;
 const
   s = 'Function PardisoSolve : ';
@@ -808,5 +1005,8 @@ begin
   for i := 0 to n-1 do X.DataPtr[i] := xvec[i];
   result := X;
 end;
+{$ENDIF}
+
+{$I newVMsparseAccel.inc}
 
 end.
