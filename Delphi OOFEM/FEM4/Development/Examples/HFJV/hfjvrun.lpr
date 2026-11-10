@@ -52,6 +52,10 @@ program hfjvrun;
            --abfat=<%> (20), fat as a percentage of the anterior wall
            (20 mm of muscle plus fat) and of the contents (density, and
            a softer foundation: fat taken as 0.3 x the lean stiffness),
+           --nochest (keep the 70 kg chest at any --weight; by default the
+           lung, FRC, lower airway, rib cage and abdominal load follow
+           the torso's BMI, see ObeseBMI), --el --frc --raw --erc --irc
+           (override those: cmH2O/L, L, cmH2O/(L/s), cmH2O/L, cmH2O s2/L),
            --alpha=<1/s>, the abdominal drag; by default it follows
            --abfat (DragForFat: 70 /s at 20 % fat or less, overdamping the
            abdominal mode as measured in slim patients, falling
@@ -111,7 +115,7 @@ end;
 
 var
   Lumped, UseBox : Boolean;
-  Alpha, CWall, CDia, EAb, VEEta, GasML, AbFat : Double;
+  Alpha, CWall, CDia, EAb, VEEta, GasML, AbFat, BMI : Double;
   // the abdomen as built, for the report
   WallFat, WallMass, ContentsRho, KFound, AreaWall, AreaDia : Double;
   NHarm : Integer;
@@ -136,11 +140,40 @@ const
   DragLean = 70;  FatLean = 0.20;   // 1/s, at and below this fat fraction
   DragObese = 15; FatObese = 0.40;  // 1/s, zeta ~0.35; at and above
 
+  // The chest at a high BMI, as obese over normal-weight ratios in
+  // anaesthetised, paralysed supine adults. They apply in full at
+  // ObeseBMI, the 150 kg, 1.75 m man and about the BMI of the morbidly
+  // obese groups measured, and exponentially in BMI between (Pelosi 1998
+  // found FRC and lung compliance exponential in BMI).
+  RefBMI = 70 / (1.75 * 1.75);
+  ObeseBMI = 150 / (1.75 * 1.75);
+  LungERatio = 106.6 / 55.3;     // static lung compliance, Pelosi 1996 (Behazin 2010: 84/43)
+  FRCRatio = 0.665 / 1.691;      // helium dilution, Pelosi 1996
+  RawObese = 4.7;                // cmH2O/(L/s), Rmin,L in Pelosi 1996's obese group
+  ChestWallRatio = 0.223 / 0.195; // chest wall compliance before surgery, Behazin 2010
+  // The contents' stiffness (before the fat's softening) that gives the
+  // 150 kg man's chest wall, rib cage in parallel with the FEM diaphragm
+  // and abdomen, ChestWallRatio x the 70 kg man's at 0.25 Hz; from --zfile runs
+  AbdomenRatio = 2.015;
+
 function DragForFat(f : Double) : Double;
 // log-linear in the fat fraction between the two calibration points
 begin
   f := EnsureRange(f, FatLean, FatObese);
   Result := DragLean * Power(DragObese / DragLean, (f - FatLean) / (FatObese - FatLean));
+end;
+
+function BMIPower(Ratio, BMI : Double) : Double;
+// Ratio at ObeseBMI, 1 at or below RefBMI, exponential in BMI
+begin
+  if BMI <= RefBMI + 1e-6 then Result := 1
+  else Result := Power(Ratio, (BMI - RefBMI) / (ObeseBMI - RefBMI));
+end;
+
+function WallMassOf(Fat : Double) : Double;
+// kg/m2: WallMuscle of lean tissue with fat making the fraction Fat of it
+begin
+  Result := RhoLean * WallMuscle + RhoFat * WallMuscle * Fat / (1 - Fat);
 end;
 
 procedure BuildModel(const P : TThoraxParams);
@@ -672,6 +705,21 @@ begin
   P0.Cannula := TJetCath(Round(Opt('cannula', Ord(P0.Cannula))));
   if Flag('calculated') then P0.JetSource := jsCalculated;
   if Flag('nopump') then P0.JetPump := False;
+
+  // the chest follows the torso's BMI (nothing changes at 70 kg, 1.75 m)
+  if not (Flag('nochest') or Flag('box') or Lumped) then
+  begin
+    BMI := Opt('weight', 70) / Sqr(Opt('height', 1.75));
+    P0.EL := Opt('el', P0.EL * BMIPower(LungERatio, BMI));
+    P0.VFRC := Opt('frc', P0.VFRC * BMIPower(FRCRatio, BMI));
+    P0.Raw := Opt('raw', P0.Raw * BMIPower(RawObese / P0.Raw, BMI));
+    P0.Erc := Opt('erc', P0.Erc * BMIPower(ChestWallRatio, BMI));
+    // fat over the ribs adds mass but not area: the same ratio as the abdominal wall's
+    P0.Irc := Opt('irc', P0.Irc * WallMassOf(AbFat) / WallMassOf(FatRef));
+    EAb := Opt('eab', DefaultThoraxParams.Edi * BMIPower(AbdomenRatio, BMI));
+    WriteLn(Format('Chest at BMI %.1f: lung E %.1f cmH2O/L, FRC %.2f L, Raw %.2f cmH2O/(L/s), rib cage E %.1f cmH2O/L, I %.4f cmH2O s2/L',
+      [BMI, P0.EL, P0.VFRC, P0.Raw, P0.Erc, P0.Irc]));
+  end;
 
   UseBox := Flag('box');
   NHarm := Round(Opt('harm', 30));
