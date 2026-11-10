@@ -1874,6 +1874,49 @@ solid, frequency and time domain both, and a FEM4 example. Units:
   lower the drag (lubricated, less tightly packed bowel) is a reading, not
   modelled. The sweeps, plots, animations and earlier figures were not
   rerun.
+- **The chest follows BMI** (2026-11-10, the default on the torso;
+  `--nochest` keeps the 70 kg chest at any `--weight`). Lung elastance,
+  FRC, lower-airway resistance, rib-cage elastance and the abdominal load
+  move from their 70 kg values to obese/normal ratios measured in
+  anaesthetised, paralysed supine adults. The full ratio applies at BMI 49
+  (150 kg, 1.75 m), with exponential interpolation in BMI below that (Pelosi 1998
+  found FRC and compliance exponential in BMI). Nothing changes at 70 kg,
+  1.75 m. `--el --frc --raw --erc --irc --eab` override each value.
+  - **Ratios**: lung E x1.93 and FRC x0.39 (Pelosi 1996), Raw to
+    4.7 cmH2O/(L/s) (Pelosi's obese Rmin,L), rib cage E x1.14 (Behazin
+    2010's chest-wall compliance). Rib-cage inertance scales with the
+    abdominal wall's mass per area, since fat adds mass but not area.
+  - **The abdominal load ratio (`AbdomenRatio` 2.015) is calibrated, not
+    measured.** It is the value that makes the whole chest wall (rib cage
+    in parallel with the FEM diaphragm and abdomen) Behazin's x1.14 stiffer
+    at 0.25 Hz, found from `--zfile` runs. 150 kg: 12.7 cmH2O/L against 8.0, so
+    k_f 60.9 kPa/m, under a wall of 1248 cm2 and a diaphragm of 803 cm2,
+    on a 14.6 L cavity.
+  - **Modes of the 150 kg man** (`--weight=150 --abfat=46`, exact by
+    `--eigdump`, 12 mm mesh, residuals below 1e-13). The volume-coupled
+    modes are:
+    - 4.44 Hz, zeta 0.142, 29 mL/mm, 69 % on the wall;
+    - 5.93 Hz, zeta 0.10, 16 mL/mm, 73 % on the wall;
+    - weaker modes at 7.13, 7.65, 7.97 and 8.43 Hz (3-7 mL/mm).
+
+    The two main modes for the other cases:
+
+    | Case | First mode | Second mode |
+    |---|---|---|
+    | 70 kg | 3.53 Hz, zeta 0.18, 24 mL/mm, 35 % wall | 5.28 Hz |
+    | 150 kg, `--nochest` | 3.69 Hz, zeta 0.17, 29 mL/mm, 65 % wall | 4.89 Hz |
+
+    A 9 mm mesh (119k unknowns) moves the main two modes by under 0.3 %
+    and the others by under 1 %. Raising only the abdominal load
+    (`--nochest --eab=16.12`) gives 4.43 Hz and 5.93 Hz, so the shift is
+    the abdominal load's. The lung, airway and rib-cage changes only lower
+    zeta from 0.150 to 0.142. The first mode therefore rests on the
+    calibrated 2.015, and `--abfat=46` was my choice. The jet's 200 /min (3.33 Hz) now
+    sits below the first mode, which falls at about 266 /min.
+    **These modes were all run at alpha 5 /s**, before `DragForFat` was
+    added, so they match `--alpha=5`. With the default drag, 46 % fat
+    gets 15 /s and the 70 kg man 70 /s, so the zetas above would be much
+    higher (70 kg overdamped). They were not rerun.
 - `HFJVView` (`HFJVView.lpi`, `uWallAnim`/`uWallView`/`uHFJVViewForm`;
   `lazbuild --ws=gtk2`): `anim_wall.py`'s animation as a Lazarus program.
   It reads an `--anim` file (default `mesh/wall_anim_200.txt`) and draws
