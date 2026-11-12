@@ -3677,6 +3677,32 @@ packages. Compiled binaries and each demo's own `lib/` output are
       34.6 min mean against 37.0, 0.4 % against 6.1 % over an hour (West
       Kent 21.6 % to K&C). `--drive=<0..8>` picks the domain; snapshot adds
       `_drive`/`_drive_whh_kch`.
+    - **Speed scenarios** (same day, a "Drive speeds" radio group,
+      `--speeds=<0..2>`). `drivedata.inc` (now ~470 kB) holds every domain's
+      times and isochrones three times over, `LsoaDriveMinutes(i, Domain,
+      Scenario)`:
+      - **free-flow car**, as above;
+      - **weekday morning peak**: free-flow times a factor by road group
+        (motorway, trunk, A/B, minor, residential) and urban or rural
+        (`PEAK`). An edge is urban if its speed tag is 30 mph or less and
+        rural if 40 or more; an untagged edge takes the density of the
+        nearest LSOA label point (urban from 1500/km2). The A/B factors
+        (0.61 urban, 0.88 rural) were tuned to put the length-weighted
+        peak speeds at DfT's local A road figures (16.6 and 32.4 mph here).
+        The other groups' factors are assumed;
+      - **blue light**: 1.25 x free-flow, capped at 113 km/h on motorways
+        and dual carriageways and 100 elsewhere. The 1.25 is a round
+        value from published ambulance studies (London, a rural pilot;
+        see Sources), not measured in Kent.
+      The memo's domain table and district table follow the chosen
+      scenario; `WhhKchSummary` gives all three overall, then areas and
+      districts for the chosen one; a selected LSOA shows all three.
+      Whole county, mean minutes WHH against K&C: free-flow 34.6 / 37.0,
+      peak 41.9 / 45.3, blue light 29.6 / 30.9; share over an hour
+      0.4 / 6.1 %, 9.7 / 19.0 %, 0 / 0.7 %. East Kent: 30.6 / 26.1,
+      37.3 / 32.9, 25.2 / 21.0. So traffic keeps the ranking and widens
+      both gaps; blue light narrows them. Snapshot adds
+      `_drive_whh_kch_peak`/`_blue`.
   - `--snapshot=<prefix>` saves density/IMD/health/admissions (per km2 and
     ratio)/zoomed maps and the window, prints the memo and exits;
     `--colour=<0..4>`, `--domain=<0..7>`, `--cvd=<0|1>`, `--areas=<list>`,

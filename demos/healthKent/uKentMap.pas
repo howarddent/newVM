@@ -49,7 +49,8 @@ unit uKentMap;
      DRIVE TIMES (kcmDrive, SetDriveDomain): the fill is each LSOA's
      modelled drive time to the chosen hospital (or the nearer/nearest of
      several) in 10-minute bands, and the isochrones - 15, 30, 45 and 60
-     minutes, from a 500 m grid - are drawn on land, over any fill, when
+     minutes, from a 500 m grid - follow the speed scenario
+     (SetDriveScenario: free-flow, morning peak, blue light) and are drawn on land, over any fill, when
      ShowIsochrones is set; the longest line of each is labelled. Hospitals
      (ShowHospitals) are red squares with a white cross, the chosen ones
      larger.
@@ -102,7 +103,7 @@ type
     FShowMotorways, FShowTrunk, FShowPrimary, FShowRail: Boolean;
     FShowBarycentre, FShowGeoCentre, FShowCvdBarycentre: Boolean;
     FShowIsochrones, FShowHospitals: Boolean;
-    FDriveDomain: Integer;
+    FDriveDomain, FDriveScenario: Integer;
     FIsoLabel: array[0..3] of Integer;   // longest line of each level, -1 none
     FBaryE, FBaryN, FGeoE, FGeoN, FCvdE, FCvdN: Double;
     FSelected: Integer;
@@ -133,6 +134,7 @@ type
     procedure DrawRoutes;
     procedure DrawMarkers;
     procedure DrawIsochrones;
+    procedure FindIsoLabels;
     procedure DrawIsoLabels;
     procedure DrawHospitals;
     procedure BuildTextures;
@@ -168,6 +170,7 @@ type
     procedure SetGeoCentre(E, N: Double);
     procedure SetCvdBarycentre(E, N: Double);
     procedure SetDriveDomain(D: Integer);      // isochrones and hospital highlight
+    procedure SetDriveScenario(S: Integer);    // 0 free-flow, 1 peak, 2 blue light
     procedure SetAreas(S: TAreaSet);
     procedure SetAreaCentre(Area: Integer; const C: TKentCentres);   // NaN BE hides it
     procedure ResetView;
@@ -190,6 +193,7 @@ type
     property ShowIsochrones: Boolean read FShowIsochrones write SetShowIsochrones;
     property ShowHospitals: Boolean read FShowHospitals write SetShowHospitals;
     property DriveDomain: Integer read FDriveDomain;
+    property DriveScenario: Integer read FDriveScenario;
     property OnSelectLsoa: TSelectLsoaEvent read FOnSelectLsoa write FOnSelectLsoa;
     property OnViewChange: TNotifyEvent read FOnViewChange write FOnViewChange;
   end;
@@ -223,7 +227,7 @@ function CvdDensityColour(D: Double): TColor;        // admissions per km2 a yea
 function CvdRatioColour(R: Double): TColor;          // against England, 1 = white
 function DriveBandColour(Band: Integer): TColor;  // 0 .. DriveBandCount - 1
 function DriveColour(Minutes: Double): TColor;
-function LsoaFillColour(Mode: TKentColourMode; Domain, i: Integer): TColor;
+function LsoaFillColour(Mode: TKentColourMode; Domain, i: Integer; Scenario: Integer = 0): TColor;
 
 implementation
 
@@ -313,10 +317,10 @@ begin
   result := DriveBandColour(Trunc(Minutes / DriveBandMinutes));
 end;
 
-function LsoaFillColour(Mode: TKentColourMode; Domain, i: Integer): TColor;
+function LsoaFillColour(Mode: TKentColourMode; Domain, i: Integer; Scenario: Integer): TColor;
 begin
   case Mode of
-    kcmDrive: result := DriveColour(LsoaDriveMinutes(i, Domain));
+    kcmDrive: result := DriveColour(LsoaDriveMinutes(i, Domain, Scenario));
     kcmDensity: result := DensityColour(LsoaDensity(i));
     kcmDeprivation: result := DecileColour(LsoaDecileOf(i, Domain));
     kcmCvd:
@@ -350,6 +354,7 @@ begin
   FShowRail := True;
   FShowBarycentre := True;
   FDriveDomain := -1;
+  FDriveScenario := 0;
   SetDriveDomain(DriveDomainCount - 1);
   FBaryE := NaN;
   FGeoE := NaN;
@@ -443,24 +448,37 @@ begin
 end;
 
 procedure TKentMapView.SetDriveDomain(D: Integer);
-var
-  k, j, lv: Integer;
-  len, best: array[0..IsoLevelCount - 1] of Double;
-  l: Double;
 begin
   D := EnsureRange(D, 0, DriveDomainCount - 1);
   if D = FDriveDomain then Exit;
   FDriveDomain := D;
+  FindIsoLabels;
+end;
+
+procedure TKentMapView.SetDriveScenario(S: Integer);
+begin
+  S := EnsureRange(S, 0, DriveScenarioCount - 1);
+  if S = FDriveScenario then Exit;
+  FDriveScenario := S;
+  FindIsoLabels;
+end;
+
+// the longest line of each isochrone level, for its label
+procedure TKentMapView.FindIsoLabels;
+var
+  k, j, lv: Integer;
+  best: array[0..IsoLevelCount - 1] of Double;
+  l: Double;
+begin
   for lv := 0 to IsoLevelCount - 1 do begin FIsoLabel[lv] := -1; best[lv] := 0; end;
   for k := 0 to IsoCount - 1 do begin
-    if IsoDomain[k] <> D then Continue;
+    if (IsoDomain[k] <> FDriveDomain) or (IsoScenario[k] <> FDriveScenario) then Continue;
     lv := 0;
     while (lv < IsoLevelCount - 1) and (IsoLevels[lv] <> IsoMinutes[k]) do Inc(lv);
     l := 0;
     for j := IsoStart[k] + 1 to IsoStart[k + 1] - 1 do
       l := l + Hypot(IsoPtE[j] - IsoPtE[j - 1], IsoPtN[j] - IsoPtN[j - 1]);
-    len[lv] := l;
-    if len[lv] > best[lv] then begin best[lv] := len[lv]; FIsoLabel[lv] := k; end;
+    if l > best[lv] then begin best[lv] := l; FIsoLabel[lv] := k; end;
   end;
   Invalidate;
 end;
@@ -692,7 +710,8 @@ procedure TKentMapView.DrawIsochrones;
     px, py: Double;
   begin
     for k := 0 to IsoCount - 1 do begin
-      if (IsoDomain[k] <> FDriveDomain) or (IsoMinutes[k] <> Minutes) then Continue;
+      if (IsoDomain[k] <> FDriveDomain) or (IsoScenario[k] <> FDriveScenario)
+        or (IsoMinutes[k] <> Minutes) then Continue;
       glBegin(GL_LINE_STRIP);
         for j := IsoStart[k] to IsoStart[k + 1] - 1 do begin
           ToPixel(IsoPtE[j], IsoPtN[j], px, py);
@@ -954,7 +973,7 @@ begin
       glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
       glStencilFunc(GL_EQUAL, $81, $81);
       glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);       // write mask $01: clears only this LSOA's bit
-      if FLsoaOn[i] then GLColour(LsoaFillColour(FMode, FDomain, i))
+      if FLsoaOn[i] then GLColour(LsoaFillColour(FMode, FDomain, i, FDriveScenario))
       else GLColour(clOutside);
       glBegin(GL_QUADS);
         glVertex2d(x0 - 1, y0 - 1); glVertex2d(x1 + 1, y0 - 1);

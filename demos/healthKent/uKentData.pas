@@ -93,11 +93,14 @@ unit uKentData;
      DRIVE TIMES (drivedata.inc, make_drive_data.py): free-flow car
      minutes from each LSOA's label point to each of the seven acute
      hospitals, over OpenStreetMap's roads from motorways down to
-     residential streets (one-way streets respected), at assumed speeds by
-     road class; plus the nearer of William Harvey and Kent and Canterbury
+     residential streets (one-way streets respected), in three speed
+     scenarios: free-flow car, weekday morning peak (anchored on DfT's
+     local 'A' road speeds) and blue light (1.25 x free-flow, capped);
+     plus the nearer of William Harvey and Kent and Canterbury
      and the nearest of all seven. Isochrones at 15, 30, 45 and 60 minutes
      come from the same model on a 500 m grid. No traffic, junction
-     delays or blue-light driving; hospital positions are approximate.
+     delays beyond the peak factors, no turn costs; hospital positions
+     are approximate.
 
      BNG -> WGS84: inverse transverse Mercator on Airy 1830 (OS "A guide
      to coordinate systems in Great Britain"), then the 7-parameter
@@ -149,7 +152,7 @@ type
   end;
 
 const
-  Sources: array[0..16] of TSourceEntry = (
+  Sources: array[0..18] of TSourceEntry = (
     (Title: 'Lower layer Super Output Area population estimates (small area, 2021-based), mid-2024';
      Publisher: 'Office for National Statistics (via Nomis, dataset NM_2014_1)';
      Edition: 'mid-2024 estimates, released 7 November 2025 - the latest published';
@@ -254,7 +257,24 @@ const
      Use: 'Drive times to the seven acute hospitals and the isochrones (make_drive_data.py): fastest routes at '
        + 'assumed free-flow car speeds - motorway 105 km/h, dual trunk 80, single trunk 72, primary 65, '
        + 'secondary 55, tertiary 48, unclassified 40, residential 28 - capped by tagged speed limits, '
-       + 'one-way streets respected, joining the network at 20 km/h. Hospital positions approximate.')
+       + 'one-way streets respected, joining the network at 20 km/h. Hospital positions approximate. '
+       + 'Peak and blue-light scenarios: see the next two sources.'),
+    (Title: 'Travel time measures for local ''A'' roads, Great Britain: April 2025 to March 2026';
+     Publisher: 'Department for Transport';
+     Edition: 'year ending March 2026';
+     Licence: 'Open Government Licence v3.0';
+     URL: 'https://www.gov.uk/government/statistics/travel-time-measures-for-the-strategic-road-network-england-and-local-a-roads-great-britain-april-2025-to-march-2026';
+     Use: 'Anchors the weekday-morning-peak scenario: average speeds on local A roads of 17.6 mph urban and 34.4 mph '
+       + 'rural (all day), 23.3 mph in the weekday morning peak against 24.6 all day. The model''s A and B road '
+       + 'speeds are scaled (x0.61 urban, x0.88 rural) to match; motorway, trunk and minor-road factors are assumed.'),
+    (Title: 'Blue-light driving: Rehn et al., Emerg Med J 2017;34:819-24 (London), and the Green Beacon pilot, Rural Remote Health 2020;20:6114';
+     Publisher: 'BMJ; Rural and Remote Health';
+     Edition: '2017, 2020';
+     Licence: 'cited figures only';
+     URL: 'https://www.rrh.org.au/journal/article/6114';
+     Use: 'Anchors the blue-light scenario: 46 km/h on blue lights against 20 km/h driving normally in London, and 1.26x '
+       + 'normal driving on rural roads. Modelled as 1.25x the free-flow speed, at most 113 km/h on motorways and dual '
+       + 'carriageways and 100 km/h elsewhere, traffic ignored.')
   );
 
   Glossary: array[0..18] of TGlossaryEntry = (
@@ -276,7 +296,7 @@ const
     (Term: 'Indirectly standardised ratio (SAR)'; Meaning: 'Observed events over those expected if England''s age-specific rates applied to the local population; 1 (or 100) = England.'),
     (Term: 'MSOA'; Meaning: 'Middle layer Super Output Area: about 5,000-15,000 residents, built from 4-6 LSOAs. Kent and Medway has 221 (2021).'),
     (Term: 'APS'; Meaning: 'The ONS Annual Population Survey, source of the official adult smoking prevalence. District samples are a few hundred people, so district figures carry wide confidence intervals.'),
-    (Term: 'Drive time and isochrone'; Meaning: 'Modelled minutes by car to a hospital along the fastest OpenStreetMap route at free-flow speeds (no traffic, no blue lights). An isochrone is the line joining places the same time away - here 15, 30, 45 and 60 minutes.')
+    (Term: 'Drive time and isochrone'; Meaning: 'Modelled minutes to a hospital along the fastest OpenStreetMap route, in three scenarios: a car at free-flow speeds, a car in the weekday morning peak, and an ambulance on blue lights. An isochrone is the line joining places the same time away - here 15, 30, 45 and 60 minutes.')
   );
 
 const
@@ -372,7 +392,8 @@ procedure M20Extent(out E0, E1: Double);
 // then the nearest of all
 function DriveDomainName(d: Integer): string;
 function DriveDomainShort(d: Integer): string;
-function LsoaDriveMinutes(i, Domain: Integer): Double;
+// Scenario 0 free-flow car, 1 weekday morning peak, 2 blue light
+function LsoaDriveMinutes(i, Domain: Integer; Scenario: Integer = 0): Double;
 // for each domain, the hospital it means (-1 for the combined ones)
 function DriveDomainHospital(d: Integer): Integer;
 // is hospital h part of domain d
@@ -845,9 +866,9 @@ begin
   else result := 'nearest';
 end;
 
-function LsoaDriveMinutes(i, Domain: Integer): Double;
+function LsoaDriveMinutes(i, Domain: Integer; Scenario: Integer): Double;
 begin
-  result := LsoaDriveMin[Domain * LsoaCount + i];
+  result := LsoaDriveMin[(Scenario * DriveDomainCount + Domain) * LsoaCount + i];
 end;
 
 function DriveDomainHospital(d: Integer): Integer;

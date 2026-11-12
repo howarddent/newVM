@@ -110,6 +110,7 @@ type
     pnlSide: TPanel;
     pnlStatus: TPanel;
     rgColour: TRadioGroup;
+    rgSpeeds: TRadioGroup;
     tabMap: TTabSheet;
     tabSources: TTabSheet;
     procedure btnResetClick(Sender: TObject);
@@ -121,12 +122,13 @@ type
     procedure FormShow(Sender: TObject);
     procedure pbLegendPaint(Sender: TObject);
     procedure rgColourClick(Sender: TObject);
+    procedure rgSpeedsClick(Sender: TObject);
   private
     FMap: TKentMapView;
     FBaryE, FBaryN, FGeoE, FGeoN, FCvdE, FCvdN: Double;
     FSnapshot: string;
     FShown: Boolean;
-    FDepDomain, FCvdMeasure, FDriveDomain, FBoxMode: Integer;
+    FDepDomain, FCvdMeasure, FDriveDomain, FDriveScenario, FBoxMode: Integer;
     FAreas: TAreaSet;
     FInc, FDistInc: TBoolArray;    // the chosen areas' LSOAs and districts
     procedure FillMeasureBox;
@@ -224,6 +226,10 @@ begin
   if Application.HasOption('drive') then
     FDriveDomain := EnsureRange(StrToIntDef(Application.GetOptionValue('drive'), 0), 0, DriveDomainCount - 1);
   FMap.SetDriveDomain(FDriveDomain);
+  if Application.HasOption('speeds') then
+    FDriveScenario := EnsureRange(StrToIntDef(Application.GetOptionValue('speeds'), 0), 0, DriveScenarioCount - 1);
+  rgSpeeds.ItemIndex := FDriveScenario;   // may fire rgSpeedsClick, which needs FInc: after ApplyAreas
+  FMap.SetDriveScenario(FDriveScenario);
   for d := 0 to cgLayers.Items.Count - 1 do
     cgLayers.Checked[d] := d in [liDistricts, liTowns, liMotorways, liTrunk, liRail, liBary, liGeo, liCvdBary,
       liIsochrones, liHospitals];
@@ -369,6 +375,15 @@ begin
   ApplyColouring;
 end;
 
+procedure TForm1.rgSpeedsClick(Sender: TObject);
+begin
+  if (rgSpeeds.ItemIndex < 0) or (FInc = nil) then Exit;
+  FDriveScenario := rgSpeeds.ItemIndex;
+  FMap.SetDriveScenario(FDriveScenario);
+  pbLegend.Invalidate;
+  ShowInfo;
+end;
+
 procedure TForm1.cbDomainChange(Sender: TObject);
 begin
   if cbDomain.ItemIndex < 0 then Exit;
@@ -479,9 +494,10 @@ begin
       if MsoaObservedSAR[LsoaMsoa[i]] > 0 then
         L.Add(Format('    MSOA ratio: model %.2f, observed %.2f (OHID, MI and stroke admissions 2016/17-20/21)',
           [MsoaModelSAR(LsoaMsoa[i]), MsoaObservedSAR[LsoaMsoa[i]]]));
-      L.Add('  Drive time (free-flow car, modelled) to');
+      L.Add('  Drive time (modelled), minutes            free-flow car   morning peak   blue light');
       for d := 0 to HospitalCount - 1 do
-        L.Add(Format('    %-52s %5.1f min', [HospitalName[d], LsoaDriveMinutes(i, d)]));
+        L.Add(Format('    %-38s %12.1f %14.1f %12.1f', [Copy(HospitalName[d], 1, 38),
+          LsoaDriveMinutes(i, d, 0), LsoaDriveMinutes(i, d, 1), LsoaDriveMinutes(i, d, 2)]));
       L.Add('');
     end else
       L.Add('Click an area on the map for its population, deprivation and expected heart attack and stroke admissions.' + LineEnding);
@@ -821,7 +837,8 @@ var
 begin
   SetLength(T, LsoaCount);
   L.Add('DRIVE TIMES TO HOSPITAL, weighted by expected heart attack and stroke admissions');
-  L.Add('  (free-flow car over OpenStreetMap roads - no traffic, no blue lights; see Sources)');
+  L.Add('  Speeds: ' + UpperCase(DriveScenarioName[FDriveScenario])
+    + ' (choose under Drive speeds; OpenStreetMap roads - see Sources)');
   L.Add('  to                                          mean   90 % within   <=15    <=30    <=45    >60 min');
   for dm := 0 to DriveDomainCount - 1 do begin
     SetLength(Idx, 0);
@@ -829,7 +846,7 @@ begin
     for k := 0 to 3 do Within[k] := 0;
     for i := 0 to LsoaCount - 1 do begin
       if not FInc[i] then Continue;
-      T[i] := LsoaDriveMinutes(i, dm);
+      T[i] := LsoaDriveMinutes(i, dm, FDriveScenario);
       Wt := LsoaCvdEvents(i);
       W := W + Wt; Sum := Sum + Wt * T[i];
       for k := 0 to 3 do if T[i] <= Lim[k] then Within[k] := Within[k] + Wt;
@@ -851,7 +868,7 @@ begin
     if not FInc[i] then Continue;
     d := LsoaDistrict[i];
     DEv[d] := DEv[d] + LsoaCvdEvents(i);
-    DT[d] := DT[d] + LsoaCvdEvents(i) * LsoaDriveMinutes(i, FDriveDomain);
+    DT[d] := DT[d] + LsoaCvdEvents(i) * LsoaDriveMinutes(i, FDriveDomain, FDriveScenario);
   end;
   for d := 0 to DistrictCount - 1 do
     if FDistInc[d] and (DEv[d] > 0) then
@@ -908,6 +925,8 @@ var
   Order: array of Integer;
   Diff: array of Double;
   NearerWHH: Double;
+  TS: array of Double;
+  sc: Integer;
 begin
   SetLength(All, LsoaCount);
   for h := 0 to 1 do begin
@@ -927,7 +946,7 @@ begin
     d := LsoaDistrict[i]; a := LsoaArea(i);
     DEv[d] := DEv[d] + Ev; AEv[a] := AEv[a] + Ev;
     for h := 0 to 1 do begin
-      T[h][i] := LsoaDriveMinutes(i, Hosp[h]);
+      T[h][i] := LsoaDriveMinutes(i, Hosp[h], FDriveScenario);
       DT[h][d] := DT[h][d] + Ev * T[h][i];
       AT[h, a] := AT[h, a] + Ev * T[h][i];
       if T[h][i] > 60 then AOver[h, a] := AOver[h, a] + Ev;
@@ -936,24 +955,29 @@ begin
   end;
 
   L.Add('ONE CENTRE FOR THE WHOLE OF KENT AND MEDWAY: WILLIAM HARVEY (ASHFORD) OR KENT AND CANTERBURY');
-  L.Add(Format('  All %s expected admissions a year, whatever areas are chosen; drive times as above.', [Thousands(W)]));
-  L.Add('                          mean  median  90 % within   <=30    <=45    <=60    >60    longest  hours/yr');
-  for h := 0 to 1 do begin
-    Sum := 0; Mx := 0; Q30 := 0; Q45 := 0; Q60 := 0;
-    for i := 0 to LsoaCount - 1 do begin
-      Ev := LsoaCvdEvents(i);
-      Sum := Sum + Ev * T[h][i];
-      Mx := Max(Mx, T[h][i]);
-      if T[h][i] <= 30 then Q30 := Q30 + Ev;
-      if T[h][i] <= 45 then Q45 := Q45 + Ev;
-      if T[h][i] <= 60 then Q60 := Q60 + Ev;
+  L.Add(Format('  All %s expected admissions a year, whatever areas are chosen, in each speed scenario.', [Thousands(W)]));
+  L.Add('                                mean  median  90 % within   <=30    <=45    <=60    >60    longest  hours/yr');
+  SetLength(TS, LsoaCount);
+  for sc := 0 to DriveScenarioCount - 1 do begin
+    L.Add('  ' + DriveScenarioName[sc] + IfThen(sc = FDriveScenario, '  (chosen: the tables below)', ''));
+    for h := 0 to 1 do begin
+      Sum := 0; Mx := 0; Q30 := 0; Q45 := 0; Q60 := 0;
+      for i := 0 to LsoaCount - 1 do begin
+        TS[i] := LsoaDriveMinutes(i, Hosp[h], sc);
+        Ev := LsoaCvdEvents(i);
+        Sum := Sum + Ev * TS[i];
+        Mx := Max(Mx, TS[i]);
+        if TS[i] <= 30 then Q30 := Q30 + Ev;
+        if TS[i] <= 45 then Q45 := Q45 + Ev;
+        if TS[i] <= 60 then Q60 := Q60 + Ev;
+      end;
+      L.Add(Format('    %-26s %5.1f  %6.1f  %9.1f %8.1f%% %6.1f%% %6.1f%% %5.1f%% %8.1f %9.0f',
+        [HospitalShort[Hosp[h]], Sum / W, WeightedQuantile(TS, All, 0.5), WeightedQuantile(TS, All, 0.9),
+         100 * Q30 / W, 100 * Q45 / W, 100 * Q60 / W, 100 * (W - Q60) / W, Mx, Sum / 60]));
     end;
-    L.Add(Format('  %-22s %5.1f  %6.1f  %9.1f %8.1f%% %6.1f%% %6.1f%% %5.1f%% %8.1f %9.0f',
-      [HospitalShort[Hosp[h]], Sum / W, WeightedQuantile(T[h], All, 0.5), WeightedQuantile(T[h], All, 0.9),
-       100 * Q30 / W, 100 * Q45 / W, 100 * Q60 / W, 100 * (W - Q60) / W, Mx, Sum / 60]));
   end;
-  L.Add(Format('  %.0f %% of admissions are quicker to William Harvey, %.0f %% to Kent and Canterbury.',
-    [100 * NearerWHH / W, 100 * (W - NearerWHH) / W]));
+  L.Add(Format('  %s: %.0f %% of admissions are quicker to William Harvey, %.0f %% to Kent and Canterbury.',
+    [DriveScenarioName[FDriveScenario], 100 * NearerWHH / W, 100 * (W - NearerWHH) / W]));
   L.Add('');
   L.Add('  area           admissions/yr   to WHH   to K&C    over 60 min: WHH   K&C');
   for a := 0 to AreaCount - 1 do
@@ -979,7 +1003,8 @@ begin
   end;
   L.Add('  West Kent decides it: the M20 puts Maidstone, Tonbridge, Sevenoaks and Tunbridge Wells');
   L.Add('  12-14 minutes nearer Ashford, outweighing Thanet and Canterbury''s 20 minutes the other way.');
-  L.Add('  In practice West and North Kent use their own hospitals; free-flow car times, no traffic.');
+  L.Add('  In practice West and North Kent use their own hospitals. Area and district tables: '
+    + DriveScenarioName[FDriveScenario] + '.');
 end;
 
 procedure TForm1.pbLegendPaint(Sender: TObject);
@@ -1022,7 +1047,7 @@ begin
   case rgColour.ItemIndex of
     0: begin
       cv.TextOut(BarX, 2, 'People per km2 (' + PopulationYear + ', log scale)');
-      h := 120;
+      h := 108;
       for y := 0 to h - 1 do begin
         t := 1 - y / (h - 1);
         v := Power(10, Log10(DensityLo) + t * (Log10(DensityHi) - Log10(DensityLo)));
@@ -1058,7 +1083,7 @@ begin
       y0 := y0 + 10 * h + 10;
     end;
     2: begin
-      h := 120;
+      h := 108;
       if FCvdMeasure = 0 then begin
         cv.TextOut(BarX, 2, 'Expected MI + stroke admissions per km2 a year');
         for y := 0 to h - 1 do begin
@@ -1093,11 +1118,11 @@ begin
           cv.TextOut(BarX + BarW + 8, y - cv.TextHeight(lab) div 2, lab);
         end;
       end;
-      y0 := y0 + h + 22;
+      y0 := y0 + h + 14;
     end;
     ciDrive: begin
-      cv.TextOut(BarX, 2, 'Drive time, minutes - share of expected admissions');
-      h := 17;
+      cv.TextOut(BarX, 2, 'Minutes, ' + DriveScenarioName[FDriveScenario] + ' - share of admissions');
+      h := 15;
       for dec := 0 to DriveBandCount - 1 do begin
         y := y0 + dec * h;
         cv.Brush.Style := bsSolid;
@@ -1109,7 +1134,7 @@ begin
         for i := 0 to LsoaCount - 1 do
           if FInc[i] then begin
             t := t + LsoaCvdEvents(i);
-            if Min(Trunc(LsoaDriveMinutes(i, FDriveDomain) / DriveBandMinutes), DriveBandCount - 1) = dec then
+            if Min(Trunc(LsoaDriveMinutes(i, FDriveDomain, FDriveScenario) / DriveBandMinutes), DriveBandCount - 1) = dec then
               v := v + LsoaCvdEvents(i);
           end;
         if dec < DriveBandCount - 1 then
@@ -1257,6 +1282,10 @@ begin
   FCvdMeasure := 0; FBoxMode := -1; ApplyColouring;
   rgColour.ItemIndex := ciDrive; ApplyColouring; Save('drive');
   FDriveDomain := HospitalCount; FMap.SetDriveDomain(FDriveDomain); FBoxMode := -1; ApplyColouring; Save('drive_whh_kch');
+  i := FDriveScenario;
+  rgSpeeds.ItemIndex := 1; rgSpeedsClick(nil); Save('drive_whh_kch_peak');
+  rgSpeeds.ItemIndex := 2; rgSpeedsClick(nil); Save('drive_whh_kch_blue');
+  rgSpeeds.ItemIndex := i; rgSpeedsClick(nil);
   FDriveDomain := DriveDomainCount - 1; FMap.SetDriveDomain(FDriveDomain); FBoxMode := -1;
   rgColour.ItemIndex := ciCvd; ApplyColouring;
   // zoom on the barycentre, with its LSOA selected
