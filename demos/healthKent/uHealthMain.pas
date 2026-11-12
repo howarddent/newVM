@@ -143,6 +143,7 @@ type
     procedure CorridorSummary(L: TStrings; Total: Double);
     procedure DriveSummary(L: TStrings);
     procedure WhhKchSummary(L: TStrings);
+    procedure BestSiteSummary(L: TStrings);
     procedure FillSources;
     function DecileShare(Domain, Decile: Integer): Double;
     procedure RunSnapshot(Data: PtrInt);
@@ -222,7 +223,7 @@ begin
     FDepDomain := EnsureRange(StrToIntDef(Application.GetOptionValue('domain'), 0), 0, DomainCount - 1);
   if Application.HasOption('cvd') then
     FCvdMeasure := EnsureRange(StrToIntDef(Application.GetOptionValue('cvd'), 0), 0, 1);
-  FDriveDomain := DriveDomainCount - 1;
+  FDriveDomain := DriveNearestDomain;
   if Application.HasOption('drive') then
     FDriveDomain := EnsureRange(StrToIntDef(Application.GetOptionValue('drive'), 0), 0, DriveDomainCount - 1);
   FMap.SetDriveDomain(FDriveDomain);
@@ -498,6 +499,9 @@ begin
       for d := 0 to HospitalCount - 1 do
         L.Add(Format('    %-38s %12.1f %14.1f %12.1f', [Copy(HospitalName[d], 1, 38),
           LsoaDriveMinutes(i, d, 0), LsoaDriveMinutes(i, d, 1), LsoaDriveMinutes(i, d, 2)]));
+      d := DriveBestDomain;
+      L.Add(Format('    %-38s %12.1f %14.1f %12.1f', ['best single site (each scenario''s own)',
+        LsoaDriveMinutes(i, d, 0), LsoaDriveMinutes(i, d, 1), LsoaDriveMinutes(i, d, 2)]));
       L.Add('');
     end else
       L.Add('Click an area on the map for its population, deprivation and expected heart attack and stroke admissions.' + LineEnding);
@@ -876,6 +880,86 @@ begin
         [DistrictName[d], DEv[d], DT[d] / DEv[d], DriveDomainShort(FDriveDomain)]));
   L.Add('');
   WhhKchSummary(L);
+  L.Add('');
+  BestSiteSummary(L);
+end;
+
+function WeightedQuantile(const T: array of Double; const Use: array of Boolean; P: Double): Double; forward;
+
+// the best single site for the whole county in each speed scenario, against
+// the existing hospitals nearest it and the two in the WHH/K&C question
+procedure TForm1.BestSiteSummary(L: TStrings);
+const
+  HospMaidstone = 2;
+var
+  Doms: array[0..3] of Integer;
+  All: array of Boolean;
+  TS: array of Double;
+  sc, k, i, a, t: Integer;
+  W, Ev, Sum, Mx, Q30, Q45, Q60, la, lo, km: Double;
+  AEv: array[0..AreaCount - 1] of Double;
+  AT: array[0..3, 0..AreaCount - 1] of Double;
+  nm: string;
+begin
+  Doms[0] := DriveBestDomain; Doms[1] := HospMaidstone; Doms[2] := DriveHospWHH; Doms[3] := DriveHospKCH;
+  SetLength(All, LsoaCount); SetLength(TS, LsoaCount);
+  for i := 0 to LsoaCount - 1 do All[i] := True;
+  L.Add('BEST SINGLE SITE FOR THE WHOLE OF KENT AND MEDWAY (green star on the map, with the Hospitals layer)');
+  L.Add('  The road-network point with the lowest admissions-weighted mean drive time from every LSOA,');
+  W := 0;
+  for i := 0 to LsoaCount - 1 do W := W + LsoaCvdEvents(i);
+  L.Add(Format('  over all %s expected admissions a year, found for each speed scenario (see Glossary).', [Thousands(W)]));
+  for sc := 0 to DriveScenarioCount - 1 do begin
+    if (sc > 0) and (BestSiteE[sc] = BestSiteE[0]) and (BestSiteN[sc] = BestSiteN[0]) then begin
+      L.Add('  ' + DriveScenarioName[sc] + ': the same point');
+      Continue;
+    end;
+    BNGToWGS84(BestSiteE[sc], BestSiteN[sc], la, lo);
+    i := LsoaAt(BestSiteE[sc], BestSiteN[sc]);
+    if i < 0 then i := NearestLsoa(BestSiteE[sc], BestSiteN[sc]);
+    t := NearestTown(BestSiteE[sc], BestSiteN[sc], km);
+    L.Add(Format('  %s: %s  %s, in %s (%s), %.1f km from %s',
+      [DriveScenarioName[sc], GridRef(BestSiteE[sc], BestSiteN[sc]), LatLonText(la, lo),
+       LsoaName[i], DistrictName[LsoaDistrict[i]], km, TownName[t]]));
+  end;
+  L.Add('                                mean  median  90 % within   <=30    <=45    <=60    >60    longest  hours/yr');
+  for sc := 0 to DriveScenarioCount - 1 do begin
+    L.Add('  ' + DriveScenarioName[sc]);
+    for k := 0 to High(Doms) do begin
+      W := 0; Sum := 0; Mx := 0; Q30 := 0; Q45 := 0; Q60 := 0;
+      for i := 0 to LsoaCount - 1 do begin
+        TS[i] := LsoaDriveMinutes(i, Doms[k], sc);
+        Ev := LsoaCvdEvents(i);
+        W := W + Ev; Sum := Sum + Ev * TS[i];
+        Mx := Max(Mx, TS[i]);
+        if TS[i] <= 30 then Q30 := Q30 + Ev;
+        if TS[i] <= 45 then Q45 := Q45 + Ev;
+        if TS[i] <= 60 then Q60 := Q60 + Ev;
+      end;
+      if Doms[k] = DriveBestDomain then nm := 'Best single site' else nm := HospitalShort[Doms[k]];
+      L.Add(Format('    %-26s %5.1f  %6.1f  %9.1f %8.1f%% %6.1f%% %6.1f%% %5.1f%% %8.1f %9.0f',
+        [nm, Sum / W, WeightedQuantile(TS, All, 0.5), WeightedQuantile(TS, All, 0.9),
+         100 * Q30 / W, 100 * Q45 / W, 100 * Q60 / W, 100 * (W - Q60) / W, Mx, Sum / 60]));
+    end;
+  end;
+  for a := 0 to AreaCount - 1 do begin
+    AEv[a] := 0;
+    for k := 0 to High(Doms) do AT[k, a] := 0;
+  end;
+  for i := 0 to LsoaCount - 1 do begin
+    a := LsoaArea(i); Ev := LsoaCvdEvents(i);
+    AEv[a] := AEv[a] + Ev;
+    for k := 0 to High(Doms) do AT[k, a] := AT[k, a] + Ev * LsoaDriveMinutes(i, Doms[k], FDriveScenario);
+  end;
+  L.Add('');
+  L.Add('  area, mean minutes (' + DriveScenarioName[FDriveScenario] + ')   best site   Maidstone   William Harvey   K&C');
+  for a := 0 to AreaCount - 1 do
+    L.Add(Format('  %-36s %9.1f %11.1f %16.1f %5.1f',
+      [AreaName[a], AT[0, a] / AEv[a], AT[1, a] / AEv[a], AT[2, a] / AEv[a], AT[3, a] / AEv[a]]));
+  L.Add('  The A249 between M20 junction 7 and M2 junction 5 joins the two motorways with Medway and Swale');
+  L.Add('  to the north, so a site there beats every existing hospital. Green outlines: sites within 2 (solid)');
+  L.Add('  and 5 minutes (dotted) of the best mean - the optimum is broad. Drive time only: no ambulance');
+  L.Add('  dispatch, land, buildings or staffing, and one centre for 1.9 million is larger than most networks.');
 end;
 
 // admissions-weighted quantile P of minutes T over the LSOAs with Use[i]
@@ -1052,6 +1136,7 @@ procedure TForm1.pbLegendPaint(Sender: TObject);
 const
   BarX = 10;
   BarW = 24;
+  KeyPitch = 14;     // line and marker key rows
 var
   cv: TCanvas;
   y, y0, h, i, dec, dom: Integer;
@@ -1193,49 +1278,56 @@ begin
     end;
   end;
   // line and marker key
-  if cgLayers.Checked[liMotorways] then begin KeyLine(y0, clMotorway, 3, 'motorway', False); Inc(y0, 15); end;
-  if cgLayers.Checked[liTrunk] then begin KeyLine(y0, clTrunk, 3, 'trunk road (primary route)', False); Inc(y0, 15); end;
-  if cgLayers.Checked[liPrimary] then begin KeyLine(y0, clPrimary, 2, 'primary A road', False); Inc(y0, 15); end;
-  if cgLayers.Checked[liRail] then begin KeyLine(y0, clRail, 4, 'railway', True); Inc(y0, 15); end;
+  if cgLayers.Checked[liMotorways] then begin KeyLine(y0, clMotorway, 3, 'motorway', False); Inc(y0, KeyPitch); end;
+  if cgLayers.Checked[liTrunk] then begin KeyLine(y0, clTrunk, 3, 'trunk road (primary route)', False); Inc(y0, KeyPitch); end;
+  if cgLayers.Checked[liPrimary] then begin KeyLine(y0, clPrimary, 2, 'primary A road', False); Inc(y0, KeyPitch); end;
+  if cgLayers.Checked[liRail] then begin KeyLine(y0, clRail, 4, 'railway', True); Inc(y0, KeyPitch); end;
   cv.Pen.Width := 1;
   if cgLayers.Checked[liTowns] then begin
     cv.Brush.Style := bsSolid; cv.Brush.Color := clWhite; cv.Pen.Color := clBlack;
     cv.Ellipse(BarX + 13, y0 - 4, BarX + 21, y0 + 4);
     cv.Brush.Style := bsClear;
     cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, Format('town over %s', [Thousands(TownMinPopulation)]));
-    Inc(y0, 15);
+    Inc(y0, KeyPitch);
   end;
   if cgLayers.Checked[liBary] then begin
     cv.Brush.Style := bsSolid; cv.Brush.Color := clBary; cv.Pen.Color := clBlack;
     cv.Ellipse(BarX + 10, y0 - 7, BarX + 24, y0 + 7);
     cv.Brush.Style := bsClear;
     cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, 'population barycentre');
-    Inc(y0, 15);
+    Inc(y0, KeyPitch);
   end;
   if cgLayers.Checked[liCvdBary] then begin
     cv.Brush.Style := bsSolid; cv.Brush.Color := clCvdBary; cv.Pen.Color := clBlack;
     cv.Ellipse(BarX + 10, y0 - 7, BarX + 24, y0 + 7);
     cv.Brush.Style := bsClear;
     cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, 'heart attack and stroke barycentre');
-    Inc(y0, 15);
+    Inc(y0, KeyPitch);
   end;
   if cgLayers.Checked[liGeo] then begin
     cv.Brush.Style := bsSolid; cv.Brush.Color := TColor($1A1A1A); cv.Pen.Color := clBlack;
     cv.Polygon([Point(BarX + 17, y0 - 6), Point(BarX + 23, y0), Point(BarX + 17, y0 + 6), Point(BarX + 11, y0)]);
     cv.Brush.Style := bsClear;
     cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, 'geographic centre');
-    Inc(y0, 15);
+    Inc(y0, KeyPitch);
   end;
   if cgLayers.Checked[liIsochrones] then begin
     KeyLine(y0, clIsochrone, 3, 'isochrones to ' + DriveDomainShort(FDriveDomain) + ': 15, 30, 45, 60 min', False);
-    Inc(y0, 15);
+    Inc(y0, KeyPitch);
   end;
   if cgLayers.Checked[liHospitals] then begin
     cv.Brush.Style := bsSolid; cv.Brush.Color := clHospital; cv.Pen.Color := clWhite;
     cv.Rectangle(BarX + 10, y0 - 7, BarX + 24, y0 + 7);
     cv.Brush.Style := bsClear;
     cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, 'acute hospital (chosen: larger)');
-    Inc(y0, 15);
+    Inc(y0, KeyPitch);
+    cv.Brush.Style := bsSolid; cv.Brush.Color := TColor($3C8C14); cv.Pen.Color := TColor($3C8C14);
+    cv.Polygon([Point(BarX + 17, y0 - 7), Point(BarX + 19, y0 - 2), Point(BarX + 24, y0 - 2), Point(BarX + 20, y0 + 1),
+      Point(BarX + 22, y0 + 7), Point(BarX + 17, y0 + 3), Point(BarX + 12, y0 + 7), Point(BarX + 14, y0 + 1),
+      Point(BarX + 10, y0 - 2), Point(BarX + 15, y0 - 2)]);
+    cv.Brush.Style := bsClear;
+    cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, 'best single site; within 2 / 5 min of its mean');
+    Inc(y0, KeyPitch);
   end;
   if not ((FAreas = AllAreas) or (FAreas = [0]) or (FAreas = [1]) or (FAreas = [2]))
     and (cgLayers.Checked[liBary] or cgLayers.Checked[liCvdBary] or cgLayers.Checked[liGeo]) then
@@ -1327,7 +1419,8 @@ begin
   rgSpeeds.ItemIndex := 1; rgSpeedsClick(nil); Save('drive_whh_kch_peak');
   rgSpeeds.ItemIndex := 2; rgSpeedsClick(nil); Save('drive_whh_kch_blue');
   rgSpeeds.ItemIndex := i; rgSpeedsClick(nil);
-  FDriveDomain := DriveDomainCount - 1; FMap.SetDriveDomain(FDriveDomain); FBoxMode := -1;
+  FDriveDomain := DriveBestDomain; FMap.SetDriveDomain(FDriveDomain); FBoxMode := -1; ApplyColouring; Save('drive_best');
+  FDriveDomain := DriveNearestDomain; FMap.SetDriveDomain(FDriveDomain); FBoxMode := -1;
   rgColour.ItemIndex := ciCvd; ApplyColouring;
   // zoom on the barycentre, with its LSOA selected
   FMap.SetView(FBaryE, FBaryN, 6);

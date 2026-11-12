@@ -277,7 +277,7 @@ const
        + 'carriageways and 100 km/h elsewhere, traffic ignored.')
   );
 
-  Glossary: array[0..18] of TGlossaryEntry = (
+  Glossary: array[0..19] of TGlossaryEntry = (
     (Term: 'LSOA'; Meaning: 'Lower layer Super Output Area: a Census 2021 statistical area of about 1,000-3,000 residents (400-1,200 households). Kent and Medway has 1,107.'),
     (Term: 'Mid-year population estimate'; Meaning: 'ONS estimate of the usual resident population on 30 June, rolled forward from the 2021 Census with births, deaths and migration.'),
     (Term: 'Population density'; Meaning: 'Mid-2024 population divided by the LSOA''s land area (ONS Standard Area Measurements), people per km2.'),
@@ -296,7 +296,8 @@ const
     (Term: 'Indirectly standardised ratio (SAR)'; Meaning: 'Observed events over those expected if England''s age-specific rates applied to the local population; 1 (or 100) = England.'),
     (Term: 'MSOA'; Meaning: 'Middle layer Super Output Area: about 5,000-15,000 residents, built from 4-6 LSOAs. Kent and Medway has 221 (2021).'),
     (Term: 'APS'; Meaning: 'The ONS Annual Population Survey, source of the official adult smoking prevalence. District samples are a few hundred people, so district figures carry wide confidence intervals.'),
-    (Term: 'Drive time and isochrone'; Meaning: 'Modelled minutes to a hospital along the fastest OpenStreetMap route, in three scenarios: a car at free-flow speeds, a car in the weekday morning peak, and an ambulance on blue lights. An isochrone is the line joining places the same time away - here 15, 30, 45 and 60 minutes.')
+    (Term: 'Drive time and isochrone'; Meaning: 'Modelled minutes to a hospital along the fastest OpenStreetMap route, in three scenarios: a car at free-flow speeds, a car in the weekday morning peak, and an ambulance on blue lights. An isochrone is the line joining places the same time away - here 15, 30, 45 and 60 minutes.'),
+    (Term: 'Best single site'; Meaning: 'The point on the road network in Kent and Medway with the shortest mean drive time from every LSOA, weighted by expected heart attack and stroke admissions - where one centre for the whole county would minimise average travel. Found separately for each speed scenario by timing every LSOA to every road node (motorways and trunk roads themselves excluded). The green outlines enclose the sites within 2 and 5 minutes of that best mean. It ignores land, existing buildings and ambulance logistics.')
   );
 
 const
@@ -388,8 +389,9 @@ procedure A2M2Extent(out E0, E1: Double);
 procedure M20Extent(out E0, E1: Double);
 
 // drive times (see the header). Domains 0 .. HospitalCount - 1 are the
-// hospitals, then the nearer of William Harvey and Kent and Canterbury,
-// then the nearest of all
+// hospitals, then the nearer of William Harvey and Kent and Canterbury
+// (HospitalCount), the nearest of all (DriveNearestDomain), and the best
+// single site for the scenario (DriveBestDomain, BestSiteE/N)
 function DriveDomainName(d: Integer): string;
 function DriveDomainShort(d: Integer): string;
 // Scenario 0 free-flow car, 1 weekday morning peak, 2 blue light
@@ -856,6 +858,7 @@ function DriveDomainName(d: Integer): string;
 begin
   if d < HospitalCount then result := HospitalName[d]
   else if d = HospitalCount then result := 'Nearer of William Harvey and Kent and Canterbury'
+  else if d = DriveBestDomain then result := 'Best single site (lowest county mean time)'
   else result := 'Nearest of all seven acute hospitals';
 end;
 
@@ -863,6 +866,7 @@ function DriveDomainShort(d: Integer): string;
 begin
   if d < HospitalCount then result := HospitalShort[d]
   else if d = HospitalCount then result := 'WHH or K&C'
+  else if d = DriveBestDomain then result := 'best site'
   else result := 'nearest';
 end;
 
@@ -880,7 +884,7 @@ function DriveDomainHas(d, h: Integer): Boolean;
 begin
   if d < HospitalCount then result := h = d
   else if d = HospitalCount then result := (h = DriveHospWHH) or (h = DriveHospKCH)
-  else result := True;
+  else result := d = DriveNearestDomain;
 end;
 
 var

@@ -3709,6 +3709,33 @@ packages. Compiled binaries and each demo's own `lib/` output are
       quicker to either site. K&C wins narrowly: 31.7 / 33.3 min free-flow,
       39.0 / 40.4 peak, 26.3 / 28.3 blue light, 52-53 % of admissions
       quicker to K&C.
+    - **Best single site** (same day, a tenth domain `DriveBestDomain`,
+      after `DriveNearestDomain`; code that meant "the last domain" by
+      `DriveDomainCount - 1` now names `DriveNearestDomain`). For each
+      scenario `make_drive_data.py` runs a forward Dijkstra from every
+      LSOA's join node (~4 min a scenario, ~15 min for the whole script)
+      and takes the node in Kent's land with the lowest admissions-weighted
+      mean time (motorway and trunk nodes excluded, as for joining). The
+      weights come from `healthKent --events=<file.csv>` (written by the
+      `.lpr` before the form is created), so the script now takes that
+      file as a second argument:
+      `./healthKent --events=~/data/healthKent-src/cvd/lsoa_events.csv`, then
+      `python3 make_drive_data.py <roads.json> <events.csv>`. It writes
+      `BestSiteE/N/Mean` per scenario, the domain's times and isochrones,
+      and contours of the node means at best + 2 and + 5 min
+      (`BestZone*`). All three scenarios pick the same point: TQ 78696
+      57925 (51.2924N 0.5615E), by the A249 at Detling between M20 J7 and
+      M2 J5. Mean 26.8 / 32.5 / 22.6 min (free-flow / peak / blue light)
+      against Maidstone Hospital 30.5 / 37.2 / 25.6, WHH 34.6 / 41.9 / 29.6
+      and K&C 37.0 / 45.3 / 30.9; nobody over an hour free-flow (6.5 % at
+      peak). East Kent pays: 38.2 min free-flow against 26.1 to K&C. Map:
+      a green star (larger when chosen) with the zones in dark green
+      (solid 2 min, dotted 5) under the Hospitals layer; its label goes
+      above it, since the population barycentre's label runs through it.
+      The zones follow the roads, so they are ragged and come in pieces.
+      Memo: `BestSiteSummary`, after `WhhKchSummary`; a selected LSOA
+      shows its time to the site too. Legend key rows are now 14 px
+      (`KeyPitch`) to fit its line. Snapshot adds `_drive_best`.
   - `--snapshot=<prefix>` saves density/IMD/health/admissions (per km2 and
     ratio)/zoomed maps and the window, prints the memo and exits;
     `--colour=<0..4>`, `--domain=<0..7>`, `--cvd=<0|1>`, `--areas=<list>`,

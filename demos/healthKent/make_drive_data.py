@@ -44,9 +44,19 @@
 # district rings, as the map) or more than 1.5 km from a road are masked out. The map draws them on land only.
 #
 # Choices ("domains"): each hospital, the nearer (in time) of William Harvey
-# and Kent and Canterbury, and the nearest of all of them.
+# and Kent and Canterbury, the nearest of all of them, and the best single
+# site (below).
 #
-# Usage: python3 make_drive_data.py <drive_roads.json>
+# Best single site: for each speed scenario, the network node in Kent and
+# Medway (motorways and trunk roads excluded, as for joining points) with the
+# lowest admissions-weighted mean drive time from every LSOA - one forward
+# Dijkstra per LSOA, about 4 minutes a scenario. The weights are each LSOA's
+# expected heart attack and stroke admissions, written by
+# `healthKent --events=<file.csv>`. Also written: the outlines of the sites
+# within 2 and 5 minutes of the best mean (BEST_ZONES), contoured on the
+# same grid as the isochrones.
+#
+# Usage: python3 make_drive_data.py <drive_roads.json> <events.csv>
 # ---------------------------------------------------------------------------
 import sys, os, json, math, re
 import numpy as np
@@ -90,6 +100,7 @@ HOSPITALS = [
 ]
 WHH, KCH = 4, 5
 LEVELS = [15, 30, 45, 60]
+BEST_ZONES = [2, 5]           # minutes above the best site's mean
 GRID = 500.0
 BOX = (535000, 660000, 120000, 190000)   # E0, E1, N0, N1
 
@@ -208,8 +219,45 @@ def simplify(pts, tol):
     return np.vstack([simplify(pts[:k + 1], tol)[:-1], simplify(pts[k:], tol)])
 
 
-def main(path):
+def read_events(path):
+    import csv
+    rows = list(csv.DictReader(open(path)))
+    w = np.zeros(len(rows))
+    for r in rows:
+        w[int(r['i'])] = float(r['events'])
+    return w
+
+
+def best_site(E, v, nn, ln, la, w, sites):
+    # admissions-weighted mean time from every LSOA to every node
+    G = coo_matrix((E['L'] / 1000 / v * 60, (E['R'], E['C'])), shape=(nn, nn)).tocsr()
+    S = np.zeros(nn)
+    for b in range(0, len(ln), 64):
+        idx = np.arange(b, min(b + 64, len(ln)))
+        S += w[idx] @ (dijkstra(G, indices=ln[idx]) + la[idx, None])
+    mean = S / w.sum()
+    k = sites[np.argmin(mean[sites])]
+    return k, mean
+
+
+def smooth(T, far):
+    # 3x3 mean over the cells near a road only, so the sea's large access
+    # times don't leak into the coast
+    T = np.where(np.isfinite(T), T, 999.0)
+    ok = (~far).astype(float)
+    P = np.pad(np.where(far, 0.0, T), 1)
+    Q = np.pad(ok, 1)
+    num = sum(P[i:i + T.shape[0], j:j + T.shape[1]] for i in range(3) for j in range(3))
+    den = sum(Q[i:i + T.shape[0], j:j + T.shape[1]] for i in range(3) for j in range(3))
+    S = np.where(far, 999.0, num / np.maximum(den, 1))
+    return np.ma.masked_array(S, mask=far)
+
+
+def main(path, events):
     E, nn, xy, cand, stamp = build_graph(path)
+    w = read_events(events)
+    sites = cand[land_mask(xy[cand, 0:1], xy[cand, 1:2]).ravel()]
+    print('events', w.sum(), 'candidate sites', len(sites))
     tree = cKDTree(xy[cand])
     def snap(P):
         dd, k = tree.query(P)
@@ -226,6 +274,7 @@ def main(path):
     far = (gacc * ACCESS_KMH / 60 > 1.5).reshape(GE.shape) | ~land_mask(GE, GN)
 
     all_l, iso = [], []    # all_l[scenario][domain]; iso (scenario, domain, minutes, points)
+    best, zones = [], []   # best (E, N, mean) per scenario; zones (scenario, extra minutes, points)
     for sc, scname in enumerate(SCENARIOS):
         v = scenario_speed(E, sc)
         report_speeds(E, v, scname)
@@ -241,28 +290,31 @@ def main(path):
             print('  %-20s LSOA %.1f..%.1f min' % (name, lt[-1].min(), lt[-1].max()))
         lt = np.array(lt)
         assert np.isfinite(lt).all()
-        # the two combined choices
-        all_l.append(list(lt) + [np.minimum(lt[WHH], lt[KCH]), lt.min(axis=0)])
-        dom_g = gt + [np.minimum(gt[WHH], gt[KCH]), np.min(gt, axis=0)]
+        # the best single site
+        k, mean = best_site(E, v, nn, ln, la, w, sites)
+        best.append((xy[k, 0], xy[k, 1], mean[k]))
+        print('  best single site E %.0f N %.0f, mean %.2f min' % best[-1])
+        dist = dijkstra(GT, indices=int(k))
+        bl = dist[ln] + la
+        bg = (dist[gnod] + gacc).reshape(GE.shape)
+        cg = contourpy.contour_generator(ge, gn, smooth(mean[gnod].reshape(GE.shape), far), corner_mask=True)
+        for extra in BEST_ZONES:
+            for line in cg.lines(mean[k] + extra):
+                pts = simplify(np.asarray(line), 60.0)
+                if len(pts) >= 2:
+                    zones.append((sc, extra, pts))
+        # the two combined choices, then the best site
+        all_l.append(list(lt) + [np.minimum(lt[WHH], lt[KCH]), lt.min(axis=0), bl])
+        dom_g = gt + [np.minimum(gt[WHH], gt[KCH]), np.min(gt, axis=0), bg]
         iso += [(sc,) + x for x in isochrones(dom_g, ge, gn, far)]
     print('isochrone lines', len(iso), 'points', sum(len(x[3]) for x in iso))
-    write(all_l, iso, stamp)
+    write(all_l, iso, best, zones, stamp)
 
 
 def isochrones(dom_g, ge, gn, far):
     iso = []    # (domain, minutes, points)
     for dmn, T in enumerate(dom_g):
-        T = np.where(np.isfinite(T), T, 999.0)
-        # 3x3 mean over the cells near a road only, so the sea's large
-        # access times don't leak into the coast
-        ok = (~far).astype(float)
-        P = np.pad(np.where(far, 0.0, T), 1)
-        Q = np.pad(ok, 1)
-        num = sum(P[i:i + T.shape[0], j:j + T.shape[1]] for i in range(3) for j in range(3))
-        den = sum(Q[i:i + T.shape[0], j:j + T.shape[1]] for i in range(3) for j in range(3))
-        S = np.where(far, 999.0, num / np.maximum(den, 1))
-        S = np.ma.masked_array(S, mask=far)
-        cg = contourpy.contour_generator(ge, gn, S, corner_mask=True)
+        cg = contourpy.contour_generator(ge, gn, smooth(T, far), corner_mask=True)
         for lev in LEVELS:
             for line in cg.lines(lev):
                 pts = simplify(np.asarray(line), 60.0)
@@ -271,7 +323,7 @@ def isochrones(dom_g, ge, gn, far):
     return iso
 
 
-def write(all_l, iso, stamp):
+def write(all_l, iso, best, zones, stamp):
     out = os.path.join(here, 'drivedata.inc')
     def arr(name, typ, vals, fmt, per=12):
         rows = [', '.join(fmt % v for v in vals[i:i + per]) for i in range(0, len(vals), per)]
@@ -287,6 +339,7 @@ def write(all_l, iso, stamp):
         fh.write('  DriveDomainCount = %d;\n' % len(all_l[0]))
         fh.write('  DriveScenarioCount = %d;\n' % len(SCENARIOS))
         fh.write('  DriveHospWHH = %d;\n  DriveHospKCH = %d;\n' % (WHH, KCH))
+        fh.write('  DriveNearestDomain = %d;\n  DriveBestDomain = %d;\n' % (len(HOSPITALS) + 1, len(HOSPITALS) + 2))
         fh.write(arr('DriveScenarioName', 'string', [pas(x) for x in SCENARIOS], '%s', 3))
         fh.write(arr('HospitalShort', 'string', [pas(h[0]) for h in HOSPITALS], '%s', 4))
         fh.write(arr('HospitalName', 'string', [pas(h[1]) for h in HOSPITALS], '%s', 2))
@@ -305,8 +358,21 @@ def write(all_l, iso, stamp):
         fh.write(arr('IsoStart', 'Integer', starts, '%d', 16))
         fh.write(arr('IsoPtE', 'Single', [float(q[0]) for x in iso for q in x[3]], '%.0f'))
         fh.write(arr('IsoPtN', 'Single', [float(q[1]) for x in iso for q in x[3]], '%.0f'))
+        # best single site per scenario, and the zones within BEST_ZONES minutes of it
+        fh.write(arr('BestSiteE', 'Single', [b[0] for b in best], '%.0f'))
+        fh.write(arr('BestSiteN', 'Single', [b[1] for b in best], '%.0f'))
+        fh.write(arr('BestSiteMean', 'Single', [b[2] for b in best], '%.2f'))
+        fh.write('  BestZoneCount = %d;\n' % len(zones))
+        fh.write(arr('BestZoneScenario', 'Byte', [z[0] for z in zones], '%d', 30))
+        fh.write(arr('BestZoneExtra', 'Byte', [z[1] for z in zones], '%d', 30))
+        zs = [0]
+        for z in zones:
+            zs.append(zs[-1] + len(z[2]))
+        fh.write(arr('BestZoneStart', 'Integer', zs, '%d', 16))
+        fh.write(arr('BestZonePtE', 'Single', [float(q[0]) for z in zones for q in z[2]], '%.0f'))
+        fh.write(arr('BestZonePtN', 'Single', [float(q[1]) for z in zones for q in z[2]], '%.0f'))
     print('wrote', out, os.path.getsize(out), 'bytes')
 
 
 if __name__ == '__main__':
-    main(sys.argv[1])
+    main(sys.argv[1], sys.argv[2])

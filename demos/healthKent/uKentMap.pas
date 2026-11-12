@@ -53,7 +53,9 @@ unit uKentMap;
      (SetDriveScenario: free-flow, morning peak, blue light) and are drawn on land, over any fill, when
      ShowIsochrones is set; the longest line of each is labelled. Hospitals
      (ShowHospitals) are red squares with a white cross, the chosen ones
-     larger.
+     larger; with them, the best single site for the scenario is a green
+     star (larger when it is the chosen domain), and the sites within 2 and
+     5 minutes of its mean are outlined in green (DrawBestZones).
 
      VIEW: wheel zooms about the cursor (1x .. 40x), a left drag pans, a
      left click without a drag selects the LSOA under the cursor
@@ -126,6 +128,7 @@ type
     FAreaTex: array[0..AreaCount - 1] of TKentTextTexture;
     FHospTex: array[0..HospitalCount - 1] of TKentTextTexture;
     FIsoTex: array[0..3] of TKentTextTexture;
+    FBestTex: TKentTextTexture;
     FTexBuilt: Boolean;
     procedure UpdateScale;
     procedure ToPixel(E, N: Double; out PX, PY: Double);
@@ -137,6 +140,8 @@ type
     procedure FindIsoLabels;
     procedure DrawIsoLabels;
     procedure DrawHospitals;
+    procedure DrawBestZones;
+    procedure DrawBestSite;
     procedure BuildTextures;
     procedure FreeTextures;
     function CreateTextTexture(const S: string; FontSize: Integer; Bold: Boolean): TKentTextTexture;
@@ -214,6 +219,8 @@ const
   clCvdBary = TColor($A01E8C);      // RGB(140, 30, 160)
   clOutside = TColor($CFCFCF);      // LSOAs outside the chosen areas
   clHospital = TColor($2020C8);     // RGB(200, 32, 32)
+  clBestSite = TColor($3C8C14);     // RGB(20, 140, 60)
+  clBestZone = TColor($1E5A00);     // RGB(0, 90, 30), darker: the drive fill is green near it
   clIsochrone = TColor($9900D6);    // RGB(214, 0, 153)
   DriveBandMinutes = 10;            // fill bands
   DriveBandCount = 7;               // 0-10 .. 50-60, 60+
@@ -355,7 +362,7 @@ begin
   FShowBarycentre := True;
   FDriveDomain := -1;
   FDriveScenario := 0;
-  SetDriveDomain(DriveDomainCount - 1);
+  SetDriveDomain(DriveNearestDomain);
   FBaryE := NaN;
   FGeoE := NaN;
   FCvdE := NaN;
@@ -600,6 +607,7 @@ begin
     FHospTex[i] := CreateTextTexture(HospitalShort[i], 9, True);
   for i := 0 to IsoLevelCount - 1 do
     FIsoTex[i] := CreateTextTexture(IntToStr(IsoLevels[i]) + ' min', 8, True);
+  FBestTex := CreateTextTexture('best single site', 9, True);
   FTexBuilt := True;
 end;
 
@@ -621,6 +629,7 @@ begin
   for i := 0 to AreaCount - 1 do Del(FAreaTex[i]);
   for i := 0 to HospitalCount - 1 do Del(FHospTex[i]);
   for i := 0 to IsoLevelCount - 1 do Del(FIsoTex[i]);
+  Del(FBestTex);
   FTexBuilt := False;
 end;
 
@@ -782,6 +791,74 @@ begin
     glEnd;
     DrawLabel(FHospTex[h], x + r + 3, y, True);
   end;
+end;
+
+// the sites within 2 minutes (solid) and 5 minutes (dotted) of the best
+// single site's mean, for the speed scenario
+procedure TKentMapView.DrawBestZones;
+
+  procedure Strokes(Extra: Integer);
+  var
+    k, j: Integer;
+    px, py: Double;
+  begin
+    for k := 0 to BestZoneCount - 1 do begin
+      if (BestZoneScenario[k] <> FDriveScenario) or (BestZoneExtra[k] <> Extra) then Continue;
+      glBegin(GL_LINE_STRIP);
+        for j := BestZoneStart[k] to BestZoneStart[k + 1] - 1 do begin
+          ToPixel(BestZonePtE[j], BestZonePtN[j], px, py);
+          glVertex2d(px, py);
+        end;
+      glEnd;
+    end;
+  end;
+
+begin
+  glColor4f(1, 1, 1, 0.9);
+  glLineWidth(5.0);
+  Strokes(2);
+  glLineWidth(4.5);
+  Strokes(5);
+  GLColour(clBestZone);
+  glLineWidth(2.5);
+  Strokes(2);
+  glEnable(GL_LINE_STIPPLE);
+  glLineStipple(2, $3333);
+  glLineWidth(2.5);
+  Strokes(5);
+  glDisable(GL_LINE_STIPPLE);
+end;
+
+// a green five-pointed star at the scenario's best single site
+procedure TKentMapView.DrawBestSite;
+
+  procedure Star(x, y, r: Double);
+  var
+    i: Integer;
+    a, rr: Double;
+  begin
+    glBegin(GL_TRIANGLE_FAN);
+      glVertex2d(x, y);
+      for i := 0 to 10 do begin
+        a := Pi / 2 + Pi * i / 5;
+        if Odd(i) then rr := 0.45 * r else rr := r;
+        glVertex2d(x + rr * Cos(a), y + rr * Sin(a));   // y up: point at the top
+      end;
+    glEnd;
+  end;
+
+var
+  x, y, r: Double;
+begin
+  ToPixel(BestSiteE[FDriveScenario], BestSiteN[FDriveScenario], x, y);
+  if FDriveDomain = DriveBestDomain then r := 13 else r := 10;
+  glColor4f(1, 1, 1, 1);
+  Star(x, y, r + 4);
+  GLColour(clBestZone);
+  Star(x, y, r + 2);
+  GLColour(clBestSite);
+  Star(x, y, r);
+  DrawLabel(FBestTex, x - FBestTex.W / 2, y + r + 6 + FBestTex.H / 2, True);   // above: the barycentres' and towns' labels sit beside and below it
 end;
 
 procedure TKentMapView.DrawMarkers;
@@ -997,6 +1074,7 @@ begin
   end;
   DrawRoutes;
   if FShowIsochrones then DrawIsochrones;
+  if FShowHospitals then DrawBestZones;
   glDisable(GL_STENCIL_TEST);
   glStencilMask($FF);
 
@@ -1028,7 +1106,10 @@ begin
   glDisable(GL_LINE_SMOOTH);
   if FShowIsochrones then DrawIsoLabels;
   DrawMarkers;
-  if FShowHospitals then DrawHospitals;
+  if FShowHospitals then begin
+    DrawHospitals;
+    DrawBestSite;
+  end;
   glDisable(GL_BLEND);
   result := True;
 end;

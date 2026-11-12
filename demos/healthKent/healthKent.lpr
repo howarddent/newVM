@@ -32,7 +32,21 @@ uses
   cthreads,
   {$ENDIF}
   Interfaces, // this includes the LCL widgetset
-  Forms, cblas, uHealthMain;
+  SysUtils, Forms, cblas, uKentData, uHealthMain;
+
+// --events=<file.csv>: each LSOA's expected admissions, for make_drive_data.py
+procedure WriteEvents(const FileName: string);
+var
+  f: TextFile;
+  i: Integer;
+begin
+  AssignFile(f, FileName);
+  Rewrite(f);
+  WriteLn(f, 'i,code,events');
+  for i := 0 to LsoaCount - 1 do
+    WriteLn(f, Format('%d,%s,%.6f', [i, LsoaCode[i], LsoaCvdEvents(i)]));
+  CloseFile(f);
+end;
 
 begin
   {$IFDEF HAVE_BLAS}
@@ -41,6 +55,10 @@ begin
   RequireDerivedFormResource := True;
   Application.Scaled := True;
   Application.Initialize;
+  if Application.HasOption('events') then begin
+    WriteEvents(Application.GetOptionValue('events'));
+    Exit;
+  end;
   Application.CreateForm(TForm1, Form1);
   Application.Run;
 end.
