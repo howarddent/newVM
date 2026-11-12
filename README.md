@@ -100,7 +100,10 @@ own, the recorded data under `demos/BioSpectra/data/` (see its
 `README.md` for sources and terms), and the place, outline and county
 tables in `demos/CanterburyRain/*.inc` (GeoNames, CC BY 4.0; Natural
 Earth, public domain; ONS boundaries and Met Office averages, Open
-Government Licence).
+Government Licence), and the Kent and Medway tables in
+`demos/healthKent/kentdata.inc` (ONS boundaries, population estimates
+and area measurements, and the English Indices of Deprivation 2025,
+Open Government Licence; roads and railways from OpenStreetMap, ODbL).
 
 ## Screenshots
 
