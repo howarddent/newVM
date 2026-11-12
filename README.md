@@ -108,7 +108,10 @@ and `demos/healthKent/cvddata.inc` (ONS population and Census 2021
 ethnicity, NHS England QOF, GP registration and Hospital Episode
 Statistics figures, and OHID Fingertips smoking, obesity and admission ratios,
 Open Government Licence), and `demos/healthKent/drivedata.inc` (drive
-times and isochrones computed from OpenStreetMap roads, ODbL).
+times and isochrones computed from OpenStreetMap roads, ODbL, for three
+speed scenarios: free-flow car, weekday morning peak with A and B road
+speeds anchored to the DfT's local A road travel time figures, Open
+Government Licence, and blue light at 1.25 times free-flow).
 
 ## Screenshots
 
