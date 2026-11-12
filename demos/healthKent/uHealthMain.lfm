@@ -53,20 +53,46 @@ object Form1: TForm1
           Font.Style = [fsBold]
           ParentFont = False
         end
+        object cgAreas: TCheckGroup
+          Left = 4
+          Height = 52
+          Top = 26
+          Width = 402
+          Align = alTop
+          AutoFill = True
+          BorderSpacing.Around = 4
+          Caption = 'Areas (all three = Kent and Medway)'
+          ChildSizing.LeftRightSpacing = 6
+          ChildSizing.Layout = cclLeftToRightThenTopToBottom
+          ChildSizing.ControlsPerLine = 3
+          Columns = 3
+          Items.Strings = (
+            'North Kent'
+            'East Kent'
+            'West Kent'
+          )
+          OnItemClick = cgAreasItemClick
+          TabOrder = 5
+        end
         object rgColour: TRadioGroup
           Left = 4
-          Height = 116
+          Height = 94
           Top = 30
           Width = 402
           Align = alTop
           AutoFill = True
           BorderSpacing.Around = 4
           Caption = 'Colour the areas by'
+          ChildSizing.LeftRightSpacing = 6
+          ChildSizing.Layout = cclLeftToRightThenTopToBottom
+          ChildSizing.ControlsPerLine = 2
+          Columns = 2
           ItemIndex = 0
           Items.Strings = (
             'Population density'
-            'Deprivation (English Indices of Deprivation 2025)'
-            'Expected heart attack and stroke admissions'
+            'Deprivation (IoD 2025)'
+            'Expected MI + stroke admissions'
+            'Drive time to hospital'
             'Nothing'
           )
           TabOrder = 0
@@ -96,7 +122,7 @@ object Form1: TForm1
         end
         object pbLegend: TPaintBox
           Left = 0
-          Height = 316
+          Height = 312
           Top = 180
           Width = 410
           Align = alTop
@@ -104,7 +130,7 @@ object Form1: TForm1
         end
         object cgLayers: TCheckGroup
           Left = 4
-          Height = 148
+          Height = 126
           Top = 514
           Width = 402
           Align = alTop
@@ -113,19 +139,21 @@ object Form1: TForm1
           Caption = 'Show'
           ChildSizing.LeftRightSpacing = 6
           ChildSizing.Layout = cclLeftToRightThenTopToBottom
-          ChildSizing.ControlsPerLine = 2
-          Columns = 2
+          ChildSizing.ControlsPerLine = 3
+          Columns = 3
           Items.Strings = (
-            'District boundaries'
-            'LSOA boundaries'
-            'Towns over 50,000'
+            'Districts'
+            'LSOAs'
+            'Towns 50,000+'
             'Motorways'
             'Trunk roads'
-            'Primary A roads'
+            'A roads'
             'Railways'
-            'Population barycentre'
-            'Geographic centre'
-            'Heart attack/stroke barycentre'
+            'Pop. barycentre'
+            'Geo. centre'
+            'MI/stroke bary.'
+            'Isochrones'
+            'Hospitals'
           )
           TabOrder = 2
           OnItemClick = cgLayersItemClick
@@ -143,7 +171,7 @@ object Form1: TForm1
             Height = 30
             Top = 4
             Width = 120
-            Caption = 'Whole area'
+            Caption = 'Fit view'
             TabOrder = 0
             OnClick = btnResetClick
           end

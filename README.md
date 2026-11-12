@@ -106,8 +106,9 @@ and area measurements, and the English Indices of Deprivation 2025,
 Open Government Licence; roads and railways from OpenStreetMap, ODbL)
 and `demos/healthKent/cvddata.inc` (ONS population and Census 2021
 ethnicity, NHS England QOF, GP registration and Hospital Episode
-Statistics figures, and OHID Fingertips smoking and admission ratios,
-Open Government Licence).
+Statistics figures, and OHID Fingertips smoking, obesity and admission ratios,
+Open Government Licence), and `demos/healthKent/drivedata.inc` (drive
+times and isochrones computed from OpenStreetMap roads, ODbL).
 
 ## Screenshots
 

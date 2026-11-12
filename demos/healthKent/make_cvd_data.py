@@ -22,7 +22,7 @@
 #   M_ib  the relative-risk multiplier against an average English person of
 #         that age and sex:
 #           prod_f (1 + p_fib (RR_f - 1)) / (1 + pbar_fb (RR_f - 1))
-#         over smoking, diabetes, hypertension, CKD 3-5 and AF, times an
+#         over smoking, obesity, diabetes, hypertension, CKD 3-5 and AF, times an
 #         ethnicity factor and a residual deprivation factor, each likewise
 #         divided by its England average.
 #
@@ -46,7 +46,12 @@
 #     (England, 2023-25) times England's age and sex gradients (2025),
 #     normalised so England's 18+ total is unchanged, then scaled to each
 #     district's APS 2023-25 value - shrunk towards 1 (log scale, prior
-#     SD SMOKE_TAU) because the district survey samples are small.
+#     SD SURVEY_TAU) because the district survey samples are small.
+#   - Obesity (BMI 30+), 18+: the same method on Sport England's Active
+#     Lives survey (OHID indicator 93881, adjusted self-reported height and
+#     weight), 2024/25: England by national LSOA deprivation decile (LSOA
+#     2011, IMD 2019 - the latest it has, applied to IMD 2025 deciles), age
+#     and sex, scaled towards each district's 2024/25 figure.
 #   - Ethnicity: Census 2021 share of South Asian (Indian, Pakistani,
 #     Bangladeshi) and Black residents of each LSOA, and England's.
 #   - Check: OHID Local Health MSOA indirectly age-standardised ratios
@@ -69,6 +74,7 @@
 #                             Activity 2024-25, primary diagnosis 3 character (CSV)
 #   fing_92443.csv            Fingertips API all_data/csv/by_indicator_id?indicator_ids=
 #                             92443&child_area_type_id=501 (APS smoking prevalence 18+)
+#   fing_93881.csv            the same for 93881 (Active Lives adult obesity)
 #   fing_93232_msoa.csv, fing_93231_msoa.csv  the same for 93232 (MI) and 93231
 #                             (stroke) emergency admissions, child_area_type_id=3 (MSOA)
 #   lsoa_msoa21.json          ONS OA21_LAD23_LSOA21_MSOA21_LEP23_EN_LU, Kent LADs,
@@ -84,7 +90,7 @@ from scipy.optimize import minimize
 src = sys.argv[1]
 cvd = os.path.join(src, 'cvd')
 here = os.path.dirname(os.path.abspath(__file__))
-SMOKE_TAU = 0.15            # prior SD of a district's log smoking ratio
+SURVEY_TAU = 0.15           # prior SD of a district's log survey ratio (smoking, obesity)
 SMOOTH = 0.01               # second-difference penalty on log r along age
 NB = 18                     # age bands 0-4 .. 80-84, 85+
 SEXES = ('Male', 'Female')
@@ -280,26 +286,62 @@ smoke_as = np.concatenate([age_f * sex_f[0], age_f * sex_f[1]])
 adult = np.concatenate([band_weight(18)] * 2)
 smoke_as /= (eng * smoke_as).sum() / (eng * adult).sum()      # England's 18+ mean factor = 1
 smoke_base = np.array([dec_rate[d] for d in k_dec])
-# district calibration
-pred = np.zeros(len(lads)); ad = np.zeros(len(lads))
-for i in range(N):
-    pred[lsoa_lad[i]] += (pop[i] * smoke_as).sum() * smoke_base[i]
-    ad[lsoa_lad[i]] += (pop[i] * adult).sum()
-dist_aps, dist_fac = [], []
-for d, (lc, ln) in enumerate(lads):
-    row = next(r for r in fing if r['Time period'] == SMOKE_PERIOD and r['Area Code'] == lc and r['Sex'] == 'Persons'
-               and r['Age'] == '18+ yrs' and r['Category'] == '')
-    v, lo, hi = float(row['Value']) / 100, float(row['Lower CI 95.0 limit']) / 100, float(row['Upper CI 95.0 limit']) / 100
-    se = (math.log(hi) - math.log(lo)) / (2 * 1.96)
-    m = pred[d] / ad[d]
-    w = SMOKE_TAU ** 2 / (SMOKE_TAU ** 2 + se ** 2)
-    fac = math.exp(w * math.log(v / m))
-    dist_aps.append(v); dist_fac.append(fac)
-    print('smoking %-22s APS %4.1f %% (%4.1f-%4.1f), decile model %4.1f %%, weight %.2f, factor %.3f'
-          % (ln, 100 * v, 100 * lo, 100 * hi, 100 * m, w, fac))
-smoke_lsoa = smoke_base * np.array([dist_fac[d] for d in lsoa_lad])
+# district calibration: each district's survey figure, shrunk towards the
+# decile model's prediction for it (log scale, prior SD SURVEY_TAU)
+def calibrate(label, rows, period, base, as_):
+    pred = np.zeros(len(lads)); ad = np.zeros(len(lads))
+    for i in range(N):
+        pred[lsoa_lad[i]] += (pop[i] * as_).sum() * base[i]
+        ad[lsoa_lad[i]] += (pop[i] * adult).sum()
+    vals, facs = [], []
+    for d, (lc, ln) in enumerate(lads):
+        row = next(r for r in rows if r['Time period'] == period and r['Area Code'] == lc and r['Sex'] == 'Persons'
+                   and r['Age'] == '18+ yrs' and r['Category'] == '')
+        v, lo, hi = float(row['Value']) / 100, float(row['Lower CI 95.0 limit']) / 100, float(row['Upper CI 95.0 limit']) / 100
+        se = (math.log(hi) - math.log(lo)) / (2 * 1.96)
+        m = pred[d] / ad[d]
+        w = SURVEY_TAU ** 2 / (SURVEY_TAU ** 2 + se ** 2)
+        fac = math.exp(w * math.log(v / m))
+        vals.append(v); facs.append(fac)
+        print('%-8s %-22s survey %4.1f %% (%4.1f-%4.1f), decile model %4.1f %%, weight %.2f, factor %.3f'
+              % (label, ln, 100 * v, 100 * lo, 100 * hi, 100 * m, w, fac))
+    return vals, facs, base * np.array([facs[d] for d in lsoa_lad])
+
+dist_aps, dist_fac, smoke_lsoa = calibrate('smoking', fing, SMOKE_PERIOD, smoke_base, smoke_as)
 smoke_eng = eng_value(SMOKE_PERIOD, 'Persons', '18+ yrs')
 print('England 18+ smoking %s: %.2f %%; Kent model %.2f %%' % (SMOKE_PERIOD, 100 * smoke_eng, 100 * (pop * smoke_as * smoke_lsoa[:, None]).sum() / (pop * adult).sum()))
+
+# ---- obesity (Active Lives, BMI 30+ from adjusted self-reported height and weight) ----
+obes = list(csv.DictReader(open(C('fing_93881.csv'))))
+OBES_PERIOD = '2024/25'
+def ob_value(sex, age, cat=''):
+    for row in obes:
+        if row['Time period'] == OBES_PERIOD and row['Area Type'] == 'England' and row['Sex'] == sex \
+           and row['Age'] == age and row['Category'] == cat:
+            return float(row['Value']) / 100
+    return None
+# national deciles of LSOA 2011 by IMD 2019 - the latest Active Lives has; applied
+# here to each LSOA's IMD 2025 decile
+ob_dec = {}
+for row in obes:
+    if row['Time period'] == OBES_PERIOD and row['Area Type'] == 'England' and row['Sex'] == 'Persons' \
+       and row['Age'] == '18+ yrs' and row['Category Type'].startswith('LSOA11 deprivation deciles'):
+        ob_dec[DEC_NAMES.index(row['Category']) + 1] = float(row['Value']) / 100
+assert len(ob_dec) == 10
+ob_all = ob_value('Persons', '18+ yrs')
+ob_age = np.zeros(NB)
+OB_AGES = [('18-24 yrs', [3, 4]), ('25-34 yrs', [5, 6]), ('35-44 yrs', [7, 8]), ('45-54 yrs', [9, 10]),
+           ('55-64 yrs', [11, 12]), ('65-74 yrs', [13, 14]), ('75-84 yrs', [15, 16]), ('85+ yrs', [17])]
+for age, ks in OB_AGES:
+    for k in ks:
+        ob_age[k] = ob_value('Persons', age) / ob_all
+ob_age[3] *= 0.4                          # 15-19: 18 and 19 only
+ob_sex = [ob_value(s_, '18+ yrs') / ob_all for s_ in SEXES]
+ob_as = np.concatenate([ob_age * ob_sex[0], ob_age * ob_sex[1]])
+ob_as /= (eng * ob_as).sum() / (eng * adult).sum()
+dist_ob, dist_obfac, ob_lsoa = calibrate('obesity', obes, OBES_PERIOD, np.array([ob_dec[d] for d in k_dec]), ob_as)
+print('England 18+ obesity %s: %.2f %%; Kent model %.2f %%' % (OBES_PERIOD, 100 * ob_all,
+      100 * (pop * ob_as * ob_lsoa[:, None]).sum() / (pop * adult).sum()))
 
 # ---- ethnicity -----------------------------------------------------------------------
 eth = collections.defaultdict(dict)
@@ -338,11 +380,12 @@ for k, (m21, nm) in enumerate(msoas):
     m_name.append(m_hoc.get(m11, ''))
 
 # ---- quick check of the default relative risks (the Pascal side does it properly) ---------
-RR = dict(smoke=2.0, DM=2.0, HYP=1.6, CKD=1.4, AF=1.5, SA=1.4, BL=0.75, DEP=1.3)
+RR = dict(obese=1.2, smoke=2.0, DM=2.0, HYP=1.6, CKD=1.4, AF=1.5, SA=1.4, BL=0.75, DEP=1.3)
 M = np.ones((N, 2 * NB))
 def mult(p, pbar, rr):
     return (1 + np.minimum(p, 1) * (rr - 1)) / (1 + pbar * (rr - 1))
 M *= mult(smoke_lsoa[:, None] * smoke_as[None, :], smoke_eng * smoke_as[None, :], RR['smoke'])
+M *= mult(ob_lsoa[:, None] * ob_as[None, :], ob_all * ob_as[None, :], RR['obese'])
 for k, (g, _, _) in enumerate(FACTORS):
     M *= mult(prev_rate[k][None, :] * prev_scale[k][:, None], prev_nat[k][None, :], RR[g])
 M *= ((1 + sa * (RR['SA'] - 1) + bl * (RR['BL'] - 1)) / (1 + sa_eng * (RR['SA'] - 1) + bl_eng * (RR['BL'] - 1)))[:, None]
@@ -377,8 +420,8 @@ with open(os.path.join(here, 'cvddata.inc'), 'w', encoding='utf-8') as fh:
     fh.write('  CvdHesYear = %s;\n  CvdQofYear = %s;\n  CvdSmokePeriod = %s;\n'
              % (pas('2024-25'), pas('2024-25'), pas(SMOKE_PERIOD.replace(' ', ''))))
     fh.write('  CvdHesEnglandAdmissions = %d;\n' % round(hes_total))
-    fh.write('  CvdSouthAsianEngland = %.6f;\n  CvdBlackEngland = %.6f;\n  CvdSmokeTau = %.3f;\n'
-             % (sa_eng, bl_eng, SMOKE_TAU))
+    fh.write('  CvdSouthAsianEngland = %.6f;\n  CvdBlackEngland = %.6f;\n  CvdSurveyTau = %.3f;\n'
+             % (sa_eng, bl_eng, SURVEY_TAU))
     fh.write(arr('CvdFactorCode', 'string', [pas(g) for g, _, _ in FACTORS], '%s', 4))
     fh.write(arr('CvdFactorName', 'string', [pas(n) for _, n, _ in FACTORS], '%s', 4))
     fh.write(arr('CvdFactorBeta', 'Double', betas, '%.6f', 4))
@@ -401,6 +444,14 @@ with open(os.path.join(here, 'cvddata.inc'), 'w', encoding='utf-8') as fh:
     fh.write(arr('CvdSmokeLsoa', 'Single', smoke_lsoa, '%.5f', 12))
     fh.write(arr('DistrictSmokeAPS', 'Single', dist_aps, '%.4f', 13))
     fh.write(arr('DistrictSmokeFactor', 'Single', dist_fac, '%.4f', 13))
+    fh.write('  // obesity (Active Lives %s): band factor, England 18+, each LSOA''s 18+ rate\n' % OBES_PERIOD)
+    fh.write('  CvdObesityPeriod = %s;\n' % pas(OBES_PERIOD))
+    fh.write('  CvdObesityEngland = %.5f;\n' % ob_all)
+    fh.write(arr('CvdObesityBand', 'Double', ob_as, '%.6f', 6))
+    fh.write(arr('CvdObesityDecile', 'Double', [ob_dec[d] for d in range(1, 11)], '%.5f', 10))
+    fh.write(arr('CvdObesityLsoa', 'Single', ob_lsoa, '%.5f', 12))
+    fh.write(arr('DistrictObesitySurvey', 'Single', dist_ob, '%.4f', 13))
+    fh.write(arr('DistrictObesityFactor', 'Single', dist_obfac, '%.4f', 13))
     fh.write(arr('LsoaSouthAsian', 'Single', sa, '%.5f', 12))
     fh.write(arr('LsoaBlack', 'Single', bl, '%.5f', 12))
     fh.write(arr('LsoaMsoa', 'Integer', lsoa_msoa, '%d', 20))

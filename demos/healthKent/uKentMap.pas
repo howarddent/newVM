@@ -26,6 +26,14 @@ unit uKentMap;
      and
      geographic centre. Built on uCountyMap (CanterburyRain).
 
+     SUB-AREAS (SetAreas): LSOAs outside the chosen North/East/West Kent
+     areas are drawn grey whatever the fill, the chosen districts get a
+     heavier outline, and ResetView fits the chosen districts. When more
+     than one area is chosen, SetAreaCentre gives each its own population
+     barycentre, heart attack and stroke barycentre and geographic centre,
+     drawn smaller than the combined ones, the population one labelled
+     with the area's name.
+
      FILLING AND CLIPPING (stencil, 8 bits):
        bit $80  land - every district (coastline-clipped) ring drawn as a
                 triangle fan with INVERT: the even-odd rule
@@ -37,6 +45,14 @@ unit uKentMap;
      coloured. Routes and LSOA outlines are drawn where bit $80 is set, so
      roads and railways stop at the coast and at the area's edge.
      Needs StencilBits := 8 in the constructor.
+
+     DRIVE TIMES (kcmDrive, SetDriveDomain): the fill is each LSOA's
+     modelled drive time to the chosen hospital (or the nearer/nearest of
+     several) in 10-minute bands, and the isochrones - 15, 30, 45 and 60
+     minutes, from a 500 m grid - are drawn on land, over any fill, when
+     ShowIsochrones is set; the longest line of each is labelled. Hospitals
+     (ShowHospitals) are red squares with a white cross, the chosen ones
+     larger.
 
      VIEW: wheel zooms about the cursor (1x .. 40x), a left drag pans, a
      left click without a drag selects the LSOA under the cursor
@@ -63,8 +79,12 @@ uses
   uKentData;
 
 type
-  TKentColourMode = (kcmNone, kcmDensity, kcmDeprivation, kcmCvd);
+  TKentColourMode = (kcmNone, kcmDensity, kcmDeprivation, kcmCvd, kcmDrive);
   TSelectLsoaEvent = procedure(Sender: TObject; Lsoa: Integer) of object;
+
+  TKentCentres = record
+    BE, BN, CE, CN, GE, GN: Double;   // population, admissions, geographic
+  end;
 
   TKentTextTexture = record
     TexID: GLuint;
@@ -81,8 +101,14 @@ type
     FShowDistricts, FShowLsoaLines, FShowTowns: Boolean;
     FShowMotorways, FShowTrunk, FShowPrimary, FShowRail: Boolean;
     FShowBarycentre, FShowGeoCentre, FShowCvdBarycentre: Boolean;
+    FShowIsochrones, FShowHospitals: Boolean;
+    FDriveDomain: Integer;
+    FIsoLabel: array[0..3] of Integer;   // longest line of each level, -1 none
     FBaryE, FBaryN, FGeoE, FGeoN, FCvdE, FCvdN: Double;
     FSelected: Integer;
+    FAreas: TAreaSet;
+    FLsoaOn, FDistrictOn: TBoolArray;
+    FAreaC: array[0..AreaCount - 1] of TKentCentres;
     FOnSelectLsoa: TSelectLsoaEvent;
     FOnViewChange: TNotifyEvent;
     // view: full extent, zoom about a centre
@@ -96,6 +122,9 @@ type
     // labels
     FTownTex: array[0..TownCount - 1] of TKentTextTexture;
     FBaryTex, FGeoTex, FCvdTex: TKentTextTexture;
+    FAreaTex: array[0..AreaCount - 1] of TKentTextTexture;
+    FHospTex: array[0..HospitalCount - 1] of TKentTextTexture;
+    FIsoTex: array[0..3] of TKentTextTexture;
     FTexBuilt: Boolean;
     procedure UpdateScale;
     procedure ToPixel(E, N: Double; out PX, PY: Double);
@@ -103,6 +132,9 @@ type
     function RenderScene: Boolean;
     procedure DrawRoutes;
     procedure DrawMarkers;
+    procedure DrawIsochrones;
+    procedure DrawIsoLabels;
+    procedure DrawHospitals;
     procedure BuildTextures;
     procedure FreeTextures;
     function CreateTextTexture(const S: string; FontSize: Integer; Bold: Boolean): TKentTextTexture;
@@ -119,6 +151,8 @@ type
     procedure SetShowBarycentre(V: Boolean);
     procedure SetShowGeoCentre(V: Boolean);
     procedure SetShowCvdBarycentre(V: Boolean);
+    procedure SetShowIsochrones(V: Boolean);
+    procedure SetShowHospitals(V: Boolean);
   protected
     procedure MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
     procedure MouseMove(Shift: TShiftState; X, Y: Integer); override;
@@ -133,11 +167,15 @@ type
     procedure SetBarycentre(E, N: Double);
     procedure SetGeoCentre(E, N: Double);
     procedure SetCvdBarycentre(E, N: Double);
+    procedure SetDriveDomain(D: Integer);      // isochrones and hospital highlight
+    procedure SetAreas(S: TAreaSet);
+    procedure SetAreaCentre(Area: Integer; const C: TKentCentres);   // NaN BE hides it
     procedure ResetView;
     // centre the view on (E, N) at zoom AZoom (1 = whole area)
     procedure SetView(E, N, AZoom: Double);
     function SaveToPNG(const FileName: string): Boolean;
     property Zoom: Double read FZoom;
+    property Areas: TAreaSet read FAreas;
     property Selected: Integer read FSelected write SetSelected;    // -1 none
     property ShowDistricts: Boolean read FShowDistricts write SetShowDistricts;
     property ShowLsoaLines: Boolean read FShowLsoaLines write SetShowLsoaLines;
@@ -149,6 +187,9 @@ type
     property ShowBarycentre: Boolean read FShowBarycentre write SetShowBarycentre;
     property ShowGeoCentre: Boolean read FShowGeoCentre write SetShowGeoCentre;
     property ShowCvdBarycentre: Boolean read FShowCvdBarycentre write SetShowCvdBarycentre;
+    property ShowIsochrones: Boolean read FShowIsochrones write SetShowIsochrones;
+    property ShowHospitals: Boolean read FShowHospitals write SetShowHospitals;
+    property DriveDomain: Integer read FDriveDomain;
     property OnSelectLsoa: TSelectLsoaEvent read FOnSelectLsoa write FOnSelectLsoa;
     property OnViewChange: TNotifyEvent read FOnViewChange write FOnViewChange;
   end;
@@ -167,12 +208,21 @@ const
   clRail = TColor($303030);
   clBary = TColor($1C1CD8);         // RGB(216, 28, 28)
   clCvdBary = TColor($A01E8C);      // RGB(140, 30, 160)
+  clOutside = TColor($CFCFCF);      // LSOAs outside the chosen areas
+  clHospital = TColor($2020C8);     // RGB(200, 32, 32)
+  clIsochrone = TColor($9900D6);    // RGB(214, 0, 153)
+  DriveBandMinutes = 10;            // fill bands
+  DriveBandCount = 7;               // 0-10 .. 50-60, 60+
+  IsoLevelCount = 4;
+  IsoLevels: array[0..IsoLevelCount - 1] of Integer = (15, 30, 45, 60);
 
 // fill colours, shared with the form's legend
 function DensityColour(D: Double): TColor;           // people per km2
 function DecileColour(Decile: Integer): TColor;      // 1 (most deprived) .. 10
 function CvdDensityColour(D: Double): TColor;        // admissions per km2 a year
 function CvdRatioColour(R: Double): TColor;          // against England, 1 = white
+function DriveBandColour(Band: Integer): TColor;  // 0 .. DriveBandCount - 1
+function DriveColour(Minutes: Double): TColor;
 function LsoaFillColour(Mode: TKentColourMode; Domain, i: Integer): TColor;
 
 implementation
@@ -208,6 +258,12 @@ const
     (r: 33; g: 102; b: 172), (r: 67; g: 147; b: 195), (r: 146; g: 197; b: 222),
     (r: 209; g: 229; b: 240), (r: 247; g: 247; b: 247), (r: 253; g: 219; b: 199),
     (r: 244; g: 165; b: 130), (r: 214; g: 96; b: 77), (r: 178; g: 24; b: 43));
+
+  // ColorBrewer RdYlGn, 7 classes, reversed: near green .. far red
+  DriveStops: array[0..DriveBandCount - 1] of TRGB = (
+    (r: 26; g: 152; b: 80), (r: 145; g: 207; b: 96), (r: 217; g: 239; b: 139),
+    (r: 255; g: 255; b: 191), (r: 254; g: 224; b: 139), (r: 252; g: 141; b: 89),
+    (r: 215; g: 48; b: 39));
 
 function Ramp(const Stops: array of TRGB; t: Double): TColor;
 var
@@ -246,9 +302,21 @@ begin
   with DecileStops[Decile] do result := RGBToColor(r, g, b);
 end;
 
+function DriveBandColour(Band: Integer): TColor;
+begin
+  with DriveStops[EnsureRange(Band, 0, DriveBandCount - 1)] do result := RGBToColor(r, g, b);
+end;
+
+function DriveColour(Minutes: Double): TColor;
+begin
+  if IsNan(Minutes) then Exit(clLand);
+  result := DriveBandColour(Trunc(Minutes / DriveBandMinutes));
+end;
+
 function LsoaFillColour(Mode: TKentColourMode; Domain, i: Integer): TColor;
 begin
   case Mode of
+    kcmDrive: result := DriveColour(LsoaDriveMinutes(i, Domain));
     kcmDensity: result := DensityColour(LsoaDensity(i));
     kcmDeprivation: result := DecileColour(LsoaDecileOf(i, Domain));
     kcmCvd:
@@ -281,22 +349,51 @@ begin
   FShowTrunk := True;
   FShowRail := True;
   FShowBarycentre := True;
+  FDriveDomain := -1;
+  SetDriveDomain(DriveDomainCount - 1);
   FBaryE := NaN;
   FGeoE := NaN;
   FCvdE := NaN;
-  FEMin := DistrictPtE[0]; FEMax := FEMin;
-  FNMin := DistrictPtN[0]; FNMax := FNMin;
-  for k := 0 to High(DistrictPtE) do begin
-    FEMin := Min(FEMin, DistrictPtE[k]); FEMax := Max(FEMax, DistrictPtE[k]);
-    FNMin := Min(FNMin, DistrictPtN[k]); FNMax := Max(FNMax, DistrictPtN[k]);
-  end;
-  ResetView;
+  for k := 0 to AreaCount - 1 do FAreaC[k].BE := NaN;
+  SetAreas(AllAreas);
 end;
 
 destructor TKentMapView.Destroy;
 begin
   if HandleAllocated and MakeCurrent then FreeTextures;
   inherited Destroy;
+end;
+
+// the chosen areas: grey the rest and fit the view to the chosen districts
+procedure TKentMapView.SetAreas(S: TAreaSet);
+var
+  d, r, k: Integer;
+  any: Boolean;
+begin
+  FAreas := S;
+  FLsoaOn := AreaLsoaMask(S);
+  FDistrictOn := AreaDistrictMask(S);
+  any := False;
+  for d := 0 to DistrictCount - 1 do begin
+    if not FDistrictOn[d] and (S <> []) then Continue;
+    for r := DistrictRingFirst[d] to DistrictRingFirst[d + 1] - 1 do
+      for k := DistrictRingStart[r] to DistrictRingStart[r + 1] - 1 do begin
+        if not any then begin
+          FEMin := DistrictPtE[k]; FEMax := FEMin;
+          FNMin := DistrictPtN[k]; FNMax := FNMin;
+          any := True;
+        end;
+        FEMin := Min(FEMin, DistrictPtE[k]); FEMax := Max(FEMax, DistrictPtE[k]);
+        FNMin := Min(FNMin, DistrictPtN[k]); FNMax := Max(FNMax, DistrictPtN[k]);
+      end;
+  end;
+  ResetView;
+end;
+
+procedure TKentMapView.SetAreaCentre(Area: Integer; const C: TKentCentres);
+begin
+  FAreaC[Area] := C;
+  Invalidate;
 end;
 
 procedure TKentMapView.ResetView;
@@ -337,7 +434,34 @@ end;
 procedure TKentMapView.SetColouring(AMode: TKentColourMode; ADomain: Integer);
 begin
   FMode := AMode;
-  FDomain := EnsureRange(ADomain, 0, DomainCount - 1);
+  if AMode = kcmDrive then begin
+    FDomain := EnsureRange(ADomain, 0, DriveDomainCount - 1);
+    SetDriveDomain(FDomain);
+  end else
+    FDomain := EnsureRange(ADomain, 0, DomainCount - 1);
+  Invalidate;
+end;
+
+procedure TKentMapView.SetDriveDomain(D: Integer);
+var
+  k, j, lv: Integer;
+  len, best: array[0..IsoLevelCount - 1] of Double;
+  l: Double;
+begin
+  D := EnsureRange(D, 0, DriveDomainCount - 1);
+  if D = FDriveDomain then Exit;
+  FDriveDomain := D;
+  for lv := 0 to IsoLevelCount - 1 do begin FIsoLabel[lv] := -1; best[lv] := 0; end;
+  for k := 0 to IsoCount - 1 do begin
+    if IsoDomain[k] <> D then Continue;
+    lv := 0;
+    while (lv < IsoLevelCount - 1) and (IsoLevels[lv] <> IsoMinutes[k]) do Inc(lv);
+    l := 0;
+    for j := IsoStart[k] + 1 to IsoStart[k + 1] - 1 do
+      l := l + Hypot(IsoPtE[j] - IsoPtE[j - 1], IsoPtN[j] - IsoPtN[j - 1]);
+    len[lv] := l;
+    if len[lv] > best[lv] then begin best[lv] := len[lv]; FIsoLabel[lv] := k; end;
+  end;
   Invalidate;
 end;
 
@@ -386,6 +510,8 @@ procedure TKentMapView.SetShowRail(V: Boolean); begin SetBool(FShowRail, V); end
 procedure TKentMapView.SetShowBarycentre(V: Boolean); begin SetBool(FShowBarycentre, V); end;
 procedure TKentMapView.SetShowGeoCentre(V: Boolean); begin SetBool(FShowGeoCentre, V); end;
 procedure TKentMapView.SetShowCvdBarycentre(V: Boolean); begin SetBool(FShowCvdBarycentre, V); end;
+procedure TKentMapView.SetShowIsochrones(V: Boolean); begin SetBool(FShowIsochrones, V); end;
+procedure TKentMapView.SetShowHospitals(V: Boolean); begin SetBool(FShowHospitals, V); end;
 
 // ---- text ---------------------------------------------------------------------
 
@@ -450,6 +576,12 @@ begin
   FBaryTex := CreateTextTexture('population barycentre', 9, True);
   FGeoTex := CreateTextTexture('geographic centre', 9, True);
   FCvdTex := CreateTextTexture('heart attack and stroke barycentre', 9, True);
+  for i := 0 to AreaCount - 1 do
+    FAreaTex[i] := CreateTextTexture(AreaName[i], 9, True);
+  for i := 0 to HospitalCount - 1 do
+    FHospTex[i] := CreateTextTexture(HospitalShort[i], 9, True);
+  for i := 0 to IsoLevelCount - 1 do
+    FIsoTex[i] := CreateTextTexture(IntToStr(IsoLevels[i]) + ' min', 8, True);
   FTexBuilt := True;
 end;
 
@@ -468,6 +600,9 @@ begin
   Del(FBaryTex);
   Del(FGeoTex);
   Del(FCvdTex);
+  for i := 0 to AreaCount - 1 do Del(FAreaTex[i]);
+  for i := 0 to HospitalCount - 1 do Del(FHospTex[i]);
+  for i := 0 to IsoLevelCount - 1 do Del(FIsoTex[i]);
   FTexBuilt := False;
 end;
 
@@ -547,6 +682,89 @@ begin
   if FShowMotorways then Road(RouteMotorway, clMotorway, 3.0 * zw);
 end;
 
+// isochrones of the chosen drive-time domain: white casing, magenta
+// line, the half hours heavier (dashes would read as railways)
+procedure TKentMapView.DrawIsochrones;
+
+  procedure Strokes(Minutes: Integer);
+  var
+    k, j: Integer;
+    px, py: Double;
+  begin
+    for k := 0 to IsoCount - 1 do begin
+      if (IsoDomain[k] <> FDriveDomain) or (IsoMinutes[k] <> Minutes) then Continue;
+      glBegin(GL_LINE_STRIP);
+        for j := IsoStart[k] to IsoStart[k + 1] - 1 do begin
+          ToPixel(IsoPtE[j], IsoPtN[j], px, py);
+          glVertex2d(px, py);
+        end;
+      glEnd;
+    end;
+  end;
+
+var
+  lv: Integer;
+  w: Single;
+begin
+  for lv := 0 to IsoLevelCount - 1 do begin
+    if IsoLevels[lv] mod 30 = 0 then w := 3.0 else w := 1.8;
+    glColor4f(1, 1, 1, 0.9);
+    glLineWidth(w + 2.5);
+    Strokes(IsoLevels[lv]);
+    GLColour(clIsochrone);
+    glLineWidth(w);
+    Strokes(IsoLevels[lv]);
+  end;
+end;
+
+// each level's label at the middle of its longest line
+procedure TKentMapView.DrawIsoLabels;
+var
+  lv, k, j: Integer;
+  x, y: Double;
+begin
+  for lv := 0 to IsoLevelCount - 1 do begin
+    k := FIsoLabel[lv];
+    if k < 0 then Continue;
+    j := (IsoStart[k] + IsoStart[k + 1] - 1) div 2;
+    ToPixel(IsoPtE[j], IsoPtN[j], x, y);
+    if (x < 0) or (y < 0) or (x > Width) or (y > Height) then Continue;
+    DrawLabel(FIsoTex[lv], x - FIsoTex[lv].W / 2, y, True);
+  end;
+end;
+
+// red squares with a white cross; the chosen domain's hospitals larger
+procedure TKentMapView.DrawHospitals;
+var
+  h: Integer;
+  x, y, r: Double;
+  chosen: Boolean;
+begin
+  for h := 0 to HospitalCount - 1 do begin
+    ToPixel(HospitalE[h], HospitalN[h], x, y);
+    chosen := DriveDomainHas(FDriveDomain, h);
+    if chosen then r := 8 else r := 5.5;
+    glColor4f(1, 1, 1, 1);
+    glBegin(GL_QUADS);
+      glVertex2d(x - r - 1.5, y - r - 1.5); glVertex2d(x + r + 1.5, y - r - 1.5);
+      glVertex2d(x + r + 1.5, y + r + 1.5); glVertex2d(x - r - 1.5, y + r + 1.5);
+    glEnd;
+    if chosen then GLColour(clHospital) else glColor4f(0.55, 0.3, 0.3, 1);
+    glBegin(GL_QUADS);
+      glVertex2d(x - r, y - r); glVertex2d(x + r, y - r);
+      glVertex2d(x + r, y + r); glVertex2d(x - r, y + r);
+    glEnd;
+    glColor4f(1, 1, 1, 1);
+    glBegin(GL_QUADS);                         // the cross
+      glVertex2d(x - 0.22 * r, y - 0.7 * r); glVertex2d(x + 0.22 * r, y - 0.7 * r);
+      glVertex2d(x + 0.22 * r, y + 0.7 * r); glVertex2d(x - 0.22 * r, y + 0.7 * r);
+      glVertex2d(x - 0.7 * r, y - 0.22 * r); glVertex2d(x + 0.7 * r, y - 0.22 * r);
+      glVertex2d(x + 0.7 * r, y + 0.22 * r); glVertex2d(x - 0.7 * r, y + 0.22 * r);
+    glEnd;
+    DrawLabel(FHospTex[h], x + r + 3, y, True);
+  end;
+end;
+
 procedure TKentMapView.DrawMarkers;
 
   procedure Disc(x, y, r: Double; AColour: TColor);
@@ -607,6 +825,38 @@ begin
     glEnd;
     DrawLabel(FGeoTex, x - 10, y, False);
   end;
+  // each chosen area's own centres, smaller, when more than one is chosen
+  for i := 0 to AreaCount - 1 do
+    with FAreaC[i] do begin
+      if IsNan(BE) then Continue;
+      if FShowGeoCentre and not IsNan(GE) then begin
+        ToPixel(GE, GN, x, y);
+        r := 5;
+        glColor4f(1, 1, 1, 1);
+        glBegin(GL_QUADS);
+          glVertex2d(x, y - r - 1.5); glVertex2d(x + r + 1.5, y); glVertex2d(x, y + r + 1.5); glVertex2d(x - r - 1.5, y);
+        glEnd;
+        glColor4f(0.1, 0.1, 0.1, 1);
+        glBegin(GL_QUADS);
+          glVertex2d(x, y - r); glVertex2d(x + r, y); glVertex2d(x, y + r); glVertex2d(x - r, y);
+        glEnd;
+      end;
+      if FShowCvdBarycentre and not IsNan(CE) then begin
+        ToPixel(CE, CN, x, y);
+        Disc(x, y, 5.5, clCvdBary);
+      end;
+      if FShowBarycentre then begin
+        ToPixel(BE, BN, x, y);
+        Disc(x, y, 5.5, clBary);
+        if FShowCvdBarycentre and not IsNan(CE) and (CE >= BE) then
+          DrawLabel(FAreaTex[i], x - 8, y, False)
+        else
+          DrawLabel(FAreaTex[i], x + 8, y, True);
+      end else if FShowCvdBarycentre and not IsNan(CE) then begin
+        ToPixel(CE, CN, x, y);
+        DrawLabel(FAreaTex[i], x + 8, y, True);
+      end;
+    end;
   // the two barycentres lie a few km apart, so with both shown each
   // label goes on the side away from the other marker
   both := FShowBarycentre and FShowCvdBarycentre and not IsNan(FBaryE) and not IsNan(FCvdE);
@@ -688,10 +938,11 @@ begin
     glVertex2d(0, 0); glVertex2d(Width, 0); glVertex2d(Width, Height); glVertex2d(0, Height);
   glEnd;
 
-  // ---- LSOA fills (bit $01), on land only ----
-  if FMode <> kcmNone then begin
+  // ---- LSOA fills (bit $01), on land only; outside the chosen areas grey ----
+  if (FMode <> kcmNone) or (FAreas <> AllAreas) then begin
     glStencilMask($01);
     for i := 0 to LsoaCount - 1 do begin
+      if (FMode = kcmNone) and FLsoaOn[i] then Continue;
       ToPixel(LsoaBoxE0(i), LsoaBoxN0(i), x0, y0);
       ToPixel(LsoaBoxE1(i), LsoaBoxN1(i), x1, y1);
       if (x1 < 0) or (y1 < 0) or (x0 > Width) or (y0 > Height) then Continue;   // off screen
@@ -703,7 +954,8 @@ begin
       glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
       glStencilFunc(GL_EQUAL, $81, $81);
       glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);       // write mask $01: clears only this LSOA's bit
-      GLColour(LsoaFillColour(FMode, FDomain, i));
+      if FLsoaOn[i] then GLColour(LsoaFillColour(FMode, FDomain, i))
+      else GLColour(clOutside);
       glBegin(GL_QUADS);
         glVertex2d(x0 - 1, y0 - 1); glVertex2d(x1 + 1, y0 - 1);
         glVertex2d(x1 + 1, y1 + 1); glVertex2d(x0 - 1, y1 + 1);
@@ -725,6 +977,7 @@ begin
       LoopRing(LsoaRingStart[r], LsoaRingStart[r + 1] - 1, LsoaPtE, LsoaPtN);
   end;
   DrawRoutes;
+  if FShowIsochrones then DrawIsochrones;
   glDisable(GL_STENCIL_TEST);
   glStencilMask($FF);
 
@@ -734,6 +987,14 @@ begin
     glLineWidth(1.0);
     for r := 0 to DistrictRingCount - 1 do
       LoopRing(DistrictRingStart[r], DistrictRingStart[r + 1] - 1, DistrictPtE, DistrictPtN);
+  end;
+  if (FAreas <> AllAreas) and (FAreas <> []) then begin
+    glColor4f(0.1, 0.1, 0.15, 1);              // the chosen districts, heavier
+    glLineWidth(2.2);
+    for i := 0 to DistrictCount - 1 do
+      if FDistrictOn[i] then
+        for r := DistrictRingFirst[i] to DistrictRingFirst[i + 1] - 1 do
+          LoopRing(DistrictRingStart[r], DistrictRingStart[r + 1] - 1, DistrictPtE, DistrictPtN);
   end;
   if (FSelected >= 0) and (FSelected < LsoaCount) then begin
     glColor4f(1, 1, 1, 1);                     // white halo, black line on top
@@ -746,7 +1007,9 @@ begin
       LoopRing(LsoaRingStart[r], LsoaRingStart[r + 1] - 1, LsoaPtE, LsoaPtN);
   end;
   glDisable(GL_LINE_SMOOTH);
+  if FShowIsochrones then DrawIsoLabels;
   DrawMarkers;
+  if FShowHospitals then DrawHospitals;
   glDisable(GL_BLEND);
   result := True;
 end;

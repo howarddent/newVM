@@ -3564,11 +3564,11 @@ packages. Compiled binaries and each demo's own `lib/` output are
       stroke (I61-I64), the same codes as OHID's Local Health indicators.
       HES gives age only for episodes and sex only overall, so the age
       profile is the episodes' and the sex split is the same at every age.
-    - M: product of (1 + p(RR-1))/(1 + pbar(RR-1)) over smoking and QOF
-      diabetes, hypertension, CKD 3-5 and AF, times ethnicity (Census 2021
+    - M: product of (1 + p(RR-1))/(1 + pbar(RR-1)) over smoking, obesity
+      and QOF diabetes, hypertension, CKD 3-5 and AF, times ethnicity (Census 2021
       South Asian/Black shares) and residual deprivation, each over
       England's average. The RRs are assumed round values (smoking 2,
-      diabetes 2, hypertension 1.6, CKD 1.4, AF 1.5, South Asian 1.4,
+      obesity 1.2, diabetes 2, hypertension 1.6, CKD 1.4, AF 1.5, South Asian 1.4,
       Black 0.75, deprivation 1.3 between deciles 1 and 10).
     - QOF prevalence: Poisson fit across all England's practices of
       register ~ exp(beta z) sum_b n_b r_b (z = patients' mean IMD score),
@@ -3582,27 +3582,99 @@ packages. Compiled binaries and each demo's own `lib/` output are
       deprived to 4.7 % least), England's 2025 age and sex gradients, then
       each district's APS shrunk towards the model (log prior SD 0.15:
       district CIs are about +-4 points).
+    - **Obesity** (added the same day, `CvdRRObesity` 1.2): Fingertips 93881,
+      Active Lives 2024/25 (BMI 30+ from adjusted self-report), the same
+      recipe as smoking (`calibrate` in the script does both): England by
+      LSOA deprivation decile - IMD 2019's deciles, the only ones published,
+      applied to IMD 2025's - age and sex, then each district's survey value
+      shrunk in. RR 1.2 is the effect **beyond** the diabetes and hypertension
+      obesity causes, which the model already counts: ERFC (Lancet 2011)
+      gives 1.44 for obese adjusted for age, sex and smoking, 1.13 also for
+      BP, diabetes and cholesterol. Kent 28.4 % against England 26.6 %.
+      Admissions 5,868 -> 5,887; MSOA r unchanged at 0.70.
     - Computed lazily (`NeedCvd`): MatMult needs CBLAS, which the `.lpr`
       initialises after the units do - in `initialization` it crashed.
       Pop (N x 36) `*` `Exp`(summed log multipliers), `MatMult` with the
       rate column; each component's effect drops its log term.
-    - **Results**: 5,868 admissions a year against 5,977 from age and sex
-      alone (ratio 0.98); 0.08-49 per km2, ratios 0.73-1.65 (east Sheppey,
+    - **Results** (with obesity): 5,887 admissions a year against 5,977
+      from age and sex alone (ratio 0.985); 0.08-49 per km2, ratios 0.73-1.70 (east Sheppey,
       Thanet, Romney Marsh high; west Kent low). Against OHID's observed
       MSOA ratios (2016/17-20/21, 219 MSOAs) r = 0.70, IMD alone 0.68, but
       observed Kent is 0.88: the model ranks better than it levels.
     - **Heart attack and stroke barycentre** (same day, check box, purple
       marker): `CvdBarycentre`, the barycentre weighted by expected
       admissions; `PopulationBarycentre` now shares `WeightedBarycentre`
-      with it. TQ 90732 57380, 2.8 km ESE of the population one: 2.4 km of
+      with it. TQ 90831 57402, 2.9 km ESE of the population one: 2.4 km of
       that is age and sex alone (the memo separates them), the risk factors
-      add 0.7 km ENE. With both shown, each label goes on the side away from
+      add 0.8 km ENE (before obesity: TQ 90732 57380, 0.7 km). With both shown, each label goes on the side away from
       the other marker (23 px apart at full view). The side panel overflowed
       with the extra check box: the memo went from 240 to 200 px, colour
       bars to 150 px, the key's lines to 16 px.
+  - **North, East and West Kent** (2026-11-12, an "Areas" check group;
+    all three = Kent and Medway; `--areas=north,east` etc.). Whole
+    districts, following the acute trusts' catchments (uKentData's
+    `AreaDistricts`): North = Dartford, Gravesham, Medway, Swale; East =
+    Ashford, Canterbury, Dover, Folkestone and Hythe, Thanet; West =
+    Maidstone, Sevenoaks, Tonbridge and Malling, Tunbridge Wells. Not the
+    NHS's four HCPs, which split Sevenoaks (Swanley) and pair Swale with
+    Medway; LSOA-level HCP membership isn't compiled in. Unchosen LSOAs
+    are grey, the chosen districts outlined heavier, and the view fits
+    them (`TKentMapView.SetAreas`). Every memo total, district table,
+    decile share and admissions figure is for the choice (the MSOA check
+    stays whole-area). A "by area" table puts each area, the combination
+    and Kent and Medway side by side, with each one's two barycentres and
+    geographic centre (`GeographicCentre` now takes a district mask). With
+    more than one area chosen the map shows each area's own centres as
+    smaller markers labelled with its name (`SetAreaCentre`) beside the
+    combination's. North 686,716 (admissions ratio 1.03), East 677,906
+    (0.99, 23 % aged 65+), West 567,062 (0.92, IMD score 15.3 against
+    23.6-24.1). FPC trap hit: setting `rgColour.ItemIndex` in `FormCreate`
+    fires its OnClick and so `ShowInfo`, which then ran before the area
+    masks existed (an access violation with any `--colour` but 0), so
+    `ApplyAreas` runs first; and a local `Inc` array hides `System.Inc`.
+  - **Road corridors** (2026-11-12, in the admissions memo): expected
+    admissions, share, population share and ratio north of the A2/M2,
+    between it and the M20, and south of the M20, split by area
+    (`uKentData.LsoaCorridor`, by LSOA label point). A2/M2 is the trunk
+    route (A2 trunk + M2, not the old A2 through the Medway towns). Each
+    road is the median northing of its OSM points in 500 m easting bins,
+    interpolated and held level past its ends, so Thanet, Deal and Sandwich
+    count as north of the A2 and Dover as north of the M20; the memo gives
+    those end effects. Kent and Medway: 51.1 % / 13.8 % / 35.2 %.
+  - **Drive times and isochrones** (2026-11-12, at the user's request
+    after asking whether vascular/stroke/PCI should sit in Ashford or
+    Canterbury). `make_drive_data.py` writes `drivedata.inc` (~160 kB)
+    from an Overpass download of every drivable OSM road in the box,
+    motorway to residential (`~/data/healthKent-src/roads/drive_roads.json`,
+    90 MB, query in the script's header): a directed graph (one-way,
+    roundabouts, motorways), free-flow car speeds by class capped by mph
+    tags, points joining at 20 km/h at the nearest non-trunk node of the
+    largest strongly connected component (without that, 3 LSOAs snapped
+    onto an island and were unreachable), scipy Dijkstra on the reversed
+    graph per hospital. Seven acute hospitals (approximate positions), plus
+    "nearer of William Harvey and K&C" and "nearest of all" - nine
+    "domains". Isochrones (15/30/45/60) are contourpy contours of the same
+    times on a 500 m grid, 3x3-smoothed over road-near cells only and
+    masked off Kent's land (district rings, even-odd) and >1.5 km from a
+    road. Before that masking, contours ran offshore and along the coast.
+    Some coast-following lines are real: Ramsgate and the Romney Marsh
+    coast sit on the 30-minute line to WHH-or-K&C.
+    - Map: a fifth fill, `kcmDrive` (10-minute bands, RdYlGn reversed),
+      the domain in the combo box, which also sets the isochrones; layers
+      "Isochrones" (magenta, half hours heavier - dashed lines read as
+      railways) and "Hospitals" (red squares, chosen larger). Each level's
+      longest line is labelled. The side panel was compacted to fit: fill
+      choices in two columns, layers in three with short captions.
+    - Memo: every domain's admissions-weighted mean, 90th percentile and
+      shares within 15/30/45 and over 60 minutes, the chosen one by
+      district; a selected LSOA lists its time to every hospital.
+      East Kent, WHH 30.6 min mean against K&C 26.1; Thanet 50.9 against
+      29.8. `--drive=<0..8>` picks the domain; snapshot adds
+      `_drive`/`_drive_whh_kch`.
   - `--snapshot=<prefix>` saves density/IMD/health/admissions (per km2 and
     ratio)/zoomed maps and the window, prints the memo and exits;
-    `--colour=<0..3>`, `--domain=<0..7>`, `--cvd=<0|1>`.
+    `--colour=<0..4>`, `--domain=<0..7>`, `--cvd=<0|1>`, `--areas=<list>`,
+    `--drive=<0..8>`.
 - **`newPoly`** — least-squares polynomial fitting with
   `newPolymath.pas`'s `TPolynomial.Fit` (see its own section above),
   shown on two `TVMPlot2D` components stacked in one form, the fit above

@@ -35,7 +35,7 @@ unit uKentData;
      I_b is England's 2024-25 emergency admission rate for acute MI
      (I21-I22) or stroke (I61-I64) at that age and sex (HES), and
        M_ib = exp( sum over components k of ln m_kib )
-     with, for smoking and the four QOF registers,
+     with, for smoking, obesity and the four QOF registers,
        m = (1 + p (RR - 1)) / (1 + pbar (RR - 1)),
      p the LSOA's estimated prevalence in that band and pbar England's;
      for ethnicity the same over the South Asian and Black shares; for
@@ -67,6 +67,38 @@ unit uKentData;
      balance. The geographic centre is the area
      centroid of the districts' land (shoelace formula over every ring).
 
+     SUB-AREAS: North, East and West Kent, by whole district, following
+     the acute trusts' catchments (Darent Valley and Medway Maritime,
+     East Kent Hospitals, Maidstone and Tunbridge Wells):
+       North  Dartford, Gravesham, Medway, Swale
+       East   Ashford, Canterbury, Dover, Folkestone and Hythe, Thanet
+       West   Maidstone, Sevenoaks, Tonbridge and Malling, Tunbridge Wells
+     All three together are Kent and Medway. The NHS's own four Health and
+     Care Partnerships split differently (Swanley, in Sevenoaks, goes with
+     Dartford and Gravesham; Swale with Medway), and LSOA-level HCP
+     membership isn't compiled in, so whole districts are used.
+
+     ROAD CORRIDORS: each LSOA's label point is put north of the A2/M2
+     (the trunk route: A2 from Dartford, M2 Strood - Brenley Corner, A2
+     on through Canterbury to Dover docks; the old A2 through the Medway
+     towns and Sittingbourne is a primary road and not used), south of
+     the M20, or between. Each road is reduced to its northing against
+     easting - the OSM points in 500 m easting bins, the median northing
+     of each bin (merging carriageways and slips), linearly interpolated -
+     and held level past its ends: so Thanet, Deal and Sandwich, east of
+     the A2's end, count as north of it, and Dover as north of the M20.
+     Both roads run west to east, and the A2/M2 lies north of the M20 at
+     every easting, so the three bands don't overlap.
+
+     DRIVE TIMES (drivedata.inc, make_drive_data.py): free-flow car
+     minutes from each LSOA's label point to each of the seven acute
+     hospitals, over OpenStreetMap's roads from motorways down to
+     residential streets (one-way streets respected), at assumed speeds by
+     road class; plus the nearer of William Harvey and Kent and Canterbury
+     and the nearest of all seven. Isochrones at 15, 30, 45 and 60 minutes
+     come from the same model on a 500 m grid. No traffic, junction
+     delays or blue-light driving; hospital positions are approximate.
+
      BNG -> WGS84: inverse transverse Mercator on Airy 1830 (OS "A guide
      to coordinate systems in Great Britain"), then the 7-parameter
      Helmert OSGB36 -> WGS84 - the inverse of bng.py's transform; a few
@@ -83,6 +115,7 @@ uses
 
 {$I kentdata.inc}
 {$I cvddata.inc}
+{$I drivedata.inc}
 
 const
   RouteMotorway = 0;
@@ -91,6 +124,21 @@ const
   RouteRail = 3;
   MostDeprivedDecile = 1;
   NationalLsoaCount = 33755;       // LSOAs ranked in IoD 2025
+
+  // sub-areas (see the header)
+  AreaCount = 3;
+  AreaName: array[0..AreaCount - 1] of string = ('North Kent', 'East Kent', 'West Kent');
+  AreaDistricts: array[0..AreaCount - 1] of string = (
+    'Dartford|Gravesham|Medway|Swale',
+    'Ashford|Canterbury|Dover|Folkestone and Hythe|Thanet',
+    'Maidstone|Sevenoaks|Tonbridge and Malling|Tunbridge Wells');
+
+type
+  TAreaSet = set of 0..AreaCount - 1;
+  TBoolArray = array of Boolean;
+
+const
+  AllAreas: TAreaSet = [0..AreaCount - 1];
 
 type
   TSourceEntry = record
@@ -101,7 +149,7 @@ type
   end;
 
 const
-  Sources: array[0..14] of TSourceEntry = (
+  Sources: array[0..16] of TSourceEntry = (
     (Title: 'Lower layer Super Output Area population estimates (small area, 2021-based), mid-2024';
      Publisher: 'Office for National Statistics (via Nomis, dataset NM_2014_1)';
      Edition: 'mid-2024 estimates, released 7 November 2025 - the latest published';
@@ -174,6 +222,12 @@ const
      Licence: 'Open Government Licence v3.0';
      URL: 'https://fingertips.phe.org.uk/profile/tobacco-control';
      Use: 'Smoking by national deprivation decile, age and sex, scaled to each district''s survey figure (shrunk towards the decile model, since district samples are small).'),
+    (Title: 'Obesity prevalence in adults (18+), using adjusted self-reported height and weight, indicator 93881';
+     Publisher: 'Office for Health Improvement and Disparities, Fingertips (Obesity, physical activity and nutrition), from Sport England''s Active Lives Adult Survey';
+     Edition: '2024/25 (district values; England by LSOA 2011 IMD 2019 decile, age and sex)';
+     Licence: 'Open Government Licence v3.0';
+     URL: 'https://fingertips.phe.org.uk/profile/obesity-physical-activity-nutrition';
+     Use: 'Obesity (BMI 30+) by national deprivation decile, age and sex, scaled towards each district''s survey figure, as for smoking. The deciles are IMD 2019''s, applied to IMD 2025 deciles.'),
     (Title: 'Census 2021 TS021 - Ethnic group';
      Publisher: 'Office for National Statistics (via Nomis, dataset NM_2041_1)';
      Edition: 'Census 2021';
@@ -191,10 +245,19 @@ const
      Edition: '2023 / 2022';
      Licence: 'Open Government Licence v3.0';
      URL: 'https://geoportal.statistics.gov.uk (services OA21_LAD23_LSOA21_MSOA21_LEP23_EN_LU, MSOA11_MSOA21_LAD22_EW_LU_v2)';
-     Use: 'Which MSOA each LSOA lies in, to compare the model with the observed MSOA ratios.')
+     Use: 'Which MSOA each LSOA lies in, to compare the model with the observed MSOA ratios.'),
+    (Title: 'OpenStreetMap - drivable roads, highway=motorway .. residential (with links and living streets)';
+     Publisher: 'OpenStreetMap contributors, via the Overpass API';
+     Edition: 'snapshot of ' + DriveOsmTimestamp;
+     Licence: 'Open Database Licence (ODbL) 1.0 - (c) OpenStreetMap contributors';
+     URL: 'https://www.openstreetmap.org/copyright';
+     Use: 'Drive times to the seven acute hospitals and the isochrones (make_drive_data.py): fastest routes at '
+       + 'assumed free-flow car speeds - motorway 105 km/h, dual trunk 80, single trunk 72, primary 65, '
+       + 'secondary 55, tertiary 48, unclassified 40, residential 28 - capped by tagged speed limits, '
+       + 'one-way streets respected, joining the network at 20 km/h. Hospital positions approximate.')
   );
 
-  Glossary: array[0..17] of TGlossaryEntry = (
+  Glossary: array[0..18] of TGlossaryEntry = (
     (Term: 'LSOA'; Meaning: 'Lower layer Super Output Area: a Census 2021 statistical area of about 1,000-3,000 residents (400-1,200 households). Kent and Medway has 1,107.'),
     (Term: 'Mid-year population estimate'; Meaning: 'ONS estimate of the usual resident population on 30 June, rolled forward from the 2021 Census with births, deaths and migration.'),
     (Term: 'Population density'; Meaning: 'Mid-2024 population divided by the LSOA''s land area (ONS Standard Area Measurements), people per km2.'),
@@ -208,17 +271,25 @@ const
     (Term: 'ICB'; Meaning: 'Integrated Care Board: the NHS body planning health services for an area - here NHS Kent and Medway, covering the 12 Kent districts and Medway.'),
     (Term: 'Expected heart attack and stroke admissions'; Meaning: 'Modelled emergency hospital admissions a year for acute myocardial infarction (ICD-10 I21-I22) or stroke (I61-I64): the LSOA''s residents by age and sex times England''s 2024-25 rates, times a multiplier for its estimated smoking, diabetes, hypertension, CKD, atrial fibrillation, ethnicity and residual deprivation against England''s. Admissions, not people: one person can be admitted twice. Per km2, it maps where the events would be; it is an estimate, not a count.'),
     (Term: 'Risk-factor ratio'; Meaning: 'Expected admissions over those from age and sex alone at England''s rates: 1.25 means 25 % more than an English population of the same age and sex. It is the model''s counterpart of an indirectly standardised admission ratio.'),
-    (Term: 'Relative risk (RR)'; Meaning: 'How many times more likely an admission is with a risk factor than without, other things equal. The model''s values (smoking 2.0, diabetes 2.0, hypertension 1.6, CKD 1.4, AF 1.5, South Asian 1.4, Black 0.75, most against least deprived decile 1.3) are round, assumed values typical of the literature, not measured here.'),
+    (Term: 'Relative risk (RR)'; Meaning: 'How many times more likely an admission is with a risk factor than without, other things equal. The model''s values (smoking 2.0, obesity 1.2 - beyond the diabetes and hypertension it causes, which are counted separately -, diabetes 2.0, hypertension 1.6, CKD 1.4, AF 1.5, South Asian 1.4, Black 0.75, most against least deprived decile 1.3) are round, assumed values typical of the literature, not measured here.'),
     (Term: 'QOF register'; Meaning: 'The Quality and Outcomes Framework''s count of a practice''s patients with a recorded diagnosis (e.g. diabetes, 17+). It counts diagnosed cases only: undiagnosed diabetes and hypertension are missed.'),
     (Term: 'Indirectly standardised ratio (SAR)'; Meaning: 'Observed events over those expected if England''s age-specific rates applied to the local population; 1 (or 100) = England.'),
     (Term: 'MSOA'; Meaning: 'Middle layer Super Output Area: about 5,000-15,000 residents, built from 4-6 LSOAs. Kent and Medway has 221 (2021).'),
-    (Term: 'APS'; Meaning: 'The ONS Annual Population Survey, source of the official adult smoking prevalence. District samples are a few hundred people, so district figures carry wide confidence intervals.')
+    (Term: 'APS'; Meaning: 'The ONS Annual Population Survey, source of the official adult smoking prevalence. District samples are a few hundred people, so district figures carry wide confidence intervals.'),
+    (Term: 'Drive time and isochrone'; Meaning: 'Modelled minutes by car to a hospital along the fastest OpenStreetMap route at free-flow speeds (no traffic, no blue lights). An isochrone is the line joining places the same time away - here 15, 30, 45 and 60 minutes.')
   );
 
 const
   // relative risks of an emergency MI or stroke admission (assumed round
   // values typical of adjusted cohort estimates - edit to explore)
   CvdRRSmoking = 2.0;              // current smoker (Banks et al., BMC Med 2019)
+  // obese (BMI 30+), over and above the diabetes and hypertension it causes,
+  // which are counted separately. ERFC (Lancet 2011;377:1085): CVD HR per
+  // SD of BMI 1.23 adjusted for age, sex and smoking, 1.07 also adjusted
+  // for blood pressure, diabetes and cholesterol; obese against not is
+  // about 1.75 SD, so 1.44 and 1.13. The model has diabetes and diagnosed
+  // hypertension but not cholesterol or undiagnosed blood pressure: 1.2.
+  CvdRRObesity = 1.2;
   CvdRRFactor: array[0..CvdFactorCount - 1] of Double = (
     2.0,                           // diabetes (ERFC, Lancet 2010: 2.0 for CHD)
     1.6,                           // diagnosed hypertension
@@ -228,12 +299,15 @@ const
   CvdRRBlack = 0.75;               // Black African and Caribbean (cf. QRISK3)
   CvdRRDeprivation = 1.3;          // residual, most against least deprived decile
 
-  // model components, for the breakdown: 0 smoking, 1..4 the QOF
-  // registers (CvdFactorName), 5 ethnicity, 6 residual deprivation
-  CvdComponentCount = 7;
+  // model components, for the breakdown: 0 smoking, 1 obesity, 2..5 the
+  // QOF registers (CvdFactorName), 6 ethnicity, 7 residual deprivation.
+  // The first CvdPrevCount have an estimated prevalence.
+  CvdComponentCount = 8;
+  CvdPrevCount = 6;
+  CvdQofFirst = 2;
   CvdComponentName: array[0..CvdComponentCount - 1] of string = (
-    'smoking', 'diabetes', 'hypertension', 'CKD 3-5', 'atrial fibrillation',
-    'ethnicity', 'deprivation (residual)');
+    'smoking', 'obesity (BMI 30+)', 'diabetes', 'hypertension', 'CKD 3-5',
+    'atrial fibrillation', 'ethnicity', 'deprivation (residual)');
 
 // expected emergency admissions for heart attack or stroke a year
 function LsoaCvdEvents(i: Integer): Double;
@@ -245,7 +319,7 @@ function LsoaCvdDensity(i: Integer): Double;
 function LsoaCvdRatio(i: Integer): Double;
 // events with component k over events without it
 function LsoaCvdEffect(i, k: Integer): Double;
-// estimated prevalence of component k (0..4), % of residents aged 18+
+// estimated prevalence of component k (0 .. CvdPrevCount - 1), % of residents aged 18+
 function LsoaCvdPrevalence(i, k: Integer): Double;
 // MSOA k: model ratio (sum of events / sum of age-sex expectation)
 function MsoaModelSAR(k: Integer): Double;
@@ -276,7 +350,40 @@ function TotalLandKm2: Double;
 procedure PopulationBarycentre(const Include: array of Boolean; out E, N: Double);
 // the same weighted by expected heart attack and stroke admissions
 procedure CvdBarycentre(const Include: array of Boolean; out E, N: Double);
-procedure GeographicCentre(out E, N: Double);
+// geographic centre of the districts with IncDistrict[d] true ([] = all)
+procedure GeographicCentre(const IncDistrict: array of Boolean; out E, N: Double);
+
+// road corridors (see the header): 0 north of the A2/M2, 1 between
+// it and the M20, 2 south of the M20
+const
+  CorridorCount = 3;
+  CorridorName: array[0..CorridorCount - 1] of string = (
+    'north of the A2/M2', 'between A2/M2 and M20', 'south of the M20');
+function LsoaCorridor(i: Integer): Integer;
+// the road's northing at easting E (held level past its ends)
+function A2M2Northing(E: Double): Double;
+function M20Northing(E: Double): Double;
+// the road's easting extent
+procedure A2M2Extent(out E0, E1: Double);
+procedure M20Extent(out E0, E1: Double);
+
+// drive times (see the header). Domains 0 .. HospitalCount - 1 are the
+// hospitals, then the nearer of William Harvey and Kent and Canterbury,
+// then the nearest of all
+function DriveDomainName(d: Integer): string;
+function DriveDomainShort(d: Integer): string;
+function LsoaDriveMinutes(i, Domain: Integer): Double;
+// for each domain, the hospital it means (-1 for the combined ones)
+function DriveDomainHospital(d: Integer): Integer;
+// is hospital h part of domain d
+function DriveDomainHas(d, h: Integer): Boolean;
+
+// sub-areas
+function DistrictArea(d: Integer): Integer;                // 0 North, 1 East, 2 West
+function LsoaArea(i: Integer): Integer;
+function AreaSetName(S: TAreaSet): string;                 // 'Kent and Medway', 'North Kent + West Kent'
+function AreaLsoaMask(S: TAreaSet): TBoolArray;            // per LSOA
+function AreaDistrictMask(S: TAreaSet): TBoolArray;        // per district
 
 procedure BNGToWGS84(E, N: Double; out Lat, Lon: Double);
 function GridRef(E, N: Double): string;               // 'TQ 87979 58078'
@@ -288,7 +395,7 @@ var
   BoxE0, BoxE1, BoxN0, BoxN1: array[0..LsoaCount - 1] of Single;
   CvdEv, CvdAge: array[0..LsoaCount - 1] of Double;
   CvdEff: array[0..LsoaCount * CvdComponentCount - 1] of Double;
-  CvdPrev: array[0..LsoaCount * 5 - 1] of Double;
+  CvdPrev: array[0..LsoaCount * CvdPrevCount - 1] of Double;
   CvdDone: Boolean = False;
 
 procedure ComputeCvd; forward;
@@ -304,7 +411,7 @@ function LsoaCvdEvents(i: Integer): Double; begin NeedCvd; result := CvdEv[i]; e
 function LsoaCvdAgeOnly(i: Integer): Double; begin NeedCvd; result := CvdAge[i]; end;
 function LsoaCvdRatio(i: Integer): Double; begin NeedCvd; result := CvdEv[i] / CvdAge[i]; end;
 function LsoaCvdEffect(i, k: Integer): Double; begin NeedCvd; result := CvdEff[i * CvdComponentCount + k]; end;
-function LsoaCvdPrevalence(i, k: Integer): Double; begin NeedCvd; result := CvdPrev[i * 5 + k]; end;
+function LsoaCvdPrevalence(i, k: Integer): Double; begin NeedCvd; result := CvdPrev[i * CvdPrevCount + k]; end;
 
 function LsoaCvdDensity(i: Integer): Double;
 begin
@@ -410,7 +517,7 @@ begin
   Rate := TVMobj.Create(NB2, 1);
   for b := 0 to NB2 - 1 do Rate[b, 0] := CvdRateMI[b] + CvdRateStroke[b];
   for k := 0 to CvdComponentCount - 1 do Comps[k] := TVMobj.Create(LsoaCount, NB2);
-  for i := 0 to LsoaCount * 5 - 1 do CvdPrev[i] := 0;
+  for i := 0 to LsoaCount * CvdPrevCount - 1 do CvdPrev[i] := 0;
   sa0 := 1 + CvdSouthAsianEngland * (CvdRRSouthAsian - 1) + CvdBlackEngland * (CvdRRBlack - 1);
   depMean := 0;
   for k := 1 to 10 do depMean := depMean + Power(CvdRRDeprivation, (5.5 - k) / 9) / 10;
@@ -426,18 +533,24 @@ begin
       p := Min(1, CvdSmokeLsoa[i] * CvdSmokeBand[b]);
       pbar := CvdSmokeEngland * CvdSmokeBand[b];
       Comps[0][i, b] := Ln((1 + p * (CvdRRSmoking - 1)) / (1 + pbar * (CvdRRSmoking - 1)));
-      CvdPrev[i * 5] := CvdPrev[i * 5] + p * Pop[i, b];
+      CvdPrev[i * CvdPrevCount] := CvdPrev[i * CvdPrevCount] + p * Pop[i, b];
+      // obesity
+      p := Min(1, CvdObesityLsoa[i] * CvdObesityBand[b]);
+      pbar := CvdObesityEngland * CvdObesityBand[b];
+      Comps[1][i, b] := Ln((1 + p * (CvdRRObesity - 1)) / (1 + pbar * (CvdRRObesity - 1)));
+      CvdPrev[i * CvdPrevCount + 1] := CvdPrev[i * CvdPrevCount + 1] + p * Pop[i, b];
       // diagnosed conditions
       for f := 0 to CvdFactorCount - 1 do begin
         p := Min(1, CvdPrevRate[f * NB2 + b] * CvdPrevScale[i * CvdFactorCount + f]);
         pbar := CvdPrevEngland[f * NB2 + b];
-        Comps[1 + f][i, b] := Ln((1 + p * (CvdRRFactor[f] - 1)) / (1 + pbar * (CvdRRFactor[f] - 1)));
-        CvdPrev[i * 5 + 1 + f] := CvdPrev[i * 5 + 1 + f] + p * Pop[i, b];
+        Comps[CvdQofFirst + f][i, b] := Ln((1 + p * (CvdRRFactor[f] - 1)) / (1 + pbar * (CvdRRFactor[f] - 1)));
+        CvdPrev[i * CvdPrevCount + CvdQofFirst + f] := CvdPrev[i * CvdPrevCount + CvdQofFirst + f] + p * Pop[i, b];
       end;
-      Comps[5][i, b] := eth;
-      Comps[6][i, b] := w;
+      Comps[6][i, b] := eth;
+      Comps[7][i, b] := w;
     end;
-    for k := 0 to 4 do CvdPrev[i * 5 + k] := 100 * CvdPrev[i * 5 + k] / adultN[i];
+    for k := 0 to CvdPrevCount - 1 do
+      CvdPrev[i * CvdPrevCount + k] := 100 * CvdPrev[i * CvdPrevCount + k] / adultN[i];
   end;
 
   LogM := Comps[0];
@@ -609,9 +722,198 @@ begin
   WeightedBarycentre(CvdEv, Include, E, N);
 end;
 
-procedure GeographicCentre(out E, N: Double);
+type
+  TRoadProfile = record
+    E, N: array of Double;
+  end;
+
 var
-  r, k, j: Integer;
+  ProfA2M2, ProfM20: TRoadProfile;
+  ProfDone: Boolean = False;
+  LsoaCor: array[0..LsoaCount - 1] of Integer;
+
+// northing against easting of the route segments matching (Ref, Kind):
+// median northing of each 500 m easting bin
+function BuildProfile(const Refs: array of string; const Kinds: array of Integer): TRoadProfile;
+const
+  BinW = 500;
+var
+  i, j, k, b, b0, b1, n: Integer;
+  Lists: array of array of Double;
+  Cnt: array of Integer;
+  v: array of Double;
+  t: Double;
+
+  function Wanted(seg: Integer): Boolean;
+  var
+    m: Integer;
+  begin
+    for m := 0 to High(Refs) do
+      if (RouteRef[seg] = Refs[m]) and (RouteKind[seg] = Kinds[m]) then Exit(True);
+    result := False;
+  end;
+
+begin
+  b0 := MaxInt; b1 := -MaxInt;
+  for i := 0 to High(RouteKind) do
+    if Wanted(i) then
+      for j := RouteStart[i] to RouteStart[i + 1] - 1 do begin
+        b := Floor(RoutePtE[j] / BinW);
+        b0 := Min(b0, b); b1 := Max(b1, b);
+      end;
+  if b0 > b1 then raise Exception.Create('uKentData: no route points for ' + Refs[0]);
+  SetLength(Lists, b1 - b0 + 1); SetLength(Cnt, b1 - b0 + 1);
+  for i := 0 to High(RouteKind) do
+    if Wanted(i) then
+      for j := RouteStart[i] to RouteStart[i + 1] - 1 do begin
+        b := Floor(RoutePtE[j] / BinW) - b0;
+        if Cnt[b] = Length(Lists[b]) then SetLength(Lists[b], 2 * Cnt[b] + 4);
+        Lists[b][Cnt[b]] := RoutePtN[j];
+        Inc(Cnt[b]);
+      end;
+  n := 0;
+  SetLength(result.E, Length(Cnt)); SetLength(result.N, Length(Cnt));
+  for b := 0 to High(Cnt) do begin
+    if Cnt[b] = 0 then Continue;
+    v := Copy(Lists[b], 0, Cnt[b]);
+    for j := 1 to High(v) do begin           // insertion sort: bins are small
+      t := v[j]; k := j - 1;
+      while (k >= 0) and (v[k] > t) do begin v[k + 1] := v[k]; Dec(k); end;
+      v[k + 1] := t;
+    end;
+    result.E[n] := (b + b0 + 0.5) * BinW;
+    if Odd(Cnt[b]) then result.N[n] := v[Cnt[b] div 2]
+    else result.N[n] := 0.5 * (v[Cnt[b] div 2 - 1] + v[Cnt[b] div 2]);
+    Inc(n);
+  end;
+  SetLength(result.E, n); SetLength(result.N, n);
+end;
+
+function ProfileAt(const P: TRoadProfile; E: Double): Double;
+var
+  lo, hi, m: Integer;
+begin
+  if E <= P.E[0] then Exit(P.N[0]);
+  if E >= P.E[High(P.E)] then Exit(P.N[High(P.N)]);
+  lo := 0; hi := High(P.E);
+  while hi - lo > 1 do begin
+    m := (lo + hi) div 2;
+    if P.E[m] <= E then lo := m else hi := m;
+  end;
+  result := P.N[lo] + (P.N[hi] - P.N[lo]) * (E - P.E[lo]) / (P.E[hi] - P.E[lo]);
+end;
+
+procedure NeedProfiles;
+var
+  i: Integer;
+begin
+  if ProfDone then Exit;
+  ProfA2M2 := BuildProfile(['A2', 'M2'], [RouteTrunk, RouteMotorway]);
+  ProfM20 := BuildProfile(['M20'], [RouteMotorway]);
+  for i := 0 to LsoaCount - 1 do
+    if LsoaLabelN[i] > ProfileAt(ProfA2M2, LsoaLabelE[i]) then LsoaCor[i] := 0
+    else if LsoaLabelN[i] < ProfileAt(ProfM20, LsoaLabelE[i]) then LsoaCor[i] := 2
+    else LsoaCor[i] := 1;
+  ProfDone := True;
+end;
+
+function LsoaCorridor(i: Integer): Integer; begin NeedProfiles; result := LsoaCor[i]; end;
+function A2M2Northing(E: Double): Double; begin NeedProfiles; result := ProfileAt(ProfA2M2, E); end;
+function M20Northing(E: Double): Double; begin NeedProfiles; result := ProfileAt(ProfM20, E); end;
+
+procedure A2M2Extent(out E0, E1: Double);
+begin
+  NeedProfiles; E0 := ProfA2M2.E[0]; E1 := ProfA2M2.E[High(ProfA2M2.E)];
+end;
+
+procedure M20Extent(out E0, E1: Double);
+begin
+  NeedProfiles; E0 := ProfM20.E[0]; E1 := ProfM20.E[High(ProfM20.E)];
+end;
+
+function DriveDomainName(d: Integer): string;
+begin
+  if d < HospitalCount then result := HospitalName[d]
+  else if d = HospitalCount then result := 'Nearer of William Harvey and Kent and Canterbury'
+  else result := 'Nearest of all seven acute hospitals';
+end;
+
+function DriveDomainShort(d: Integer): string;
+begin
+  if d < HospitalCount then result := HospitalShort[d]
+  else if d = HospitalCount then result := 'WHH or K&C'
+  else result := 'nearest';
+end;
+
+function LsoaDriveMinutes(i, Domain: Integer): Double;
+begin
+  result := LsoaDriveMin[Domain * LsoaCount + i];
+end;
+
+function DriveDomainHospital(d: Integer): Integer;
+begin
+  if d < HospitalCount then result := d else result := -1;
+end;
+
+function DriveDomainHas(d, h: Integer): Boolean;
+begin
+  if d < HospitalCount then result := h = d
+  else if d = HospitalCount then result := (h = DriveHospWHH) or (h = DriveHospKCH)
+  else result := True;
+end;
+
+var
+  DistArea: array[0..DistrictCount - 1] of Integer;
+
+function DistrictArea(d: Integer): Integer; begin result := DistArea[d]; end;
+function LsoaArea(i: Integer): Integer; begin result := DistArea[LsoaDistrict[i]]; end;
+
+function AreaSetName(S: TAreaSet): string;
+var
+  a: Integer;
+begin
+  if S = AllAreas then Exit('Kent and Medway');
+  result := '';
+  for a := 0 to AreaCount - 1 do
+    if a in S then begin
+      if result <> '' then result := result + ' + ';
+      result := result + AreaName[a];
+    end;
+  if result = '' then result := 'no area';
+end;
+
+function AreaLsoaMask(S: TAreaSet): TBoolArray;
+var
+  i: Integer;
+begin
+  SetLength(result, LsoaCount);
+  for i := 0 to LsoaCount - 1 do result[i] := LsoaArea(i) in S;
+end;
+
+function AreaDistrictMask(S: TAreaSet): TBoolArray;
+var
+  d: Integer;
+begin
+  SetLength(result, DistrictCount);
+  for d := 0 to DistrictCount - 1 do result[d] := DistArea[d] in S;
+end;
+
+procedure AssignAreas;
+var
+  d, a: Integer;
+begin
+  for d := 0 to DistrictCount - 1 do begin
+    DistArea[d] := -1;
+    for a := 0 to AreaCount - 1 do
+      if Pos('|' + DistrictName[d] + '|', '|' + AreaDistricts[a] + '|') > 0 then DistArea[d] := a;
+    if DistArea[d] < 0 then
+      raise Exception.Create('uKentData: district ' + DistrictName[d] + ' is in no sub-area');
+  end;
+end;
+
+procedure GeographicCentre(const IncDistrict: array of Boolean; out E, N: Double);
+var
+  r, k, j, d: Integer;
   Ar, Cxr, Cyr, cr, x0, y0, W, Sx, Sy: Double;
 begin
   // area-weighted mean of each land ring's centroid (shoelace, relative to
@@ -621,7 +923,10 @@ begin
   x0 := DistrictPtE[0];
   y0 := DistrictPtN[0];
   W := 0; Sx := 0; Sy := 0;
+  d := 0;
   for r := 0 to DistrictRingCount - 1 do begin
+    while r >= DistrictRingFirst[d + 1] do Inc(d);
+    if (Length(IncDistrict) > 0) and not IncDistrict[d] then Continue;
     Ar := 0; Cxr := 0; Cyr := 0;
     j := DistrictRingStart[r + 1] - 1;
     for k := DistrictRingStart[r] to DistrictRingStart[r + 1] - 1 do begin
@@ -636,6 +941,7 @@ begin
     Sx := Sx + Abs(Ar) / 2 * Cxr / (3 * Ar);
     Sy := Sy + Abs(Ar) / 2 * Cyr / (3 * Ar);
   end;
+  if W = 0 then begin E := NaN; N := NaN; Exit; end;
   E := x0 + Sx / W;
   N := y0 + Sy / W;
 end;
@@ -732,4 +1038,5 @@ end;
 
 initialization
   ComputeBoxes;
+  AssignAreas;
 end.
