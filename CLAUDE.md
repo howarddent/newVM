@@ -3669,7 +3669,13 @@ packages. Compiled binaries and each demo's own `lib/` output are
       shares within 15/30/45 and over 60 minutes, the chosen one by
       district; a selected LSOA lists its time to every hospital.
       East Kent, WHH 30.6 min mean against K&C 26.1; Thanet 50.9 against
-      29.8. `--drive=<0..8>` picks the domain; snapshot adds
+      29.8. A second section (`WhhKchSummary`) always covers the whole
+      of Kent and Medway, whatever areas are chosen: William Harvey against
+      Kent and Canterbury as a single county centre - overall (mean, median,
+      90th percentile, shares within 30/45/60, longest, admission-hours),
+      by area and by district sorted by the difference. Whole county: WHH
+      34.6 min mean against 37.0, 0.4 % against 6.1 % over an hour (West
+      Kent 21.6 % to K&C). `--drive=<0..8>` picks the domain; snapshot adds
       `_drive`/`_drive_whh_kch`.
   - `--snapshot=<prefix>` saves density/IMD/health/admissions (per km2 and
     ratio)/zoomed maps and the window, prints the memo and exits;

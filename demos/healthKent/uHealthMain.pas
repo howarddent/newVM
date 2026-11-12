@@ -140,6 +140,7 @@ type
     procedure CvdSummary(L: TStrings);
     procedure CorridorSummary(L: TStrings; Total: Double);
     procedure DriveSummary(L: TStrings);
+    procedure WhhKchSummary(L: TStrings);
     procedure FillSources;
     function DecileShare(Domain, Decile: Integer): Double;
     procedure RunSnapshot(Data: PtrInt);
@@ -856,6 +857,129 @@ begin
     if FDistInc[d] and (DEv[d] > 0) then
       L.Add(Format('    %-23s %6.0f admissions/yr   %5.1f min to %s',
         [DistrictName[d], DEv[d], DT[d] / DEv[d], DriveDomainShort(FDriveDomain)]));
+  L.Add('');
+  WhhKchSummary(L);
+end;
+
+// admissions-weighted quantile P of minutes T over the LSOAs with Use[i]
+function WeightedQuantile(const T: array of Double; const Use: array of Boolean; P: Double): Double;
+var
+  Idx: array of Integer;
+  i, n, gap, a, b, tmp: Integer;
+  W, c: Double;
+begin
+  SetLength(Idx, LsoaCount);
+  n := 0; W := 0;
+  for i := 0 to LsoaCount - 1 do
+    if Use[i] then begin Idx[n] := i; Inc(n); W := W + LsoaCvdEvents(i); end;
+  SetLength(Idx, n);
+  gap := n div 2;                               // shell sort by T
+  while gap > 0 do begin
+    for a := gap to n - 1 do begin
+      tmp := Idx[a]; b := a;
+      while (b >= gap) and (T[Idx[b - gap]] > T[tmp]) do begin
+        Idx[b] := Idx[b - gap]; Dec(b, gap);
+      end;
+      Idx[b] := tmp;
+    end;
+    gap := gap div 2;
+  end;
+  c := 0; result := NaN;
+  for a := 0 to n - 1 do begin
+    c := c + LsoaCvdEvents(Idx[a]);
+    if c >= P * W then Exit(T[Idx[a]]);
+  end;
+end;
+
+// one centre for the whole of Kent and Medway, whatever areas are chosen:
+// William Harvey (Ashford) against Kent and Canterbury
+procedure TForm1.WhhKchSummary(L: TStrings);
+const
+  Hosp: array[0..1] of Integer = (DriveHospWHH, DriveHospKCH);
+var
+  i, h, d, a, k, n: Integer;
+  T: array[0..1] of array of Double;
+  All: array of Boolean;
+  W, Ev, Sum, Mx, Q30, Q45, Q60: Double;
+  DEv: array of Double;
+  DT: array[0..1] of array of Double;
+  AEv: array[0..AreaCount - 1] of Double;
+  AT, AOver: array[0..1, 0..AreaCount - 1] of Double;
+  Order: array of Integer;
+  Diff: array of Double;
+  NearerWHH: Double;
+begin
+  SetLength(All, LsoaCount);
+  for h := 0 to 1 do begin
+    SetLength(T[h], LsoaCount);
+    SetLength(DT[h], DistrictCount);
+  end;
+  SetLength(DEv, DistrictCount);
+  for a := 0 to AreaCount - 1 do begin
+    AEv[a] := 0;
+    for h := 0 to 1 do begin AT[h, a] := 0; AOver[h, a] := 0; end;
+  end;
+  W := 0; NearerWHH := 0;
+  for i := 0 to LsoaCount - 1 do begin
+    All[i] := True;
+    Ev := LsoaCvdEvents(i);
+    W := W + Ev;
+    d := LsoaDistrict[i]; a := LsoaArea(i);
+    DEv[d] := DEv[d] + Ev; AEv[a] := AEv[a] + Ev;
+    for h := 0 to 1 do begin
+      T[h][i] := LsoaDriveMinutes(i, Hosp[h]);
+      DT[h][d] := DT[h][d] + Ev * T[h][i];
+      AT[h, a] := AT[h, a] + Ev * T[h][i];
+      if T[h][i] > 60 then AOver[h, a] := AOver[h, a] + Ev;
+    end;
+    if T[0][i] < T[1][i] then NearerWHH := NearerWHH + Ev;
+  end;
+
+  L.Add('ONE CENTRE FOR THE WHOLE OF KENT AND MEDWAY: WILLIAM HARVEY (ASHFORD) OR KENT AND CANTERBURY');
+  L.Add(Format('  All %s expected admissions a year, whatever areas are chosen; drive times as above.', [Thousands(W)]));
+  L.Add('                          mean  median  90 % within   <=30    <=45    <=60    >60    longest  hours/yr');
+  for h := 0 to 1 do begin
+    Sum := 0; Mx := 0; Q30 := 0; Q45 := 0; Q60 := 0;
+    for i := 0 to LsoaCount - 1 do begin
+      Ev := LsoaCvdEvents(i);
+      Sum := Sum + Ev * T[h][i];
+      Mx := Max(Mx, T[h][i]);
+      if T[h][i] <= 30 then Q30 := Q30 + Ev;
+      if T[h][i] <= 45 then Q45 := Q45 + Ev;
+      if T[h][i] <= 60 then Q60 := Q60 + Ev;
+    end;
+    L.Add(Format('  %-22s %5.1f  %6.1f  %9.1f %8.1f%% %6.1f%% %6.1f%% %5.1f%% %8.1f %9.0f',
+      [HospitalShort[Hosp[h]], Sum / W, WeightedQuantile(T[h], All, 0.5), WeightedQuantile(T[h], All, 0.9),
+       100 * Q30 / W, 100 * Q45 / W, 100 * Q60 / W, 100 * (W - Q60) / W, Mx, Sum / 60]));
+  end;
+  L.Add(Format('  %.0f %% of admissions are quicker to William Harvey, %.0f %% to Kent and Canterbury.',
+    [100 * NearerWHH / W, 100 * (W - NearerWHH) / W]));
+  L.Add('');
+  L.Add('  area           admissions/yr   to WHH   to K&C    over 60 min: WHH   K&C');
+  for a := 0 to AreaCount - 1 do
+    L.Add(Format('  %-14s %12.0f %8.1f %8.1f %16.1f%% %5.1f%%',
+      [AreaName[a], AEv[a], AT[0, a] / AEv[a], AT[1, a] / AEv[a],
+       100 * AOver[0, a] / AEv[a], 100 * AOver[1, a] / AEv[a]]));
+  L.Add('');
+  // districts, largest William Harvey advantage first
+  n := 0;
+  SetLength(Order, DistrictCount); SetLength(Diff, DistrictCount);
+  for d := 0 to DistrictCount - 1 do
+    if DEv[d] > 0 then begin
+      Diff[d] := (DT[1][d] - DT[0][d]) / DEv[d];
+      k := n;
+      while (k > 0) and (Diff[Order[k - 1]] < Diff[d]) do begin Order[k] := Order[k - 1]; Dec(k); end;
+      Order[k] := d; Inc(n);
+    end;
+  L.Add('  district                admissions/yr   to WHH   to K&C   K&C - WHH  (mean minutes)');
+  for k := 0 to n - 1 do begin
+    d := Order[k];
+    L.Add(Format('  %-23s %10.0f %9.1f %8.1f %10s',
+      [DistrictName[d], DEv[d], DT[0][d] / DEv[d], DT[1][d] / DEv[d], Signed(Diff[d])]));
+  end;
+  L.Add('  West Kent decides it: the M20 puts Maidstone, Tonbridge, Sevenoaks and Tunbridge Wells');
+  L.Add('  12-14 minutes nearer Ashford, outweighing Thanet and Canterbury''s 20 minutes the other way.');
+  L.Add('  In practice West and North Kent use their own hospitals; free-flow car times, no traffic.');
 end;
 
 procedure TForm1.pbLegendPaint(Sender: TObject);
