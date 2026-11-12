@@ -926,7 +926,37 @@ var
   Diff: array of Double;
   NearerWHH: Double;
   TS: array of Double;
-  sc: Integer;
+  sc, West: Integer;
+  NE: array of Boolean;
+
+  // One row per hospital per speed scenario, over the LSOAs with Use set.
+  procedure ScenarioRows(const Use: array of Boolean; const ChosenNote: string);
+  var
+    i, h, sc: Integer;
+    W, Ev, Sum, Mx, Q30, Q45, Q60: Double;
+  begin
+    for sc := 0 to DriveScenarioCount - 1 do begin
+      L.Add('  ' + DriveScenarioName[sc] + IfThen(sc = FDriveScenario, ChosenNote, ''));
+      for h := 0 to 1 do begin
+        W := 0; Sum := 0; Mx := 0; Q30 := 0; Q45 := 0; Q60 := 0;
+        for i := 0 to LsoaCount - 1 do begin
+          TS[i] := LsoaDriveMinutes(i, Hosp[h], sc);
+          if not Use[i] then Continue;
+          Ev := LsoaCvdEvents(i);
+          W := W + Ev;
+          Sum := Sum + Ev * TS[i];
+          Mx := Max(Mx, TS[i]);
+          if TS[i] <= 30 then Q30 := Q30 + Ev;
+          if TS[i] <= 45 then Q45 := Q45 + Ev;
+          if TS[i] <= 60 then Q60 := Q60 + Ev;
+        end;
+        L.Add(Format('    %-26s %5.1f  %6.1f  %9.1f %8.1f%% %6.1f%% %6.1f%% %5.1f%% %8.1f %9.0f',
+          [HospitalShort[Hosp[h]], Sum / W, WeightedQuantile(TS, Use, 0.5), WeightedQuantile(TS, Use, 0.9),
+           100 * Q30 / W, 100 * Q45 / W, 100 * Q60 / W, 100 * (W - Q60) / W, Mx, Sum / 60]));
+      end;
+    end;
+  end;
+
 begin
   SetLength(All, LsoaCount);
   for h := 0 to 1 do begin
@@ -958,24 +988,7 @@ begin
   L.Add(Format('  All %s expected admissions a year, whatever areas are chosen, in each speed scenario.', [Thousands(W)]));
   L.Add('                                mean  median  90 % within   <=30    <=45    <=60    >60    longest  hours/yr');
   SetLength(TS, LsoaCount);
-  for sc := 0 to DriveScenarioCount - 1 do begin
-    L.Add('  ' + DriveScenarioName[sc] + IfThen(sc = FDriveScenario, '  (chosen: the tables below)', ''));
-    for h := 0 to 1 do begin
-      Sum := 0; Mx := 0; Q30 := 0; Q45 := 0; Q60 := 0;
-      for i := 0 to LsoaCount - 1 do begin
-        TS[i] := LsoaDriveMinutes(i, Hosp[h], sc);
-        Ev := LsoaCvdEvents(i);
-        Sum := Sum + Ev * TS[i];
-        Mx := Max(Mx, TS[i]);
-        if TS[i] <= 30 then Q30 := Q30 + Ev;
-        if TS[i] <= 45 then Q45 := Q45 + Ev;
-        if TS[i] <= 60 then Q60 := Q60 + Ev;
-      end;
-      L.Add(Format('    %-26s %5.1f  %6.1f  %9.1f %8.1f%% %6.1f%% %6.1f%% %5.1f%% %8.1f %9.0f',
-        [HospitalShort[Hosp[h]], Sum / W, WeightedQuantile(TS, All, 0.5), WeightedQuantile(TS, All, 0.9),
-         100 * Q30 / W, 100 * Q45 / W, 100 * Q60 / W, 100 * (W - Q60) / W, Mx, Sum / 60]));
-    end;
-  end;
+  ScenarioRows(All, '  (chosen: the tables below)');
   L.Add(Format('  %s: %.0f %% of admissions are quicker to William Harvey, %.0f %% to Kent and Canterbury.',
     [DriveScenarioName[FDriveScenario], 100 * NearerWHH / W, 100 * (W - NearerWHH) / W]));
   L.Add('');
@@ -1005,6 +1018,34 @@ begin
   L.Add('  12-14 minutes nearer Ashford, outweighing Thanet and Canterbury''s 20 minutes the other way.');
   L.Add('  In practice West and North Kent use their own hospitals. Area and district tables: '
     + DriveScenarioName[FDriveScenario] + '.');
+
+  // the same comparison without West Kent
+  West := -1;
+  for a := 0 to AreaCount - 1 do
+    if AreaName[a] = 'West Kent' then West := a;
+  SetLength(NE, LsoaCount);
+  Ev := 0;
+  for i := 0 to LsoaCount - 1 do begin
+    NE[i] := LsoaArea(i) <> West;
+    if NE[i] then Ev := Ev + LsoaCvdEvents(i);
+  end;
+  L.Add('');
+  L.Add('  NORTH AND EAST KENT ONLY (WEST KENT LEFT OUT)');
+  L.Add(Format('  %s expected admissions a year, whatever areas are chosen.', [Thousands(Ev)]));
+  L.Add('                                mean  median  90 % within   <=30    <=45    <=60    >60    longest  hours/yr');
+  ScenarioRows(NE, '');
+  for sc := 0 to DriveScenarioCount - 1 do begin
+    NearerWHH := 0;
+    for i := 0 to LsoaCount - 1 do
+      if NE[i] and (LsoaDriveMinutes(i, DriveHospWHH, sc) < LsoaDriveMinutes(i, DriveHospKCH, sc)) then
+        NearerWHH := NearerWHH + LsoaCvdEvents(i);
+    L.Add(Format('  %s: %.0f %% quicker to William Harvey, %.0f %% to Kent and Canterbury.',
+      [DriveScenarioName[sc], 100 * NearerWHH / Ev, 100 * (Ev - NearerWHH) / Ev]));
+  end;
+  L.Add('  Without West Kent the balance tips to Kent and Canterbury: Thanet, Canterbury, Dover and');
+  L.Add('  Swale are nearer it, Ashford, Folkestone and the North Kent districts nearer Ashford');
+  L.Add('  (see the district table above). The margin is about 2 minutes, within what the assumed');
+  L.Add('  speeds and approximate hospital positions could move.');
 end;
 
 procedure TForm1.pbLegendPaint(Sender: TObject);

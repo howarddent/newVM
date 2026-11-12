@@ -3703,6 +3703,12 @@ packages. Compiled binaries and each demo's own `lib/` output are
       37.3 / 32.9, 25.2 / 21.0. So traffic keeps the ranking and widens
       both gaps; blue light narrows them. Snapshot adds
       `_drive_whh_kch_peak`/`_blue`.
+    - **North and East Kent only** (same day, end of `WhhKchSummary`,
+      whatever areas are chosen): the same per-scenario rows over the
+      4,222 admissions outside West Kent, plus each scenario's share
+      quicker to either site. K&C wins narrowly: 31.7 / 33.3 min free-flow,
+      39.0 / 40.4 peak, 26.3 / 28.3 blue light, 52-53 % of admissions
+      quicker to K&C.
   - `--snapshot=<prefix>` saves density/IMD/health/admissions (per km2 and
     ratio)/zoomed maps and the window, prints the memo and exits;
     `--colour=<0..4>`, `--domain=<0..7>`, `--cvd=<0|1>`, `--areas=<list>`,
