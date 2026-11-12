@@ -77,6 +77,27 @@ from where.
 
 Other developers are welcome to use and extend this code.
 
+## healthKent: William Harvey or Kent and Canterbury
+
+`demos/healthKent` maps Kent and Medway's expected heart attack and
+stroke admissions and the drive times to its acute hospitals over
+OpenStreetMap roads, in three speed scenarios (free-flow car, weekday
+morning peak, blue light). Its memo compares William Harvey (Ashford)
+and Kent and Canterbury as a single centre. Mean minutes are weighted
+by expected admissions:
+
+| Speeds | Whole county: WHH / K&C | North and East Kent: WHH / K&C | North and East Kent quicker to K&C |
+|---|---|---|---|
+| Free-flow car | 34.6 / 37.0 | 33.3 / 31.7 | 52 % |
+| Morning peak | 41.9 / 45.3 | 40.4 / 39.0 | 53 % |
+| Blue light | 29.6 / 30.9 | 28.3 / 26.3 | 53 % |
+
+For the whole county Ashford is nearer, because the M20 brings West
+Kent 12-14 minutes closer to it. Leave West Kent out (4,222 of the
+5,887 admissions a year) and Canterbury is narrowly nearer, by about
+2 minutes. That is within what the assumed speeds and approximate
+hospital positions could move.
+
 ## Licence
 
 Copyright (C) 2026 Howard Dent.
