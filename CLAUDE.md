@@ -3553,8 +3553,56 @@ packages. Compiled binaries and each demo's own `lib/` output are
     its open service. `BNGToWGS84` is the inverse of `bng.py`'s transform
     and round-trips it to 1e-6 deg.
   - FPC gotcha hit again: locals `X` and `x` collide (case-insensitive).
-  - `--snapshot=<prefix>` saves density/IMD/health/zoomed maps and the
-    window, prints the memo and exits; `--colour=<0..2>`, `--domain=<0..7>`.
+  - **Expected heart attack and stroke admissions** (2026-11-12, third
+    fill; the combo box switches between per km2 a year, log YlOrRd, and
+    the risk-factor ratio against England at the same age and sex,
+    diverging). `make_cvd_data.py` writes `cvddata.inc` from downloads in
+    `~/data/healthKent-src/cvd/` (its header has every URL); uKentData does
+    the arithmetic so the relative risks (`CvdRR...`) stay editable.
+    events = sum over 36 age-sex bands of pop x I x M:
+    - I: England's 2024-25 HES emergency admissions for MI (I21-I22) and
+      stroke (I61-I64), the same codes as OHID's Local Health indicators.
+      HES gives age only for episodes and sex only overall, so the age
+      profile is the episodes' and the sex split is the same at every age.
+    - M: product of (1 + p(RR-1))/(1 + pbar(RR-1)) over smoking and QOF
+      diabetes, hypertension, CKD 3-5 and AF, times ethnicity (Census 2021
+      South Asian/Black shares) and residual deprivation, each over
+      England's average. The RRs are assumed round values (smoking 2,
+      diabetes 2, hypertension 1.6, CKD 1.4, AF 1.5, South Asian 1.4,
+      Black 0.75, deprivation 1.3 between deciles 1 and 10).
+    - QOF prevalence: Poisson fit across all England's practices of
+      register ~ exp(beta z) sum_b n_b r_b (z = patients' mean IMD score),
+      then each practice's O/E is shared out to LSOAs by its patients there
+      (April 2025 lists). **One age curve for both sexes**: separate male
+      and female curves came out with women's diabetes above men's, since
+      practices' sex ratios barely vary. **The age bands are collinear
+      across practices** (hypertension 135/1000 at age 0-4 before), so log r
+      has a second-difference penalty (`SMOOTH` 0.01) and HYP/AF start at 18.
+    - Smoking: Fingertips APS 2023-25 by LSOA IMD 2025 decile (18.6 % most
+      deprived to 4.7 % least), England's 2025 age and sex gradients, then
+      each district's APS shrunk towards the model (log prior SD 0.15:
+      district CIs are about +-4 points).
+    - Computed lazily (`NeedCvd`): MatMult needs CBLAS, which the `.lpr`
+      initialises after the units do - in `initialization` it crashed.
+      Pop (N x 36) `*` `Exp`(summed log multipliers), `MatMult` with the
+      rate column; each component's effect drops its log term.
+    - **Results**: 5,868 admissions a year against 5,977 from age and sex
+      alone (ratio 0.98); 0.08-49 per km2, ratios 0.73-1.65 (east Sheppey,
+      Thanet, Romney Marsh high; west Kent low). Against OHID's observed
+      MSOA ratios (2016/17-20/21, 219 MSOAs) r = 0.70, IMD alone 0.68, but
+      observed Kent is 0.88: the model ranks better than it levels.
+    - **Heart attack and stroke barycentre** (same day, check box, purple
+      marker): `CvdBarycentre`, the barycentre weighted by expected
+      admissions; `PopulationBarycentre` now shares `WeightedBarycentre`
+      with it. TQ 90732 57380, 2.8 km ESE of the population one: 2.4 km of
+      that is age and sex alone (the memo separates them), the risk factors
+      add 0.7 km ENE. With both shown, each label goes on the side away from
+      the other marker (23 px apart at full view). The side panel overflowed
+      with the extra check box: the memo went from 240 to 200 px, colour
+      bars to 150 px, the key's lines to 16 px.
+  - `--snapshot=<prefix>` saves density/IMD/health/admissions (per km2 and
+    ratio)/zoomed maps and the window, prints the memo and exits;
+    `--colour=<0..3>`, `--domain=<0..7>`, `--cvd=<0|1>`.
 - **`newPoly`** — least-squares polynomial fitting with
   `newPolymath.pas`'s `TPolynomial.Fit` (see its own section above),
   shown on two `TVMPlot2D` components stacked in one form, the fit above

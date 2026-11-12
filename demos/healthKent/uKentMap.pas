@@ -17,9 +17,13 @@ unit uKentMap;
      TKentMapView - the healthKent demo's map: an OpenGL (TOpenGLControl)
      map of Kent and Medway's 1107 LSOAs (uKentData, British National Grid
      coordinates drawn as they are), each filled with the colour of its
-     population density or of a deprivation decile, with optional
+     population density, a deprivation decile, or the expected heart
+     attack and stroke admissions (per km2, or as a risk-factor ratio
+     against England - SetColouring's Domain 0 or 1), with optional
      district and LSOA outlines, towns over 50,000, motorways, trunk
-     roads, primary A roads, railways, and the population barycentre and
+     roads, primary A roads, railways, the population barycentre, the
+     heart attack and stroke barycentre (weighted by expected admissions)
+     and
      geographic centre. Built on uCountyMap (CanterburyRain).
 
      FILLING AND CLIPPING (stencil, 8 bits):
@@ -59,7 +63,7 @@ uses
   uKentData;
 
 type
-  TKentColourMode = (kcmNone, kcmDensity, kcmDeprivation);
+  TKentColourMode = (kcmNone, kcmDensity, kcmDeprivation, kcmCvd);
   TSelectLsoaEvent = procedure(Sender: TObject; Lsoa: Integer) of object;
 
   TKentTextTexture = record
@@ -76,8 +80,8 @@ type
     FDomain: Integer;
     FShowDistricts, FShowLsoaLines, FShowTowns: Boolean;
     FShowMotorways, FShowTrunk, FShowPrimary, FShowRail: Boolean;
-    FShowBarycentre, FShowGeoCentre: Boolean;
-    FBaryE, FBaryN, FGeoE, FGeoN: Double;
+    FShowBarycentre, FShowGeoCentre, FShowCvdBarycentre: Boolean;
+    FBaryE, FBaryN, FGeoE, FGeoN, FCvdE, FCvdN: Double;
     FSelected: Integer;
     FOnSelectLsoa: TSelectLsoaEvent;
     FOnViewChange: TNotifyEvent;
@@ -91,7 +95,7 @@ type
     FDragCenE, FDragCenN: Double;
     // labels
     FTownTex: array[0..TownCount - 1] of TKentTextTexture;
-    FBaryTex, FGeoTex: TKentTextTexture;
+    FBaryTex, FGeoTex, FCvdTex: TKentTextTexture;
     FTexBuilt: Boolean;
     procedure UpdateScale;
     procedure ToPixel(E, N: Double; out PX, PY: Double);
@@ -114,6 +118,7 @@ type
     procedure SetShowRail(V: Boolean);
     procedure SetShowBarycentre(V: Boolean);
     procedure SetShowGeoCentre(V: Boolean);
+    procedure SetShowCvdBarycentre(V: Boolean);
   protected
     procedure MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
     procedure MouseMove(Shift: TShiftState; X, Y: Integer); override;
@@ -127,6 +132,7 @@ type
     procedure SetColouring(AMode: TKentColourMode; ADomain: Integer);
     procedure SetBarycentre(E, N: Double);
     procedure SetGeoCentre(E, N: Double);
+    procedure SetCvdBarycentre(E, N: Double);
     procedure ResetView;
     // centre the view on (E, N) at zoom AZoom (1 = whole area)
     procedure SetView(E, N, AZoom: Double);
@@ -142,6 +148,7 @@ type
     property ShowRail: Boolean read FShowRail write SetShowRail;
     property ShowBarycentre: Boolean read FShowBarycentre write SetShowBarycentre;
     property ShowGeoCentre: Boolean read FShowGeoCentre write SetShowGeoCentre;
+    property ShowCvdBarycentre: Boolean read FShowCvdBarycentre write SetShowCvdBarycentre;
     property OnSelectLsoa: TSelectLsoaEvent read FOnSelectLsoa write FOnSelectLsoa;
     property OnViewChange: TNotifyEvent read FOnViewChange write FOnViewChange;
   end;
@@ -149,6 +156,9 @@ type
 const
   DensityLo = 10.0;       // people per km2, bottom of the (log) colour scale
   DensityHi = 15000.0;    // top
+  CvdDensityLo = 0.03;    // expected admissions per km2 a year (log scale)
+  CvdDensityHi = 50.0;
+  CvdRatioSpan = 1.7;     // ratio scale 1/1.7 .. 1.7, log, white at 1
   clSea = TColor($EFE3CF);          // BGR: RGB(207, 227, 239)
   clLand = TColor($E9EFF2);         // RGB(242, 239, 233)
   clMotorway = TColor($B5550F);     // RGB(15, 85, 181)
@@ -156,10 +166,13 @@ const
   clPrimary = TColor($0062C8);      // RGB(200, 98, 0)
   clRail = TColor($303030);
   clBary = TColor($1C1CD8);         // RGB(216, 28, 28)
+  clCvdBary = TColor($A01E8C);      // RGB(140, 30, 160)
 
 // fill colours, shared with the form's legend
 function DensityColour(D: Double): TColor;           // people per km2
 function DecileColour(Decile: Integer): TColor;      // 1 (most deprived) .. 10
+function CvdDensityColour(D: Double): TColor;        // admissions per km2 a year
+function CvdRatioColour(R: Double): TColor;          // against England, 1 = white
 function LsoaFillColour(Mode: TKentColourMode; Domain, i: Integer): TColor;
 
 implementation
@@ -185,6 +198,17 @@ const
     (r: 146; g: 197; b: 222), (r: 67; g: 147; b: 195), (r: 33; g: 102; b: 172),
     (r: 5; g: 48; b: 97));
 
+  // ColorBrewer YlOrRd, 9 classes
+  HeatStops: array[0..8] of TRGB = (
+    (r: 255; g: 255; b: 204), (r: 255; g: 237; b: 160), (r: 254; g: 217; b: 118),
+    (r: 254; g: 178; b: 76), (r: 253; g: 141; b: 60), (r: 252; g: 78; b: 42),
+    (r: 227; g: 26; b: 28), (r: 189; g: 0; b: 38), (r: 128; g: 0; b: 38));
+  // ColorBrewer RdBu, 9 classes, blue (lower risk) .. red (higher)
+  RatioStops: array[0..8] of TRGB = (
+    (r: 33; g: 102; b: 172), (r: 67; g: 147; b: 195), (r: 146; g: 197; b: 222),
+    (r: 209; g: 229; b: 240), (r: 247; g: 247; b: 247), (r: 253; g: 219; b: 199),
+    (r: 244; g: 165; b: 130), (r: 214; g: 96; b: 77), (r: 178; g: 24; b: 43));
+
 function Ramp(const Stops: array of TRGB; t: Double): TColor;
 var
   i: Integer;
@@ -204,6 +228,18 @@ begin
   result := Ramp(PurpleStops, (Log10(D) - Log10(DensityLo)) / (Log10(DensityHi) - Log10(DensityLo)));
 end;
 
+function CvdDensityColour(D: Double): TColor;
+begin
+  if IsNan(D) or (D <= 0) then Exit(clLand);
+  result := Ramp(HeatStops, (Log10(D) - Log10(CvdDensityLo)) / (Log10(CvdDensityHi) - Log10(CvdDensityLo)));
+end;
+
+function CvdRatioColour(R: Double): TColor;
+begin
+  if IsNan(R) or (R <= 0) then Exit(clLand);
+  result := Ramp(RatioStops, 0.5 + 0.5 * Ln(R) / Ln(CvdRatioSpan));
+end;
+
 function DecileColour(Decile: Integer): TColor;
 begin
   Decile := EnsureRange(Decile, 1, 10);
@@ -215,6 +251,9 @@ begin
   case Mode of
     kcmDensity: result := DensityColour(LsoaDensity(i));
     kcmDeprivation: result := DecileColour(LsoaDecileOf(i, Domain));
+    kcmCvd:
+      if Domain = 0 then result := CvdDensityColour(LsoaCvdDensity(i))
+      else result := CvdRatioColour(LsoaCvdRatio(i));
   else
     result := clLand;
   end;
@@ -244,6 +283,7 @@ begin
   FShowBarycentre := True;
   FBaryE := NaN;
   FGeoE := NaN;
+  FCvdE := NaN;
   FEMin := DistrictPtE[0]; FEMax := FEMin;
   FNMin := DistrictPtN[0]; FNMax := FNMin;
   for k := 0 to High(DistrictPtE) do begin
@@ -308,6 +348,13 @@ begin
   Invalidate;
 end;
 
+procedure TKentMapView.SetCvdBarycentre(E, N: Double);
+begin
+  FCvdE := E;
+  FCvdN := N;
+  Invalidate;
+end;
+
 procedure TKentMapView.SetGeoCentre(E, N: Double);
 begin
   FGeoE := E;
@@ -338,6 +385,7 @@ procedure TKentMapView.SetShowPrimary(V: Boolean); begin SetBool(FShowPrimary, V
 procedure TKentMapView.SetShowRail(V: Boolean); begin SetBool(FShowRail, V); end;
 procedure TKentMapView.SetShowBarycentre(V: Boolean); begin SetBool(FShowBarycentre, V); end;
 procedure TKentMapView.SetShowGeoCentre(V: Boolean); begin SetBool(FShowGeoCentre, V); end;
+procedure TKentMapView.SetShowCvdBarycentre(V: Boolean); begin SetBool(FShowCvdBarycentre, V); end;
 
 // ---- text ---------------------------------------------------------------------
 
@@ -401,6 +449,7 @@ begin
     FTownTex[i] := CreateTextTexture(TownName[i], 9, True);
   FBaryTex := CreateTextTexture('population barycentre', 9, True);
   FGeoTex := CreateTextTexture('geographic centre', 9, True);
+  FCvdTex := CreateTextTexture('heart attack and stroke barycentre', 9, True);
   FTexBuilt := True;
 end;
 
@@ -418,6 +467,7 @@ begin
   for i := 0 to TownCount - 1 do Del(FTownTex[i]);
   Del(FBaryTex);
   Del(FGeoTex);
+  Del(FCvdTex);
   FTexBuilt := False;
 end;
 
@@ -522,9 +572,21 @@ procedure TKentMapView.DrawMarkers;
     glEnd;
   end;
 
+  procedure CrossDisc(x, y: Double; AColour: TColor);
+  begin
+    Disc(x, y, 8, AColour);
+    glColor4f(1, 1, 1, 1);                     // white cross hair
+    glLineWidth(1.5);
+    glBegin(GL_LINES);
+      glVertex2d(x - 5, y); glVertex2d(x + 5, y);
+      glVertex2d(x, y - 5); glVertex2d(x, y + 5);
+    glEnd;
+  end;
+
 var
   i: Integer;
   x, y, r: Double;
+  both, cvdEast: Boolean;
 begin
   if FShowTowns then
     for i := 0 to TownCount - 1 do begin
@@ -545,16 +607,21 @@ begin
     glEnd;
     DrawLabel(FGeoTex, x - 10, y, False);
   end;
+  // the two barycentres lie a few km apart, so with both shown each
+  // label goes on the side away from the other marker
+  both := FShowBarycentre and FShowCvdBarycentre and not IsNan(FBaryE) and not IsNan(FCvdE);
+  cvdEast := FCvdE >= FBaryE;
   if FShowBarycentre and not IsNan(FBaryE) then begin
     ToPixel(FBaryE, FBaryN, x, y);
-    Disc(x, y, 8, clBary);
-    glColor4f(1, 1, 1, 1);                     // white cross hair
-    glLineWidth(1.5);
-    glBegin(GL_LINES);
-      glVertex2d(x - 5, y); glVertex2d(x + 5, y);
-      glVertex2d(x, y - 5); glVertex2d(x, y + 5);
-    glEnd;
-    DrawLabel(FBaryTex, x + 11, y, True);
+    CrossDisc(x, y, clBary);
+    if both and cvdEast then DrawLabel(FBaryTex, x - 11, y, False)
+    else DrawLabel(FBaryTex, x + 11, y, True);
+  end;
+  if FShowCvdBarycentre and not IsNan(FCvdE) then begin
+    ToPixel(FCvdE, FCvdN, x, y);
+    CrossDisc(x, y, clCvdBary);
+    if both and not cvdEast then DrawLabel(FCvdTex, x - 11, y, False)
+    else DrawLabel(FCvdTex, x + 11, y, True);
   end;
 end;
 

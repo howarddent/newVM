@@ -29,6 +29,31 @@ unit uKentData;
 
      All coordinates are British National Grid (OSGB36) metres.
 
+     EXPECTED HEART ATTACK AND STROKE ADMISSIONS (cvddata.inc, from
+     make_cvd_data.py, whose header has the method). For LSOA i:
+       events_i = sum over 36 age-sex bands b of pop_ib * I_b * M_ib
+     I_b is England's 2024-25 emergency admission rate for acute MI
+     (I21-I22) or stroke (I61-I64) at that age and sex (HES), and
+       M_ib = exp( sum over components k of ln m_kib )
+     with, for smoking and the four QOF registers,
+       m = (1 + p (RR - 1)) / (1 + pbar (RR - 1)),
+     p the LSOA's estimated prevalence in that band and pbar England's;
+     for ethnicity the same over the South Asian and Black shares; for
+     residual deprivation RR^((5.5 - decile)/9) over its England mean.
+     So an LSOA of England-average risk factors has M = 1 and gets the
+     age-sex expectation. The relative risks are the CvdRR... constants
+     below - round, literature-typical values, editable. Every
+     multiplier divides by England's average for that age and sex, which
+     is what the HES baseline already contains.
+     Computed once with newVM: the (N, 36) population matrix times the
+     elementwise exponential of the summed log multipliers (the Hadamard
+     '*'), then MatMult with the (36, 1) rate column. A component's effect
+     is events with it over events without it: the same product with its
+     log multiplier subtracted.
+     The factors are combined as if independent within an LSOA (diabetes,
+     hypertension, obesity and smoking cluster in reality), and hyper-
+     tension, diabetes, CKD and AF are diagnosed (QOF) prevalence.
+
      POPULATION BARYCENTRE: the population-weighted mean of the LSOA
      label points, sum(p_i x_i) / sum(p_i), computed with newVM: the
      populations as a (1, N) TVMobj times the (N, 2) [E N] matrix,
@@ -36,7 +61,10 @@ unit uKentData;
      per LSOA the label points stand in well for the people; ONS's own
      population-weighted LSOA centroids aren't on its open service. It is
      the point that minimises the population's summed squared distance -
-     the mean, not the median, centre. The geographic centre is the area
+     the mean, not the median, centre. The heart attack and stroke
+     barycentre is the same with each LSOA weighted by its expected
+     admissions instead of its residents: where the events would
+     balance. The geographic centre is the area
      centroid of the districts' land (shoelace formula over every ring).
 
      BNG -> WGS84: inverse transverse Mercator on Airy 1830 (OS "A guide
@@ -54,6 +82,7 @@ uses
   Classes, SysUtils, Math, newVM;
 
 {$I kentdata.inc}
+{$I cvddata.inc}
 
 const
   RouteMotorway = 0;
@@ -72,13 +101,13 @@ type
   end;
 
 const
-  Sources: array[0..7] of TSourceEntry = (
+  Sources: array[0..14] of TSourceEntry = (
     (Title: 'Lower layer Super Output Area population estimates (small area, 2021-based), mid-2024';
      Publisher: 'Office for National Statistics (via Nomis, dataset NM_2014_1)';
      Edition: 'mid-2024 estimates, released 7 November 2025 - the latest published';
      Licence: 'Open Government Licence v3.0';
      URL: 'https://www.nomisweb.co.uk/datasets/pestsyoala';
-     Use: 'Population of every LSOA (all ages, persons); population density, the barycentre and town populations are all built from it.'),
+     Use: 'Population of every LSOA (all ages, and by sex in five-year age bands, plus England''s by age and sex); population density, the barycentre, town populations and the expected heart attack and stroke admissions are all built from it.'),
     (Title: 'English Indices of Deprivation 2025 - File 7: all ranks, scores, deciles and population denominators';
      Publisher: 'Ministry of Housing, Communities and Local Government';
      Edition: 'IoD2025, published 2025 (LSOA 2021 geography)';
@@ -120,10 +149,52 @@ const
      Edition: 'snapshot of ' + OsmTimestamp;
      Licence: 'Open Database Licence (ODbL) 1.0 - (c) OpenStreetMap contributors';
      URL: 'https://www.openstreetmap.org/copyright';
-     Use: 'Motorways, trunk roads (mostly primary routes), primary A roads and railways, simplified to 20 m.')
+     Use: 'Motorways, trunk roads (mostly primary routes), primary A roads and railways, simplified to 20 m.'),
+    (Title: 'Hospital Admitted Patient Care Activity 2024-25: primary diagnosis, 3 character (CSV)';
+     Publisher: 'NHS England (Hospital Episode Statistics)';
+     Edition: '2024-25';
+     Licence: 'Open Government Licence v3.0';
+     URL: 'https://digital.nhs.uk/data-and-information/publications/statistical/hospital-admitted-patient-care-activity/2024-25';
+     Use: 'England''s emergency admissions for acute myocardial infarction (I21-I22) and stroke (I61-I64), split by age (episode age profile) and sex: the age-sex baseline rates of the expected admissions.'),
+    (Title: 'Quality and Outcomes Framework 2024-25: prevalence (registers) by practice';
+     Publisher: 'NHS England';
+     Edition: '2024-25 (year to 31 March 2025)';
+     Licence: 'Open Government Licence v3.0';
+     URL: 'https://digital.nhs.uk/data-and-information/publications/statistical/quality-and-outcomes-framework-achievement-prevalence-and-exceptions-data/2024-25';
+     Use: 'Diagnosed diabetes (17+), hypertension, CKD stages 3-5 (18+) and atrial fibrillation for every practice in England: age curves and deprivation gradients fitted across all practices, and each practice''s excess or shortfall.'),
+    (Title: 'Patients Registered at a GP Practice, April 2025: by LSOA (2021), and by five-year age and sex';
+     Publisher: 'NHS England';
+     Edition: 'April 2025';
+     Licence: 'Open Government Licence v3.0';
+     URL: 'https://digital.nhs.uk/data-and-information/publications/statistical/patients-registered-at-a-gp-practice/april-2025';
+     Use: 'Each practice''s list by age (for the QOF age curves) and where its patients live: a practice''s figures are shared out to LSOAs by its patients there.'),
+    (Title: 'Smoking prevalence in adults (18+) - current smokers (APS), indicator 92443';
+     Publisher: 'Office for Health Improvement and Disparities, Fingertips (Local Tobacco Control Profiles), from the ONS Annual Population Survey';
+     Edition: '2023-25 pooled (district values and England by LSOA IMD 2025 decile); 2025 age and sex gradients';
+     Licence: 'Open Government Licence v3.0';
+     URL: 'https://fingertips.phe.org.uk/profile/tobacco-control';
+     Use: 'Smoking by national deprivation decile, age and sex, scaled to each district''s survey figure (shrunk towards the decile model, since district samples are small).'),
+    (Title: 'Census 2021 TS021 - Ethnic group';
+     Publisher: 'Office for National Statistics (via Nomis, dataset NM_2041_1)';
+     Edition: 'Census 2021';
+     Licence: 'Open Government Licence v3.0';
+     URL: 'https://www.nomisweb.co.uk/sources/census_2021';
+     Use: 'Share of residents of South Asian (Indian, Pakistani, Bangladeshi) and Black ethnicity in each LSOA and England.'),
+    (Title: 'Local Health: emergency hospital admissions for myocardial infarction (93232) and for stroke (93231), MSOA';
+     Publisher: 'Office for Health Improvement and Disparities, Fingertips (Local Health), from HES and ONS';
+     Edition: '2016/17 - 2020/21 pooled, MSOA 2011';
+     Licence: 'Open Government Licence v3.0';
+     URL: 'https://fingertips.phe.org.uk/profile/local-health';
+     Use: 'Observed indirectly age-standardised admission ratios for each MSOA - the check of the model''s ratios (not an input).'),
+    (Title: 'OA (2021) to LSOA to MSOA to LAD (2023) lookup, and MSOA (2011) to MSOA (2021) lookup';
+     Publisher: 'Office for National Statistics, Open Geography Portal';
+     Edition: '2023 / 2022';
+     Licence: 'Open Government Licence v3.0';
+     URL: 'https://geoportal.statistics.gov.uk (services OA21_LAD23_LSOA21_MSOA21_LEP23_EN_LU, MSOA11_MSOA21_LAD22_EW_LU_v2)';
+     Use: 'Which MSOA each LSOA lies in, to compare the model with the observed MSOA ratios.')
   );
 
-  Glossary: array[0..9] of TGlossaryEntry = (
+  Glossary: array[0..17] of TGlossaryEntry = (
     (Term: 'LSOA'; Meaning: 'Lower layer Super Output Area: a Census 2021 statistical area of about 1,000-3,000 residents (400-1,200 households). Kent and Medway has 1,107.'),
     (Term: 'Mid-year population estimate'; Meaning: 'ONS estimate of the usual resident population on 30 June, rolled forward from the 2021 Census with births, deaths and migration.'),
     (Term: 'Population density'; Meaning: 'Mid-2024 population divided by the LSOA''s land area (ONS Standard Area Measurements), people per km2.'),
@@ -131,10 +202,57 @@ const
     (Term: 'Decile'; Meaning: 'National tenth of the 33,755 LSOAs in England ranked by score: decile 1 is the most deprived 10 %, decile 10 the least deprived. Deciles are relative - decile 10 is the least deprived, not necessarily wealthy.'),
     (Term: 'Built-up area (BUA)'; Meaning: 'ONS 2022 definition of a town or city from land use (built-up land at 25 m resolution); Medway''s towns are separate BUAs (Gillingham, Chatham, Rochester).'),
     (Term: 'Population barycentre'; Meaning: 'Population-weighted mean position of the residents - where a rigid map with each person as an equal weight would balance. It minimises the summed squared distance to everyone.'),
+    (Term: 'Heart attack and stroke barycentre'; Meaning: 'The population barycentre with each LSOA weighted by its expected heart attack and stroke admissions instead of its residents: the mean position of the events. Its offset from the population barycentre shows which way risk leans - mostly towards older areas, then towards areas with more risk factors.'),
     (Term: 'Geographic centre'; Meaning: 'Area centroid of the land: where the map would balance if every square kilometre weighed the same.'),
     (Term: 'British National Grid'; Meaning: 'The OS transverse Mercator grid (OSGB36): eastings and northings in metres; a grid reference such as TQ 87979 58078 names the 100 km square and the position inside it.'),
-    (Term: 'ICB'; Meaning: 'Integrated Care Board: the NHS body planning health services for an area - here NHS Kent and Medway, covering the 12 Kent districts and Medway.')
+    (Term: 'ICB'; Meaning: 'Integrated Care Board: the NHS body planning health services for an area - here NHS Kent and Medway, covering the 12 Kent districts and Medway.'),
+    (Term: 'Expected heart attack and stroke admissions'; Meaning: 'Modelled emergency hospital admissions a year for acute myocardial infarction (ICD-10 I21-I22) or stroke (I61-I64): the LSOA''s residents by age and sex times England''s 2024-25 rates, times a multiplier for its estimated smoking, diabetes, hypertension, CKD, atrial fibrillation, ethnicity and residual deprivation against England''s. Admissions, not people: one person can be admitted twice. Per km2, it maps where the events would be; it is an estimate, not a count.'),
+    (Term: 'Risk-factor ratio'; Meaning: 'Expected admissions over those from age and sex alone at England''s rates: 1.25 means 25 % more than an English population of the same age and sex. It is the model''s counterpart of an indirectly standardised admission ratio.'),
+    (Term: 'Relative risk (RR)'; Meaning: 'How many times more likely an admission is with a risk factor than without, other things equal. The model''s values (smoking 2.0, diabetes 2.0, hypertension 1.6, CKD 1.4, AF 1.5, South Asian 1.4, Black 0.75, most against least deprived decile 1.3) are round, assumed values typical of the literature, not measured here.'),
+    (Term: 'QOF register'; Meaning: 'The Quality and Outcomes Framework''s count of a practice''s patients with a recorded diagnosis (e.g. diabetes, 17+). It counts diagnosed cases only: undiagnosed diabetes and hypertension are missed.'),
+    (Term: 'Indirectly standardised ratio (SAR)'; Meaning: 'Observed events over those expected if England''s age-specific rates applied to the local population; 1 (or 100) = England.'),
+    (Term: 'MSOA'; Meaning: 'Middle layer Super Output Area: about 5,000-15,000 residents, built from 4-6 LSOAs. Kent and Medway has 221 (2021).'),
+    (Term: 'APS'; Meaning: 'The ONS Annual Population Survey, source of the official adult smoking prevalence. District samples are a few hundred people, so district figures carry wide confidence intervals.')
   );
+
+const
+  // relative risks of an emergency MI or stroke admission (assumed round
+  // values typical of adjusted cohort estimates - edit to explore)
+  CvdRRSmoking = 2.0;              // current smoker (Banks et al., BMC Med 2019)
+  CvdRRFactor: array[0..CvdFactorCount - 1] of Double = (
+    2.0,                           // diabetes (ERFC, Lancet 2010: 2.0 for CHD)
+    1.6,                           // diagnosed hypertension
+    1.4,                           // CKD stages 3-5
+    1.5);                          // atrial fibrillation (mainly stroke)
+  CvdRRSouthAsian = 1.4;           // Indian, Pakistani, Bangladeshi (cf. QRISK3)
+  CvdRRBlack = 0.75;               // Black African and Caribbean (cf. QRISK3)
+  CvdRRDeprivation = 1.3;          // residual, most against least deprived decile
+
+  // model components, for the breakdown: 0 smoking, 1..4 the QOF
+  // registers (CvdFactorName), 5 ethnicity, 6 residual deprivation
+  CvdComponentCount = 7;
+  CvdComponentName: array[0..CvdComponentCount - 1] of string = (
+    'smoking', 'diabetes', 'hypertension', 'CKD 3-5', 'atrial fibrillation',
+    'ethnicity', 'deprivation (residual)');
+
+// expected emergency admissions for heart attack or stroke a year
+function LsoaCvdEvents(i: Integer): Double;
+// the same from age and sex alone (England's rates)
+function LsoaCvdAgeOnly(i: Integer): Double;
+// per km2 of land a year
+function LsoaCvdDensity(i: Integer): Double;
+// events / age-sex expectation: the risk-factor ratio, 1 = England
+function LsoaCvdRatio(i: Integer): Double;
+// events with component k over events without it
+function LsoaCvdEffect(i, k: Integer): Double;
+// estimated prevalence of component k (0..4), % of residents aged 18+
+function LsoaCvdPrevalence(i, k: Integer): Double;
+// MSOA k: model ratio (sum of events / sum of age-sex expectation)
+function MsoaModelSAR(k: Integer): Double;
+// Pearson r of model against observed MSOA ratios, and of the
+// population-weighted IMD score against them, over MSOAs with data
+procedure CvdMsoaCheck(out RModel, RImd: Double; out Count: Integer;
+  out ObservedKent, ModelKent: Double);
 
 // density, people per km2
 function LsoaDensity(i: Integer): Double;
@@ -156,6 +274,8 @@ function TotalLandKm2: Double;
 // population-weighted mean of the label points (newVM), over the LSOAs
 // with Include[i] (all when Include is empty)
 procedure PopulationBarycentre(const Include: array of Boolean; out E, N: Double);
+// the same weighted by expected heart attack and stroke admissions
+procedure CvdBarycentre(const Include: array of Boolean; out E, N: Double);
 procedure GeographicCentre(out E, N: Double);
 
 procedure BNGToWGS84(E, N: Double; out Lat, Lon: Double);
@@ -166,6 +286,176 @@ implementation
 
 var
   BoxE0, BoxE1, BoxN0, BoxN1: array[0..LsoaCount - 1] of Single;
+  CvdEv, CvdAge: array[0..LsoaCount - 1] of Double;
+  CvdEff: array[0..LsoaCount * CvdComponentCount - 1] of Double;
+  CvdPrev: array[0..LsoaCount * 5 - 1] of Double;
+  CvdDone: Boolean = False;
+
+procedure ComputeCvd; forward;
+
+// computed on first use, not in initialization: MatMult needs CBLAS,
+// which the program loads (InitializeCBLAS) after the units initialise
+procedure NeedCvd; inline;
+begin
+  if not CvdDone then ComputeCvd;
+end;
+
+function LsoaCvdEvents(i: Integer): Double; begin NeedCvd; result := CvdEv[i]; end;
+function LsoaCvdAgeOnly(i: Integer): Double; begin NeedCvd; result := CvdAge[i]; end;
+function LsoaCvdRatio(i: Integer): Double; begin NeedCvd; result := CvdEv[i] / CvdAge[i]; end;
+function LsoaCvdEffect(i, k: Integer): Double; begin NeedCvd; result := CvdEff[i * CvdComponentCount + k]; end;
+function LsoaCvdPrevalence(i, k: Integer): Double; begin NeedCvd; result := CvdPrev[i * 5 + k]; end;
+
+function LsoaCvdDensity(i: Integer): Double;
+begin
+  NeedCvd;
+  if LsoaLandKm2[i] > 0 then result := CvdEv[i] / LsoaLandKm2[i]
+  else result := NaN;
+end;
+
+function MsoaModelSAR(k: Integer): Double;
+var
+  i: Integer;
+  e, a: Double;
+begin
+  NeedCvd;
+  e := 0; a := 0;
+  for i := 0 to LsoaCount - 1 do
+    if LsoaMsoa[i] = k then begin
+      e := e + CvdEv[i];
+      a := a + CvdAge[i];
+    end;
+  result := e / a;
+end;
+
+function Pearson(const X, Y: array of Double; n: Integer): Double;
+var
+  i: Integer;
+  mx, my, sxy, sxx, syy: Double;
+begin
+  mx := 0; my := 0;
+  for i := 0 to n - 1 do begin mx := mx + X[i]; my := my + Y[i]; end;
+  mx := mx / n; my := my / n;
+  sxy := 0; sxx := 0; syy := 0;
+  for i := 0 to n - 1 do begin
+    sxy := sxy + (X[i] - mx) * (Y[i] - my);
+    sxx := sxx + Sqr(X[i] - mx);
+    syy := syy + Sqr(Y[i] - my);
+  end;
+  result := sxy / Sqrt(sxx * syy);
+end;
+
+procedure CvdMsoaCheck(out RModel, RImd: Double; out Count: Integer;
+  out ObservedKent, ModelKent: Double);
+var
+  i, k: Integer;
+  Model, Imd, Obs: array of Double;
+  ImdSum, PopSum, AgeSum, EvSum: array[0..MsoaCount - 1] of Double;
+  oa, a: Double;
+begin
+  NeedCvd;
+  for k := 0 to MsoaCount - 1 do begin
+    ImdSum[k] := 0; PopSum[k] := 0; AgeSum[k] := 0; EvSum[k] := 0;
+  end;
+  for i := 0 to LsoaCount - 1 do begin
+    k := LsoaMsoa[i];
+    ImdSum[k] := ImdSum[k] + LsoaPop[i] * LsoaScoreOf(i, 0);
+    PopSum[k] := PopSum[k] + LsoaPop[i];
+    AgeSum[k] := AgeSum[k] + CvdAge[i];
+    EvSum[k] := EvSum[k] + CvdEv[i];
+  end;
+  SetLength(Model, MsoaCount);
+  SetLength(Imd, MsoaCount);
+  SetLength(Obs, MsoaCount);
+  Count := 0;
+  oa := 0; a := 0;
+  for k := 0 to MsoaCount - 1 do
+    if MsoaObservedSAR[k] > 0 then begin
+      Model[Count] := EvSum[k] / AgeSum[k];
+      Imd[Count] := ImdSum[k] / PopSum[k];
+      Obs[Count] := MsoaObservedSAR[k];
+      oa := oa + MsoaObservedSAR[k] * AgeSum[k];
+      a := a + AgeSum[k];
+      Inc(Count);
+    end;
+  RModel := Pearson(Model, Obs, Count);
+  RImd := Pearson(Imd, Obs, Count);
+  ObservedKent := oa / a;
+  oa := 0; a := 0;
+  for i := 0 to LsoaCount - 1 do begin oa := oa + CvdEv[i]; a := a + CvdAge[i]; end;
+  ModelKent := oa / a;
+end;
+
+procedure ComputeCvd;
+const
+  NB2 = 2 * CvdBandCount;
+var
+  Pop, Rate, LogM, Comp, Ev, Age, EvWithout: TVMobj;
+  Comps: array[0..CvdComponentCount - 1] of TVMobj;
+  i, b, f, k: Integer;
+  p, pbar, adult, w, sa0, depMean, eth: Double;
+  adultN: array[0..LsoaCount - 1] of Double;
+
+  // fraction of age band b (5-year, within its sex) aged 18 or over
+  function Adult18(b: Integer): Double;
+  var
+    lo: Integer;
+  begin
+    lo := 5 * (b mod CvdBandCount);
+    result := EnsureRange((lo + 5 - 18) / 5, 0, 1);
+  end;
+
+begin
+  Pop := TVMobj.Create(LsoaCount, NB2);
+  Rate := TVMobj.Create(NB2, 1);
+  for b := 0 to NB2 - 1 do Rate[b, 0] := CvdRateMI[b] + CvdRateStroke[b];
+  for k := 0 to CvdComponentCount - 1 do Comps[k] := TVMobj.Create(LsoaCount, NB2);
+  for i := 0 to LsoaCount * 5 - 1 do CvdPrev[i] := 0;
+  sa0 := 1 + CvdSouthAsianEngland * (CvdRRSouthAsian - 1) + CvdBlackEngland * (CvdRRBlack - 1);
+  depMean := 0;
+  for k := 1 to 10 do depMean := depMean + Power(CvdRRDeprivation, (5.5 - k) / 9) / 10;
+  for i := 0 to LsoaCount - 1 do begin
+    adultN[i] := 0;
+    eth := Ln((1 + LsoaSouthAsian[i] * (CvdRRSouthAsian - 1) + LsoaBlack[i] * (CvdRRBlack - 1)) / sa0);
+    w := Ln(Power(CvdRRDeprivation, (5.5 - LsoaDecileOf(i, 0)) / 9) / depMean);
+    for b := 0 to NB2 - 1 do begin
+      Pop[i, b] := LsoaAgePop[i * NB2 + b];
+      adult := Adult18(b) * Pop[i, b];
+      adultN[i] := adultN[i] + adult;
+      // smoking
+      p := Min(1, CvdSmokeLsoa[i] * CvdSmokeBand[b]);
+      pbar := CvdSmokeEngland * CvdSmokeBand[b];
+      Comps[0][i, b] := Ln((1 + p * (CvdRRSmoking - 1)) / (1 + pbar * (CvdRRSmoking - 1)));
+      CvdPrev[i * 5] := CvdPrev[i * 5] + p * Pop[i, b];
+      // diagnosed conditions
+      for f := 0 to CvdFactorCount - 1 do begin
+        p := Min(1, CvdPrevRate[f * NB2 + b] * CvdPrevScale[i * CvdFactorCount + f]);
+        pbar := CvdPrevEngland[f * NB2 + b];
+        Comps[1 + f][i, b] := Ln((1 + p * (CvdRRFactor[f] - 1)) / (1 + pbar * (CvdRRFactor[f] - 1)));
+        CvdPrev[i * 5 + 1 + f] := CvdPrev[i * 5 + 1 + f] + p * Pop[i, b];
+      end;
+      Comps[5][i, b] := eth;
+      Comps[6][i, b] := w;
+    end;
+    for k := 0 to 4 do CvdPrev[i * 5 + k] := 100 * CvdPrev[i * 5 + k] / adultN[i];
+  end;
+
+  LogM := Comps[0];
+  for k := 1 to CvdComponentCount - 1 do LogM := LogM + Comps[k];
+  Ev := MatMult(Pop * Exp(LogM), Rate);          // (N, 1)
+  Age := MatMult(Pop, Rate);
+  for i := 0 to LsoaCount - 1 do begin
+    CvdEv[i] := Ev[i, 0];
+    CvdAge[i] := Age[i, 0];
+  end;
+  for k := 0 to CvdComponentCount - 1 do begin
+    Comp := LogM - Comps[k];
+    EvWithout := MatMult(Pop * Exp(Comp), Rate);
+    for i := 0 to LsoaCount - 1 do
+      CvdEff[i * CvdComponentCount + k] := CvdEv[i] / EvWithout[i, 0];
+  end;
+  CvdDone := True;
+end;
 
 function LsoaDensity(i: Integer): Double;
 begin
@@ -275,7 +565,10 @@ begin
   for i := 0 to LsoaCount - 1 do result := result + LsoaLandKm2[i];
 end;
 
-procedure PopulationBarycentre(const Include: array of Boolean; out E, N: Double);
+// weighted mean of the label points: the (1, N) weights times the (N, 2)
+// [E N] matrix, over the weights times a column of ones
+procedure WeightedBarycentre(const Wt: array of Double; const Include: array of Boolean;
+  out E, N: Double);
 var
   W, XY, Ones, Num, Den: TVMobj;
   i: Integer;
@@ -284,13 +577,13 @@ begin
   XY := TVMobj.Create(LsoaCount, 2);
   Ones := TVMobj.Create(LsoaCount, 1);
   for i := 0 to LsoaCount - 1 do begin
-    if (Length(Include) = 0) or Include[i] then W[0, i] := LsoaPop[i] else W[0, i] := 0;
+    if (Length(Include) = 0) or Include[i] then W[0, i] := Wt[i] else W[0, i] := 0;
     XY[i, 0] := LsoaLabelE[i];
     XY[i, 1] := LsoaLabelN[i];
     Ones[i, 0] := 1;
   end;
-  Num := MatMult(W, XY);          // (1, 2): sum p E, sum p N
-  Den := MatMult(W, Ones);        // (1, 1): sum p
+  Num := MatMult(W, XY);          // (1, 2): sum w E, sum w N
+  Den := MatMult(W, Ones);        // (1, 1): sum w
   if Den[0, 0] > 0 then begin
     E := Num[0, 0] / Den[0, 0];
     N := Num[0, 1] / Den[0, 0];
@@ -298,6 +591,22 @@ begin
     E := NaN;
     N := NaN;
   end;
+end;
+
+procedure PopulationBarycentre(const Include: array of Boolean; out E, N: Double);
+var
+  Wt: array of Double;
+  i: Integer;
+begin
+  SetLength(Wt, LsoaCount);
+  for i := 0 to LsoaCount - 1 do Wt[i] := LsoaPop[i];
+  WeightedBarycentre(Wt, Include, E, N);
+end;
+
+procedure CvdBarycentre(const Include: array of Boolean; out E, N: Double);
+begin
+  NeedCvd;
+  WeightedBarycentre(CvdEv, Include, E, N);
 end;
 
 procedure GeographicCentre(out E, N: Double);

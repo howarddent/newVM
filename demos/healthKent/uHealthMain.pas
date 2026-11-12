@@ -24,10 +24,16 @@ unit uHealthMain;
          decile, for the IMD or any of its seven domains (a combo box);
          diverging red (decile 1, most deprived) to blue (decile 10,
          least deprived),
+       - expected emergency admissions for heart attack or stroke (uKentData
+         has the model): per km2 a year on a log scale (ColorBrewer
+         YlOrRd), or as the risk-factor ratio against an English
+         population of the same age and sex (blue below, red above);
+         the combo box picks which,
        - or no fill,
      with check boxes for district and LSOA outlines, built-up areas over
      50,000 people, motorways, trunk roads, primary A roads, railways,
-     the population barycentre and the geographic centre. Wheel zooms,
+     the population barycentre, the heart attack and stroke barycentre
+     (weighted by expected admissions) and the geographic centre. Wheel zooms,
      drag pans, a click selects an LSOA and the memo shows its figures.
      The legend beside the map shows the colour scale (and, for
      deprivation, the share of residents in each decile) and the line and
@@ -42,11 +48,20 @@ unit uHealthMain;
      edition, licence, link and what the demo uses it for) and of the
      terms used, from uKentData's Sources and Glossary tables.
 
+     For the admissions the memo adds, for a selected LSOA, its estimated
+     risk factors and each one's effect on the expected admissions; for
+     the area, the totals, a table by district, and the model's check
+     against OHID's observed MSOA admission ratios.
+
      COMMAND LINE: --snapshot=<prefix> saves the map coloured by density
      (<prefix>_density.png), by IMD decile (<prefix>_imd.png), by health
-     deprivation (<prefix>_health.png), a zoomed view round the barycentre
-     (<prefix>_zoom.png) and the window (<prefix>_window.bmp), prints the
-     memo and exits.
+     deprivation (<prefix>_health.png), by expected admissions per km2
+     (<prefix>_cvd.png) and by risk-factor ratio (<prefix>_cvdratio.png),
+     a zoomed view round the barycentre (<prefix>_zoom.png) and the window
+     (<prefix>_window.bmp), prints the memo and exits. --colour=<0..3>
+     picks the fill (0 density, 1 deprivation, 2 admissions, 3 none),
+     --domain=<0..7> the deprivation measure, --cvd=<0|1> admissions per
+     km2 or the ratio.
 
 *******************************************************************************}
 
@@ -93,14 +108,17 @@ type
     procedure rgColourClick(Sender: TObject);
   private
     FMap: TKentMapView;
-    FBaryE, FBaryN, FGeoE, FGeoN: Double;
+    FBaryE, FBaryN, FGeoE, FGeoN, FCvdE, FCvdN: Double;
     FSnapshot: string;
     FShown: Boolean;
+    FDepDomain, FCvdMeasure, FBoxMode: Integer;
+    procedure FillMeasureBox;
     procedure ApplyColouring;
     procedure ApplyLayers;
     procedure LsoaSelected(Sender: TObject; Lsoa: Integer);
     procedure ViewChanged(Sender: TObject);
     procedure ShowInfo;
+    procedure CvdSummary(L: TStrings);
     procedure FillSources;
     function DecileShare(Domain, Decile: Integer): Double;
     procedure RunSnapshot(Data: PtrInt);
@@ -115,13 +133,24 @@ implementation
 {$R *.lfm}
 
 const
+  // colour radio items
+  ciDensity = 0; ciDeprivation = 1; ciCvd = 2; ciNone = 3;
+  CvdMeasureName: array[0..1] of string = (
+    'Admissions per km2 a year', 'Risk-factor ratio (against England, same age and sex)');
+
   // check group items
   liDistricts = 0; liLsoas = 1; liTowns = 2; liMotorways = 3; liTrunk = 4;
-  liPrimary = 5; liRail = 6; liBary = 7; liGeo = 8;
+  liPrimary = 5; liRail = 6; liBary = 7; liGeo = 8; liCvdBary = 9;
 
 function Thousands(v: Double): string;
 begin
   result := FormatFloat('#,##0', v);
+end;
+
+// FPC's Format has no '+' flag
+function Signed(v: Double): string;
+begin
+  result := FormatFloat('+0.0;-0.0;0.0', v);
 end;
 
 // compass point of the bearing from (E0, N0) to (E1, N1)
@@ -153,21 +182,18 @@ begin
   GeographicCentre(FGeoE, FGeoN);
   FMap.SetBarycentre(FBaryE, FBaryN);
   FMap.SetGeoCentre(FGeoE, FGeoN);
+  CvdBarycentre([], FCvdE, FCvdN);
+  FMap.SetCvdBarycentre(FCvdE, FCvdN);
 
-  cbDomain.Items.BeginUpdate;
-  try
-    cbDomain.Items.Clear;
-    for d := 0 to DomainCount - 1 do cbDomain.Items.Add(DomainName[d]);
-  finally
-    cbDomain.Items.EndUpdate;
-  end;
-  cbDomain.ItemIndex := 0;
+  FBoxMode := -1;
   if Application.HasOption('colour') then
-    rgColour.ItemIndex := EnsureRange(StrToIntDef(Application.GetOptionValue('colour'), 0), 0, 2);
+    rgColour.ItemIndex := EnsureRange(StrToIntDef(Application.GetOptionValue('colour'), 0), 0, ciNone);
   if Application.HasOption('domain') then
-    cbDomain.ItemIndex := EnsureRange(StrToIntDef(Application.GetOptionValue('domain'), 0), 0, DomainCount - 1);
+    FDepDomain := EnsureRange(StrToIntDef(Application.GetOptionValue('domain'), 0), 0, DomainCount - 1);
+  if Application.HasOption('cvd') then
+    FCvdMeasure := EnsureRange(StrToIntDef(Application.GetOptionValue('cvd'), 0), 0, 1);
   for d := 0 to cgLayers.Items.Count - 1 do
-    cgLayers.Checked[d] := d in [liDistricts, liTowns, liMotorways, liTrunk, liRail, liBary, liGeo];
+    cgLayers.Checked[d] := d in [liDistricts, liTowns, liMotorways, liTrunk, liRail, liBary, liGeo, liCvdBary];
   ApplyLayers;
   ApplyColouring;
   FillSources;
@@ -185,15 +211,45 @@ begin
   if FSnapshot <> '' then Application.QueueAsyncCall(@RunSnapshot, 0);
 end;
 
+// the combo box lists the deprivation measures or the two admissions
+// measures, whichever fill is chosen; each keeps its own selection
+procedure TForm1.FillMeasureBox;
+var
+  m, d: Integer;
+begin
+  m := IfThen(rgColour.ItemIndex = ciCvd, ciCvd, ciDeprivation);
+  if m = FBoxMode then Exit;
+  FBoxMode := m;
+  cbDomain.Items.BeginUpdate;
+  try
+    cbDomain.Items.Clear;
+    if m = ciCvd then
+      for d := 0 to High(CvdMeasureName) do cbDomain.Items.Add(CvdMeasureName[d])
+    else
+      for d := 0 to DomainCount - 1 do cbDomain.Items.Add(DomainName[d]);
+  finally
+    cbDomain.Items.EndUpdate;
+  end;
+  if m = ciCvd then begin
+    cbDomain.ItemIndex := FCvdMeasure;
+    lblDomain.Caption := 'Admissions measure:';
+  end else begin
+    cbDomain.ItemIndex := FDepDomain;
+    lblDomain.Caption := 'Deprivation measure (index or domain):';
+  end;
+end;
+
 procedure TForm1.ApplyColouring;
 begin
-  cbDomain.Enabled := rgColour.ItemIndex = 1;
+  FillMeasureBox;
+  cbDomain.Enabled := rgColour.ItemIndex in [ciDeprivation, ciCvd];
   lblDomain.Enabled := cbDomain.Enabled;
   case rgColour.ItemIndex of
-    0: FMap.SetColouring(kcmDensity, cbDomain.ItemIndex);
-    1: FMap.SetColouring(kcmDeprivation, cbDomain.ItemIndex);
+    ciDensity: FMap.SetColouring(kcmDensity, FDepDomain);
+    ciDeprivation: FMap.SetColouring(kcmDeprivation, FDepDomain);
+    ciCvd: FMap.SetColouring(kcmCvd, FCvdMeasure);
   else
-    FMap.SetColouring(kcmNone, cbDomain.ItemIndex);
+    FMap.SetColouring(kcmNone, FDepDomain);
   end;
   pbLegend.Invalidate;
   ShowInfo;
@@ -210,6 +266,7 @@ begin
   FMap.ShowRail := cgLayers.Checked[liRail];
   FMap.ShowBarycentre := cgLayers.Checked[liBary];
   FMap.ShowGeoCentre := cgLayers.Checked[liGeo];
+  FMap.ShowCvdBarycentre := cgLayers.Checked[liCvdBary];
   pbLegend.Invalidate;
 end;
 
@@ -220,6 +277,9 @@ end;
 
 procedure TForm1.cbDomainChange(Sender: TObject);
 begin
+  if cbDomain.ItemIndex < 0 then Exit;
+  if FBoxMode = ciCvd then FCvdMeasure := cbDomain.ItemIndex
+  else FDepDomain := cbDomain.ItemIndex;
   ApplyColouring;
 end;
 
@@ -251,7 +311,8 @@ end;
 procedure TForm1.ViewChanged(Sender: TObject);
 begin
   lblStatus.Caption := Format('Zoom %.1fx - wheel to zoom, drag to pan, click an area for its figures. '
-    + 'Population: ONS %s estimates; deprivation: English Indices of Deprivation 2025.',
+    + 'Population: ONS %s estimates; deprivation: English Indices of Deprivation 2025; '
+    + 'admissions: a model (see the memo and Sources).',
     [FMap.Zoom, PopulationYear]);
 end;
 
@@ -278,7 +339,7 @@ var
   Inc: array of Boolean;
   tp: Int64;
 begin
-  dom := cbDomain.ItemIndex;
+  dom := FDepDomain;
   L := TStringList.Create;
   try
     i := FMap.Selected;
@@ -296,9 +357,28 @@ begin
           [DomainName[d], LsoaScoreOf(i, d), Thousands(LsoaRankOf(i, d)), LsoaDecileOf(i, d),
            IfThen(LsoaDecileOf(i, d) = 1, '  most deprived 10 %',
              IfThen(LsoaDecileOf(i, d) = 10, '  least deprived 10 %', ''))]));
+      L.Add(Format('  Expected heart attack and stroke admissions: %.1f a year (%.2f per km2);',
+        [LsoaCvdEvents(i), LsoaCvdDensity(i)]));
+      L.Add(Format('    from age and sex alone %.1f, so a risk-factor ratio of %.2f (England 1)',
+        [LsoaCvdAgeOnly(i), LsoaCvdRatio(i)]));
+      L.Add('    estimated risk factor            % of 18+    effect on admissions');
+      for d := 0 to CvdComponentCount - 1 do
+        if d <= 4 then
+          L.Add(Format('      %-28s %7.1f      %7s %%',
+            [CvdComponentName[d], LsoaCvdPrevalence(i, d), Signed(100 * (LsoaCvdEffect(i, d) - 1))]))
+        else
+          L.Add(Format('      %-28s %7s      %7s %%',
+            [CvdComponentName[d], '', Signed(100 * (LsoaCvdEffect(i, d) - 1))]));
+      L.Add(Format('    (diagnosed prevalence; %.0f %% of residents'' GP patients are at practices with QOF data.',
+        [100 * CvdPracticeCoverage[i]]));
+      L.Add(Format('    South Asian %.1f %%, Black %.1f %% of residents, Census 2021. MSOA: %s.)',
+        [100 * LsoaSouthAsian[i], 100 * LsoaBlack[i], MsoaName[LsoaMsoa[i]]]));
+      if MsoaObservedSAR[LsoaMsoa[i]] > 0 then
+        L.Add(Format('    MSOA ratio: model %.2f, observed %.2f (OHID, MI and stroke admissions 2016/17-20/21)',
+          [MsoaModelSAR(LsoaMsoa[i]), MsoaObservedSAR[LsoaMsoa[i]]]));
       L.Add('');
     end else
-      L.Add('Click an area on the map for its population and deprivation.' + LineEnding);
+      L.Add('Click an area on the map for its population, deprivation and expected heart attack and stroke admissions.' + LineEnding);
 
     tp := TotalPopulation;
     L.Add('KENT AND MEDWAY (NHS Kent and Medway ICB area)');
@@ -354,6 +434,8 @@ begin
     L.Add('  * population-weighted mean of the LSOA scores; deciles 1-2 = the most deprived');
     L.Add('    20 % of LSOAs in England.');
     L.Add('');
+    CvdSummary(L);
+    L.Add('');
     L.Add(Format('TOWNS (ONS built-up areas over %s, %s population)', [Thousands(TownMinPopulation), PopulationYear]));
     for t := 0 to TownCount - 1 do
       L.Add(Format('  %-24s %9s', [TownName[t], Thousands(TownPop[t])]));
@@ -361,6 +443,83 @@ begin
   finally
     L.Free;
   end;
+end;
+
+// the admissions model, for the whole area and by district
+procedure TForm1.CvdSummary(L: TStrings);
+var
+  i, d, n: Integer;
+  ev, ag, rm, ri, ok, mk, la, lo, w, wE, wN: Double;
+  Ev_, Ag_, Land, Smk, Ad: array of Double;
+  b: Integer;
+begin
+  ev := 0; ag := 0;
+  for i := 0 to LsoaCount - 1 do begin
+    ev := ev + LsoaCvdEvents(i);
+    ag := ag + LsoaCvdAgeOnly(i);
+  end;
+  L.Add('EXPECTED HEART ATTACK AND STROKE ADMISSIONS (a model - see Sources and the glossary)');
+  L.Add(Format('  %s emergency admissions a year for acute MI or stroke; %s from age and sex alone',
+    [Thousands(ev), Thousands(ag)]));
+  L.Add(Format('  at England''s %s rates (HES), a risk-factor ratio of %.3f; %.2f per km2 a year.',
+    [CvdHesYear, ev / ag, ev / TotalLandKm2]));
+  L.Add('  Risk factors: smoking (APS by deprivation decile, age and sex, scaled to each district),');
+  L.Add('  diagnosed diabetes, hypertension, CKD 3-5 and AF (QOF ' + CvdQofYear + ', fitted by age and');
+  L.Add('  deprivation across England''s practices and shared out to LSOAs), ethnicity (Census 2021)');
+  L.Add(Format('  and residual deprivation. Relative risks: smoking %.1f, diabetes %.1f, hypertension %.1f,',
+    [CvdRRSmoking, CvdRRFactor[0], CvdRRFactor[1]]));
+  L.Add(Format('  CKD %.1f, AF %.1f, South Asian %.2f, Black %.2f, deprivation %.1f (decile 1 against 10) - assumed.',
+    [CvdRRFactor[2], CvdRRFactor[3], CvdRRSouthAsian, CvdRRBlack, CvdRRDeprivation]));
+  CvdMsoaCheck(rm, ri, n, ok, mk);
+  L.Add(Format('  Check against OHID''s observed MSOA admission ratios (MI and stroke, 2016/17-20/21, %d MSOAs):', [n]));
+  L.Add(Format('    correlation %.2f (the IMD score alone: %.2f). Observed Kent ratio %.2f against the model''s %.2f:',
+    [rm, ri, ok, mk]));
+  L.Add('    Kent''s admissions run below what its risk factors predict - the model ranks areas better than');
+  L.Add('    it sets the level, and the observed period is older.');
+  BNGToWGS84(FCvdE, FCvdN, la, lo);
+  L.Add('');
+  L.Add('  Heart attack and stroke barycentre  ' + GridRef(FCvdE, FCvdN) + '  ' + LatLonText(la, lo));
+  i := LsoaAt(FCvdE, FCvdN);
+  if i < 0 then i := NearestLsoa(FCvdE, FCvdN);
+  L.Add(Format('    in %s (%s): the expected admissions'' weighted mean position,', [LsoaName[i], DistrictName[LsoaDistrict[i]]]));
+  L.Add(Format('    %.1f km %s of the population barycentre.',
+    [Hypot(FCvdE - FBaryE, FCvdN - FBaryN) / 1000, Compass(FBaryE, FBaryN, FCvdE, FCvdN)]));
+  // weighted by the age-sex expectation alone, to separate age from the risk factors
+  w := 0; wE := 0; wN := 0;
+  for i := 0 to LsoaCount - 1 do begin
+    w := w + LsoaCvdAgeOnly(i);
+    wE := wE + LsoaCvdAgeOnly(i) * LsoaLabelE[i];
+    wN := wN + LsoaCvdAgeOnly(i) * LsoaLabelN[i];
+  end;
+  wE := wE / w; wN := wN / w;
+  L.Add(Format('    Age and sex alone move it %.1f km %s (the older east and coast);',
+    [Hypot(wE - FBaryE, wN - FBaryN) / 1000, Compass(FBaryE, FBaryN, wE, wN)]));
+  L.Add(Format('    the risk factors a further %.1f km %s.',
+    [Hypot(FCvdE - wE, FCvdN - wN) / 1000, Compass(wE, wN, FCvdE, FCvdN)]));
+
+  SetLength(Ev_, DistrictCount); SetLength(Ag_, DistrictCount); SetLength(Land, DistrictCount);
+  SetLength(Smk, DistrictCount); SetLength(Ad, DistrictCount);
+  for d := 0 to DistrictCount - 1 do begin
+    Ev_[d] := 0; Ag_[d] := 0; Land[d] := 0; Smk[d] := 0; Ad[d] := 0;
+  end;
+  for i := 0 to LsoaCount - 1 do begin
+    d := LsoaDistrict[i];
+    Ev_[d] := Ev_[d] + LsoaCvdEvents(i);
+    Ag_[d] := Ag_[d] + LsoaCvdAgeOnly(i);
+    Land[d] := Land[d] + LsoaLandKm2[i];
+    for b := 0 to 2 * CvdBandCount - 1 do begin
+      Smk[d] := Smk[d] + LsoaAgePop[i * 2 * CvdBandCount + b] * Min(1, CvdSmokeLsoa[i] * CvdSmokeBand[b]);
+      Ad[d] := Ad[d] + LsoaAgePop[i * 2 * CvdBandCount + b] * EnsureRange((5 * (b mod CvdBandCount) + 5 - 18) / 5, 0, 1);
+    end;
+  end;
+  L.Add('');
+  L.Add('  district                admissions/yr   per km2   ratio   smoking: model   APS ' + CvdSmokePeriod);
+  for d := 0 to DistrictCount - 1 do
+    L.Add(Format('  %-23s %12.0f %9.2f %7.2f %13.1f %%  %7.1f %%',
+      [DistrictName[d], Ev_[d], Ev_[d] / Land[d], Ev_[d] / Ag_[d], 100 * Smk[d] / Ad[d],
+       100 * DistrictSmokeAPS[d]]));
+  L.Add('  ratio = against England''s rates for the same ages and sexes. The district smoking survey');
+  L.Add('  samples are small, so the model only leans towards them.');
 end;
 
 procedure TForm1.pbLegendPaint(Sender: TObject);
@@ -374,6 +533,8 @@ var
   lab: string;
 const
   Ticks: array[0..6] of Double = (10, 30, 100, 300, 1000, 3000, 10000);
+  CvdTicks: array[0..6] of Double = (0.03, 0.1, 0.3, 1, 3, 10, 30);
+  RatioTicks: array[0..6] of Double = (0.6, 0.7, 0.85, 1, 1.2, 1.4, 1.7);
 
   procedure KeyLine(yy: Integer; AColour: TColor; W: Integer; const Txt: string; Dashed: Boolean);
   begin
@@ -401,7 +562,7 @@ begin
   case rgColour.ItemIndex of
     0: begin
       cv.TextOut(BarX, 2, 'People per km2 (' + PopulationYear + ', log scale)');
-      h := 160;
+      h := 150;
       for y := 0 to h - 1 do begin
         t := 1 - y / (h - 1);
         v := Power(10, Log10(DensityLo) + t * (Log10(DensityHi) - Log10(DensityLo)));
@@ -419,7 +580,7 @@ begin
       y0 := y0 + h + 14;
     end;
     1: begin
-      dom := cbDomain.ItemIndex;
+      dom := FDepDomain;
       cv.TextOut(BarX, 2, 'National decile (IoD 2025) - % of residents');
       h := 17;
       for dec := 1 to 10 do begin
@@ -436,6 +597,44 @@ begin
       end;
       y0 := y0 + 10 * h + 10;
     end;
+    2: begin
+      h := 150;
+      if FCvdMeasure = 0 then begin
+        cv.TextOut(BarX, 2, 'Expected MI + stroke admissions per km2 a year');
+        for y := 0 to h - 1 do begin
+          t := 1 - y / (h - 1);
+          v := Power(10, Log10(CvdDensityLo) + t * (Log10(CvdDensityHi) - Log10(CvdDensityLo)));
+          cv.Pen.Color := CvdDensityColour(v);
+          cv.Line(BarX, y0 + y, BarX + BarW, y0 + y);
+        end;
+        cv.Pen.Color := clBlack;
+        cv.Rectangle(BarX, y0, BarX + BarW, y0 + h);
+        for i := 0 to High(CvdTicks) do begin
+          y := y0 + Round((Log10(CvdDensityHi) - Log10(CvdTicks[i])) / (Log10(CvdDensityHi) - Log10(CvdDensityLo)) * (h - 1));
+          cv.Line(BarX + BarW, y, BarX + BarW + 5, y);
+          lab := FloatToStr(CvdTicks[i]);
+          cv.TextOut(BarX + BarW + 8, y - cv.TextHeight(lab) div 2, lab);
+        end;
+      end else begin
+        cv.TextOut(BarX, 2, 'Risk-factor ratio (1 = England, same age and sex)');
+        for y := 0 to h - 1 do begin
+          t := 1 - y / (h - 1);
+          v := Power(CvdRatioSpan, 2 * t - 1);
+          cv.Pen.Color := CvdRatioColour(v);
+          cv.Line(BarX, y0 + y, BarX + BarW, y0 + y);
+        end;
+        cv.Pen.Color := clBlack;
+        cv.Rectangle(BarX, y0, BarX + BarW, y0 + h);
+        for i := 0 to High(RatioTicks) do begin
+          y := y0 + Round((1 - (Ln(RatioTicks[i]) / Ln(CvdRatioSpan) + 1) / 2) * (h - 1));
+          cv.Line(BarX + BarW, y, BarX + BarW + 5, y);
+          lab := FormatFloat('0.0#', RatioTicks[i]);
+          if RatioTicks[i] = 1 then lab := lab + '  England';
+          cv.TextOut(BarX + BarW + 8, y - cv.TextHeight(lab) div 2, lab);
+        end;
+      end;
+      y0 := y0 + h + 22;
+    end;
   else
     begin
       cv.TextOut(BarX, 2, 'No fill');
@@ -443,24 +642,31 @@ begin
     end;
   end;
   // line and marker key
-  if cgLayers.Checked[liMotorways] then begin KeyLine(y0, clMotorway, 3, 'motorway', False); Inc(y0, 18); end;
-  if cgLayers.Checked[liTrunk] then begin KeyLine(y0, clTrunk, 3, 'trunk road (primary route)', False); Inc(y0, 18); end;
-  if cgLayers.Checked[liPrimary] then begin KeyLine(y0, clPrimary, 2, 'primary A road', False); Inc(y0, 18); end;
-  if cgLayers.Checked[liRail] then begin KeyLine(y0, clRail, 4, 'railway', True); Inc(y0, 18); end;
+  if cgLayers.Checked[liMotorways] then begin KeyLine(y0, clMotorway, 3, 'motorway', False); Inc(y0, 16); end;
+  if cgLayers.Checked[liTrunk] then begin KeyLine(y0, clTrunk, 3, 'trunk road (primary route)', False); Inc(y0, 16); end;
+  if cgLayers.Checked[liPrimary] then begin KeyLine(y0, clPrimary, 2, 'primary A road', False); Inc(y0, 16); end;
+  if cgLayers.Checked[liRail] then begin KeyLine(y0, clRail, 4, 'railway', True); Inc(y0, 16); end;
   cv.Pen.Width := 1;
   if cgLayers.Checked[liTowns] then begin
     cv.Brush.Style := bsSolid; cv.Brush.Color := clWhite; cv.Pen.Color := clBlack;
     cv.Ellipse(BarX + 13, y0 - 4, BarX + 21, y0 + 4);
     cv.Brush.Style := bsClear;
     cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, Format('town over %s', [Thousands(TownMinPopulation)]));
-    Inc(y0, 18);
+    Inc(y0, 16);
   end;
   if cgLayers.Checked[liBary] then begin
     cv.Brush.Style := bsSolid; cv.Brush.Color := clBary; cv.Pen.Color := clBlack;
     cv.Ellipse(BarX + 10, y0 - 7, BarX + 24, y0 + 7);
     cv.Brush.Style := bsClear;
     cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, 'population barycentre');
-    Inc(y0, 18);
+    Inc(y0, 16);
+  end;
+  if cgLayers.Checked[liCvdBary] then begin
+    cv.Brush.Style := bsSolid; cv.Brush.Color := clCvdBary; cv.Pen.Color := clBlack;
+    cv.Ellipse(BarX + 10, y0 - 7, BarX + 24, y0 + 7);
+    cv.Brush.Style := bsClear;
+    cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, 'heart attack and stroke barycentre');
+    Inc(y0, 16);
   end;
   if cgLayers.Checked[liGeo] then begin
     cv.Brush.Style := bsSolid; cv.Brush.Color := TColor($1A1A1A); cv.Pen.Color := clBlack;
@@ -543,10 +749,12 @@ var
   i: Integer;
 begin
   Application.ProcessMessages;
-  rgColour.ItemIndex := 0; ApplyColouring; Save('density');
-  rgColour.ItemIndex := 1; cbDomain.ItemIndex := 0; ApplyColouring; Save('imd');
-  cbDomain.ItemIndex := 4; ApplyColouring; Save('health');
-  cbDomain.ItemIndex := 0; ApplyColouring;
+  rgColour.ItemIndex := ciDensity; ApplyColouring; Save('density');
+  FDepDomain := 0; rgColour.ItemIndex := ciDeprivation; ApplyColouring; Save('imd');
+  FDepDomain := 4; FBoxMode := -1; ApplyColouring; Save('health');
+  FCvdMeasure := 0; rgColour.ItemIndex := ciCvd; ApplyColouring; Save('cvd');
+  FCvdMeasure := 1; FBoxMode := -1; ApplyColouring; Save('cvdratio');
+  FCvdMeasure := 0; FBoxMode := -1; ApplyColouring;
   // zoom on the barycentre, with its LSOA selected
   FMap.SetView(FBaryE, FBaryN, 6);
   i := LsoaAt(FBaryE, FBaryN);

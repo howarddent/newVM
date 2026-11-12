@@ -22,8 +22,8 @@ object Form1: TForm1
       Caption = 'Map'
       object memInfo: TMemo
         Left = 0
-        Height = 240
-        Top = 620
+        Height = 200
+        Top = 660
         Width = 1470
         Align = alBottom
         Font.Name = 'Monospace'
@@ -36,7 +36,7 @@ object Form1: TForm1
       end
       object pnlSide: TPanel
         Left = 1010
-        Height = 620
+        Height = 660
         Top = 0
         Width = 460
         Align = alRight
@@ -55,7 +55,7 @@ object Form1: TForm1
         end
         object rgColour: TRadioGroup
           Left = 4
-          Height = 92
+          Height = 116
           Top = 30
           Width = 402
           Align = alTop
@@ -66,6 +66,7 @@ object Form1: TForm1
           Items.Strings = (
             'Population density'
             'Deprivation (English Indices of Deprivation 2025)'
+            'Expected heart attack and stroke admissions'
             'Nothing'
           )
           TabOrder = 0
@@ -95,7 +96,7 @@ object Form1: TForm1
         end
         object pbLegend: TPaintBox
           Left = 0
-          Height = 318
+          Height = 316
           Top = 180
           Width = 410
           Align = alTop
@@ -103,7 +104,7 @@ object Form1: TForm1
         end
         object cgLayers: TCheckGroup
           Left = 4
-          Height = 128
+          Height = 148
           Top = 514
           Width = 402
           Align = alTop
@@ -124,6 +125,7 @@ object Form1: TForm1
             'Railways'
             'Population barycentre'
             'Geographic centre'
+            'Heart attack/stroke barycentre'
           )
           TabOrder = 2
           OnItemClick = cgLayersItemClick

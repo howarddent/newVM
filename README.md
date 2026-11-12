@@ -103,7 +103,11 @@ Earth, public domain; ONS boundaries and Met Office averages, Open
 Government Licence), and the Kent and Medway tables in
 `demos/healthKent/kentdata.inc` (ONS boundaries, population estimates
 and area measurements, and the English Indices of Deprivation 2025,
-Open Government Licence; roads and railways from OpenStreetMap, ODbL).
+Open Government Licence; roads and railways from OpenStreetMap, ODbL)
+and `demos/healthKent/cvddata.inc` (ONS population and Census 2021
+ethnicity, NHS England QOF, GP registration and Hospital Episode
+Statistics figures, and OHID Fingertips smoking and admission ratios,
+Open Government Licence).
 
 ## Screenshots
 
