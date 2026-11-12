@@ -1,0 +1,207 @@
+object Form1: TForm1
+  Left = 200
+  Height = 980
+  Top = 40
+  Width = 1480
+  Caption = 'healthKent - Kent and Medway: population and deprivation (newVM demo)'
+  ClientHeight = 980
+  ClientWidth = 1480
+  Position = poScreenCenter
+  OnCreate = FormCreate
+  OnShow = FormShow
+  object pcMain: TPageControl
+    Left = 0
+    Height = 892
+    Top = 0
+    Width = 1480
+    ActivePage = tabMap
+    Align = alClient
+    TabIndex = 0
+    TabOrder = 0
+    object tabMap: TTabSheet
+      Caption = 'Map'
+      object memInfo: TMemo
+        Left = 0
+        Height = 240
+        Top = 620
+        Width = 1470
+        Align = alBottom
+        Font.Name = 'Monospace'
+        Font.Height = -11
+        ParentFont = False
+        ReadOnly = True
+        ScrollBars = ssAutoBoth
+        TabOrder = 4
+        WordWrap = False
+      end
+      object pnlSide: TPanel
+        Left = 1010
+        Height = 620
+        Top = 0
+        Width = 460
+        Align = alRight
+        BevelOuter = bvNone
+        TabOrder = 0
+        object lblTitle: TLabel
+          Left = 0
+          Height = 22
+          Top = 0
+          Width = 410
+          Align = alTop
+          BorderSpacing.Around = 4
+          Caption = 'Kent and Medway (NHS Kent and Medway ICB area)'
+          Font.Style = [fsBold]
+          ParentFont = False
+        end
+        object rgColour: TRadioGroup
+          Left = 4
+          Height = 92
+          Top = 30
+          Width = 402
+          Align = alTop
+          AutoFill = True
+          BorderSpacing.Around = 4
+          Caption = 'Colour the areas by'
+          ItemIndex = 0
+          Items.Strings = (
+            'Population density'
+            'Deprivation (English Indices of Deprivation 2025)'
+            'Nothing'
+          )
+          TabOrder = 0
+          OnClick = rgColourClick
+        end
+        object lblDomain: TLabel
+          Left = 4
+          Height = 18
+          Top = 126
+          Width = 402
+          Align = alTop
+          BorderSpacing.Left = 4
+          Caption = 'Deprivation measure (index or domain):'
+        end
+        object cbDomain: TComboBox
+          Left = 4
+          Height = 30
+          Top = 146
+          Width = 402
+          Align = alTop
+          BorderSpacing.Left = 4
+          BorderSpacing.Right = 4
+          BorderSpacing.Bottom = 4
+          Style = csDropDownList
+          TabOrder = 1
+          OnChange = cbDomainChange
+        end
+        object pbLegend: TPaintBox
+          Left = 0
+          Height = 318
+          Top = 180
+          Width = 410
+          Align = alTop
+          OnPaint = pbLegendPaint
+        end
+        object cgLayers: TCheckGroup
+          Left = 4
+          Height = 128
+          Top = 514
+          Width = 402
+          Align = alTop
+          AutoFill = True
+          BorderSpacing.Around = 4
+          Caption = 'Show'
+          ChildSizing.LeftRightSpacing = 6
+          ChildSizing.Layout = cclLeftToRightThenTopToBottom
+          ChildSizing.ControlsPerLine = 2
+          Columns = 2
+          Items.Strings = (
+            'District boundaries'
+            'LSOA boundaries'
+            'Towns over 50,000'
+            'Motorways'
+            'Trunk roads'
+            'Primary A roads'
+            'Railways'
+            'Population barycentre'
+            'Geographic centre'
+          )
+          TabOrder = 2
+          OnItemClick = cgLayersItemClick
+        end
+        object pnlButtons: TPanel
+          Left = 0
+          Height = 38
+          Top = 668
+          Width = 410
+          Align = alTop
+          BevelOuter = bvNone
+          TabOrder = 3
+          object btnReset: TButton
+            Left = 4
+            Height = 30
+            Top = 4
+            Width = 120
+            Caption = 'Whole area'
+            TabOrder = 0
+            OnClick = btnResetClick
+          end
+          object btnSave: TButton
+            Left = 132
+            Height = 30
+            Top = 4
+            Width = 120
+            Caption = 'Save map...'
+            TabOrder = 1
+            OnClick = btnSaveClick
+          end
+        end
+      end
+      object pnlMap: TPanel
+        Left = 0
+        Height = 860
+        Top = 0
+        Width = 1060
+        Align = alClient
+        BevelOuter = bvNone
+        TabOrder = 1
+      end
+    end
+    object tabSources: TTabSheet
+      Caption = 'Sources'
+      object memSources: TMemo
+        Left = 0
+        Height = 860
+        Top = 0
+        Width = 1470
+        Align = alClient
+        BorderSpacing.Around = 6
+        ReadOnly = True
+        ScrollBars = ssAutoVertical
+        TabOrder = 0
+      end
+    end
+  end
+  object pnlStatus: TPanel
+    Left = 0
+    Height = 28
+    Top = 892
+    Width = 1480
+    Align = alBottom
+    BevelOuter = bvNone
+    TabOrder = 1
+    object lblStatus: TLabel
+      Left = 6
+      Height = 18
+      Top = 5
+      Width = 100
+      Caption = ''
+    end
+  end
+  object dlgSave: TSaveDialog
+    DefaultExt = '.png'
+    Filter = 'PNG image|*.png'
+    Options = [ofOverwritePrompt, ofEnableSizing, ofViewDetail]
+    Left = 40
+    Top = 40
+  end
+end

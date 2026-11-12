@@ -3517,6 +3517,44 @@ packages. Compiled binaries and each demo's own `lib/` output are
   counter, a `DOMString` node-name comparison needs a `UnicodeString(...)`
   cast, and a local named `Text` inside a form method collides with the
   inherited property.
+- **`healthKent`** (added 2026-11-12) — Kent and Medway (the NHS Kent
+  and Medway ICB area: 12 Kent districts plus Medway, 1,107 LSOAs) on an
+  OpenGL map, `uKentMap.TKentMapView`, modelled on CanterburyRain's county
+  map. Fill by population density (ONS mid-2024 LSOA estimates over ONS
+  Standard Area Measurement land area, log purples) or by an English
+  Indices of Deprivation 2025 national decile (IMD or any of its seven
+  domains, RdBu, decile 1 red). Check boxes for district and LSOA
+  outlines, built-up areas over 50,000, motorways, trunk roads, primary A
+  roads, railways (OSM), the population barycentre and the geographic
+  centre. Wheel zooms, drag pans, a click selects an LSOA. A memo gives the
+  selected LSOA, totals, the centres as grid references and lat/lon, and a
+  table by district; a Sources tab is a glossary of every dataset and term
+  (`uKentData`'s `Sources`/`Glossary` tables). Things worth knowing:
+  - **All data compiled in** (`kentdata.inc`, 2.7 MB) by
+    `make_kent_data.py`, whose header has every download URL and query;
+    the raw files were in `~/data/healthKent-src/`. Boundaries are
+    Douglas-Peucker simplified (12 m; routes 20 m).
+  - **LSOA boundaries are BFE (to low water)**: ONS's BFC/BGC LSOA layers
+    need a token, and the open BSC one is 200 m generalised. So the land
+    mask is stencil bit `$80` from the coastline-clipped district (LAD
+    2024 BFC) rings, each LSOA uses bit `$01` and fills where the stencil
+    is `$81`; roads and LSOA outlines are drawn only where `$80` is set.
+    That keeps the Thames/Medway/Swale mudflats sea-coloured and stops
+    routes at the area's edge without any clipping in Python.
+  - **Towns are ONS built-up areas (2022)**, populations summed from the
+    mid-2024 LSOA estimates via the LSOA21 -> BUA22 best-fit lookup,
+    positions the population-weighted mean of LSOA label points; GeoNames
+    is not used (the user asked for the latest government figures).
+  - **Barycentre** = population-weighted mean of LSOA label points, by
+    `MatMult` of a (1, N) population row with the (N, 2) [E N] matrix:
+    TQ 87980 58078 (51.2908N 0.6946E), in Maidstone 011D between
+    Maidstone and Sittingbourne, 7.1 km NNW of the geographic centre
+    (TQ 90195 51369). ONS's LSOA population-weighted centroids aren't on
+    its open service. `BNGToWGS84` is the inverse of `bng.py`'s transform
+    and round-trips it to 1e-6 deg.
+  - FPC gotcha hit again: locals `X` and `x` collide (case-insensitive).
+  - `--snapshot=<prefix>` saves density/IMD/health/zoomed maps and the
+    window, prints the memo and exits; `--colour=<0..2>`, `--domain=<0..7>`.
 - **`newPoly`** — least-squares polynomial fitting with
   `newPolymath.pas`'s `TPolynomial.Fit` (see its own section above),
   shown on two `TVMPlot2D` components stacked in one form, the fit above
