@@ -3736,10 +3736,64 @@ packages. Compiled binaries and each demo's own `lib/` output are
       Memo: `BestSiteSummary`, after `WhhKchSummary`; a selected LSOA
       shows its time to the site too. Legend key rows are now 14 px
       (`KeyPitch`) to fit its line. Snapshot adds `_drive_best`.
+    - **Weight by MI + stroke, MI or STEMI** (same day, a "Weight by" combo
+      beside Drive speeds, `--weighting=<0..2>`; `uKentData.SetCvdEventKind`,
+      then `TKentMapView.EventKindChanged`). Everything weighted by
+      admissions follows the choice: the admissions fill (its per-km2 scale
+      shrinks with the kind, `CvdDensityLoOf/HiOf`), the barycentre and its
+      label, the drive-time memo and the best single site. `ComputeCvd` does
+      all three at once with a (36, 3) rate matrix (`CvdEvAll`/`CvdAgeAll`/
+      `CvdEffAll`), and the MSOA check always uses MI + stroke, since OHID's
+      observed ratios are for the two together. Same risk-factor multipliers
+      for all three kinds.
+      - **STEMI share from HES's 4-character diagnoses** (`make_cvd_data.py`
+        now reads `DIAG_4_01` too): I21.0-I21.3 STEMI, I21.4 NSTEMI, with
+        I21.9 and I22 given the same share. The episodes' STEMI odds by age
+        (under 35 and 85+ pooled) times a female odds ratio from episodes by
+        sex (0.785), scaled so England's share matches emergency admissions
+        (27,159 STEMI, 45,835 NSTEMI: 37.2 %; episodes give 28 %, as NSTEMI
+        has more episodes per admission). Within the model both sexes have
+        the same age profile, as HES gives age only overall. `CvdStemiShare`:
+        men 0.49 at 35-39 down to 0.33 at 75+, women 0.43 down to 0.28.
+      - **Drive data**: `--events` now writes `events,mi,stemi`, and
+        `make_drive_data.py` finds the best site for each (`KINDS`) in the
+        same Dijkstra pass. There are 12 stored domains: the best site for
+        kind k is `DriveBestDomain + k`. The user picks from
+        `DriveChoiceCount` (10), and `LsoaDriveMinutes`/`DriveDataDomain`
+        map `DriveBestDomain` to the chosen kind's. `BestSiteE/N/Mean` are
+        `[kind * DriveScenarioCount + scenario]` (`BestSiteIndex`), and the
+        zones carry `BestZoneKind`. `drivedata.inc` is now ~660 kB.
+      - **Results**: Kent and Medway 5,887 MI + stroke, 2,602 MI and 965
+        STEMI admissions a year. **Nothing moves**: all three kinds pick the
+        same best site in every scenario (free-flow means 26.8 / 26.7 /
+        26.6 min). WHH against K&C, whole county, is 34.6 / 37.0 for all
+        three; North and East Kent is 33.3 / 31.7 for MI + stroke and MI,
+        33.3 / 31.8 for STEMI. The barycentre moves 0.3 km west (STEMI TQ
+        90558 57572). STEMI's younger, more male profile changes the weights
+        too little. The memo's best-site section adds a table by kind.
+        Snapshot adds `_drive_best_stemi` and `_cvd_stemi`.
+    - **Median lines** (2026-11-13, layer "Median lines", `--medians`, off by
+      default): a north-south line at the weighted median easting and an
+      east-west one at the weighted median northing of the chosen kind's
+      expected admissions, over the chosen areas
+      (`uKentData.CvdMedianLines`, by LSOA label point). Each line sits
+      halfway between the two neighbouring LSOAs whose split comes nearest
+      to half, so no LSOA lies on it and each side is exactly what the memo
+      says. The map labels each quadrant with its share; the memo gives
+      the lines, the crossing and the shares. Two medians halve each
+      direction but don't make equal quarters. Kent and Medway, MI +
+      stroke: easting 581807, northing 161037 (crossing TQ 81807 61037,
+      9.7 km WNW of the admissions barycentre); NW 27.1 / NE 22.9 / SW 22.9
+      / SE 27.1 %, so admissions lie along a NW-SE diagonal (Medway and
+      Dartford against Ashford, Folkestone and the east coast). North and
+      East Kent: NW 32.9 / NE 17.0 / SW 17.1 / SE 32.9 %. The extra check
+      box row came out of the memo (200 to 164 px); the legend went to
+      290 px for the extra key row. Snapshot adds `_medians` and
+      `_medians_north_east`.
   - `--snapshot=<prefix>` saves density/IMD/health/admissions (per km2 and
     ratio)/zoomed maps and the window, prints the memo and exits;
     `--colour=<0..4>`, `--domain=<0..7>`, `--cvd=<0|1>`, `--areas=<list>`,
-    `--drive=<0..8>`.
+    `--drive=<0..9>`, `--speeds=<0..2>`, `--weighting=<0..2>`, `--medians`.
 - **`newPoly`** — least-squares polynomial fitting with
   `newPolymath.pas`'s `TPolynomial.Fit` (see its own section above),
   shown on two `TVMPlot2D` components stacked in one form, the fit above

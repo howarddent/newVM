@@ -34,7 +34,8 @@ uses
   Interfaces, // this includes the LCL widgetset
   SysUtils, Forms, cblas, uKentData, uHealthMain;
 
-// --events=<file.csv>: each LSOA's expected admissions, for make_drive_data.py
+// --events=<file.csv>: each LSOA's expected admissions a year (heart attack
+// and stroke, heart attack, STEMI), for make_drive_data.py
 procedure WriteEvents(const FileName: string);
 var
   f: TextFile;
@@ -42,9 +43,10 @@ var
 begin
   AssignFile(f, FileName);
   Rewrite(f);
-  WriteLn(f, 'i,code,events');
+  WriteLn(f, 'i,code,events,mi,stemi');
   for i := 0 to LsoaCount - 1 do
-    WriteLn(f, Format('%d,%s,%.6f', [i, LsoaCode[i], LsoaCvdEvents(i)]));
+    WriteLn(f, Format('%d,%s,%.6f,%.6f,%.6f', [i, LsoaCode[i], LsoaCvdEventsOf(i, 0),
+      LsoaCvdEventsOf(i, 1), LsoaCvdEventsOf(i, 2)]));
   CloseFile(f);
 end;
 

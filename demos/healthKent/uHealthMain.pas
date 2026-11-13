@@ -30,10 +30,18 @@ unit uHealthMain;
          population of the same age and sex (blue below, red above);
          the combo box picks which,
        - or no fill,
+     "Weight by" chooses what the admissions count - heart attack and
+     stroke, heart attack only, or STEMI only (uKentData's
+     SetCvdEventKind; --weighting=<0..2>) - and everything weighted by
+     admissions follows: the fill, the barycentres, the drive-time means
+     and the best single site, which has its own site for each choice.
      with check boxes for district and LSOA outlines, built-up areas over
      50,000 people, motorways, trunk roads, primary A roads, railways,
      the population barycentre, the heart attack and stroke barycentre
-     (weighted by expected admissions) and the geographic centre. Wheel zooms,
+     (weighted by expected admissions), the geographic centre and the
+     admissions' weighted median lines (--medians: a north-south and an
+     east-west line, each with half the admissions either side, and the
+     share in each quadrant they make). Wheel zooms,
      drag pans, a click selects an LSOA and the memo shows its figures.
      The legend beside the map shows the colour scale (and, for
      deprivation, the share of residents in each decile) and the line and
@@ -111,11 +119,15 @@ type
     pnlStatus: TPanel;
     rgColour: TRadioGroup;
     rgSpeeds: TRadioGroup;
+    pnlDriveRow: TPanel;
+    gbEvents: TGroupBox;
+    cbEvents: TComboBox;
     tabMap: TTabSheet;
     tabSources: TTabSheet;
     procedure btnResetClick(Sender: TObject);
     procedure btnSaveClick(Sender: TObject);
     procedure cbDomainChange(Sender: TObject);
+    procedure cbEventsChange(Sender: TObject);
     procedure cgAreasItemClick(Sender: TObject; Index: integer);
     procedure cgLayersItemClick(Sender: TObject; Index: integer);
     procedure FormCreate(Sender: TObject);
@@ -126,6 +138,8 @@ type
   private
     FMap: TKentMapView;
     FBaryE, FBaryN, FGeoE, FGeoN, FCvdE, FCvdN: Double;
+    FMedE, FMedN: Double;                 // admissions' weighted median lines
+    FMedQ: array[0..3] of Double;         // their quadrants' shares: NW, NE, SW, SE
     FSnapshot: string;
     FShown: Boolean;
     FDepDomain, FCvdMeasure, FDriveDomain, FDriveScenario, FBoxMode: Integer;
@@ -166,7 +180,18 @@ const
   // check group items
   liDistricts = 0; liLsoas = 1; liTowns = 2; liMotorways = 3; liTrunk = 4;
   liPrimary = 5; liRail = 6; liBary = 7; liGeo = 8; liCvdBary = 9;
-  liIsochrones = 10; liHospitals = 11;
+  liIsochrones = 10; liHospitals = 11; liMedians = 12;
+
+// what the chosen event kind counts, for the memo
+function EventsPhrase: string;
+begin
+  case CvdEventKind of
+    0: result := 'acute MI or stroke';
+    1: result := 'acute MI';
+  else
+    result := 'STEMI (ST elevation MI)';
+  end;
+end;
 
 function Thousands(v: Double): string;
 begin
@@ -214,6 +239,11 @@ begin
     if FAreas = [] then FAreas := AllAreas;
   end;
   for d := 0 to AreaCount - 1 do cgAreas.Checked[d] := d in FAreas;
+  // which events weight everything: --weighting=<0 MI + stroke, 1 MI, 2 STEMI>
+  for d := 0 to CvdEventKindCount - 1 do cbEvents.Items.Add(CvdEventKindShort[d]);
+  if Application.HasOption('weighting') then
+    SetCvdEventKind(StrToIntDef(Application.GetOptionValue('weighting'), 0));
+  cbEvents.ItemIndex := CvdEventKind;   // before ApplyAreas: cbEventsChange exits while FInc is nil
   ApplyAreas;      // before anything that can reach ShowInfo, which needs FInc
 
   FBoxMode := -1;
@@ -225,7 +255,7 @@ begin
     FCvdMeasure := EnsureRange(StrToIntDef(Application.GetOptionValue('cvd'), 0), 0, 1);
   FDriveDomain := DriveNearestDomain;
   if Application.HasOption('drive') then
-    FDriveDomain := EnsureRange(StrToIntDef(Application.GetOptionValue('drive'), 0), 0, DriveDomainCount - 1);
+    FDriveDomain := EnsureRange(StrToIntDef(Application.GetOptionValue('drive'), 0), 0, DriveChoiceCount - 1);
   FMap.SetDriveDomain(FDriveDomain);
   if Application.HasOption('speeds') then
     FDriveScenario := EnsureRange(StrToIntDef(Application.GetOptionValue('speeds'), 0), 0, DriveScenarioCount - 1);
@@ -234,6 +264,7 @@ begin
   for d := 0 to cgLayers.Items.Count - 1 do
     cgLayers.Checked[d] := d in [liDistricts, liTowns, liMotorways, liTrunk, liRail, liBary, liGeo, liCvdBary,
       liIsochrones, liHospitals];
+  cgLayers.Checked[liMedians] := Application.HasOption('medians');
   ApplyLayers;
   ApplyColouring;
   FillSources;
@@ -261,6 +292,8 @@ begin
   FMap.SetBarycentre(FBaryE, FBaryN);
   FMap.SetGeoCentre(FGeoE, FGeoN);
   FMap.SetCvdBarycentre(FCvdE, FCvdN);
+  CvdMedianLines(FInc, FMedE, FMedN, FMedQ);
+  FMap.SetMedianLines(FMedE, FMedN, FMedQ);
   several := (FAreas <> []) and (FAreas <> [0]) and (FAreas <> [1]) and (FAreas <> [2]);
   for a := 0 to AreaCount - 1 do begin
     c.BE := NaN;
@@ -319,7 +352,7 @@ begin
     if m = ciCvd then
       for d := 0 to High(CvdMeasureName) do cbDomain.Items.Add(CvdMeasureName[d])
     else if m = ciDrive then
-      for d := 0 to DriveDomainCount - 1 do cbDomain.Items.Add(DriveDomainName(d))
+      for d := 0 to DriveChoiceCount - 1 do cbDomain.Items.Add(DriveDomainName(d))
     else
       for d := 0 to DomainCount - 1 do cbDomain.Items.Add(DomainName[d]);
   finally
@@ -368,6 +401,7 @@ begin
   FMap.ShowCvdBarycentre := cgLayers.Checked[liCvdBary];
   FMap.ShowIsochrones := cgLayers.Checked[liIsochrones];
   FMap.ShowHospitals := cgLayers.Checked[liHospitals];
+  FMap.ShowMedianLines := cgLayers.Checked[liMedians];
   pbLegend.Invalidate;
 end;
 
@@ -383,6 +417,15 @@ begin
   FMap.SetDriveScenario(FDriveScenario);
   pbLegend.Invalidate;
   ShowInfo;
+end;
+
+procedure TForm1.cbEventsChange(Sender: TObject);
+begin
+  if (cbEvents.ItemIndex < 0) or (FInc = nil) then Exit;
+  SetCvdEventKind(cbEvents.ItemIndex);
+  FMap.EventKindChanged;
+  ApplyAreas;        // the barycentres move
+  ApplyColouring;    // map, legend and memo
 end;
 
 procedure TForm1.cbDomainChange(Sender: TObject);
@@ -475,8 +518,8 @@ begin
           [DomainName[d], LsoaScoreOf(i, d), Thousands(LsoaRankOf(i, d)), LsoaDecileOf(i, d),
            IfThen(LsoaDecileOf(i, d) = 1, '  most deprived 10 %',
              IfThen(LsoaDecileOf(i, d) = 10, '  least deprived 10 %', ''))]));
-      L.Add(Format('  Expected heart attack and stroke admissions: %.1f a year (%.2f per km2);',
-        [LsoaCvdEvents(i), LsoaCvdDensity(i)]));
+      L.Add(Format('  Expected %s admissions: %.1f a year (%.2f per km2);',
+        [CvdEventText, LsoaCvdEvents(i), LsoaCvdDensity(i)]));
       L.Add(Format('    from age and sex alone %.1f, so a risk-factor ratio of %.2f (England 1)',
         [LsoaCvdAgeOnly(i), LsoaCvdRatio(i)]));
       L.Add('    estimated risk factor            % of 18+    effect on admissions');
@@ -493,18 +536,18 @@ begin
       L.Add(Format('    South Asian %.1f %%, Black %.1f %% of residents, Census 2021. MSOA: %s.)',
         [100 * LsoaSouthAsian[i], 100 * LsoaBlack[i], MsoaName[LsoaMsoa[i]]]));
       if MsoaObservedSAR[LsoaMsoa[i]] > 0 then
-        L.Add(Format('    MSOA ratio: model %.2f, observed %.2f (OHID, MI and stroke admissions 2016/17-20/21)',
+        L.Add(Format('    MSOA ratio: model %.2f, observed %.2f (OHID, MI and stroke admissions 2016/17-20/21; MI + stroke model)',
           [MsoaModelSAR(LsoaMsoa[i]), MsoaObservedSAR[LsoaMsoa[i]]]));
       L.Add('  Drive time (modelled), minutes            free-flow car   morning peak   blue light');
       for d := 0 to HospitalCount - 1 do
         L.Add(Format('    %-38s %12.1f %14.1f %12.1f', [Copy(HospitalName[d], 1, 38),
           LsoaDriveMinutes(i, d, 0), LsoaDriveMinutes(i, d, 1), LsoaDriveMinutes(i, d, 2)]));
       d := DriveBestDomain;
-      L.Add(Format('    %-38s %12.1f %14.1f %12.1f', ['best single site (each scenario''s own)',
+      L.Add(Format('    %-38s %12.1f %14.1f %12.1f', ['best single site, ' + CvdEventKindShort[CvdEventKind] + ' (each scenario''s)',
         LsoaDriveMinutes(i, d, 0), LsoaDriveMinutes(i, d, 1), LsoaDriveMinutes(i, d, 2)]));
       L.Add('');
     end else
-      L.Add('Click an area on the map for its population, deprivation and expected heart attack and stroke admissions.' + LineEnding);
+      L.Add('Click an area on the map for its population, deprivation, expected ' + CvdEventText + ' admissions and drive times.' + LineEnding);
 
     tp := 0; tl := 0; nl := 0;
     for i := 0 to LsoaCount - 1 do
@@ -674,9 +717,9 @@ begin
     ev := ev + LsoaCvdEvents(i);
     ag := ag + LsoaCvdAgeOnly(i);
   end;
-  L.Add('EXPECTED HEART ATTACK AND STROKE ADMISSIONS (a model - see Sources and the glossary)');
-  L.Add(Format('  %s emergency admissions a year for acute MI or stroke; %s from age and sex alone',
-    [Thousands(ev), Thousands(ag)]));
+  L.Add('EXPECTED ' + UpperCase(CvdEventText) + ' ADMISSIONS (a model - see Sources and the glossary; Weight by chooses)');
+  L.Add(Format('  %s emergency admissions a year for %s; %s from age and sex alone',
+    [Thousands(ev), EventsPhrase, Thousands(ag)]));
   L.Add(Format('  at England''s %s rates (HES), a risk-factor ratio of %.3f; %.2f per km2 a year.',
     [CvdHesYear, ev / ag, ev / tl]));
   L.Add('  Risk factors: smoking (APS by deprivation decile, age and sex, scaled to each district),');
@@ -688,8 +731,16 @@ begin
     [CvdRRSmoking, CvdRRObesity, CvdRRFactor[0], CvdRRFactor[1]]));
   L.Add(Format('  CKD %.1f, AF %.1f, South Asian %.2f, Black %.2f, deprivation %.1f (decile 1 against 10) - assumed.',
     [CvdRRFactor[2], CvdRRFactor[3], CvdRRSouthAsian, CvdRRBlack, CvdRRDeprivation]));
+  if CvdEventKind = 2 then begin
+    L.Add(Format('  STEMI: HES %s''s STEMI share of typed MI admissions at each age and sex (England %s STEMI,',
+      [CvdHesYear, Thousands(CvdStemiAdmissions)]));
+    L.Add(Format('  %s NSTEMI: %.1f %%; women''s odds %.2f x men''s) times the MI model. Unchanged risk factors.',
+      [Thousands(CvdNstemiAdmissions), 100 * CvdStemiAdmissions / (CvdStemiAdmissions + CvdNstemiAdmissions),
+       CvdStemiFemaleOR]));
+  end else if CvdEventKind = 1 then
+    L.Add('  Heart attack only: England''s MI rates (I21-I22) with the same risk-factor multipliers.');
   CvdMsoaCheck(rm, ri, n, ok, mk);
-  L.Add(Format('  Check against OHID''s observed MSOA admission ratios (MI and stroke, 2016/17-20/21, all %d', [n]));
+  L.Add(Format('  Check of the MI + stroke model against OHID''s observed MSOA admission ratios (2016/17-20/21, all %d', [n]));
   L.Add('  of Kent and Medway''s MSOAs, whatever areas are chosen):');
   L.Add(Format('    correlation %.2f (the IMD score alone: %.2f). Observed Kent ratio %.2f against the model''s %.2f:',
     [rm, ri, ok, mk]));
@@ -697,7 +748,7 @@ begin
   L.Add('    it sets the level, and the observed period is older.');
   BNGToWGS84(FCvdE, FCvdN, la, lo);
   L.Add('');
-  L.Add('  Heart attack and stroke barycentre  ' + GridRef(FCvdE, FCvdN) + '  ' + LatLonText(la, lo));
+  L.Add('  ' + UpperCase(Copy(CvdEventText, 1, 1)) + Copy(CvdEventText, 2, 99) + ' barycentre  ' + GridRef(FCvdE, FCvdN) + '  ' + LatLonText(la, lo));
   i := LsoaAt(FCvdE, FCvdN);
   if i < 0 then i := NearestLsoa(FCvdE, FCvdN);
   L.Add(Format('    in %s (%s): the expected admissions'' weighted mean position,', [LsoaName[i], DistrictName[LsoaDistrict[i]]]));
@@ -716,6 +767,20 @@ begin
     [Hypot(wE - FBaryE, wN - FBaryN) / 1000, Compass(FBaryE, FBaryN, wE, wN)]));
   L.Add(Format('    the risk factors a further %.1f km %s.',
     [Hypot(FCvdE - wE, FCvdN - wN) / 1000, Compass(wE, wN, FCvdE, FCvdN)]));
+  // weighted median lines and the quadrants they make
+  L.Add('');
+  L.Add('  Median lines (half the expected ' + CvdEventText + ' admissions either side of each):');
+  BNGToWGS84(FMedE, FMedN, la, lo);
+  L.Add(Format('    north-south line at easting %d (%.4f%s), east-west line at northing %d (%.4fN),',
+    [Trunc(FMedE), Abs(lo), IfThen(lo < 0, 'W', 'E'), Trunc(FMedN), la]));
+  L.Add('    crossing at ' + GridRef(FMedE, FMedN) + Format(', %.1f km %s of the barycentre.',
+    [Hypot(FMedE - FCvdE, FMedN - FCvdN) / 1000, Compass(FCvdE, FCvdN, FMedE, FMedN)]));
+  L.Add(Format('    Quadrants: NW %.1f %%, NE %.1f %%, SW %.1f %%, SE %.1f %%.',
+    [FMedQ[0], FMedQ[1], FMedQ[2], FMedQ[3]]));
+  L.Add(Format('    West %.1f / east %.1f %%, north %.1f / south %.1f %% (to the nearest whole LSOA).',
+    [FMedQ[0] + FMedQ[2], FMedQ[1] + FMedQ[3], FMedQ[0] + FMedQ[1], FMedQ[2] + FMedQ[3]]));
+  L.Add('    Two medians halve each direction but needn''t make equal quarters: larger NE and SW');
+  L.Add('    quadrants mean the admissions lie along a SW-NE diagonal, larger NW and SE along NW-SE.');
 
   CorridorSummary(L, ev);
 
@@ -840,11 +905,11 @@ var
 
 begin
   SetLength(T, LsoaCount);
-  L.Add('DRIVE TIMES TO HOSPITAL, weighted by expected heart attack and stroke admissions');
+  L.Add('DRIVE TIMES TO HOSPITAL, weighted by expected ' + CvdEventText + ' admissions');
   L.Add('  Speeds: ' + UpperCase(DriveScenarioName[FDriveScenario])
     + ' (choose under Drive speeds; OpenStreetMap roads - see Sources)');
   L.Add('  to                                          mean   90 % within   <=15    <=30    <=45    >60 min');
-  for dm := 0 to DriveDomainCount - 1 do begin
+  for dm := 0 to DriveChoiceCount - 1 do begin
     SetLength(Idx, 0);
     W := 0; Sum := 0;
     for k := 0 to 3 do Within[k] := 0;
@@ -905,21 +970,22 @@ begin
   SetLength(All, LsoaCount); SetLength(TS, LsoaCount);
   for i := 0 to LsoaCount - 1 do All[i] := True;
   L.Add('BEST SINGLE SITE FOR THE WHOLE OF KENT AND MEDWAY (green star on the map, with the Hospitals layer)');
-  L.Add('  The road-network point with the lowest admissions-weighted mean drive time from every LSOA,');
+  L.Add('  The road-network point with the lowest mean drive time from every LSOA, weighted by expected');
+  L.Add('  ' + CvdEventText + ' admissions (Weight by chooses),');
   W := 0;
   for i := 0 to LsoaCount - 1 do W := W + LsoaCvdEvents(i);
-  L.Add(Format('  over all %s expected admissions a year, found for each speed scenario (see Glossary).', [Thousands(W)]));
+  L.Add(Format('  over all %s a year, found for each speed scenario (see Glossary).', [Thousands(W)]));
   for sc := 0 to DriveScenarioCount - 1 do begin
-    if (sc > 0) and (BestSiteE[sc] = BestSiteE[0]) and (BestSiteN[sc] = BestSiteN[0]) then begin
+    if (sc > 0) and (BestSiteE[BestSiteIndex(sc)] = BestSiteE[BestSiteIndex(0)]) and (BestSiteN[BestSiteIndex(sc)] = BestSiteN[BestSiteIndex(0)]) then begin
       L.Add('  ' + DriveScenarioName[sc] + ': the same point');
       Continue;
     end;
-    BNGToWGS84(BestSiteE[sc], BestSiteN[sc], la, lo);
-    i := LsoaAt(BestSiteE[sc], BestSiteN[sc]);
-    if i < 0 then i := NearestLsoa(BestSiteE[sc], BestSiteN[sc]);
-    t := NearestTown(BestSiteE[sc], BestSiteN[sc], km);
+    BNGToWGS84(BestSiteE[BestSiteIndex(sc)], BestSiteN[BestSiteIndex(sc)], la, lo);
+    i := LsoaAt(BestSiteE[BestSiteIndex(sc)], BestSiteN[BestSiteIndex(sc)]);
+    if i < 0 then i := NearestLsoa(BestSiteE[BestSiteIndex(sc)], BestSiteN[BestSiteIndex(sc)]);
+    t := NearestTown(BestSiteE[BestSiteIndex(sc)], BestSiteN[BestSiteIndex(sc)], km);
     L.Add(Format('  %s: %s  %s, in %s (%s), %.1f km from %s',
-      [DriveScenarioName[sc], GridRef(BestSiteE[sc], BestSiteN[sc]), LatLonText(la, lo),
+      [DriveScenarioName[sc], GridRef(BestSiteE[BestSiteIndex(sc)], BestSiteN[BestSiteIndex(sc)]), LatLonText(la, lo),
        LsoaName[i], DistrictName[LsoaDistrict[i]], km, TownName[t]]));
   end;
   L.Add('                                mean  median  90 % within   <=30    <=45    <=60    >60    longest  hours/yr');
@@ -956,6 +1022,39 @@ begin
   for a := 0 to AreaCount - 1 do
     L.Add(Format('  %-36s %9.1f %11.1f %16.1f %5.1f',
       [AreaName[a], AT[0, a] / AEv[a], AT[1, a] / AEv[a], AT[2, a] / AEv[a], AT[3, a] / AEv[a]]));
+  // the best site under each weighting, for the chosen scenario, with each
+  // weighting's mean to its own site and to the two East Kent hospitals
+  L.Add('');
+  L.Add('  by what is counted (' + DriveScenarioName[FDriveScenario] + '), weighted mean minutes:');
+  L.Add('    weighting      a year   best site         from MI+stroke site   to it    WHH    K&C   (East Kent: site  K&C)');
+  for k := 0 to CvdEventKindCount - 1 do begin
+    sc := k * DriveScenarioCount + FDriveScenario;
+    W := 0; Sum := 0; Mx := 0; Q30 := 0; Q45 := 0; Q60 := 0;
+    for i := 0 to LsoaCount - 1 do begin
+      Ev := LsoaCvdEventsOf(i, k);
+      W := W + Ev;
+      Sum := Sum + Ev * LsoaDriveMin[(FDriveScenario * DriveDomainCount + DriveBestDomain + k) * LsoaCount + i];
+      Mx := Mx + Ev * LsoaDriveMinutes(i, DriveHospWHH, FDriveScenario);
+      Q30 := Q30 + Ev * LsoaDriveMinutes(i, DriveHospKCH, FDriveScenario);
+      if LsoaArea(i) = 1 then begin
+        Q45 := Q45 + Ev * LsoaDriveMin[(FDriveScenario * DriveDomainCount + DriveBestDomain + k) * LsoaCount + i];
+        Q60 := Q60 + Ev * LsoaDriveMinutes(i, DriveHospKCH, FDriveScenario);
+      end;
+    end;
+    Ev := 0;
+    for i := 0 to LsoaCount - 1 do if LsoaArea(i) = 1 then Ev := Ev + LsoaCvdEventsOf(i, k);
+    L.Add(Format('    %-12s %7s   %s %9.1f km %9.1f %6.1f %6.1f %16.1f %5.1f',
+      [CvdEventKindShort[k], Thousands(W), GridRef(BestSiteE[sc], BestSiteN[sc]),
+       Hypot(BestSiteE[sc] - BestSiteE[FDriveScenario], BestSiteN[sc] - BestSiteN[FDriveScenario]) / 1000,
+       Sum / W, Mx / W, Q30 / W, Q45 / Ev, Q60 / Ev]));
+  end;
+  if (BestSiteE[DriveScenarioCount + FDriveScenario] = BestSiteE[FDriveScenario])
+    and (BestSiteE[2 * DriveScenarioCount + FDriveScenario] = BestSiteE[FDriveScenario])
+    and (BestSiteN[DriveScenarioCount + FDriveScenario] = BestSiteN[FDriveScenario])
+    and (BestSiteN[2 * DriveScenarioCount + FDriveScenario] = BestSiteN[FDriveScenario]) then begin
+    L.Add('  All three pick the same point. STEMI is a larger share of MI in younger people and men, but');
+    L.Add('  that moves the weights too little to shift the site or the WHH/K&C comparison.');
+  end;
   L.Add('  The A249 between M20 junction 7 and M2 junction 5 joins the two motorways with Medway and Swale');
   L.Add('  to the north, so a site there beats every existing hospital. Green outlines: sites within 2 (solid)');
   L.Add('  and 5 minutes (dotted) of the best mean - the optimum is broad. Drive time only: no ambulance');
@@ -1144,7 +1243,7 @@ var
   lab: string;
 const
   Ticks: array[0..6] of Double = (10, 30, 100, 300, 1000, 3000, 10000);
-  CvdTicks: array[0..6] of Double = (0.03, 0.1, 0.3, 1, 3, 10, 30);
+  CvdTicks: array[0..7] of Double = (0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30);
   RatioTicks: array[0..6] of Double = (0.6, 0.7, 0.85, 1, 1.2, 1.4, 1.7);
 
   procedure KeyLine(yy: Integer; AColour: TColor; W: Integer; const Txt: string; Dashed: Boolean);
@@ -1211,7 +1310,7 @@ begin
     2: begin
       h := 108;
       if FCvdMeasure = 0 then begin
-        cv.TextOut(BarX, 2, 'Expected MI + stroke admissions per km2 a year');
+        cv.TextOut(BarX, 2, 'Expected ' + CvdEventKindShort[CvdEventKind] + ' admissions per km2 a year');
         for y := 0 to h - 1 do begin
           t := 1 - y / (h - 1);
           v := Power(10, Log10(CvdDensityLo) + t * (Log10(CvdDensityHi) - Log10(CvdDensityLo)));
@@ -1221,6 +1320,7 @@ begin
         cv.Pen.Color := clBlack;
         cv.Rectangle(BarX, y0, BarX + BarW, y0 + h);
         for i := 0 to High(CvdTicks) do begin
+          if (CvdTicks[i] < CvdDensityLo * 0.999) or (CvdTicks[i] > CvdDensityHi) then Continue;
           y := y0 + Round((Log10(CvdDensityHi) - Log10(CvdTicks[i])) / (Log10(CvdDensityHi) - Log10(CvdDensityLo)) * (h - 1));
           cv.Line(BarX + BarW, y, BarX + BarW + 5, y);
           lab := FloatToStr(CvdTicks[i]);
@@ -1301,7 +1401,7 @@ begin
     cv.Brush.Style := bsSolid; cv.Brush.Color := clCvdBary; cv.Pen.Color := clBlack;
     cv.Ellipse(BarX + 10, y0 - 7, BarX + 24, y0 + 7);
     cv.Brush.Style := bsClear;
-    cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, 'heart attack and stroke barycentre');
+    cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, CvdEventText + ' barycentre');
     Inc(y0, KeyPitch);
   end;
   if cgLayers.Checked[liGeo] then begin
@@ -1327,6 +1427,10 @@ begin
       Point(BarX + 10, y0 - 2), Point(BarX + 15, y0 - 2)]);
     cv.Brush.Style := bsClear;
     cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, 'best single site; within 2 / 5 min of its mean');
+    Inc(y0, KeyPitch);
+  end;
+  if cgLayers.Checked[liMedians] then begin
+    KeyLine(y0, clMedian, 3, 'median lines of admissions; % in each quadrant', False);
     Inc(y0, KeyPitch);
   end;
   if not ((FAreas = AllAreas) or (FAreas = [0]) or (FAreas = [1]) or (FAreas = [2]))
@@ -1405,6 +1509,7 @@ procedure TForm1.RunSnapshot(Data: PtrInt);
 
 var
   i: Integer;
+  ok: Boolean;
 begin
   Application.ProcessMessages;
   rgColour.ItemIndex := ciDensity; ApplyColouring; Save('density');
@@ -1420,8 +1525,18 @@ begin
   rgSpeeds.ItemIndex := 2; rgSpeedsClick(nil); Save('drive_whh_kch_blue');
   rgSpeeds.ItemIndex := i; rgSpeedsClick(nil);
   FDriveDomain := DriveBestDomain; FMap.SetDriveDomain(FDriveDomain); FBoxMode := -1; ApplyColouring; Save('drive_best');
+  i := cbEvents.ItemIndex;
+  cbEvents.ItemIndex := 2; cbEventsChange(nil); Save('drive_best_stemi');
+  rgColour.ItemIndex := ciCvd; FBoxMode := -1; ApplyColouring; Save('cvd_stemi');
+  cbEvents.ItemIndex := i; cbEventsChange(nil);
+  rgColour.ItemIndex := ciDrive; FBoxMode := -1; ApplyColouring;
   FDriveDomain := DriveNearestDomain; FMap.SetDriveDomain(FDriveDomain); FBoxMode := -1;
   rgColour.ItemIndex := ciCvd; ApplyColouring;
+  ok := cgLayers.Checked[liMedians];
+  cgLayers.Checked[liMedians] := True; ApplyLayers; Save('medians');
+  FAreas := [0, 1]; ApplyAreas; ApplyColouring; Save('medians_north_east');
+  FAreas := AllAreas; ApplyAreas; ApplyColouring;
+  cgLayers.Checked[liMedians] := ok; ApplyLayers;
   // zoom on the barycentre, with its LSOA selected
   FMap.SetView(FBaryE, FBaryN, 6);
   i := LsoaAt(FBaryE, FBaryN);

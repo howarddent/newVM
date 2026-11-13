@@ -24,7 +24,10 @@ unit uKentMap;
      roads, primary A roads, railways, the population barycentre, the
      heart attack and stroke barycentre (weighted by expected admissions)
      and
-     geographic centre. Built on uCountyMap (CanterburyRain).
+     geographic centre. Built on uCountyMap (CanterburyRain). The
+     admissions follow uKentData's chosen event kind (MI + stroke, MI or
+     STEMI): its density scale, barycentre label and best single site
+     (call EventKindChanged after SetCvdEventKind).
 
      SUB-AREAS (SetAreas): LSOAs outside the chosen North/East/West Kent
      areas are drawn grey whatever the fill, the chosen districts get a
@@ -104,7 +107,9 @@ type
     FShowDistricts, FShowLsoaLines, FShowTowns: Boolean;
     FShowMotorways, FShowTrunk, FShowPrimary, FShowRail: Boolean;
     FShowBarycentre, FShowGeoCentre, FShowCvdBarycentre: Boolean;
-    FShowIsochrones, FShowHospitals: Boolean;
+    FShowIsochrones, FShowHospitals, FShowMedians: Boolean;
+    FMedE, FMedN: Double;
+    FMedQ: array[0..3] of Double;
     FDriveDomain, FDriveScenario: Integer;
     FIsoLabel: array[0..3] of Integer;   // longest line of each level, -1 none
     FBaryE, FBaryN, FGeoE, FGeoN, FCvdE, FCvdN: Double;
@@ -129,6 +134,7 @@ type
     FHospTex: array[0..HospitalCount - 1] of TKentTextTexture;
     FIsoTex: array[0..3] of TKentTextTexture;
     FBestTex: TKentTextTexture;
+    FQuadTex: array[0..3] of TKentTextTexture;
     FTexBuilt: Boolean;
     procedure UpdateScale;
     procedure ToPixel(E, N: Double; out PX, PY: Double);
@@ -142,6 +148,7 @@ type
     procedure DrawHospitals;
     procedure DrawBestZones;
     procedure DrawBestSite;
+    procedure DrawMedianLines;
     procedure BuildTextures;
     procedure FreeTextures;
     function CreateTextTexture(const S: string; FontSize: Integer; Bold: Boolean): TKentTextTexture;
@@ -160,6 +167,7 @@ type
     procedure SetShowCvdBarycentre(V: Boolean);
     procedure SetShowIsochrones(V: Boolean);
     procedure SetShowHospitals(V: Boolean);
+    procedure SetShowMedians(V: Boolean);
   protected
     procedure MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
     procedure MouseMove(Shift: TShiftState; X, Y: Integer); override;
@@ -174,8 +182,12 @@ type
     procedure SetBarycentre(E, N: Double);
     procedure SetGeoCentre(E, N: Double);
     procedure SetCvdBarycentre(E, N: Double);
+    // admissions' weighted median lines and the quadrant shares (NW, NE, SW, SE, %)
+    procedure SetMedianLines(E, N: Double; const Q: array of Double);
     procedure SetDriveDomain(D: Integer);      // isochrones and hospital highlight
     procedure SetDriveScenario(S: Integer);    // 0 free-flow, 1 peak, 2 blue light
+    // after SetCvdEventKind: the best site, its isochrones and the labels follow the kind
+    procedure EventKindChanged;
     procedure SetAreas(S: TAreaSet);
     procedure SetAreaCentre(Area: Integer; const C: TKentCentres);   // NaN BE hides it
     procedure ResetView;
@@ -197,6 +209,7 @@ type
     property ShowCvdBarycentre: Boolean read FShowCvdBarycentre write SetShowCvdBarycentre;
     property ShowIsochrones: Boolean read FShowIsochrones write SetShowIsochrones;
     property ShowHospitals: Boolean read FShowHospitals write SetShowHospitals;
+    property ShowMedianLines: Boolean read FShowMedians write SetShowMedians;
     property DriveDomain: Integer read FDriveDomain;
     property DriveScenario: Integer read FDriveScenario;
     property OnSelectLsoa: TSelectLsoaEvent read FOnSelectLsoa write FOnSelectLsoa;
@@ -206,8 +219,10 @@ type
 const
   DensityLo = 10.0;       // people per km2, bottom of the (log) colour scale
   DensityHi = 15000.0;    // top
-  CvdDensityLo = 0.03;    // expected admissions per km2 a year (log scale)
-  CvdDensityHi = 50.0;
+  // expected admissions per km2 a year (log scale), per event kind
+  // (MI + stroke, MI, STEMI): the kinds' totals are about 1 : 0.44 : 0.16
+  CvdDensityLoOf: array[0..CvdEventKindCount - 1] of Double = (0.03, 0.01, 0.005);
+  CvdDensityHiOf: array[0..CvdEventKindCount - 1] of Double = (50.0, 20.0, 8.0);
   CvdRatioSpan = 1.7;     // ratio scale 1/1.7 .. 1.7, log, white at 1
   clSea = TColor($EFE3CF);          // BGR: RGB(207, 227, 239)
   clLand = TColor($E9EFF2);         // RGB(242, 239, 233)
@@ -220,6 +235,7 @@ const
   clOutside = TColor($CFCFCF);      // LSOAs outside the chosen areas
   clHospital = TColor($2020C8);     // RGB(200, 32, 32)
   clBestSite = TColor($3C8C14);     // RGB(20, 140, 60)
+  clMedian = TColor($A05000);       // RGB(0, 80, 160)
   clBestZone = TColor($1E5A00);     // RGB(0, 90, 30), darker: the drive fill is green near it
   clIsochrone = TColor($9900D6);    // RGB(214, 0, 153)
   DriveBandMinutes = 10;            // fill bands
@@ -231,6 +247,9 @@ const
 function DensityColour(D: Double): TColor;           // people per km2
 function DecileColour(Decile: Integer): TColor;      // 1 (most deprived) .. 10
 function CvdDensityColour(D: Double): TColor;        // admissions per km2 a year
+// the chosen event kind's density scale
+function CvdDensityLo: Double;
+function CvdDensityHi: Double;
 function CvdRatioColour(R: Double): TColor;          // against England, 1 = white
 function DriveBandColour(Band: Integer): TColor;  // 0 .. DriveBandCount - 1
 function DriveColour(Minutes: Double): TColor;
@@ -242,6 +261,7 @@ const
   MarginPx = 10;
   MinZoom = 1.0;
   MaxZoom = 40.0;
+  QuadName: array[0..3] of string = ('NW', 'NE', 'SW', 'SE');
 
 type
   TRGB = record r, g, b: Byte; end;
@@ -294,6 +314,9 @@ begin
   if IsNan(D) or (D <= 0) then Exit(clLand);
   result := Ramp(PurpleStops, (Log10(D) - Log10(DensityLo)) / (Log10(DensityHi) - Log10(DensityLo)));
 end;
+
+function CvdDensityLo: Double; begin result := CvdDensityLoOf[CvdEventKind]; end;
+function CvdDensityHi: Double; begin result := CvdDensityHiOf[CvdEventKind]; end;
 
 function CvdDensityColour(D: Double): TColor;
 begin
@@ -366,6 +389,7 @@ begin
   FBaryE := NaN;
   FGeoE := NaN;
   FCvdE := NaN;
+  FMedE := NaN;
   for k := 0 to AreaCount - 1 do FAreaC[k].BE := NaN;
   SetAreas(AllAreas);
 end;
@@ -447,7 +471,7 @@ procedure TKentMapView.SetColouring(AMode: TKentColourMode; ADomain: Integer);
 begin
   FMode := AMode;
   if AMode = kcmDrive then begin
-    FDomain := EnsureRange(ADomain, 0, DriveDomainCount - 1);
+    FDomain := EnsureRange(ADomain, 0, DriveChoiceCount - 1);
     SetDriveDomain(FDomain);
   end else
     FDomain := EnsureRange(ADomain, 0, DomainCount - 1);
@@ -456,9 +480,15 @@ end;
 
 procedure TKentMapView.SetDriveDomain(D: Integer);
 begin
-  D := EnsureRange(D, 0, DriveDomainCount - 1);
+  D := EnsureRange(D, 0, DriveChoiceCount - 1);
   if D = FDriveDomain then Exit;
   FDriveDomain := D;
+  FindIsoLabels;
+end;
+
+procedure TKentMapView.EventKindChanged;
+begin
+  FTexBuilt := False;
   FindIsoLabels;
 end;
 
@@ -479,7 +509,7 @@ var
 begin
   for lv := 0 to IsoLevelCount - 1 do begin FIsoLabel[lv] := -1; best[lv] := 0; end;
   for k := 0 to IsoCount - 1 do begin
-    if (IsoDomain[k] <> FDriveDomain) or (IsoScenario[k] <> FDriveScenario) then Continue;
+    if (IsoDomain[k] <> DriveDataDomain(FDriveDomain)) or (IsoScenario[k] <> FDriveScenario) then Continue;
     lv := 0;
     while (lv < IsoLevelCount - 1) and (IsoLevels[lv] <> IsoMinutes[k]) do Inc(lv);
     l := 0;
@@ -501,6 +531,17 @@ procedure TKentMapView.SetCvdBarycentre(E, N: Double);
 begin
   FCvdE := E;
   FCvdN := N;
+  Invalidate;
+end;
+
+procedure TKentMapView.SetMedianLines(E, N: Double; const Q: array of Double);
+var
+  k: Integer;
+begin
+  FMedE := E;
+  FMedN := N;
+  for k := 0 to 3 do FMedQ[k] := Q[k];
+  FTexBuilt := False;
   Invalidate;
 end;
 
@@ -537,6 +578,7 @@ procedure TKentMapView.SetShowGeoCentre(V: Boolean); begin SetBool(FShowGeoCentr
 procedure TKentMapView.SetShowCvdBarycentre(V: Boolean); begin SetBool(FShowCvdBarycentre, V); end;
 procedure TKentMapView.SetShowIsochrones(V: Boolean); begin SetBool(FShowIsochrones, V); end;
 procedure TKentMapView.SetShowHospitals(V: Boolean); begin SetBool(FShowHospitals, V); end;
+procedure TKentMapView.SetShowMedians(V: Boolean); begin SetBool(FShowMedians, V); end;
 
 // ---- text ---------------------------------------------------------------------
 
@@ -600,14 +642,18 @@ begin
     FTownTex[i] := CreateTextTexture(TownName[i], 9, True);
   FBaryTex := CreateTextTexture('population barycentre', 9, True);
   FGeoTex := CreateTextTexture('geographic centre', 9, True);
-  FCvdTex := CreateTextTexture('heart attack and stroke barycentre', 9, True);
+  FCvdTex := CreateTextTexture(CvdEventText + ' barycentre', 9, True);
   for i := 0 to AreaCount - 1 do
     FAreaTex[i] := CreateTextTexture(AreaName[i], 9, True);
   for i := 0 to HospitalCount - 1 do
     FHospTex[i] := CreateTextTexture(HospitalShort[i], 9, True);
   for i := 0 to IsoLevelCount - 1 do
     FIsoTex[i] := CreateTextTexture(IntToStr(IsoLevels[i]) + ' min', 8, True);
-  FBestTex := CreateTextTexture('best single site', 9, True);
+  if CvdEventKind = 0 then FBestTex := CreateTextTexture('best single site', 9, True)
+  else FBestTex := CreateTextTexture('best single site (' + CvdEventKindShort[CvdEventKind] + ')', 9, True);
+  for i := 0 to 3 do
+    if not IsNan(FMedE) then
+      FQuadTex[i] := CreateTextTexture(Format('%s %.1f %%', [QuadName[i], FMedQ[i]]), 9, True);
   FTexBuilt := True;
 end;
 
@@ -630,6 +676,7 @@ begin
   for i := 0 to HospitalCount - 1 do Del(FHospTex[i]);
   for i := 0 to IsoLevelCount - 1 do Del(FIsoTex[i]);
   Del(FBestTex);
+  for i := 0 to 3 do Del(FQuadTex[i]);
   FTexBuilt := False;
 end;
 
@@ -719,7 +766,7 @@ procedure TKentMapView.DrawIsochrones;
     px, py: Double;
   begin
     for k := 0 to IsoCount - 1 do begin
-      if (IsoDomain[k] <> FDriveDomain) or (IsoScenario[k] <> FDriveScenario)
+      if (IsoDomain[k] <> DriveDataDomain(FDriveDomain)) or (IsoScenario[k] <> FDriveScenario)
         or (IsoMinutes[k] <> Minutes) then Continue;
       glBegin(GL_LINE_STRIP);
         for j := IsoStart[k] to IsoStart[k + 1] - 1 do begin
@@ -803,7 +850,8 @@ procedure TKentMapView.DrawBestZones;
     px, py: Double;
   begin
     for k := 0 to BestZoneCount - 1 do begin
-      if (BestZoneScenario[k] <> FDriveScenario) or (BestZoneExtra[k] <> Extra) then Continue;
+      if (BestZoneKind[k] <> CvdEventKind) or (BestZoneScenario[k] <> FDriveScenario)
+        or (BestZoneExtra[k] <> Extra) then Continue;
       glBegin(GL_LINE_STRIP);
         for j := BestZoneStart[k] to BestZoneStart[k + 1] - 1 do begin
           ToPixel(BestZonePtE[j], BestZonePtN[j], px, py);
@@ -850,7 +898,7 @@ procedure TKentMapView.DrawBestSite;
 var
   x, y, r: Double;
 begin
-  ToPixel(BestSiteE[FDriveScenario], BestSiteN[FDriveScenario], x, y);
+  ToPixel(BestSiteE[BestSiteIndex(FDriveScenario)], BestSiteN[BestSiteIndex(FDriveScenario)], x, y);
   if FDriveDomain = DriveBestDomain then r := 13 else r := 10;
   glColor4f(1, 1, 1, 1);
   Star(x, y, r + 4);
@@ -859,6 +907,41 @@ begin
   GLColour(clBestSite);
   Star(x, y, r);
   DrawLabel(FBestTex, x - FBestTex.W / 2, y + r + 6 + FBestTex.H / 2, True);   // above: the barycentres' and towns' labels sit beside and below it
+end;
+
+// the weighted median lines across the chosen areas, with each
+// quadrant's share of admissions out towards its corner
+procedure TKentMapView.DrawMedianLines;
+const
+  QuadSE: array[0..3] of Integer = (-1, 1, -1, 1);   // east of the line?
+  QuadSN: array[0..3] of Integer = (1, 1, -1, -1);   // north?
+var
+  x0, y0, x1, y1, cx, cy, ex, ny, lx, ly: Double;
+  k, pass: Integer;
+begin
+  if IsNan(FMedE) or IsNan(FMedN) then Exit;
+  ToPixel(FEMin, FNMin, x0, y0);
+  ToPixel(FEMax, FNMax, x1, y1);
+  ToPixel(FMedE, FMedN, cx, cy);
+  for pass := 0 to 1 do begin                 // white halo, then the line
+    if pass = 0 then begin glColor4f(1, 1, 1, 0.85); glLineWidth(5.0); end
+    else begin GLColour(clMedian); glLineWidth(2.4); end;
+    glBegin(GL_LINES);
+      glVertex2d(cx, y0); glVertex2d(cx, y1);
+      glVertex2d(x0, cy); glVertex2d(x1, cy);
+    glEnd;
+  end;
+  // labels halfway from the crossing to the box's corner, kept on screen
+  for k := 0 to 3 do begin
+    if not FQuadTex[k].Built then Continue;
+    if QuadSE[k] > 0 then ex := x1 else ex := x0;
+    if QuadSN[k] > 0 then ny := Max(y0, y1) else ny := Min(y0, y1);
+    lx := (cx + ex) / 2;
+    ly := (cy + ny) / 2;
+    lx := EnsureRange(lx, FQuadTex[k].W / 2 + 4, Width - FQuadTex[k].W / 2 - 4);
+    ly := EnsureRange(ly, FQuadTex[k].H + 4, Height - FQuadTex[k].H - 4);
+    DrawLabel(FQuadTex[k], lx - FQuadTex[k].W / 2, ly, True);
+  end;
 end;
 
 procedure TKentMapView.DrawMarkers;
@@ -1105,6 +1188,7 @@ begin
   end;
   glDisable(GL_LINE_SMOOTH);
   if FShowIsochrones then DrawIsoLabels;
+  if FShowMedians then DrawMedianLines;
   DrawMarkers;
   if FShowHospitals then begin
     DrawHospitals;

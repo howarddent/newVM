@@ -47,14 +47,15 @@
 # and Kent and Canterbury, the nearest of all of them, and the best single
 # site (below).
 #
-# Best single site: for each speed scenario, the network node in Kent and
-# Medway (motorways and trunk roads excluded, as for joining points) with the
-# lowest admissions-weighted mean drive time from every LSOA - one forward
-# Dijkstra per LSOA, about 4 minutes a scenario. The weights are each LSOA's
-# expected heart attack and stroke admissions, written by
-# `healthKent --events=<file.csv>`. Also written: the outlines of the sites
-# within 2 and 5 minutes of the best mean (BEST_ZONES), contoured on the
-# same grid as the isochrones.
+# Best single site: for each speed scenario and kind of event, the network
+# node in Kent and Medway (motorways and trunk roads excluded, as for joining
+# points) with the lowest admissions-weighted mean drive time from every
+# LSOA - one forward Dijkstra per LSOA, about 4 minutes a scenario, shared
+# by the kinds. The weights are each LSOA's expected admissions for heart
+# attack and stroke, heart attack only, and STEMI only (KINDS), written by
+# `healthKent --events=<file.csv>`. They are domains DriveBestDomain + kind.
+# Also written: the outlines of the sites within 2 and 5 minutes of each
+# best mean (BEST_ZONES), contoured on the same grid as the isochrones.
 #
 # Usage: python3 make_drive_data.py <drive_roads.json> <events.csv>
 # ---------------------------------------------------------------------------
@@ -101,6 +102,7 @@ HOSPITALS = [
 WHH, KCH = 4, 5
 LEVELS = [15, 30, 45, 60]
 BEST_ZONES = [2, 5]           # minutes above the best site's mean
+KINDS = ['events', 'mi', 'stemi']   # events CSV columns: MI + stroke, MI, STEMI
 GRID = 500.0
 BOX = (535000, 660000, 120000, 190000)   # E0, E1, N0, N1
 
@@ -222,21 +224,23 @@ def simplify(pts, tol):
 def read_events(path):
     import csv
     rows = list(csv.DictReader(open(path)))
-    w = np.zeros(len(rows))
+    w = np.zeros((len(KINDS), len(rows)))
     for r in rows:
-        w[int(r['i'])] = float(r['events'])
+        for k, col in enumerate(KINDS):
+            w[k, int(r['i'])] = float(r[col])
     return w
 
 
 def best_site(E, v, nn, ln, la, w, sites):
-    # admissions-weighted mean time from every LSOA to every node
+    # admissions-weighted mean time from every LSOA to every node, one row
+    # per kind of event; the best node for each
     G = coo_matrix((E['L'] / 1000 / v * 60, (E['R'], E['C'])), shape=(nn, nn)).tocsr()
-    S = np.zeros(nn)
+    S = np.zeros((w.shape[0], nn))
     for b in range(0, len(ln), 64):
         idx = np.arange(b, min(b + 64, len(ln)))
-        S += w[idx] @ (dijkstra(G, indices=ln[idx]) + la[idx, None])
-    mean = S / w.sum()
-    k = sites[np.argmin(mean[sites])]
+        S += w[:, idx] @ (dijkstra(G, indices=ln[idx]) + la[idx, None])
+    mean = S / w.sum(axis=1)[:, None]
+    k = [sites[np.argmin(m[sites])] for m in mean]
     return k, mean
 
 
@@ -257,7 +261,7 @@ def main(path, events):
     E, nn, xy, cand, stamp = build_graph(path)
     w = read_events(events)
     sites = cand[land_mask(xy[cand, 0:1], xy[cand, 1:2]).ravel()]
-    print('events', w.sum(), 'candidate sites', len(sites))
+    print('events', w.sum(axis=1), 'candidate sites', len(sites))
     tree = cKDTree(xy[cand])
     def snap(P):
         dd, k = tree.query(P)
@@ -274,7 +278,7 @@ def main(path, events):
     far = (gacc * ACCESS_KMH / 60 > 1.5).reshape(GE.shape) | ~land_mask(GE, GN)
 
     all_l, iso = [], []    # all_l[scenario][domain]; iso (scenario, domain, minutes, points)
-    best, zones = [], []   # best (E, N, mean) per scenario; zones (scenario, extra minutes, points)
+    best, zones = {}, []   # best[(kind, scenario)] = (E, N, mean); zones (kind, scenario, extra minutes, points)
     for sc, scname in enumerate(SCENARIOS):
         v = scenario_speed(E, sc)
         report_speeds(E, v, scname)
@@ -290,22 +294,24 @@ def main(path, events):
             print('  %-20s LSOA %.1f..%.1f min' % (name, lt[-1].min(), lt[-1].max()))
         lt = np.array(lt)
         assert np.isfinite(lt).all()
-        # the best single site
-        k, mean = best_site(E, v, nn, ln, la, w, sites)
-        best.append((xy[k, 0], xy[k, 1], mean[k]))
-        print('  best single site E %.0f N %.0f, mean %.2f min' % best[-1])
-        dist = dijkstra(GT, indices=int(k))
-        bl = dist[ln] + la
-        bg = (dist[gnod] + gacc).reshape(GE.shape)
-        cg = contourpy.contour_generator(ge, gn, smooth(mean[gnod].reshape(GE.shape), far), corner_mask=True)
-        for extra in BEST_ZONES:
-            for line in cg.lines(mean[k] + extra):
-                pts = simplify(np.asarray(line), 60.0)
-                if len(pts) >= 2:
-                    zones.append((sc, extra, pts))
-        # the two combined choices, then the best site
-        all_l.append(list(lt) + [np.minimum(lt[WHH], lt[KCH]), lt.min(axis=0), bl])
-        dom_g = gt + [np.minimum(gt[WHH], gt[KCH]), np.min(gt, axis=0), bg]
+        # the best single site for each kind of event
+        ks, mean = best_site(E, v, nn, ln, la, w, sites)
+        bls, bgs = [], []
+        for kind, k in enumerate(ks):
+            best[(kind, sc)] = (xy[k, 0], xy[k, 1], mean[kind, k])
+            print('  best single site (%s) E %.0f N %.0f, mean %.2f min' % ((KINDS[kind],) + best[(kind, sc)]))
+            dist = dijkstra(GT, indices=int(k))
+            bls.append(dist[ln] + la)
+            bgs.append((dist[gnod] + gacc).reshape(GE.shape))
+            cg = contourpy.contour_generator(ge, gn, smooth(mean[kind][gnod].reshape(GE.shape), far), corner_mask=True)
+            for extra in BEST_ZONES:
+                for line in cg.lines(mean[kind, k] + extra):
+                    pts = simplify(np.asarray(line), 60.0)
+                    if len(pts) >= 2:
+                        zones.append((kind, sc, extra, pts))
+        # the two combined choices, then the best sites
+        all_l.append(list(lt) + [np.minimum(lt[WHH], lt[KCH]), lt.min(axis=0)] + bls)
+        dom_g = gt + [np.minimum(gt[WHH], gt[KCH]), np.min(gt, axis=0)] + bgs
         iso += [(sc,) + x for x in isochrones(dom_g, ge, gn, far)]
     print('isochrone lines', len(iso), 'points', sum(len(x[3]) for x in iso))
     write(all_l, iso, best, zones, stamp)
@@ -340,6 +346,8 @@ def write(all_l, iso, best, zones, stamp):
         fh.write('  DriveScenarioCount = %d;\n' % len(SCENARIOS))
         fh.write('  DriveHospWHH = %d;\n  DriveHospKCH = %d;\n' % (WHH, KCH))
         fh.write('  DriveNearestDomain = %d;\n  DriveBestDomain = %d;\n' % (len(HOSPITALS) + 1, len(HOSPITALS) + 2))
+        fh.write('  // best site domains: DriveBestDomain + kind (0 MI + stroke, 1 MI, 2 STEMI)\n')
+        fh.write('  DriveBestKindCount = %d;\n' % len(KINDS))
         fh.write(arr('DriveScenarioName', 'string', [pas(x) for x in SCENARIOS], '%s', 3))
         fh.write(arr('HospitalShort', 'string', [pas(h[0]) for h in HOSPITALS], '%s', 4))
         fh.write(arr('HospitalName', 'string', [pas(h[1]) for h in HOSPITALS], '%s', 2))
@@ -358,19 +366,22 @@ def write(all_l, iso, best, zones, stamp):
         fh.write(arr('IsoStart', 'Integer', starts, '%d', 16))
         fh.write(arr('IsoPtE', 'Single', [float(q[0]) for x in iso for q in x[3]], '%.0f'))
         fh.write(arr('IsoPtN', 'Single', [float(q[1]) for x in iso for q in x[3]], '%.0f'))
-        # best single site per scenario, and the zones within BEST_ZONES minutes of it
-        fh.write(arr('BestSiteE', 'Single', [b[0] for b in best], '%.0f'))
-        fh.write(arr('BestSiteN', 'Single', [b[1] for b in best], '%.0f'))
-        fh.write(arr('BestSiteMean', 'Single', [b[2] for b in best], '%.2f'))
+        # best single site per kind and scenario, [kind * DriveScenarioCount + scenario],
+        # and the zones within BEST_ZONES minutes of it
+        bl = [best[(kind, sc)] for kind in range(len(KINDS)) for sc in range(len(SCENARIOS))]
+        fh.write(arr('BestSiteE', 'Single', [b[0] for b in bl], '%.0f'))
+        fh.write(arr('BestSiteN', 'Single', [b[1] for b in bl], '%.0f'))
+        fh.write(arr('BestSiteMean', 'Single', [b[2] for b in bl], '%.2f'))
         fh.write('  BestZoneCount = %d;\n' % len(zones))
-        fh.write(arr('BestZoneScenario', 'Byte', [z[0] for z in zones], '%d', 30))
-        fh.write(arr('BestZoneExtra', 'Byte', [z[1] for z in zones], '%d', 30))
+        fh.write(arr('BestZoneKind', 'Byte', [z[0] for z in zones], '%d', 30))
+        fh.write(arr('BestZoneScenario', 'Byte', [z[1] for z in zones], '%d', 30))
+        fh.write(arr('BestZoneExtra', 'Byte', [z[2] for z in zones], '%d', 30))
         zs = [0]
         for z in zones:
-            zs.append(zs[-1] + len(z[2]))
+            zs.append(zs[-1] + len(z[3]))
         fh.write(arr('BestZoneStart', 'Integer', zs, '%d', 16))
-        fh.write(arr('BestZonePtE', 'Single', [float(q[0]) for z in zones for q in z[2]], '%.0f'))
-        fh.write(arr('BestZonePtN', 'Single', [float(q[1]) for z in zones for q in z[2]], '%.0f'))
+        fh.write(arr('BestZonePtE', 'Single', [float(q[0]) for z in zones for q in z[3]], '%.0f'))
+        fh.write(arr('BestZonePtN', 'Single', [float(q[1]) for z in zones for q in z[3]], '%.0f'))
     print('wrote', out, os.path.getsize(out), 'bytes')
 
 

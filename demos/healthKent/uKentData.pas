@@ -50,6 +50,17 @@ unit uKentData;
      '*'), then MatMult with the (36, 1) rate column. A component's effect
      is events with it over events without it: the same product with its
      log multiplier subtracted.
+     WHICH EVENTS (CvdEventKind, SetCvdEventKind): 0 heart attack and
+     stroke (the rates above), 1 heart attack only (I21-I22), 2 STEMI only
+     - the MI rate times CvdStemiShare, HES's STEMI share of MI admissions
+     at that age and sex (falling from about a half at 35-50 to a third
+     over 75 in men, lower in women; see make_cvd_data.py). The same
+     risk-factor multiplier applies to all three, so a kind changes the
+     weights through age and sex only. Every events function below, the
+     barycentre, the map and the drive-time weights follow the chosen
+     kind; the MSOA check always uses kind 0, since OHID's observed
+     ratios are for MI and stroke together. The three kinds are computed
+     together (a (36, 3) rate matrix), so switching is free.
      The factors are combined as if independent within an LSOA (diabetes,
      hypertension, obesity and smoking cluster in reality), and hyper-
      tension, diabetes, CKD and AF are diagnosed (QOF) prevalence.
@@ -121,6 +132,17 @@ uses
 {$I drivedata.inc}
 
 const
+  // the domains a user can choose: DriveBestDomain stands for the best site
+  // under the chosen event kind, stored as DriveBestDomain + CvdEventKind
+  DriveChoiceCount = DriveBestDomain + 1;
+
+  // which events the model counts (see the header)
+  CvdEventKindCount = 3;
+  CvdEventKindName: array[0..CvdEventKindCount - 1] of string = (
+    'heart attack and stroke', 'heart attack', 'STEMI');
+  CvdEventKindShort: array[0..CvdEventKindCount - 1] of string = (
+    'MI + stroke', 'MI', 'STEMI');
+
   RouteMotorway = 0;
   RouteTrunk = 1;
   RoutePrimary = 2;
@@ -277,7 +299,7 @@ const
        + 'carriageways and 100 km/h elsewhere, traffic ignored.')
   );
 
-  Glossary: array[0..19] of TGlossaryEntry = (
+  Glossary: array[0..20] of TGlossaryEntry = (
     (Term: 'LSOA'; Meaning: 'Lower layer Super Output Area: a Census 2021 statistical area of about 1,000-3,000 residents (400-1,200 households). Kent and Medway has 1,107.'),
     (Term: 'Mid-year population estimate'; Meaning: 'ONS estimate of the usual resident population on 30 June, rolled forward from the 2021 Census with births, deaths and migration.'),
     (Term: 'Population density'; Meaning: 'Mid-2024 population divided by the LSOA''s land area (ONS Standard Area Measurements), people per km2.'),
@@ -297,7 +319,8 @@ const
     (Term: 'MSOA'; Meaning: 'Middle layer Super Output Area: about 5,000-15,000 residents, built from 4-6 LSOAs. Kent and Medway has 221 (2021).'),
     (Term: 'APS'; Meaning: 'The ONS Annual Population Survey, source of the official adult smoking prevalence. District samples are a few hundred people, so district figures carry wide confidence intervals.'),
     (Term: 'Drive time and isochrone'; Meaning: 'Modelled minutes to a hospital along the fastest OpenStreetMap route, in three scenarios: a car at free-flow speeds, a car in the weekday morning peak, and an ambulance on blue lights. An isochrone is the line joining places the same time away - here 15, 30, 45 and 60 minutes.'),
-    (Term: 'Best single site'; Meaning: 'The point on the road network in Kent and Medway with the shortest mean drive time from every LSOA, weighted by expected heart attack and stroke admissions - where one centre for the whole county would minimise average travel. Found separately for each speed scenario by timing every LSOA to every road node (motorways and trunk roads themselves excluded). The green outlines enclose the sites within 2 and 5 minutes of that best mean. It ignores land, existing buildings and ambulance logistics.')
+    (Term: 'Best single site'; Meaning: 'The point on the road network in Kent and Medway with the shortest mean drive time from every LSOA, weighted by the chosen events'' expected admissions (heart attack and stroke, heart attack, or STEMI) - where one centre for the whole county would minimise average travel. Found separately for each kind of event and speed scenario by timing every LSOA to every road node (motorways and trunk roads themselves excluded). The green outlines enclose the sites within 2 and 5 minutes of that best mean. It ignores land, existing buildings and ambulance logistics.'),
+    (Term: 'STEMI and NSTEMI'; Meaning: 'The two kinds of acute myocardial infarction. A STEMI (ST elevation, ICD-10 I21.0-I21.3) is a complete blockage, treated by emergency (primary) PCI within about two hours, so its travel time matters in minutes; it is about 37 % of England''s typed emergency MI admissions, a larger share in younger people and men. An NSTEMI (I21.4) has angiography and, if needed, PCI within about three days, usually after admission to the nearest hospital. The STEMI weighting applies HES''s STEMI share at each age and sex to the MI model.')
   );
 
 const
@@ -330,8 +353,16 @@ const
     'smoking', 'obesity (BMI 30+)', 'diabetes', 'hypertension', 'CKD 3-5',
     'atrial fibrillation', 'ethnicity', 'deprivation (residual)');
 
-// expected emergency admissions for heart attack or stroke a year
+// the event kind every LsoaCvd... function below counts (default 0)
+function CvdEventKind: Integer;
+procedure SetCvdEventKind(k: Integer);
+// 'heart attack and stroke', 'heart attack' or 'STEMI'
+function CvdEventText: string;
+
+// expected emergency admissions a year for the chosen kind of event
 function LsoaCvdEvents(i: Integer): Double;
+// the same for kind k, whatever is chosen
+function LsoaCvdEventsOf(i, k: Integer): Double;
 // the same from age and sex alone (England's rates)
 function LsoaCvdAgeOnly(i: Integer): Double;
 // per km2 of land a year
@@ -371,6 +402,11 @@ function TotalLandKm2: Double;
 procedure PopulationBarycentre(const Include: array of Boolean; out E, N: Double);
 // the same weighted by expected heart attack and stroke admissions
 procedure CvdBarycentre(const Include: array of Boolean; out E, N: Double);
+// the expected admissions' weighted median easting and northing (label
+// points), and the share of admissions in each quadrant they make:
+// Q[0] NW, Q[1] NE, Q[2] SW, Q[3] SE
+procedure CvdMedianLines(const Include: array of Boolean; out E, N: Double;
+  out Q: array of Double);
 // geographic centre of the districts with IncDistrict[d] true ([] = all)
 procedure GeographicCentre(const IncDistrict: array of Boolean; out E, N: Double);
 
@@ -395,7 +431,12 @@ procedure M20Extent(out E0, E1: Double);
 function DriveDomainName(d: Integer): string;
 function DriveDomainShort(d: Integer): string;
 // Scenario 0 free-flow car, 1 weekday morning peak, 2 blue light
+// DriveBestDomain gives the best site for the chosen event kind
 function LsoaDriveMinutes(i, Domain: Integer; Scenario: Integer = 0): Double;
+// the stored domain behind a choice (DriveBestDomain + CvdEventKind for the best site)
+function DriveDataDomain(d: Integer): Integer;
+// index into BestSiteE/N/Mean for a scenario, under the chosen event kind
+function BestSiteIndex(Scenario: Integer): Integer;
 // for each domain, the hospital it means (-1 for the combined ones)
 function DriveDomainHospital(d: Integer): Integer;
 // is hospital h part of domain d
@@ -416,10 +457,15 @@ implementation
 
 var
   BoxE0, BoxE1, BoxN0, BoxN1: array[0..LsoaCount - 1] of Single;
+  // the chosen kind's values (copied from the ...All arrays)
   CvdEv, CvdAge: array[0..LsoaCount - 1] of Double;
   CvdEff: array[0..LsoaCount * CvdComponentCount - 1] of Double;
+  // every kind: [k * LsoaCount + i], [(k * LsoaCount + i) * CvdComponentCount + c]
+  CvdEvAll, CvdAgeAll: array[0..CvdEventKindCount * LsoaCount - 1] of Double;
+  CvdEffAll: array[0..CvdEventKindCount * LsoaCount * CvdComponentCount - 1] of Double;
   CvdPrev: array[0..LsoaCount * CvdPrevCount - 1] of Double;
   CvdDone: Boolean = False;
+  CvdKind: Integer = 0;
 
 procedure ComputeCvd; forward;
 
@@ -430,7 +476,32 @@ begin
   if not CvdDone then ComputeCvd;
 end;
 
+procedure SelectCvdKind;
+var
+  i: Integer;
+begin
+  for i := 0 to LsoaCount - 1 do begin
+    CvdEv[i] := CvdEvAll[CvdKind * LsoaCount + i];
+    CvdAge[i] := CvdAgeAll[CvdKind * LsoaCount + i];
+  end;
+  for i := 0 to LsoaCount * CvdComponentCount - 1 do
+    CvdEff[i] := CvdEffAll[CvdKind * LsoaCount * CvdComponentCount + i];
+end;
+
+function CvdEventKind: Integer; begin result := CvdKind; end;
+
+procedure SetCvdEventKind(k: Integer);
+begin
+  k := EnsureRange(k, 0, CvdEventKindCount - 1);
+  if k = CvdKind then Exit;
+  CvdKind := k;
+  if CvdDone then SelectCvdKind;
+end;
+
+function CvdEventText: string; begin result := CvdEventKindName[CvdKind]; end;
+
 function LsoaCvdEvents(i: Integer): Double; begin NeedCvd; result := CvdEv[i]; end;
+function LsoaCvdEventsOf(i, k: Integer): Double; begin NeedCvd; result := CvdEvAll[k * LsoaCount + i]; end;
 function LsoaCvdAgeOnly(i: Integer): Double; begin NeedCvd; result := CvdAge[i]; end;
 function LsoaCvdRatio(i: Integer): Double; begin NeedCvd; result := CvdEv[i] / CvdAge[i]; end;
 function LsoaCvdEffect(i, k: Integer): Double; begin NeedCvd; result := CvdEff[i * CvdComponentCount + k]; end;
@@ -451,9 +522,9 @@ begin
   NeedCvd;
   e := 0; a := 0;
   for i := 0 to LsoaCount - 1 do
-    if LsoaMsoa[i] = k then begin
-      e := e + CvdEv[i];
-      a := a + CvdAge[i];
+    if LsoaMsoa[i] = k then begin      // kind 0: the observed ratios are MI and stroke
+      e := e + CvdEvAll[i];
+      a := a + CvdAgeAll[i];
     end;
   result := e / a;
 end;
@@ -491,8 +562,8 @@ begin
     k := LsoaMsoa[i];
     ImdSum[k] := ImdSum[k] + LsoaPop[i] * LsoaScoreOf(i, 0);
     PopSum[k] := PopSum[k] + LsoaPop[i];
-    AgeSum[k] := AgeSum[k] + CvdAge[i];
-    EvSum[k] := EvSum[k] + CvdEv[i];
+    AgeSum[k] := AgeSum[k] + CvdAgeAll[i];   // kind 0, as MsoaModelSAR
+    EvSum[k] := EvSum[k] + CvdEvAll[i];
   end;
   SetLength(Model, MsoaCount);
   SetLength(Imd, MsoaCount);
@@ -512,7 +583,7 @@ begin
   RImd := Pearson(Imd, Obs, Count);
   ObservedKent := oa / a;
   oa := 0; a := 0;
-  for i := 0 to LsoaCount - 1 do begin oa := oa + CvdEv[i]; a := a + CvdAge[i]; end;
+  for i := 0 to LsoaCount - 1 do begin oa := oa + CvdEvAll[i]; a := a + CvdAgeAll[i]; end;
   ModelKent := oa / a;
 end;
 
@@ -522,7 +593,7 @@ const
 var
   Pop, Rate, LogM, Comp, Ev, Age, EvWithout: TVMobj;
   Comps: array[0..CvdComponentCount - 1] of TVMobj;
-  i, b, f, k: Integer;
+  i, b, f, k, c: Integer;
   p, pbar, adult, w, sa0, depMean, eth: Double;
   adultN: array[0..LsoaCount - 1] of Double;
 
@@ -537,8 +608,13 @@ var
 
 begin
   Pop := TVMobj.Create(LsoaCount, NB2);
-  Rate := TVMobj.Create(NB2, 1);
-  for b := 0 to NB2 - 1 do Rate[b, 0] := CvdRateMI[b] + CvdRateStroke[b];
+  // one rate column per event kind: MI + stroke, MI, STEMI
+  Rate := TVMobj.Create(NB2, CvdEventKindCount);
+  for b := 0 to NB2 - 1 do begin
+    Rate[b, 0] := CvdRateMI[b] + CvdRateStroke[b];
+    Rate[b, 1] := CvdRateMI[b];
+    Rate[b, 2] := CvdRateMI[b] * CvdStemiShare[b];
+  end;
   for k := 0 to CvdComponentCount - 1 do Comps[k] := TVMobj.Create(LsoaCount, NB2);
   for i := 0 to LsoaCount * CvdPrevCount - 1 do CvdPrev[i] := 0;
   sa0 := 1 + CvdSouthAsianEngland * (CvdRRSouthAsian - 1) + CvdBlackEngland * (CvdRRBlack - 1);
@@ -578,19 +654,22 @@ begin
 
   LogM := Comps[0];
   for k := 1 to CvdComponentCount - 1 do LogM := LogM + Comps[k];
-  Ev := MatMult(Pop * Exp(LogM), Rate);          // (N, 1)
+  Ev := MatMult(Pop * Exp(LogM), Rate);          // (N, kinds)
   Age := MatMult(Pop, Rate);
-  for i := 0 to LsoaCount - 1 do begin
-    CvdEv[i] := Ev[i, 0];
-    CvdAge[i] := Age[i, 0];
-  end;
+  for c := 0 to CvdEventKindCount - 1 do
+    for i := 0 to LsoaCount - 1 do begin
+      CvdEvAll[c * LsoaCount + i] := Ev[i, c];
+      CvdAgeAll[c * LsoaCount + i] := Age[i, c];
+    end;
   for k := 0 to CvdComponentCount - 1 do begin
     Comp := LogM - Comps[k];
     EvWithout := MatMult(Pop * Exp(Comp), Rate);
-    for i := 0 to LsoaCount - 1 do
-      CvdEff[i * CvdComponentCount + k] := CvdEv[i] / EvWithout[i, 0];
+    for c := 0 to CvdEventKindCount - 1 do
+      for i := 0 to LsoaCount - 1 do
+        CvdEffAll[(c * LsoaCount + i) * CvdComponentCount + k] := Ev[i, c] / EvWithout[i, c];
   end;
   CvdDone := True;
+  SelectCvdKind;
 end;
 
 function LsoaDensity(i: Integer): Double;
@@ -745,6 +824,68 @@ begin
   WeightedBarycentre(CvdEv, Include, E, N);
 end;
 
+// weighted median of V: sorted, the split between two neighbouring
+// LSOAs whose two sides' weights come nearest to half each, the line
+// halfway between them, so that no LSOA lies on it
+function WeightedMedian(const V, Wt: array of Double; const Include: array of Boolean): Double;
+var
+  idx: array of Integer;
+  i, j, n, t, k: Integer;
+  tot, cum, best: Double;
+begin
+  SetLength(idx, LsoaCount);
+  n := 0;
+  tot := 0;
+  for i := 0 to LsoaCount - 1 do
+    if ((Length(Include) = 0) or Include[i]) and (Wt[i] > 0) then begin
+      idx[n] := i; Inc(n); tot := tot + Wt[i];
+    end;
+  if n = 0 then Exit(NaN);
+  if n = 1 then Exit(V[idx[0]]);
+  for i := 1 to n - 1 do begin              // insertion sort by V
+    t := idx[i]; j := i - 1;
+    while (j >= 0) and (V[idx[j]] > V[t]) do begin idx[j + 1] := idx[j]; Dec(j); end;
+    idx[j + 1] := t;
+  end;
+  cum := 0;
+  k := 0;
+  best := Infinity;
+  for i := 0 to n - 2 do begin              // split after idx[i]
+    cum := cum + Wt[idx[i]];
+    if Abs(cum - tot / 2) < best then begin best := Abs(cum - tot / 2); k := i; end;
+  end;
+  result := (V[idx[k]] + V[idx[k + 1]]) / 2;
+end;
+
+procedure CvdMedianLines(const Include: array of Boolean; out E, N: Double;
+  out Q: array of Double);
+var
+  VE, VN: array of Double;
+  i, k: Integer;
+  tot: Double;
+begin
+  NeedCvd;
+  SetLength(VE, LsoaCount);
+  SetLength(VN, LsoaCount);
+  for i := 0 to LsoaCount - 1 do begin
+    VE[i] := LsoaLabelE[i];
+    VN[i] := LsoaLabelN[i];
+  end;
+  E := WeightedMedian(VE, CvdEv, Include);
+  N := WeightedMedian(VN, CvdEv, Include);
+  for k := 0 to 3 do Q[k] := 0;
+  tot := 0;
+  for i := 0 to LsoaCount - 1 do begin
+    if (Length(Include) > 0) and not Include[i] then Continue;
+    k := 0;
+    if VE[i] > E then k := 1;
+    if VN[i] < N then k := k + 2;
+    Q[k] := Q[k] + CvdEv[i];
+    tot := tot + CvdEv[i];
+  end;
+  if tot > 0 then for k := 0 to 3 do Q[k] := 100 * Q[k] / tot;
+end;
+
 type
   TRoadProfile = record
     E, N: array of Double;
@@ -858,7 +999,7 @@ function DriveDomainName(d: Integer): string;
 begin
   if d < HospitalCount then result := HospitalName[d]
   else if d = HospitalCount then result := 'Nearer of William Harvey and Kent and Canterbury'
-  else if d = DriveBestDomain then result := 'Best single site (lowest county mean time)'
+  else if d >= DriveBestDomain then result := 'Best single site (lowest county mean time)'
   else result := 'Nearest of all seven acute hospitals';
 end;
 
@@ -866,13 +1007,23 @@ function DriveDomainShort(d: Integer): string;
 begin
   if d < HospitalCount then result := HospitalShort[d]
   else if d = HospitalCount then result := 'WHH or K&C'
-  else if d = DriveBestDomain then result := 'best site'
+  else if d >= DriveBestDomain then result := 'best site'
   else result := 'nearest';
+end;
+
+function DriveDataDomain(d: Integer): Integer;
+begin
+  if d = DriveBestDomain then result := DriveBestDomain + CvdKind else result := d;
+end;
+
+function BestSiteIndex(Scenario: Integer): Integer;
+begin
+  result := CvdKind * DriveScenarioCount + Scenario;
 end;
 
 function LsoaDriveMinutes(i, Domain: Integer; Scenario: Integer): Double;
 begin
-  result := LsoaDriveMin[(Scenario * DriveDomainCount + Domain) * LsoaCount + i];
+  result := LsoaDriveMin[(Scenario * DriveDomainCount + DriveDataDomain(Domain)) * LsoaCount + i];
 end;
 
 function DriveDomainHospital(d: Integer): Integer;

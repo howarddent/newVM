@@ -54,6 +54,14 @@
 #     and sex, scaled towards each district's 2024/25 figure.
 #   - Ethnicity: Census 2021 share of South Asian (Indian, Pakistani,
 #     Bangladeshi) and Black residents of each LSOA, and England's.
+#   - STEMI share of MI admissions by age and sex (for the STEMI weighting):
+#     HES's 4-character diagnoses split I21 into STEMI (I21.0-I21.3) and
+#     NSTEMI (I21.4); I21.9 and I22 are left unassigned, so they take the
+#     same share. The episodes' STEMI odds by age (ages under 35 pooled,
+#     85+ pooled) times a female odds ratio from the episodes by sex, then
+#     scaled by one constant so England's expected STEMI share of MI
+#     admissions equals that of the emergency admissions (episodes
+#     over-count NSTEMI, which more often has several consultant episodes).
 #   - Check: OHID Local Health MSOA indirectly age-standardised ratios
 #     for emergency admissions for MI and for stroke (2016/17-20/21),
 #     combined by expected counts, for each MSOA, matched to MSOA 2021.
@@ -71,7 +79,7 @@
 #                             a GP Practice April 2025, practice x LSOA 2021
 #   gp-reg-pat-prac-quin-age/ the same publication, practice x 5-year age x sex
 #   hosp-epis-stat-admi-diag-2024-25.csv  NHS England, Hospital Admitted Patient Care
-#                             Activity 2024-25, primary diagnosis 3 character (CSV)
+#                             Activity 2024-25, primary diagnosis 3 and 4 character (CSV)
 #   fing_92443.csv            Fingertips API all_data/csv/by_indicator_id?indicator_ids=
 #                             92443&child_area_type_id=501 (APS smoking prevalence 18+)
 #   fing_93881.csv            the same for 93881 (Active Lives adult obesity)
@@ -157,6 +165,41 @@ rate_mi = event_rates(['I21', 'I22'])
 rate_st = event_rates(['I61', 'I62', 'I63', 'I64'])
 base_rate = rate_mi + rate_st
 hes_total = sum(hes[c]['FAE_EMERGENCY_Sum'] for c in hes)
+
+# ---- STEMI share of MI admissions, by age and sex -----------------------------------
+STEMI_CODES, NSTEMI_CODES = ('I21.0', 'I21.1', 'I21.2', 'I21.3'), ('I21.4',)
+hes4 = collections.defaultdict(dict)
+for row in csv.DictReader(open(C('hosp-epis-stat-admi-diag-2024-25.csv'), encoding='utf-8-sig')):
+    if row['Category'] == 'DIAG_4_01' and row['Code'] in STEMI_CODES + NSTEMI_CODES:
+        hes4[row['Code']][row['Attribute']] = float(row['Value'] or 0)
+def h4sum(codes_, attr):
+    return sum(hes4[c][attr] for c in codes_)
+STEMI_POOL = [['Age_%d_Sum' % a for a in (15, 16, 17, 18, 19)] + ['Age_%d_%d_Sum' % (lo, lo + 4) for lo in (20, 25, 30)]] * 7 + \
+             [['Age_%d_%d_Sum' % (lo, lo + 4)] for lo in range(35, 85, 5)] + [['Age_85_89_Sum', 'Age_90_120_Sum']]
+assert len(STEMI_POOL) == NB
+s_age = np.array([sum(h4sum(STEMI_CODES, k) for k in ks) for ks in STEMI_POOL])
+n_age = np.array([sum(h4sum(NSTEMI_CODES, k) for k in ks) for ks in STEMI_POOL])
+stemi_female_or = (h4sum(STEMI_CODES, 'FCE_Female_Sum') / h4sum(STEMI_CODES, 'FCE_Male_Sum')) / \
+                  (h4sum(NSTEMI_CODES, 'FCE_Female_Sum') / h4sum(NSTEMI_CODES, 'FCE_Male_Sum'))
+stemi_adm = h4sum(STEMI_CODES, 'FAE_EMERGENCY_Sum')
+nstemi_adm = h4sum(NSTEMI_CODES, 'FAE_EMERGENCY_Sum')
+odds0 = np.concatenate([s_age / n_age, s_age / n_age * stemi_female_or])
+def stemi_share(c):
+    return c * odds0 / (1 + c * odds0)
+mi_eng = eng * rate_mi
+lo_c, hi_c = 0.01, 100.0
+for _ in range(100):
+    mid = math.sqrt(lo_c * hi_c)
+    if (mi_eng * stemi_share(mid)).sum() / mi_eng.sum() < stemi_adm / (stemi_adm + nstemi_adm):
+        lo_c = mid
+    else:
+        hi_c = mid
+stemi_c = math.sqrt(lo_c * hi_c)
+stemi_sh = stemi_share(stemi_c)
+print('STEMI: %d emergency admissions, NSTEMI %d (share %.3f); female OR %.3f, episode-to-admission odds x%.3f'
+      % (stemi_adm, nstemi_adm, stemi_adm / (stemi_adm + nstemi_adm), stemi_female_or, stemi_c))
+print('  share by band, men  ', ' '.join('%.2f' % x for x in stemi_sh[:NB]))
+print('  share by band, women', ' '.join('%.2f' % x for x in stemi_sh[NB:]))
 
 # ---- practices: list by age and sex, deprivation, QOF registers -------------------
 QUIN = ['0_4', '5_9', '10_14', '15_19', '20_24', '25_29', '30_34', '35_39', '40_44', '45_49',
@@ -428,6 +471,10 @@ with open(os.path.join(here, 'cvddata.inc'), 'w', encoding='utf-8') as fh:
     fh.write('  // England emergency admissions per person per year (MI I21-I22, stroke I61-I64)\n')
     fh.write(arr('CvdRateMI', 'Double', rate_mi, '%.6e', 6))
     fh.write(arr('CvdRateStroke', 'Double', rate_st, '%.6e', 6))
+    fh.write('  // STEMI share of MI admissions at that age and sex (HES 4-character diagnoses)\n')
+    fh.write('  CvdStemiAdmissions = %d;\n  CvdNstemiAdmissions = %d;\n  CvdStemiFemaleOR = %.3f;\n'
+             % (round(stemi_adm), round(nstemi_adm), stemi_female_or))
+    fh.write(arr('CvdStemiShare', 'Double', stemi_sh, '%.4f', 9))
     fh.write(arr('CvdEnglandPop', 'Integer', eng, '%d', 9))
     fh.write('  // LSOA i, band b: LsoaAgePop[i * 2 * CvdBandCount + b]\n')
     fh.write(arr('LsoaAgePop', 'Integer', pop.ravel(), '%d', 18))
