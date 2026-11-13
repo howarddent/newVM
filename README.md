@@ -98,6 +98,21 @@ Kent 12-14 minutes closer to it. Leave West Kent out (4,222 of the
 2 minutes. That is within what the assumed speeds and approximate
 hospital positions could move.
 
+The map can also draw the admissions' median lines: a north-south and
+an east-west line, each with half the expected admissions on either
+side. They cross at TQ 81807 61037, north-east of Maidstone, and the
+quadrants they make are not equal:
+
+| Area | NW | NE | SW | SE |
+|---|---|---|---|---|
+| Kent and Medway | 27.1 % | 22.9 % | 22.9 % | 27.1 % |
+| North and East Kent | 32.9 % | 17.0 % | 17.1 % | 32.9 % |
+
+So admissions lie along a north-west to south-east diagonal, from
+Dartford and Medway to Ashford, Canterbury, Dover and Folkestone, and
+more so once West Kent is left out. Counting only STEMIs changes these
+shares by 0.1 point at most.
+
 ## Licence
 
 Copyright (C) 2026 Howard Dent.
