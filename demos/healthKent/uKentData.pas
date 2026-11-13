@@ -113,6 +113,18 @@ unit uKentData;
      delays beyond the peak factors, no turn costs; hospital positions
      are approximate.
 
+     999 AMBULANCE (SetAmbulance, --ambulance): optionally every drive time
+     becomes a 999 call-to-hospital-door time by adding two county-wide
+     constants that don't depend on where the patient goes: South East
+     Coast Ambulance Service's mean Category 2 response, call to arrival,
+     27.8 min (NHS England AmbSYS, A30/A10, November 2025 - October 2026;
+     heart attack and stroke are Category 2), and an on-scene time of
+     33 min (English studies of suspected stroke: medians 27-35 min). The
+     transport leg is still the chosen speed scenario, normally blue
+     light. Because the two constants are the same for every hospital,
+     they move totals and thresholds but never a comparison between
+     hospitals or the best site.
+
      BNG -> WGS84: inverse transverse Mercator on Airy 1830 (OS "A guide
      to coordinate systems in Great Britain"), then the 7-parameter
      Helmert OSGB36 -> WGS84 - the inverse of bng.py's transform; a few
@@ -174,7 +186,7 @@ type
   end;
 
 const
-  Sources: array[0..18] of TSourceEntry = (
+  Sources: array[0..20] of TSourceEntry = (
     (Title: 'Lower layer Super Output Area population estimates (small area, 2021-based), mid-2024';
      Publisher: 'Office for National Statistics (via Nomis, dataset NM_2014_1)';
      Edition: 'mid-2024 estimates, released 7 November 2025 - the latest published';
@@ -296,10 +308,27 @@ const
      URL: 'https://www.rrh.org.au/journal/article/6114';
      Use: 'Anchors the blue-light scenario: 46 km/h on blue lights against 20 km/h driving normally in London, and 1.26x '
        + 'normal driving on rural roads. Modelled as 1.25x the free-flow speed, at most 113 km/h on motorways and dual '
-       + 'carriageways and 100 km/h elsewhere, traffic ignored.')
+       + 'carriageways and 100 km/h elsewhere, traffic ignored.'),
+    (Title: 'Ambulance Quality Indicators: AmbSYS (systems) and AmbCO (clinical outcomes)';
+     Publisher: 'NHS England';
+     Edition: 'AmbSYS to October 2026, AmbCO to June 2026';
+     Licence: 'Open Government Licence v3.0';
+     URL: 'https://www.england.nhs.uk/statistics/statistical-work-areas/ambulance-quality-indicators/';
+     Use: '999 ambulance option: South East Coast Ambulance Service (RYD) Category 2 response, call to arrival - mean '
+       + '27.8 min, 90th centile 56 min, monthly means 22.5-32.5 min (England 30.5) over November 2025 - October 2026 '
+       + '(A30/A10, A32, A31) - and its mean handover at hospital, 18.9 min (A141/A140). The check: SECAmb''s confirmed '
+       + 'strokes, 999 call to hospital arrival, mean 93.0 min, 90th centile 140, 5,621 patients July 2025 - June 2026 (K1m).'),
+    (Title: 'Ambulance on-scene time with suspected stroke: English studies';
+     Publisher: 'European Stroke Journal 2023 (North East England); SSNAP prehospital timings, ESOC 2024 poster';
+     Edition: '2021-2023 data';
+     Licence: 'cited figures only';
+     URL: 'https://www.strokeaudit.org/';
+     Use: '999 ambulance option: on scene 33 min - the North East study''s median (IQR 26-41) and the top of the '
+       + 'national SSNAP medians, 27-32 min in 2019-2023; NHS England recommends 30 at most. No routine '
+       + 'statistic publishes it.')
   );
 
-  Glossary: array[0..20] of TGlossaryEntry = (
+  Glossary: array[0..21] of TGlossaryEntry = (
     (Term: 'LSOA'; Meaning: 'Lower layer Super Output Area: a Census 2021 statistical area of about 1,000-3,000 residents (400-1,200 households). Kent and Medway has 1,107.'),
     (Term: 'Mid-year population estimate'; Meaning: 'ONS estimate of the usual resident population on 30 June, rolled forward from the 2021 Census with births, deaths and migration.'),
     (Term: 'Population density'; Meaning: 'Mid-2024 population divided by the LSOA''s land area (ONS Standard Area Measurements), people per km2.'),
@@ -319,7 +348,8 @@ const
     (Term: 'MSOA'; Meaning: 'Middle layer Super Output Area: about 5,000-15,000 residents, built from 4-6 LSOAs. Kent and Medway has 221 (2021).'),
     (Term: 'APS'; Meaning: 'The ONS Annual Population Survey, source of the official adult smoking prevalence. District samples are a few hundred people, so district figures carry wide confidence intervals.'),
     (Term: 'Drive time and isochrone'; Meaning: 'Modelled minutes to a hospital along the fastest OpenStreetMap route, in three scenarios: a car at free-flow speeds, a car in the weekday morning peak, and an ambulance on blue lights. An isochrone is the line joining places the same time away - here 15, 30, 45 and 60 minutes.'),
-    (Term: 'Best single site'; Meaning: 'The point on the road network in Kent and Medway with the shortest mean drive time from every LSOA, weighted by the chosen events'' expected admissions (heart attack and stroke, heart attack, or STEMI) - where one centre for the whole county would minimise average travel. Found separately for each kind of event and speed scenario by timing every LSOA to every road node (motorways and trunk roads themselves excluded). The green outlines enclose the sites within 2 and 5 minutes of that best mean. It ignores land, existing buildings and ambulance logistics.'),
+    (Term: '999 call to hospital door'; Meaning: 'With 999 ambulance ticked: SECAmb''s mean Category 2 response (call to ambulance arrival, 27.8 min) plus 33 min on scene plus the drive to hospital. The first two are the same wherever the patient goes, so they add to every time equally; handover inside the hospital (18.9 min mean) comes after the door and is not included.'),
+    (Term: 'Best single site'; Meaning: 'The point on the road network in Kent and Medway with the shortest mean drive time from every LSOA, weighted by the chosen events'' expected admissions (heart attack and stroke, heart attack, or STEMI) - where one centre for the whole county would minimise average travel. Found separately for each kind of event and speed scenario by timing every LSOA to every road node (motorways and trunk roads themselves excluded). It ignores land, existing buildings and ambulance logistics.'),
     (Term: 'STEMI and NSTEMI'; Meaning: 'The two kinds of acute myocardial infarction. A STEMI (ST elevation, ICD-10 I21.0-I21.3) is a complete blockage, treated by emergency (primary) PCI within about two hours, so its travel time matters in minutes; it is about 37 % of England''s typed emergency MI admissions, a larger share in younger people and men. An NSTEMI (I21.4) has angiography and, if needed, PCI within about three days, usually after admission to the nearest hospital. The STEMI weighting applies HES''s STEMI share at each age and sex to the MI model.')
   );
 
@@ -437,10 +467,36 @@ function LsoaDriveMinutes(i, Domain: Integer; Scenario: Integer = 0): Double;
 function DriveDataDomain(d: Integer): Integer;
 // index into BestSiteE/N/Mean for a scenario, under the chosen event kind
 function BestSiteIndex(Scenario: Integer): Integer;
+// the plain drive (transport) time, never including the ambulance constants
+function LsoaTransportMinutes(i, Domain: Integer; Scenario: Integer = 0): Double;
 // for each domain, the hospital it means (-1 for the combined ones)
 function DriveDomainHospital(d: Integer): Integer;
 // is hospital h part of domain d
 function DriveDomainHas(d, h: Integer): Boolean;
+
+// 999 ambulance: with it on, LsoaDriveMinutes adds the response and
+// on-scene constants below (call to hospital door rather than drive time)
+const
+  AmbResponseMin = 27.8;        // SECAmb Category 2 mean, Nov 2025 - Oct 2026 (AmbSYS)
+  AmbResponse90Min = 56.0;      // its 90th centile (monthly figures, count-weighted)
+  AmbResponseMonthLo = 22.5;    // the lowest and highest monthly means in that year
+  AmbResponseMonthHi = 32.5;
+  AmbResponseEngland = 30.5;    // England, same months
+  AmbOnSceneMin = 33.0;         // suspected stroke, English studies: medians 27-35
+  AmbHandoverMin = 18.9;        // SECAmb mean handover at hospital (after the door; not added)
+  AmbStrokeCallToDoor = 93.0;   // SECAmb AmbCO K1m, Jul 2025 - Jun 2026: mean, 999 call to hospital
+  AmbStrokeCallToDoor90 = 139.7;
+  AmbStrokePatients = 5621;     // confirmed strokes behind it
+  // with the ambulance on, thresholds and fill bands move up by this much
+  AmbThresholdShift = 60;
+  // hyper-acute stroke units in Kent and Medway, as hospital indices
+  StrokeUnitCount = 3;
+  StrokeUnitHosp: array[0..StrokeUnitCount - 1] of Integer = (0, 2, 4);  // Darent Valley, Maidstone, William Harvey
+
+procedure SetAmbulance(AOn: Boolean);
+function AmbulanceOn: Boolean;
+function AmbulanceMinutes: Double;          // response + on scene when on, else 0
+function TimeShift: Integer;                // AmbThresholdShift when on, else 0
 
 // sub-areas
 function DistrictArea(d: Integer): Integer;                // 0 North, 1 East, 2 West
@@ -1021,9 +1077,37 @@ begin
   result := CvdKind * DriveScenarioCount + Scenario;
 end;
 
-function LsoaDriveMinutes(i, Domain: Integer; Scenario: Integer): Double;
+function LsoaTransportMinutes(i, Domain: Integer; Scenario: Integer): Double;
 begin
   result := LsoaDriveMin[(Scenario * DriveDomainCount + DriveDataDomain(Domain)) * LsoaCount + i];
+end;
+
+function LsoaDriveMinutes(i, Domain: Integer; Scenario: Integer): Double;
+begin
+  result := LsoaTransportMinutes(i, Domain, Scenario) + AmbulanceMinutes;
+end;
+
+var
+  FAmbulance: Boolean = False;
+
+procedure SetAmbulance(AOn: Boolean);
+begin
+  FAmbulance := AOn;
+end;
+
+function AmbulanceOn: Boolean;
+begin
+  result := FAmbulance;
+end;
+
+function AmbulanceMinutes: Double;
+begin
+  if FAmbulance then result := AmbResponseMin + AmbOnSceneMin else result := 0;
+end;
+
+function TimeShift: Integer;
+begin
+  if FAmbulance then result := AmbThresholdShift else result := 0;
 end;
 
 function DriveDomainHospital(d: Integer): Integer;

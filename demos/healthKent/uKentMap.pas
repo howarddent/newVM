@@ -57,8 +57,7 @@ unit uKentMap;
      ShowIsochrones is set; the longest line of each is labelled. Hospitals
      (ShowHospitals) are red squares with a white cross, the chosen ones
      larger; with them, the best single site for the scenario is a green
-     star (larger when it is the chosen domain), and the sites within 2 and
-     5 minutes of its mean are outlined in green (DrawBestZones).
+     star (larger when it is the chosen domain).
 
      VIEW: wheel zooms about the cursor (1x .. 40x), a left drag pans, a
      left click without a drag selects the LSOA under the cursor
@@ -146,7 +145,6 @@ type
     procedure FindIsoLabels;
     procedure DrawIsoLabels;
     procedure DrawHospitals;
-    procedure DrawBestZones;
     procedure DrawBestSite;
     procedure DrawMedianLines;
     procedure BuildTextures;
@@ -188,6 +186,7 @@ type
     procedure SetDriveScenario(S: Integer);    // 0 free-flow, 1 peak, 2 blue light
     // after SetCvdEventKind: the best site, its isochrones and the labels follow the kind
     procedure EventKindChanged;
+    procedure AmbulanceChanged;
     procedure SetAreas(S: TAreaSet);
     procedure SetAreaCentre(Area: Integer; const C: TKentCentres);   // NaN BE hides it
     procedure ResetView;
@@ -236,7 +235,7 @@ const
   clHospital = TColor($2020C8);     // RGB(200, 32, 32)
   clBestSite = TColor($3C8C14);     // RGB(20, 140, 60)
   clMedian = TColor($A05000);       // RGB(0, 80, 160)
-  clBestZone = TColor($1E5A00);     // RGB(0, 90, 30), darker: the drive fill is green near it
+  clBestZone = TColor($1E5A00);     // RGB(0, 90, 30), the star's outline: the drive fill is green near it
   clIsochrone = TColor($9900D6);    // RGB(214, 0, 153)
   DriveBandMinutes = 10;            // fill bands
   DriveBandCount = 7;               // 0-10 .. 50-60, 60+
@@ -344,7 +343,8 @@ end;
 function DriveColour(Minutes: Double): TColor;
 begin
   if IsNan(Minutes) then Exit(clLand);
-  result := DriveBandColour(Trunc(Minutes / DriveBandMinutes));
+  // with the 999 ambulance on, the bands start at TimeShift (60 min)
+  result := DriveBandColour(Max(0, Floor((Minutes - TimeShift) / DriveBandMinutes)));
 end;
 
 function LsoaFillColour(Mode: TKentColourMode; Domain, i: Integer; Scenario: Integer): TColor;
@@ -484,6 +484,13 @@ begin
   if D = FDriveDomain then Exit;
   FDriveDomain := D;
   FindIsoLabels;
+end;
+
+// the 999 ambulance option changed: the fill and the isochrone labels follow
+procedure TKentMapView.AmbulanceChanged;
+begin
+  FTexBuilt := False;
+  Invalidate;
 end;
 
 procedure TKentMapView.EventKindChanged;
@@ -648,7 +655,7 @@ begin
   for i := 0 to HospitalCount - 1 do
     FHospTex[i] := CreateTextTexture(HospitalShort[i], 9, True);
   for i := 0 to IsoLevelCount - 1 do
-    FIsoTex[i] := CreateTextTexture(IntToStr(IsoLevels[i]) + ' min', 8, True);
+    FIsoTex[i] := CreateTextTexture(IntToStr(Round(IsoLevels[i] + AmbulanceMinutes)) + ' min', 8, True);
   if CvdEventKind = 0 then FBestTex := CreateTextTexture('best single site', 9, True)
   else FBestTex := CreateTextTexture('best single site (' + CvdEventKindShort[CvdEventKind] + ')', 9, True);
   for i := 0 to 3 do
@@ -838,43 +845,6 @@ begin
     glEnd;
     DrawLabel(FHospTex[h], x + r + 3, y, True);
   end;
-end;
-
-// the sites within 2 minutes (solid) and 5 minutes (dotted) of the best
-// single site's mean, for the speed scenario
-procedure TKentMapView.DrawBestZones;
-
-  procedure Strokes(Extra: Integer);
-  var
-    k, j: Integer;
-    px, py: Double;
-  begin
-    for k := 0 to BestZoneCount - 1 do begin
-      if (BestZoneKind[k] <> CvdEventKind) or (BestZoneScenario[k] <> FDriveScenario)
-        or (BestZoneExtra[k] <> Extra) then Continue;
-      glBegin(GL_LINE_STRIP);
-        for j := BestZoneStart[k] to BestZoneStart[k + 1] - 1 do begin
-          ToPixel(BestZonePtE[j], BestZonePtN[j], px, py);
-          glVertex2d(px, py);
-        end;
-      glEnd;
-    end;
-  end;
-
-begin
-  glColor4f(1, 1, 1, 0.9);
-  glLineWidth(5.0);
-  Strokes(2);
-  glLineWidth(4.5);
-  Strokes(5);
-  GLColour(clBestZone);
-  glLineWidth(2.5);
-  Strokes(2);
-  glEnable(GL_LINE_STIPPLE);
-  glLineStipple(2, $3333);
-  glLineWidth(2.5);
-  Strokes(5);
-  glDisable(GL_LINE_STIPPLE);
 end;
 
 // a green five-pointed star at the scenario's best single site
@@ -1157,7 +1127,6 @@ begin
   end;
   DrawRoutes;
   if FShowIsochrones then DrawIsochrones;
-  if FShowHospitals then DrawBestZones;
   glDisable(GL_STENCIL_TEST);
   glStencilMask($FF);
 

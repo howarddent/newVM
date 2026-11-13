@@ -3721,18 +3721,18 @@ packages. Compiled binaries and each demo's own `lib/` output are
       file as a second argument:
       `./healthKent --events=~/data/healthKent-src/cvd/lsoa_events.csv`, then
       `python3 make_drive_data.py <roads.json> <events.csv>`. It writes
-      `BestSiteE/N/Mean` per scenario, the domain's times and isochrones,
-      and contours of the node means at best + 2 and + 5 min
-      (`BestZone*`). All three scenarios pick the same point: TQ 78696
+      `BestSiteE/N/Mean` per scenario and the domain's times and
+      isochrones. All three scenarios pick the same point: TQ 78696
       57925 (51.2924N 0.5615E), by the A249 at Detling between M20 J7 and
       M2 J5. Mean 26.8 / 32.5 / 22.6 min (free-flow / peak / blue light)
       against Maidstone Hospital 30.5 / 37.2 / 25.6, WHH 34.6 / 41.9 / 29.6
       and K&C 37.0 / 45.3 / 30.9; nobody over an hour free-flow (6.5 % at
       peak). East Kent pays: 38.2 min free-flow against 26.1 to K&C. Map:
-      a green star (larger when chosen) with the zones in dark green
-      (solid 2 min, dotted 5) under the Hospitals layer; its label goes
-      above it, since the population barycentre's label runs through it.
-      The zones follow the roads, so they are ragged and come in pieces.
+      a green star (larger when chosen) under the Hospitals layer; its
+      label goes above it, since the population barycentre's label runs
+      through it. (It used to be ringed by dark green contours of the
+      sites within 2 and 5 min of the best mean, `BestZone*`; removed
+      2026-11-13 at the user's request.)
       Memo: `BestSiteSummary`, after `WhhKchSummary`; a selected LSOA
       shows its time to the site too. Legend key rows are now 14 px
       (`KeyPitch`) to fit its line. Snapshot adds `_drive_best`.
@@ -3761,8 +3761,7 @@ packages. Compiled binaries and each demo's own `lib/` output are
         kind k is `DriveBestDomain + k`. The user picks from
         `DriveChoiceCount` (10), and `LsoaDriveMinutes`/`DriveDataDomain`
         map `DriveBestDomain` to the chosen kind's. `BestSiteE/N/Mean` are
-        `[kind * DriveScenarioCount + scenario]` (`BestSiteIndex`), and the
-        zones carry `BestZoneKind`. `drivedata.inc` is now ~660 kB.
+        `[kind * DriveScenarioCount + scenario]` (`BestSiteIndex`).
       - **Results**: Kent and Medway 5,887 MI + stroke, 2,602 MI and 965
         STEMI admissions a year. **Nothing moves**: all three kinds pick the
         same best site in every scenario (free-flow means 26.8 / 26.7 /
@@ -3790,10 +3789,54 @@ packages. Compiled binaries and each demo's own `lib/` output are
       box row came out of the memo (200 to 164 px); the legend went to
       290 px for the extra key row. Snapshot adds `_medians` and
       `_medians_north_east`.
+    - **999 ambulance** (2026-11-13, a check box under Drive speeds,
+      `--ambulance`): asked as "what part of the total is response time
+      against the drive, and is the WHH/K&C difference significant next to
+      it". With it ticked, every time is 999 call to hospital door:
+      SECAmb's mean Category 2 response plus an assumed on-scene time
+      plus the modelled drive (`uKentData.SetAmbulance`;
+      `LsoaDriveMinutes` adds `AmbulanceMinutes`, `LsoaTransportMinutes`
+      is the plain drive). The thresholds, fill bands and isochrone
+      labels move up by 60 min (`TimeShift`); the isochrones themselves
+      are the same lines. Constants in `uKentData`, all from NHS
+      England's Ambulance Quality Indicators CSVs (RYD = SECAmb):
+      Category 2 mean 27.8 min (A30/A10, Nov 2025 - Oct 2026; England
+      30.5), 90th centile 56, monthly means 22.5-32.5, handover 18.9 (not
+      added: it is after the door); confirmed strokes, 999 call to
+      hospital arrival, mean 93.0, 90th 139.7, 5,621 patients (AmbCO K1m,
+      Jul 2025 - Jun 2026). AQI has no on-scene time; 33 min is the North
+      East study's median, with SSNAP's national medians 27-32. Refresh
+      them by hand when the AQI files move on. The memo section
+      `AmbulanceSummary` (shown ticked or not) answers the question on
+      blue lights: response + on scene are 67 % of a ~90-minute call to
+      door; WHH/K&C differ by 1.3 min county-wide (1.4 % of the total)
+      and 2.0 for North and East Kent, against a 10-min swing between
+      SECAmb's best and worst months and 28 min between mean and 90th-
+      centile response; but by district from -17.6 (Thanet) to +15.1
+      (Ashford); and the farther unit costs ~254 ambulance-hours a year
+      in round trips. The stroke check (27.8 + 33 + 18.4 min to the
+      nearest HASU: Darent Valley, Maidstone, William Harvey) gives 79.2
+      against SECAmb's 93.0. The constants cancel in every comparison
+      between hospitals, so nothing else in the memo changes. Snapshot
+      adds `_drive_whh_kch_ambulance`.
+      - **Stroke only, by district** (same day, at the user's request):
+        `AmbulanceSummary` is now weighted by expected strokes (MI +
+        stroke less MI) whatever "Weight by" says, and adds a district
+        table. A district's mean difference is "significant" at 10 min
+        or more (the swing between SECAmb's best and worst monthly
+        means), "borderline" from 5, judged on the value as printed to
+        0.1 min; a column gives the share of its strokes where the sites
+        differ by 10+. Blue light, 3,284 strokes a year: significant
+        Thanet -17.6 and Canterbury -15.9 (K&C quicker), Ashford +15.1,
+        Tunbridge Wells +10.6 and Folkestone and Hythe +10.0 (WHH
+        quicker); borderline Dover -7.3, Maidstone +9.9, Tonbridge and
+        Malling +8.9, Sevenoaks +8.7. The 10-minute line is my choice,
+        not a clinical threshold.
   - `--snapshot=<prefix>` saves density/IMD/health/admissions (per km2 and
     ratio)/zoomed maps and the window, prints the memo and exits;
     `--colour=<0..4>`, `--domain=<0..7>`, `--cvd=<0|1>`, `--areas=<list>`,
-    `--drive=<0..9>`, `--speeds=<0..2>`, `--weighting=<0..2>`, `--medians`.
+    `--drive=<0..9>`, `--speeds=<0..2>`, `--weighting=<0..2>`, `--medians`,
+    `--ambulance`.
 - **`newPoly`** — least-squares polynomial fitting with
   `newPolymath.pas`'s `TPolynomial.Fit` (see its own section above),
   shown on two `TVMPlot2D` components stacked in one form, the fit above

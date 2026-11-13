@@ -54,8 +54,6 @@
 # by the kinds. The weights are each LSOA's expected admissions for heart
 # attack and stroke, heart attack only, and STEMI only (KINDS), written by
 # `healthKent --events=<file.csv>`. They are domains DriveBestDomain + kind.
-# Also written: the outlines of the sites within 2 and 5 minutes of each
-# best mean (BEST_ZONES), contoured on the same grid as the isochrones.
 #
 # Usage: python3 make_drive_data.py <drive_roads.json> <events.csv>
 # ---------------------------------------------------------------------------
@@ -101,7 +99,6 @@ HOSPITALS = [
 ]
 WHH, KCH = 4, 5
 LEVELS = [15, 30, 45, 60]
-BEST_ZONES = [2, 5]           # minutes above the best site's mean
 KINDS = ['events', 'mi', 'stemi']   # events CSV columns: MI + stroke, MI, STEMI
 GRID = 500.0
 BOX = (535000, 660000, 120000, 190000)   # E0, E1, N0, N1
@@ -278,7 +275,7 @@ def main(path, events):
     far = (gacc * ACCESS_KMH / 60 > 1.5).reshape(GE.shape) | ~land_mask(GE, GN)
 
     all_l, iso = [], []    # all_l[scenario][domain]; iso (scenario, domain, minutes, points)
-    best, zones = {}, []   # best[(kind, scenario)] = (E, N, mean); zones (kind, scenario, extra minutes, points)
+    best = {}              # best[(kind, scenario)] = (E, N, mean)
     for sc, scname in enumerate(SCENARIOS):
         v = scenario_speed(E, sc)
         report_speeds(E, v, scname)
@@ -303,18 +300,12 @@ def main(path, events):
             dist = dijkstra(GT, indices=int(k))
             bls.append(dist[ln] + la)
             bgs.append((dist[gnod] + gacc).reshape(GE.shape))
-            cg = contourpy.contour_generator(ge, gn, smooth(mean[kind][gnod].reshape(GE.shape), far), corner_mask=True)
-            for extra in BEST_ZONES:
-                for line in cg.lines(mean[kind, k] + extra):
-                    pts = simplify(np.asarray(line), 60.0)
-                    if len(pts) >= 2:
-                        zones.append((kind, sc, extra, pts))
         # the two combined choices, then the best sites
         all_l.append(list(lt) + [np.minimum(lt[WHH], lt[KCH]), lt.min(axis=0)] + bls)
         dom_g = gt + [np.minimum(gt[WHH], gt[KCH]), np.min(gt, axis=0)] + bgs
         iso += [(sc,) + x for x in isochrones(dom_g, ge, gn, far)]
     print('isochrone lines', len(iso), 'points', sum(len(x[3]) for x in iso))
-    write(all_l, iso, best, zones, stamp)
+    write(all_l, iso, best, stamp)
 
 
 def isochrones(dom_g, ge, gn, far):
@@ -329,7 +320,7 @@ def isochrones(dom_g, ge, gn, far):
     return iso
 
 
-def write(all_l, iso, best, zones, stamp):
+def write(all_l, iso, best, stamp):
     out = os.path.join(here, 'drivedata.inc')
     def arr(name, typ, vals, fmt, per=12):
         rows = [', '.join(fmt % v for v in vals[i:i + per]) for i in range(0, len(vals), per)]
@@ -366,22 +357,11 @@ def write(all_l, iso, best, zones, stamp):
         fh.write(arr('IsoStart', 'Integer', starts, '%d', 16))
         fh.write(arr('IsoPtE', 'Single', [float(q[0]) for x in iso for q in x[3]], '%.0f'))
         fh.write(arr('IsoPtN', 'Single', [float(q[1]) for x in iso for q in x[3]], '%.0f'))
-        # best single site per kind and scenario, [kind * DriveScenarioCount + scenario],
-        # and the zones within BEST_ZONES minutes of it
+        # best single site per kind and scenario, [kind * DriveScenarioCount + scenario]
         bl = [best[(kind, sc)] for kind in range(len(KINDS)) for sc in range(len(SCENARIOS))]
         fh.write(arr('BestSiteE', 'Single', [b[0] for b in bl], '%.0f'))
         fh.write(arr('BestSiteN', 'Single', [b[1] for b in bl], '%.0f'))
         fh.write(arr('BestSiteMean', 'Single', [b[2] for b in bl], '%.2f'))
-        fh.write('  BestZoneCount = %d;\n' % len(zones))
-        fh.write(arr('BestZoneKind', 'Byte', [z[0] for z in zones], '%d', 30))
-        fh.write(arr('BestZoneScenario', 'Byte', [z[1] for z in zones], '%d', 30))
-        fh.write(arr('BestZoneExtra', 'Byte', [z[2] for z in zones], '%d', 30))
-        zs = [0]
-        for z in zones:
-            zs.append(zs[-1] + len(z[3]))
-        fh.write(arr('BestZoneStart', 'Integer', zs, '%d', 16))
-        fh.write(arr('BestZonePtE', 'Single', [float(q[0]) for z in zones for q in z[3]], '%.0f'))
-        fh.write(arr('BestZonePtN', 'Single', [float(q[1]) for z in zones for q in z[3]], '%.0f'))
     print('wrote', out, os.path.getsize(out), 'bytes')
 
 
