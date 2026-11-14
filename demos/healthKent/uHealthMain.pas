@@ -39,9 +39,9 @@ unit uHealthMain;
      50,000 people, motorways, trunk roads, primary A roads, railways,
      the population barycentre, the heart attack and stroke barycentre
      (weighted by expected admissions), the geographic centre and the
-     admissions' weighted median lines (--medians: a north-south and an
-     east-west line, each with half the admissions either side, and the
-     share in each quadrant they make) and the population quarters
+     admissions' median lines (--medians: two lines, each with half the
+     admissions either side, angled so that the four quadrants they make
+     hold a quarter each) and the population quarters
      (--quarters: two lines that split the population into four equal
      quarters, each with the hospital inside it that gives the lowest
      admissions-weighted mean drive time under every speed scenario,
@@ -152,7 +152,8 @@ type
   private
     FMap: TKentMapView;
     FBaryE, FBaryN, FGeoE, FGeoN, FCvdE, FCvdN: Double;
-    FMedE, FMedN: Double;                 // admissions' weighted median lines
+    FMedE, FMedN: Double;                 // where the admissions' two median lines cross
+    FMedA1, FMedA2: Double;               // their bearings, degrees clockwise from north
     FMedQ: array[0..3] of Double;         // their quadrants' shares: NW, NE, SW, SE
     FSnapshot: string;
     FShown: Boolean;
@@ -228,6 +229,14 @@ end;
 function Signed(v: Double): string;
 begin
   result := FormatFloat('+0.0;-0.0;0.0', v);
+end;
+
+// a bearing in degrees clockwise from north as 000.0 .. 359.9
+function Bearing(A: Double): string;
+begin
+  A := A - 360 * Floor(A / 360);
+  if A >= 359.95 then A := 0;
+  result := FormatFloat('000.0', A);
 end;
 
 // compass point of the bearing from (E0, N0) to (E1, N1)
@@ -336,8 +345,8 @@ begin
   FMap.SetBarycentre(FBaryE, FBaryN);
   FMap.SetGeoCentre(FGeoE, FGeoN);
   FMap.SetCvdBarycentre(FCvdE, FCvdN);
-  CvdMedianLines(FInc, FMedE, FMedN, FMedQ);
-  FMap.SetMedianLines(FMedE, FMedN, FMedQ);
+  CvdMedianLines(FInc, FMedE, FMedN, FMedA1, FMedA2, FMedQ);
+  FMap.SetMedianLines(FMedE, FMedN, FMedA1, FMedA2, FMedQ);
   UpdateQuarters;
   several := (FAreas <> []) and (FAreas <> [0]) and (FAreas <> [1]) and (FAreas <> [2]);
   for a := 0 to AreaCount - 1 do begin
@@ -952,6 +961,7 @@ procedure TForm1.CvdSummary(L: TStrings);
 var
   i, d, n: Integer;
   ev, ag, rm, ri, ok, mk, la, lo, w, wE, wN, tl: Double;
+  axQ: array[0..3] of Double;
   Ev_, Ag_, Land, Smk, Obe, Ad: array of Double;
   b: Integer;
 begin
@@ -1012,20 +1022,28 @@ begin
     [Hypot(wE - FBaryE, wN - FBaryN) / 1000, Compass(FBaryE, FBaryN, wE, wN)]));
   L.Add(Format('    the risk factors a further %.1f km %s.',
     [Hypot(FCvdE - wE, FCvdN - wN) / 1000, Compass(wE, wN, FCvdE, FCvdN)]));
-  // weighted median lines and the quadrants they make
+  // the two median lines, angled to make equal quarters
   L.Add('');
-  L.Add('  Median lines (half the expected ' + CvdEventText + ' admissions either side of each):');
+  L.Add('  Median lines (each halves the expected ' + CvdEventText + ' admissions; angled so that');
+  L.Add('  together they quarter them):');
+  L.Add(Format('    line 1 runs %s - %s, line 2 %s - %s, %.2f degrees apart,',
+    [Bearing(FMedA1 + 180), Bearing(FMedA1), Bearing(FMedA2 + 180), Bearing(FMedA2),
+     FMedA2 - FMedA1]));
   BNGToWGS84(FMedE, FMedN, la, lo);
-  L.Add(Format('    north-south line at easting %d (%.4f%s), east-west line at northing %d (%.4fN),',
-    [Trunc(FMedE), Abs(lo), IfThen(lo < 0, 'W', 'E'), Trunc(FMedN), la]));
-  L.Add('    crossing at ' + GridRef(FMedE, FMedN) + Format(', %.1f km %s of the barycentre.',
-    [Hypot(FMedE - FCvdE, FMedN - FCvdN) / 1000, Compass(FCvdE, FCvdN, FMedE, FMedN)]));
-  L.Add(Format('    Quadrants: NW %.1f %%, NE %.1f %%, SW %.1f %%, SE %.1f %%.',
+  L.Add('    crossing at ' + GridRef(FMedE, FMedN) + Format(' (%.4fN %.4f%s), %.1f km %s of the barycentre.',
+    [la, Abs(lo), IfThen(lo < 0, 'W', 'E'),
+     Hypot(FMedE - FCvdE, FMedN - FCvdN) / 1000, Compass(FCvdE, FCvdN, FMedE, FMedN)]));
+  L.Add(Format('    Quadrants: NW %.2f %%, NE %.2f %%, SW %.2f %%, SE %.2f %% (whole LSOAs, by label point).',
     [FMedQ[0], FMedQ[1], FMedQ[2], FMedQ[3]]));
-  L.Add(Format('    West %.1f / east %.1f %%, north %.1f / south %.1f %% (to the nearest whole LSOA).',
+  L.Add(Format('    West %.2f / east %.2f %% of line 1, north %.2f / south %.2f %% of line 2.',
     [FMedQ[0] + FMedQ[2], FMedQ[1] + FMedQ[3], FMedQ[0] + FMedQ[1], FMedQ[2] + FMedQ[3]]));
-  L.Add('    Two medians halve each direction but needn''t make equal quarters: larger NE and SW');
-  L.Add('    quadrants mean the admissions lie along a SW-NE diagonal, larger NW and SE along NW-SE.');
+  CvdMedianQuadrants(FInc, 0, 90, wE, wN, axQ);
+  L.Add(Format('    Plain north-south and east-west medians (easting %d, northing %d) would give',
+    [Trunc(wE), Trunc(wN)]));
+  L.Add(Format('    NW %.1f %%, NE %.1f %%, SW %.1f %%, SE %.1f %%.', [axQ[0], axQ[1], axQ[2], axQ[3]]));
+  L.Add('    The lines are the perpendicular pair nearest to north-south and east-west that makes');
+  L.Add('    equal quarters, each then turned by up to half a degree to bring the quarters as near');
+  L.Add('    25 % as whole LSOAs allow. Other pairs of lines quarter the admissions too.');
 
   CorridorSummary(L, ev);
 
@@ -2172,7 +2190,7 @@ begin
     Inc(y0, KeyPitch);
   end;
   if cgLayers.Checked[liMedians] then begin
-    KeyLine(y0, clMedian, 3, 'median lines of admissions; % in each quadrant', False);
+    KeyLine(y0, clMedian, 3, 'median lines quartering admissions; % in each', False);
     Inc(y0, KeyPitch);
   end;
   if cgLayers.Checked[liQuarters] then begin

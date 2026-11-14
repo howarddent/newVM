@@ -127,10 +127,19 @@ Hythe (10.0). Dover, Maidstone, Tonbridge and Malling and Sevenoaks are
 borderline (7-10 minutes); Swale, Medway, Dartford and Gravesham are
 not.
 
-The map can also draw the admissions' median lines: a north-south and
-an east-west line, each with half the expected admissions on either
-side. They cross at TQ 81807 61037, north-east of Maidstone, and the
-quadrants they make are not equal:
+The map can also draw the admissions' median lines: two lines, each
+with half the expected admissions on either side, angled so that the
+four quadrants they make hold a quarter each. They are the
+perpendicular pair nearest to north-south and east-west that does so,
+each then turned by up to half a degree to bring the quarters as near
+25 % as whole LSOAs allow. For Kent and Medway they are turned 7.9
+degrees clockwise (bearings 007.9 and 097.9) and cross at TQ 83065
+62269, giving 25.02, 25.01, 24.99 and 24.98 %. For North and East Kent
+the quarters are within 0.1 point of 25 %.
+
+Plain north-south and east-west medians (crossing at TQ 81807 61037,
+north-east of Maidstone) do not make equal quarters, which the memo
+gives for comparison:
 
 | Area | NW | NE | SW | SE |
 |---|---|---|---|---|

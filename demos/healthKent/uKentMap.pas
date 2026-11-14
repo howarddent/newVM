@@ -118,7 +118,7 @@ type
     FShowIsochrones, FShowHospitals, FShowMedians, FShowQuarters: Boolean;
     FQuarterHosp: array[0..3] of Integer;    // the population quarters' chosen hospitals
     FQuarterText: array[0..3] of string;
-    FMedE, FMedN: Double;
+    FMedE, FMedN, FMedA1, FMedA2: Double;
     FMedQ: array[0..3] of Double;
     FDriveDomain, FDriveScenario: Integer;
     FIsoLabel: array[0..3] of Integer;   // longest line of each level, -1 none
@@ -200,7 +200,8 @@ type
     procedure SetGeoCentre(E, N: Double);
     procedure SetCvdBarycentre(E, N: Double);
     // admissions' weighted median lines and the quadrant shares (NW, NE, SW, SE, %)
-    procedure SetMedianLines(E, N: Double; const Q: array of Double);
+    // (E, N) where they cross; A1, A2 their bearings, degrees clockwise from north
+    procedure SetMedianLines(E, N, A1, A2: Double; const Q: array of Double);
     procedure SetDriveDomain(D: Integer);      // isochrones and hospital highlight
     // the population quarters' chosen hospitals and labels (NW, NE, SW, SE)
     procedure SetQuarters(const Hosp: array of Integer; const Labels: array of string);
@@ -585,12 +586,14 @@ begin
   Invalidate;
 end;
 
-procedure TKentMapView.SetMedianLines(E, N: Double; const Q: array of Double);
+procedure TKentMapView.SetMedianLines(E, N, A1, A2: Double; const Q: array of Double);
 var
   k: Integer;
 begin
   FMedE := E;
   FMedN := N;
+  FMedA1 := A1;
+  FMedA2 := A2;
   for k := 0 to 3 do FMedQ[k] := Q[k];
   FTexBuilt := False;
   Invalidate;
@@ -1006,31 +1009,41 @@ end;
 // quadrant's share of admissions out towards its corner
 procedure TKentMapView.DrawMedianLines;
 const
-  QuadSE: array[0..3] of Integer = (-1, 1, -1, 1);   // east of the line?
-  QuadSN: array[0..3] of Integer = (1, 1, -1, -1);   // north?
+  QuadSE: array[0..3] of Integer = (-1, 1, -1, 1);   // east of line 1?
+  QuadSN: array[0..3] of Integer = (1, 1, -1, -1);   // north of line 2?
 var
-  x0, y0, x1, y1, cx, cy, ex, ny, lx, ly: Double;
+  d1e, d1n, d2e, d2n, far, be, bn, bl, ce, cn, r, ax, ay, bx, by, lx, ly: Double;
   k, pass: Integer;
 begin
   if IsNan(FMedE) or IsNan(FMedN) then Exit;
-  ToPixel(FEMin, FNMin, x0, y0);
-  ToPixel(FEMax, FNMax, x1, y1);
-  ToPixel(FMedE, FMedN, cx, cy);
+  // unit vectors along the lines: line 1 northwards, line 2 eastwards
+  d1e := Sin(DegToRad(FMedA1)); d1n := Cos(DegToRad(FMedA1));
+  d2e := Sin(DegToRad(FMedA2)); d2n := Cos(DegToRad(FMedA2));
+  far := 2 * (Abs(FEMax - FEMin) + Abs(FNMax - FNMin));   // beyond the area either way
   for pass := 0 to 1 do begin                 // white halo, then the line
     if pass = 0 then begin glColor4f(1, 1, 1, 0.85); glLineWidth(5.0); end
     else begin GLColour(clMedian); glLineWidth(2.4); end;
     glBegin(GL_LINES);
-      glVertex2d(cx, y0); glVertex2d(cx, y1);
-      glVertex2d(x0, cy); glVertex2d(x1, cy);
+      ToPixel(FMedE - far * d1e, FMedN - far * d1n, ax, ay);
+      ToPixel(FMedE + far * d1e, FMedN + far * d1n, bx, by);
+      glVertex2d(ax, ay); glVertex2d(bx, by);
+      ToPixel(FMedE - far * d2e, FMedN - far * d2n, ax, ay);
+      ToPixel(FMedE + far * d2e, FMedN + far * d2n, bx, by);
+      glVertex2d(ax, ay); glVertex2d(bx, by);
     glEnd;
   end;
-  // labels halfway from the crossing to the box's corner, kept on screen
+  // labels out along each quadrant's bisector, half as far as the box's
+  // corner on that side, kept on screen
   for k := 0 to 3 do begin
     if not FQuadTex[k].Built then Continue;
-    if QuadSE[k] > 0 then ex := x1 else ex := x0;
-    if QuadSN[k] > 0 then ny := Max(y0, y1) else ny := Min(y0, y1);
-    lx := (cx + ex) / 2;
-    ly := (cy + ny) / 2;
+    be := QuadSN[k] * d1e + QuadSE[k] * d2e;
+    bn := QuadSN[k] * d1n + QuadSE[k] * d2n;
+    bl := Hypot(be, bn);
+    if bl < 1e-9 then Continue;
+    if QuadSE[k] > 0 then ce := FEMax else ce := FEMin;
+    if QuadSN[k] > 0 then cn := FNMax else cn := FNMin;
+    r := 0.5 * Hypot(ce - FMedE, cn - FMedN);
+    ToPixel(FMedE + r * be / bl, FMedN + r * bn / bl, lx, ly);
     lx := EnsureRange(lx, FQuadTex[k].W / 2 + 4, Width - FQuadTex[k].W / 2 - 4);
     ly := EnsureRange(ly, FQuadTex[k].H + 4, Height - FQuadTex[k].H - 4);
     DrawLabel(FQuadTex[k], lx - FQuadTex[k].W / 2, ly, True);

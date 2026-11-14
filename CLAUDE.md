@@ -1870,7 +1870,12 @@ solid, frequency and time domain both, and a FEM4 example. Units:
   bump near 3 Hz goes, Rrs now falling smoothly 2.11 -> 1.55 from 1 to
   10 Hz; the midline wall at the fundamental falls from 1.75 mm peak low
   in the abdomen to 0.38 mm just below the costal margin (these cycle
-  figures were run before the jet pump, i.e. as with `--nopump`). Why fat would
+  figures were run before the jet pump, i.e. as with `--nopump`). With
+  the pump as well (both defaults), alpha 5 -> 70: VT 138.7 -> 139.2 mL,
+  diaphragm 69 -> 14 %, entrained 27.9 -> 29.7 mL per cycle, mean
+  alveolar pressure 4.97 -> 4.89 cmH2O, mean tracheal 1.37 -> 1.39, wall
+  peak 1.36 -> 0.29 mm; across 60-800 /min VT changes by at most 2 %
+  (the drag's largest effect, at 60 /min: 444 -> 435 mL). Why fat would
   lower the drag (lubricated, less tightly packed bowel) is a reading, not
   modelled. The sweeps, plots, animations and earlier figures were not
   rerun.
@@ -3783,6 +3788,21 @@ packages. Compiled binaries and each demo's own `lib/` output are
         90558 57572). STEMI's younger, more male profile changes the weights
         too little. The memo's best-site section adds a table by kind.
         Snapshot adds `_drive_best_stemi` and `_cvd_stemi`.
+    - **Median lines are angled since 2026-11-14** (at the user's request),
+      so the four quadrants hold a quarter each; the paragraph below
+      describes the plain north-south / east-west version, which the memo
+      still gives for comparison (`CvdMedianQuadrants(Inc, 0, 90, ...)`).
+      `CvdMedianLines` now returns the crossing, two bearings (degrees
+      clockwise from north) and the shares. It scans a perpendicular pair
+      turned by th in 0.05 degree steps outwards from 0 for the first sign
+      change of NE - NW (one must exist: a quarter turn swaps them), then
+      tries each line +-0.5 degrees in 0.01 steps for the smallest largest
+      departure from 25 %. Other pairs quarter the admissions too; this
+      rule is my choice. Kent and Medway, MI + stroke: turned 7.9 degrees
+      clockwise, exactly perpendicular, crossing TQ 83065 62269, quadrants
+      25.02 / 25.01 / 24.99 / 24.98 %. North and East Kent: within 0.1
+      point (from the map; line 1 about 015). The map draws the lines
+      through the crossing and puts each label on its quadrant's bisector.
     - **Median lines** (2026-11-13, layer "Median lines", `--medians`, off by
       default): a north-south line at the weighted median easting and an
       east-west one at the weighted median northing of the chosen kind's

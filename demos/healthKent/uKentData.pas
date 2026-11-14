@@ -444,9 +444,6 @@ function TotalLandKm2: Double;
 procedure PopulationBarycentre(const Include: array of Boolean; out E, N: Double);
 // the same weighted by expected heart attack and stroke admissions
 procedure CvdBarycentre(const Include: array of Boolean; out E, N: Double);
-// the expected admissions' weighted median easting and northing (label
-// points), and the share of admissions in each quadrant they make:
-// Q[0] NW, Q[1] NE, Q[2] SW, Q[3] SE
 // Population quarters: two straight lines, one near north-south and one near
 // east-west, that split the whole ICB's population (mid-2024, by LSOA label
 // point) into four quarters - NW, NE, SW, SE (0..3, as the median lines).
@@ -481,8 +478,21 @@ function QuarterHospital(q: Integer; out Means: array of Double; out Agree, Insi
 const
   QuarterName: array[0..3] of string = ('NW', 'NE', 'SW', 'SE');
 
-procedure CvdMedianLines(const Include: array of Boolean; out E, N: Double;
+// two lines that each halve the expected admissions (label points) and
+// together quarter them. A1 and A2 are the lines' bearings in degrees
+// clockwise from grid north: line 1 the more north-south one (-45..45),
+// line 2 the more east-west one (near 90). They start perpendicular, at
+// the rotation nearest to north-south / east-west that makes equal
+// quarters, and are then each adjusted by up to half a degree to bring
+// the quarters as near 25 % as whole LSOAs allow. (E, N) is where they
+// cross; Q is each quadrant's share: Q[0] NW, Q[1] NE, Q[2] SW, Q[3] SE
+// (west/east of line 1, north/south of line 2)
+procedure CvdMedianLines(const Include: array of Boolean; out E, N, A1, A2: Double;
   out Q: array of Double);
+// the same for two given bearings: each line halves the admissions at
+// that bearing (A1 = 0, A2 = 90 are the plain easting and northing medians)
+procedure CvdMedianQuadrants(const Include: array of Boolean; A1, A2: Double;
+  out E, N: Double; out Q: array of Double);
 // geographic centre of the districts with IncDistrict[d] true ([] = all)
 procedure GeographicCentre(const IncDistrict: array of Boolean; out E, N: Double);
 
@@ -930,6 +940,81 @@ begin
   WeightedBarycentre(CvdEv, Include, E, N);
 end;
 
+// the median lines' working data: the included LSOAs with a weight
+type
+  TMedianSet = record
+    Cnt: Integer;
+    E, N, W: array of Double;
+    Tot: Double;
+    Key: array of Double;       // scratch: projections
+    Idx: array of Integer;      // scratch: sort order
+  end;
+
+procedure MedianSetInit(out S: TMedianSet; const Include: array of Boolean);
+var
+  i: Integer;
+begin
+  NeedCvd;
+  SetLength(S.E, LsoaCount); SetLength(S.N, LsoaCount); SetLength(S.W, LsoaCount);
+  SetLength(S.Key, LsoaCount); SetLength(S.Idx, LsoaCount);
+  S.Cnt := 0;
+  S.Tot := 0;
+  for i := 0 to LsoaCount - 1 do
+    if ((Length(Include) = 0) or Include[i]) and (CvdEv[i] > 0) then begin
+      S.E[S.Cnt] := LsoaLabelE[i];
+      S.N[S.Cnt] := LsoaLabelN[i];
+      S.W[S.Cnt] := CvdEv[i];
+      S.Tot := S.Tot + CvdEv[i];
+      Inc(S.Cnt);
+    end;
+end;
+
+procedure SortIdxByKey(var Idx: array of Integer; const Key: array of Double; lo, hi: Integer);
+var
+  i, j, t: Integer;
+  pv: Double;
+begin
+  while lo < hi do begin
+    i := lo; j := hi;
+    pv := Key[Idx[(lo + hi) div 2]];
+    repeat
+      while Key[Idx[i]] < pv do Inc(i);
+      while Key[Idx[j]] > pv do Dec(j);
+      if i <= j then begin
+        t := Idx[i]; Idx[i] := Idx[j]; Idx[j] := t;
+        Inc(i); Dec(j);
+      end;
+    until i > j;
+    if j - lo < hi - i then begin SortIdxByKey(Idx, Key, lo, j); lo := i; end
+    else begin SortIdxByKey(Idx, Key, i, hi); hi := j; end;
+  end;
+end;
+
+// weighted median of cx E + cn N over the set: sorted, the split between
+// two neighbouring LSOAs whose two sides' weights come nearest to half
+// each, the line halfway between them, so that no LSOA lies on it
+function MedianOffset(var S: TMedianSet; cx, cn: Double): Double;
+var
+  i, k: Integer;
+  cum, best: Double;
+begin
+  if S.Cnt = 0 then Exit(NaN);
+  for i := 0 to S.Cnt - 1 do begin
+    S.Key[i] := cx * S.E[i] + cn * S.N[i];
+    S.Idx[i] := i;
+  end;
+  if S.Cnt = 1 then Exit(S.Key[0]);
+  SortIdxByKey(S.Idx, S.Key, 0, S.Cnt - 1);
+  cum := 0;
+  k := 0;
+  best := Infinity;
+  for i := 0 to S.Cnt - 2 do begin              // split after Idx[i]
+    cum := cum + S.W[S.Idx[i]];
+    if Abs(cum - S.Tot / 2) < best then begin best := Abs(cum - S.Tot / 2); k := i; end;
+  end;
+  result := (S.Key[S.Idx[k]] + S.Key[S.Idx[k + 1]]) / 2;
+end;
+
 // weighted median of V: sorted, the split between two neighbouring
 // LSOAs whose two sides' weights come nearest to half each, the line
 // halfway between them, so that no LSOA lies on it
@@ -1104,33 +1189,128 @@ begin
   for s := 0 to Min(High(Means), DriveScenarioCount - 1) do Means[s] := M[result][s];
 end;
 
-procedure CvdMedianLines(const Include: array of Boolean; out E, N: Double;
+// a line at bearing A (degrees clockwise from north) is cx E + cn N = c,
+// with the positive side east of it for A near 0 and north for A near 90
+procedure LineCoeffs(A: Double; NorthSide: Boolean; out cx, cn: Double);
+begin
+  cx := Cos(DegToRad(A));
+  cn := -Sin(DegToRad(A));
+  if NorthSide then begin cx := -cx; cn := -cn; end;
+end;
+
+// quadrant shares (%) for line 1 (x1, n1, c1: east positive) and line 2
+// (x2, n2, c2: north positive)
+procedure QuadShares(const S: TMedianSet; x1, n1, c1, x2, n2, c2: Double;
   out Q: array of Double);
 var
-  VE, VN: array of Double;
   i, k: Integer;
-  tot: Double;
 begin
-  NeedCvd;
-  SetLength(VE, LsoaCount);
-  SetLength(VN, LsoaCount);
-  for i := 0 to LsoaCount - 1 do begin
-    VE[i] := LsoaLabelE[i];
-    VN[i] := LsoaLabelN[i];
-  end;
-  E := WeightedMedian(VE, CvdEv, Include);
-  N := WeightedMedian(VN, CvdEv, Include);
   for k := 0 to 3 do Q[k] := 0;
-  tot := 0;
-  for i := 0 to LsoaCount - 1 do begin
-    if (Length(Include) > 0) and not Include[i] then Continue;
+  for i := 0 to S.Cnt - 1 do begin
     k := 0;
-    if VE[i] > E then k := 1;
-    if VN[i] < N then k := k + 2;
-    Q[k] := Q[k] + CvdEv[i];
-    tot := tot + CvdEv[i];
+    if x1 * S.E[i] + n1 * S.N[i] > c1 then k := 1;
+    if x2 * S.E[i] + n2 * S.N[i] < c2 then k := k + 2;
+    Q[k] := Q[k] + S.W[i];
   end;
-  if tot > 0 then for k := 0 to 3 do Q[k] := 100 * Q[k] / tot;
+  if S.Tot > 0 then for k := 0 to 3 do Q[k] := 100 * Q[k] / S.Tot;
+end;
+
+procedure MedianPair(var S: TMedianSet; A1, A2: Double; out E, N: Double;
+  out Q: array of Double);
+var
+  x1, n1, c1, x2, n2, c2, det: Double;
+begin
+  LineCoeffs(A1, False, x1, n1);
+  LineCoeffs(A2, True, x2, n2);
+  c1 := MedianOffset(S, x1, n1);
+  c2 := MedianOffset(S, x2, n2);
+  QuadShares(S, x1, n1, c1, x2, n2, c2, Q);
+  det := x1 * n2 - n1 * x2;
+  if IsNan(c1) or (Abs(det) < 1e-9) then begin E := NaN; N := NaN; end
+  else begin
+    E := (c1 * n2 - n1 * c2) / det;
+    N := (x1 * c2 - c1 * x2) / det;
+  end;
+end;
+
+procedure CvdMedianQuadrants(const Include: array of Boolean; A1, A2: Double;
+  out E, N: Double; out Q: array of Double);
+var
+  S: TMedianSet;
+begin
+  MedianSetInit(S, Include);
+  MedianPair(S, A1, A2, E, N, Q);
+end;
+
+procedure CvdMedianLines(const Include: array of Boolean; out E, N, A1, A2: Double;
+  out Q: array of Double);
+const
+  Coarse = 0.05;                 // degrees, the perpendicular scan
+  Fine = 0.01;                   // degrees, the adjustment of each line
+  FineN = 50;                    // +- 0.5 degrees
+var
+  S: TMedianSet;
+  QQ: array[0..3] of Double;
+  i, j, k, nStep: Integer;
+  th, g, gPrev, g0, thBest, dev, bestDev, e0, n0: Double;
+  x1, n1, c1, x2, n2, c2: array of Double;
+  found: Boolean;
+begin
+  MedianSetInit(S, Include);
+  A1 := 0; A2 := 90;
+  MedianPair(S, A1, A2, E, N, Q);
+  if S.Cnt < 4 then Exit;
+  // perpendicular pair turned by th: the NE - NW difference changes sign
+  // between th = -45 and +45 (a quarter turn swaps the two), so it has a
+  // zero; take the one nearest th = 0, looking outwards from it
+  g0 := Q[1] - Q[0];
+  nStep := Round(45 / Coarse);
+  thBest := 0;
+  found := g0 = 0;
+  if not found then
+    for k := 0 to 1 do begin                     // k = 0 clockwise, 1 anticlockwise
+      gPrev := g0;
+      for i := 1 to nStep do begin
+        if found and (i * Coarse >= Abs(thBest)) then Break;
+        th := i * Coarse;
+        if k = 1 then th := -th;
+        MedianPair(S, th, th + 90, e0, n0, QQ);
+        g := QQ[1] - QQ[0];
+        if (g = 0) or ((g > 0) <> (gPrev > 0)) then begin
+          if Abs(g) <= Abs(gPrev) then thBest := th
+          else if k = 0 then thBest := th - Coarse
+          else thBest := th + Coarse;
+          found := True;
+          Break;
+        end;
+        gPrev := g;
+      end;
+    end;
+  // each line adjusted on its own: the pair with the quarters nearest
+  // 25 %, and among equals the least adjusted
+  SetLength(x1, 2 * FineN + 1); SetLength(n1, 2 * FineN + 1); SetLength(c1, 2 * FineN + 1);
+  SetLength(x2, 2 * FineN + 1); SetLength(n2, 2 * FineN + 1); SetLength(c2, 2 * FineN + 1);
+  for i := 0 to 2 * FineN do begin
+    LineCoeffs(thBest + (i - FineN) * Fine, False, x1[i], n1[i]);
+    c1[i] := MedianOffset(S, x1[i], n1[i]);
+    LineCoeffs(thBest + 90 + (i - FineN) * Fine, True, x2[i], n2[i]);
+    c2[i] := MedianOffset(S, x2[i], n2[i]);
+  end;
+  bestDev := Infinity;
+  A1 := thBest; A2 := thBest + 90;
+  for i := 0 to 2 * FineN do
+    for j := 0 to 2 * FineN do begin
+      QuadShares(S, x1[i], n1[i], c1[i], x2[j], n2[j], c2[j], QQ);
+      dev := 0;
+      for k := 0 to 3 do dev := Max(dev, Abs(QQ[k] - 25));
+      dev := dev + 1e-6 * (Abs(i - FineN) + Abs(j - FineN));
+      if dev < bestDev then begin
+        bestDev := dev;
+        A1 := thBest + (i - FineN) * Fine;
+        A2 := thBest + 90 + (j - FineN) * Fine;
+      end;
+    end;
+  MedianPair(S, A1, A2, E, N, Q);
 end;
 
 type
