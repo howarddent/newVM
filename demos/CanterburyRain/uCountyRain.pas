@@ -39,7 +39,9 @@ unit uCountyRain;
      NETCDF - the grids are netCDF-4 (HDF5), read through the netCDF C
      library (libnetcdf), loaded dynamically when first needed; without it
      GetCountyRain fails with a message saying so rather than the program
-     failing to start. Ubuntu has it as libnetcdf19 (ParaView pulls it in).
+     failing to start. Ubuntu has it as libnetcdf19 (ParaView pulls it in);
+     on Windows the Unidata installer's folder under Program Files is
+     found without being on PATH.
 
 *******************************************************************************}
 
@@ -99,6 +101,50 @@ var
   nc_inq_dimlen: Tnc_inq_dimlen;
   nc_get_var_double: Tnc_get_var_double;
 
+{$IFDEF WINDOWS}
+const
+  LOAD_WITH_ALTERED_SEARCH_PATH = $00000008;
+
+function LoadLibraryExW(lpLibFileName: PWideChar; hFile: THandle;
+  dwFlags: DWord): TLibHandle; stdcall; external 'kernel32.dll';
+
+// The Unidata Windows installer puts netcdf.dll, and the hdf5, zlib and curl
+// DLLs it needs, in "%ProgramFiles%\netCDF <version>\bin" without adding that
+// to PATH. Look there (and in %NETCDF_DIR%\bin first, if set), loading with
+// the DLL's own folder searched for its dependencies.
+function LoadInstalledNetCDF: TLibHandle;
+var
+  Dirs: TStringList;
+  SR: TSearchRec;
+  Root, Dir: string;
+begin
+  result := NilHandle;
+  Dirs := TStringList.Create;
+  try
+    Root := GetEnvironmentVariable('NETCDF_DIR');
+    if Root <> '' then begin
+      Dirs.Add(IncludeTrailingPathDelimiter(Root) + 'bin');
+      Dirs.Add(ExcludeTrailingPathDelimiter(Root));
+    end;
+    Root := IncludeTrailingPathDelimiter(GetEnvironmentVariable('ProgramFiles'));
+    if (Root <> PathDelim) and (FindFirst(Root + 'netCDF*', faDirectory, SR) = 0) then begin
+      repeat
+        if (SR.Attr and faDirectory) <> 0 then Dirs.Add(Root + SR.Name + PathDelim + 'bin');
+      until FindNext(SR) <> 0;
+      FindClose(SR);
+    end;
+    for Dir in Dirs do
+      if FileExists(Dir + PathDelim + 'netcdf.dll') then begin
+        result := LoadLibraryExW(PWideChar(UnicodeString(Dir + PathDelim + 'netcdf.dll')), 0,
+          LOAD_WITH_ALTERED_SEARCH_PATH);
+        if result <> NilHandle then Exit;
+      end;
+  finally
+    Dirs.Free;
+  end;
+end;
+{$ENDIF}
+
 function LoadNetCDF(out Err: string): Boolean;
 const
   Names: array[0..5] of string = (
@@ -117,9 +163,14 @@ begin
       NcLib := LoadLibrary(n);
       if NcLib <> NilHandle then Break;
     end;
+  {$IFDEF WINDOWS}
+  if NcLib = NilHandle then NcLib := LoadInstalledNetCDF;
+  {$ENDIF}
   if NcLib = NilHandle then begin
     Err := 'the netCDF library (libnetcdf) is not installed - it is needed to read the '
-      + 'Met Office files (Ubuntu: apt install libnetcdf19)';
+      + 'Met Office files ('
+      + {$IFDEF WINDOWS}'Windows: install netCDF from Unidata, or set NETCDF_DIR'
+      + {$ELSE}'Ubuntu: apt install libnetcdf19' + {$ENDIF}')';
     Exit(False);
   end;
   Pointer(nc_open) := GetProcAddress(NcLib, 'nc_open');
