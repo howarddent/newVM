@@ -151,7 +151,10 @@ const
       + 'minutes instead of T5, and more of it stays at T12-L2. The heartbeat does nearly all of this; '
       + 'breathing at the default volume does little. The likely reason is that the oscillation stirs '
       + 'the thin sheet of heavy solution running down the posterior dura, diluting it and so weakening '
-      + 'what drives it - a reading of the numbers, not separately tested.',
+      + 'what drives it - a reading of the numbers, not separately tested. Left lateral it is the same '
+      + 'story (T9 instead of T7 at two minutes); sitting, where the heavy solution has only a short way '
+      + 'to fall to the sacrum, it makes no difference (S2-L1 either way). Plain solution is unaffected '
+      + 'in all three positions.',
     '',
     '8. WHAT IS LEFT OUT',
     '',

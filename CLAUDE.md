@@ -3953,8 +3953,8 @@ packages. Compiled binaries and each demo's own `lib/` output are
       flux, and a uniform plug brings it to its prescribed value: `q G_k`
       with pulsation, zero without, as a closed sac requires. The
       projection then only works within each section. This also changes
-      the pulsation-free runs slightly; the supine figures in Results came
-      out the same to the level reported (sitting and lateral not rerun).
+      the pulsation-free runs slightly; the supine, sitting and lateral
+      figures in Results came out the same to the level reported.
   - **The drug is not transported by Stam's method.** C, the injectate
     volume fraction, is conservative finite volumes: MUSCL with the MC
     limiter and SSP-RK2 (`c_flux`/`c_update`).
@@ -4019,8 +4019,14 @@ packages. Compiled binaries and each demo's own `lib/` output are
       this; breathing alone gives T9 at 65 s, against T11 with both. That
       the oscillation stirs and dilutes the thin heavy sheet on the
       posterior dura is a reading of the numbers, not tested. Plain
-      0.999 is unchanged (L5-T12). Sitting, lateral and the other
-      results below are without pulsation and weren't rerun.
+      0.999 is unchanged (L5-T12).
+    - **Sitting and left lateral** (rerun the same day, 125 s, off/on):
+      sitting is unchanged, hyperbaric S2-L1 and plain L5-L4..T12-T11
+      both ways. Left lateral, hyperbaric reaches T9 rather than T7 (T10
+      rather than T9 at 65 s), and plain S1..T12-T11 both ways. So
+      pulsation slows the hyperbaric spread wherever it runs a long way
+      downhill along the sac, and does nothing when sitting, where the
+      solution has only a short way to fall to the sacrum.
     - The cost is the headless check at about 10x real time (17x
       before); the window still draws about 150 fps.
   - **Rendering** (`uspineview.pas`):
