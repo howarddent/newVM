@@ -32,6 +32,7 @@ unit uGlassSpineMain;
     --time=<s>            simulated time for --snapshot (default 120)
     --tilt=<deg> --roll=<deg> --sol0=<n> --sol1=<n> --level=<n>
     --speed=<n>           index into the speed list
+    --pulse=0             start with CSF pulsation off
     --tab=method          open on the Methodology tab
 
 *******************************************************************************}
@@ -72,7 +73,8 @@ type
     cbLevel, cbNeedle, cbJet, cbSpeed: TComboBox;
     seDose, seDur: TFloatSpinEdit;
     btnPause: TButton;
-    chkRoots: TCheckBox;
+    chkRoots, chkPulse: TCheckBox;
+    seCardML, seHR, seRespML, seRR: TFloatSpinEdit;
     mmInfo: TMemo;
     FPaused, FUpdating: Boolean;
     FLastTick: QWord;
@@ -101,6 +103,10 @@ type
     procedure ResetViewClick(Sender: TObject);
     procedure RootsClick(Sender: TObject);
     procedure OpacityChange(Sender: TObject);
+    procedure PulseChange(Sender: TObject);
+    procedure PageChange(Sender: TObject);
+    function AddSpin(AParent: TWinControl; X, Y, W: Integer; AMin, AMax, AInc, AValue: Double;
+      Places: Integer): TFloatSpinEdit;
     procedure SyncPostureControls;
     procedure ApplyInjectionSettings;
     procedure UpdateTitles;
@@ -184,6 +190,19 @@ begin
   Result.Tag := ATag;
 end;
 
+function TfmGlassSpine.AddSpin(AParent: TWinControl; X, Y, W: Integer; AMin, AMax, AInc,
+  AValue: Double; Places: Integer): TFloatSpinEdit;
+begin
+  Result := TFloatSpinEdit.Create(Self);
+  Result.Parent := AParent;
+  Result.SetBounds(X, Y, W, 26);
+  Result.MinValue := AMin;
+  Result.MaxValue := AMax;
+  Result.Increment := AInc;
+  Result.DecimalPlaces := Places;
+  Result.Value := AValue;
+end;
+
 procedure TfmGlassSpine.BuildControls;
 var
   Y, s, i: Integer;
@@ -206,6 +225,7 @@ begin
   tsSim.Caption := 'Simulation';
   tsMethod := FPages.AddTabSheet;
   tsMethod.Caption := 'Methodology';
+  FPages.OnChange := @PageChange;
 
   mmMethod := TMemo.Create(Self);
   mmMethod.Parent := tsMethod;
@@ -312,6 +332,28 @@ begin
   tbOpacity.Min := 1; tbOpacity.Max := 40; tbOpacity.Position := 9;
   tbOpacity.OnChange := @OpacityChange;
 
+  G := AddGroup('CSF pulsation (volume through T1 per cycle)', Y, 112);
+  chkPulse := TCheckBox.Create(Self);
+  chkPulse.Parent := G;
+  chkPulse.SetBounds(8, 2, 330, 22);
+  chkPulse.Caption := 'CSF moves with the heartbeat and breathing';
+  chkPulse.Checked := True;
+  AddLabel(G, 'Heartbeat', 8, 32);
+  seCardML := AddSpin(G, 92, 28, 74, 0, 2, 0.05, 0.3, 2);
+  AddLabel(G, 'mL at', 172, 32);
+  seHR := AddSpin(G, 220, 28, 70, 30, 180, 5, 70, 0);
+  AddLabel(G, '/min', 296, 32);
+  AddLabel(G, 'Breathing', 8, 62);
+  seRespML := AddSpin(G, 92, 58, 74, 0, 2, 0.05, 0.3, 2);
+  AddLabel(G, 'mL at', 172, 62);
+  seRR := AddSpin(G, 220, 58, 70, 4, 40, 1, 12, 0);
+  AddLabel(G, '/min', 296, 62);
+  chkPulse.OnClick := @PulseChange;
+  seCardML.OnChange := @PulseChange;
+  seHR.OnChange := @PulseChange;
+  seRespML.OnChange := @PulseChange;
+  seRR.OnChange := @PulseChange;
+
   lblStatus := TLabel.Create(Self);
   lblStatus.Parent := FRight;
   lblStatus.Align := alBottom;
@@ -356,6 +398,8 @@ begin
     cbSol[1].ItemIndex := EnsureRange(StrToIntDef(OptValue('sol1', '1'), 1), 0, High(Solutions));
     cbLevel.ItemIndex := EnsureRange(StrToIntDef(OptValue('level', '1'), 1), 0, 2);
     cbSpeed.ItemIndex := EnsureRange(StrToIntDef(OptValue('speed', '3'), 3), 0, High(Speeds));
+    chkPulse.Checked := OptValue('pulse', '1') <> '0';
+    PulseChange(nil);
     FSim.Baricity[0] := Solutions[cbSol[0].ItemIndex].Baricity;
     FSim.Baricity[1] := Solutions[cbSol[1].ItemIndex].Baricity;
     ApplyInjectionSettings;
@@ -371,7 +415,11 @@ begin
   UpdateInfo;
   UpdatePlot;
   FPages.ActivePage := tsSim;
-  if OptValue('tab', '') = 'method' then FPages.ActivePage := tsMethod;
+  if OptValue('tab', '') = 'method' then
+  begin
+    FPages.ActivePage := tsMethod;
+    PageChange(nil);
+  end;
   FLastTick := GetTickCount64;
   Application.OnIdle := @AppIdle;
 end;
@@ -519,6 +567,31 @@ begin
   if chkRoots.Checked then FSim.RootsDrag := 5 else FSim.RootsDrag := 0;
 end;
 
+procedure TfmGlassSpine.PageChange(Sender: TObject);
+begin
+  // the closing "this run" section follows the current settings
+  if FPages.ActivePage = tsMethod then
+  begin
+    FillMethodology(mmMethod.Lines, FSim);
+    mmMethod.SelStart := 0;
+  end;
+end;
+
+procedure TfmGlassSpine.PulseChange(Sender: TObject);
+begin
+  if FSim = nil then Exit;
+  // takes effect at once; the flow changes smoothly from the next step
+  FSim.Pulse := chkPulse.Checked;
+  FSim.CardiacML := seCardML.Value;
+  FSim.HeartRate := seHR.Value;
+  FSim.RespML := seRespML.Value;
+  FSim.RespRate := seRR.Value;
+  seCardML.Enabled := chkPulse.Checked;
+  seHR.Enabled := chkPulse.Checked;
+  seRespML.Enabled := chkPulse.Checked;
+  seRR.Enabled := chkPulse.Checked;
+end;
+
 procedure TfmGlassSpine.OpacityChange(Sender: TObject);
 begin
   FView.Opacity := tbOpacity.Position / 10;
@@ -588,7 +661,8 @@ var
   s: Integer;
   ce, cd, peak: Single;
   i, pk: Integer;
-  inj: string;
+  inj, dir: string;
+  q: Double;
 begin
   FLastInfo := GetTickCount64;
   if FSim = nil then Exit;
@@ -627,6 +701,15 @@ begin
     end;
     L.Add('C is the injectate''s volume fraction;');
     L.Add('x5 mg/mL for a 0.5% solution.');
+    if FSim.Pulse then
+    begin
+      q := FSim.PulseFlow(FSim.Time) / 1000;
+      if q >= 0 then dir := 'into the sac' else dir := 'to the head';
+      L.Add(Format('CSF at T1: %.2f mL/s %s;', [Abs(q), dir]));
+      L.Add(Format('the dura holds %.2f mL extra.', [FSim.PulseDisp / 1000]));
+    end
+    else
+      L.Add('No CSF pulsation.');
     L.Add(Format('Last step: %d drug sub-steps, max %.0f mm/s', [FSim.LastSubsteps, FSim.LastMaxSpeed]));
     L.Add(Format('%.0f frames/s', [FFps]));
     mmInfo.Lines.Assign(L);

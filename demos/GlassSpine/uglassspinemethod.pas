@@ -33,7 +33,7 @@ procedure FillMethodology(Lines: TStrings; Sim: TSpineSim);
 implementation
 
 const
-  Text: array[0..52] of string = (
+  Text: array[0..60] of string = (
     'GLASSSPINE - HOW THE SIMULATION WORKS',
     '',
     'GlassSpine follows a spinal anaesthetic as it spreads through the cerebrospinal fluid (CSF) of a '
@@ -122,9 +122,41 @@ const
       + 'same sphere as a body force of acceleration Q^2 / (A V), directed cephalad or caudad as the '
       + 'needle''s opening faces: a finer needle gives a faster, stronger jet for the same dose and time.',
     '',
-    '7. WHAT IS LEFT OUT',
+    '7. CSF PULSATION',
     '',
-    '  - CSF pulsation with the heartbeat and breathing, which adds slow mixing;',
+    'CSF is not still. With each heartbeat the brain''s arteries fill and push CSF down through the '
+      + 'foramen magnum into the spinal sac; the dura and the epidural veins around it give, take the '
+      + 'volume up, and hand it back in diastole. Breathing does the same more slowly. Here each wave is '
+      + 'a sine, the flow into the top of the sac being pi f V sin(2 pi f t), where V is the volume per '
+      + 'cycle through T1 (defaults 0.3 mL a beat at 70 /min and 0.3 mL a breath at 12 /min - estimates; '
+      + 'cervical stroke volumes measured by MRI are 0.5-0.8 mL, falling down the canal).',
+    'The CSF enters through a 10 mm band at the T1 end and is taken up evenly by every cell of the sac, '
+      + 'so the volume crossing a level falls in proportion to the CSF below it, to nothing at S2. In the '
+      + 'pressure equation this is a prescribed source, div u = s, instead of zero, which still sums to '
+      + 'zero over each sac.',
+    'Two numerical points. First, the flow this needs runs the whole length of the sac, and the '
+      + 'pressure solver''s sweeps would take thousands of steps to build it; so each step the change in '
+      + 'the flow is added directly as a flat ("plug") profile across every section - appropriate, since '
+      + 'the Womersley number is about 20, which makes the real profile nearly flat outside a thin layer '
+      + 'at the wall. Second, the small error the sweeps leave in each cell is smooth and of one sign over '
+      + 'long stretches, and summed over thousands of cells it made the net flow through a level drift by '
+      + 'tens of per cent. So before each projection the flow through every cross-section is summed and '
+      + 'set exactly to what the sources require (zero without pulsation, as a closed sac demands), '
+      + 'leaving the solver only the work within each section. The flow through L3, L1, T8 and T2 then '
+      + 'matches the prescription to under 1 %.',
+    'Where the dura takes up CSF, a cell of the fixed grid stands for a slightly larger volume; the '
+      + 'drug''s concentration there is unchanged (it is carried with the fluid), and the amount of drug '
+      + 'reported allows for the dilation, so it stays equal to the dose.',
+    'Effect: in the supine position, with the defaults, hyperbaric solution reaches T9-T8 by two '
+      + 'minutes instead of T5, and more of it stays at T12-L2. The heartbeat does nearly all of this; '
+      + 'breathing at the default volume does little. The likely reason is that the oscillation stirs '
+      + 'the thin sheet of heavy solution running down the posterior dura, diluting it and so weakening '
+      + 'what drives it - a reading of the numbers, not separately tested.',
+    '',
+    '8. WHAT IS LEFT OUT',
+    '',
+    '  - the true shape of the pulse (here two sines) and where along the canal the dura and epidural '
+      + 'veins are most compliant (here everywhere equally);',
     '  - the injected volume pushing CSF aside (the injectate replaces CSF in place; the displacement is '
       + 'about 1 mm/s along the sac, small beside the buoyant flow);',
     '  - uptake of drug into nerve roots and cord, and its clearance - C here is injectate fraction, not '
@@ -132,7 +164,7 @@ const
     '  - the arachnoid trabeculae and individual nerve roots.',
     'Concentration is the volume fraction of injectate; multiply by the solution''s strength for mg/mL.',
     '',
-    '8. DISPLAY',
+    '9. DISPLAY',
     '',
     'Each frame the concentration is copied to a 3-D texture and ray-marched by a shader: the dura as '
       + 'glass with a bright rim where it is seen edge-on, the cord as an opaque solid, and the drug as a '
@@ -151,7 +183,7 @@ begin
     if Sim <> nil then
     begin
       Lines.Add('');
-      Lines.Add('9. THIS RUN');
+      Lines.Add('10. THIS RUN');
       Lines.Add('');
       Lines.Add(Format('  device: %s', [Sim.DeviceName]));
       Lines.Add(Format('  grid: %d x %d x %d cells of %.2f mm, %d fluid cells a sac, %.1f mL CSF a sac, '
@@ -161,6 +193,11 @@ begin
         + 'over-relaxation %.2f; drug sub-steps to Courant %.2f',
         [Sim.Dt, Sim.Nu, Sim.ViscIters, Sim.PressureIters, Sim.Omega, Sim.CFL]));
       Lines.Add(Format('  CSF density %.5f g/mL; g = %.0f mm/s^2', [CSFDensity, GravityMM]));
+      if Sim.Pulse then
+        Lines.Add(Format('  pulsation %.2f mL a beat at %.0f /min, %.2f mL a breath at %.0f /min',
+          [Sim.CardiacML, Sim.HeartRate, Sim.RespML, Sim.RespRate]))
+      else
+        Lines.Add('  pulsation off');
     end;
   finally
     Lines.EndUpdate;

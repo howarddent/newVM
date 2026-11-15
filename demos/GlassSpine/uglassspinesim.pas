@@ -56,6 +56,22 @@ unit uGlassSpineSim;
   The injectate replaces CSF in place: the volume it displaces (~1 mm/s
   along the sac) is too slow to matter beside the buoyant flow.
 
+  CSF PULSATION (Pulse, on by default). CSF moves to and fro between the
+  head and the spinal sac with each heartbeat and breath: CSF enters the
+  top of the sac (T1) as the brain's arteries fill, and the sac's
+  compliance (the dura and the epidural veins round it) takes it up, then
+  gives it back. Here q(t) = pi f V sin(2 pi f t) for each of the cardiac
+  and respiratory waves, V the volume per cycle through T1 (+ = into the
+  sac, caudal), which enters through a band PulseBandMM deep at the top
+  and is taken up evenly by every fluid cell - so the volume crossing a
+  level falls linearly with the CSF below it, to nothing at S2. How
+  glassspine.cl imposes it is in its header. Defaults: 0.3 mL a beat at
+  70 /min (cervical stroke volumes are 0.5-0.8 mL, falling down the
+  canal) and 0.3 mL a breath at 12 /min; both are estimates.
+  The fixed grid can't dilate, so a cell's C stays as it was while it
+  "takes up" CSF; the drug in the sac is then sum C Vcell exp(Phi/V_sac),
+  Phi the volume taken up so far, which is what Present reports.
+
   Concentration is the injectate's volume fraction; mg/mL is that times
   the solution's strength.
 
@@ -79,15 +95,21 @@ type
     FDevice: cl_device_id;
     FProgram: cl_program;
     FKForces, FKDiffuse, FKDiv, FKPressure, FKGrad, FKAdvVel, FKFlux,
-      FKUpdate, FKMax, FKInject, FKPrep: cl_kernel;
+      FKUpdate, FKMax, FKInject, FKPrep, FKPlaneFlux, FKPlaneCorr: cl_kernel;
     FBFlags, FBFluid, FBV, FBV1, FBV2, FBC, FBC1, FBC2, FBC3, FBP, FBDiv, FBSrc, FBState,
-      FBFlux, FBMax: cl_mem;
+      FBFlux, FBMax, FBPulse, FBPlaneG, FBPlaneA, FBPlaneCorr: cl_mem;
+    FQPrev, FQNow: Single;           // pulsation flow, mm^3/s, last and this step
+    FSacCells: array[0..1] of Integer;
+    FOwed: array[0..1] of Double;    // true mm^3 the injection has asked for
+    FPlaneG: array[0..1] of array of Double;   // volume through z plane k per unit q
     FKernelSrc: string;
     FNFluid: Integer;
     FGlobal: NativeUInt;
     FSrcCells: array[0..1] of array of Integer;
     FHaveC: Boolean;
     procedure ZeroState;
+    procedure BuildPulse;
+    procedure CorrectSectionFlux;
     procedure ReleaseBuffers;
     procedure BuildProgram;
     procedure Run(K: cl_kernel);
@@ -116,6 +138,11 @@ type
     Injected: array[0..1] of Double;   // mm^3 actually added so far (at ReadBack)
     Pending: array[0..1] of Double;    // mm^3 owed but not yet added
     CFL: Single;                       // target Courant number for the drug's transport
+    // CSF pulsation: volume per cycle through T1 (mL) and rate (/min)
+    Pulse: Boolean;
+    CardiacML, HeartRate, RespML, RespRate: Single;
+    PulseDisp: Double;                 // mm^3 taken up by the dura since Reset
+    Isolated: Integer;                 // fluid cells off the sacs' main bodies
     LastMaxSpeed: Single;              // mm/s, the last step's largest face speed
     LastSubsteps: Integer;             // the drug's transport sub-steps in the last step
     // read-back and its diagnostics (after ReadBack)
@@ -143,6 +170,16 @@ type
     // max |div u| dx over the fluid cells, after a fresh divergence pass
     // (mm/s; for checks)
     function MaxDivergence: Single;
+    function MaxDivergenceAt(out KMax: Integer; out Rms: Single): Single;
+    // the pulsation's flow into the sac at time t, mm^3/s (0 if off)
+    function PulseFlow(t: Double): Double;
+    // a cell's true volume over Vcell in sac s: the CSF the dura has taken
+    // up, Phi, shared over the sac's cells
+    function Dilation(s: Integer): Double;
+    // volume flux (mm^3/s, + = cephalad) through z plane k of sac s: as
+    // computed (reads the velocity back) and as prescribed
+    function AxialFlux(s, k: Integer): Double;
+    function PrescribedAxialFlux(s, k: Integer): Double;
   end;
 
 // columns are the body x, y, z axes in world coordinates
@@ -155,6 +192,7 @@ const
   GravityMM = 9810.0;      // mm/s^2
   SourceRadiusMM = 2.5;
   SourceDepthMM = 3.0;
+  PulseBandMM = 10.0;      // depth of the band at T1 where pulsatile CSF enters
 
 implementation
 
@@ -232,6 +270,11 @@ begin
   NeedleIDmm := 0.26;
   JetDir := 1;
   CFL := 0.3;
+  Pulse := True;
+  CardiacML := 0.3;
+  HeartRate := 70;
+  RespML := 0.3;
+  RespRate := 12;
   InjectStart := -1;
   if not InitializeOpenCLContext(FCtx, FQueue, FDevice, Msg) then
     raise Exception.Create('OpenCL: ' + Msg);
@@ -270,9 +313,10 @@ procedure TSpineSim.ReleaseBuffers;
   end;
 begin
   M(FBFlags); M(FBFluid); M(FBV); M(FBV1); M(FBV2); M(FBC); M(FBC1); M(FBC2);
-  M(FBC3); M(FBP); M(FBDiv); M(FBSrc); M(FBState); M(FBFlux); M(FBMax);
+  M(FBC3); M(FBP); M(FBDiv); M(FBSrc); M(FBState); M(FBFlux); M(FBMax); M(FBPulse);
+  M(FBPlaneG); M(FBPlaneA); M(FBPlaneCorr);
   K(FKForces); K(FKDiffuse); K(FKDiv); K(FKPressure); K(FKGrad); K(FKAdvVel);
-  K(FKFlux); K(FKUpdate); K(FKMax); K(FKInject); K(FKPrep);
+  K(FKFlux); K(FKUpdate); K(FKMax); K(FKInject); K(FKPrep); K(FKPlaneFlux); K(FKPlaneCorr);
   if FProgram <> nil then clReleaseProgram(FProgram);
   FProgram := nil;
 end;
@@ -322,6 +366,8 @@ begin
   FKMax := MakeK('max_speed');
   FKInject := MakeK('inject');
   FKPrep := MakeK('inject_prepare');
+  FKPlaneFlux := MakeK('plane_flux');
+  FKPlaneCorr := MakeK('plane_correct');
 end;
 
 procedure TSpineSim.Setup(ADx, ACurvature: Single);
@@ -362,6 +408,7 @@ begin
   FBMax := Buf(4, nil);
   SetLength(HostC, N);
   BuildSourceCells;
+  BuildPulse;
   Reset;
 end;
 
@@ -400,6 +447,191 @@ begin
   Check(Err, 'clCreateBuffer');
 end;
 
+procedure TSpineSim.BuildPulse;
+var
+  s, i, id, k, kTop, nb, nxy, N: Integer;
+  cnt, band: array of Integer;     // fluid cells per slice; open -z faces per plane
+  w: array[0..1] of array of Double;   // w per slice (uniform within a slice)
+  nTop: Integer;
+  PW: array of Single;              // pairs (w / Vcell, plug)
+  sac1: Boolean;
+  Err: cl_int;
+  Conn: array of Boolean;           // in the sac's main face-connected body
+  Queue: array of Integer;
+  qh, qt, d, nbr, seed: Integer;
+  Steps: array[0..5] of Integer;
+  PG: array of Single;
+  PA: array of LongInt;
+begin
+  nxy := Geom.NX * Geom.NY;
+  N := nxy * Geom.NZ;
+  // a pulsation source in a cell joined to the rest only by an edge or a
+  // corner (a few, at the closed ends) can't drain, and makes the
+  // pressure equation unsolvable: flood each sac from a cell half way up
+  // and leave out what the flood doesn't reach
+  SetLength(Conn, N);
+  FillChar(Conn[0], N, 0);
+  SetLength(Queue, Length(Geom.Fluid));
+  Steps[0] := 1; Steps[1] := -1; Steps[2] := Geom.NX; Steps[3] := -Geom.NX;
+  Steps[4] := nxy; Steps[5] := -nxy;
+  for s := 0 to 1 do
+  begin
+    seed := -1;
+    for i := 0 to High(Geom.Fluid) do
+    begin
+      id := Geom.Fluid[i];
+      if ((Geom.Flags[id] and FlagSac1 <> 0) = (s = 1)) and (id div nxy >= Geom.NZ div 2) then
+      begin
+        seed := id;
+        Break;
+      end;
+    end;
+    if seed < 0 then Continue;
+    qh := 0; qt := 1;
+    Queue[0] := seed;
+    Conn[seed] := True;
+    while qh < qt do
+    begin
+      id := Queue[qh];
+      Inc(qh);
+      for d := 0 to 5 do
+      begin
+        nbr := id + Steps[d];
+        if (not Conn[nbr]) and (Geom.Flags[nbr] and FlagFluid <> 0) then
+        begin
+          Conn[nbr] := True;
+          Queue[qt] := nbr;
+          Inc(qt);
+        end;
+      end;
+    end;
+  end;
+  nb := Max(1, Round(PulseBandMM / Geom.Dx));
+  SetLength(PW, 2 * N);
+  FillChar(PW[0], 8 * N, 0);
+  for s := 0 to 1 do
+  begin
+    SetLength(cnt, Geom.NZ);
+    SetLength(band, Geom.NZ);
+    FillChar(cnt[0], 4 * Geom.NZ, 0);
+    FillChar(band[0], 4 * Geom.NZ, 0);
+    kTop := 0;
+    for i := 0 to High(Geom.Fluid) do
+    begin
+      id := Geom.Fluid[i];
+      sac1 := Geom.Flags[id] and FlagSac1 <> 0;
+      if (sac1 <> (s = 1)) or not Conn[id] then Continue;
+      k := id div nxy;
+      Inc(cnt[k]);
+      if k > kTop then kTop := k;
+      if Conn[id - nxy] then Inc(band[k]);
+    end;
+    FSacCells[s] := 0;
+    nTop := 0;
+    for k := 0 to Geom.NZ - 1 do
+    begin
+      Inc(FSacCells[s], cnt[k]);
+      if k > kTop - nb then Inc(nTop, cnt[k]);
+    end;
+    SetLength(w[s], Geom.NZ);
+    for k := 0 to Geom.NZ - 1 do
+    begin
+      w[s][k] := -1 / FSacCells[s];
+      if k > kTop - nb then w[s][k] := w[s][k] + 1 / nTop;
+    end;
+    // G_k: the volume crossing plane k (between slices k-1 and k), + up,
+    // per unit q - everything the cells below it make
+    SetLength(FPlaneG[s], Geom.NZ + 1);
+    FPlaneG[s][0] := 0;
+    for k := 1 to Geom.NZ do
+      FPlaneG[s][k] := FPlaneG[s][k - 1] + cnt[k - 1] * w[s][k - 1];
+    for i := 0 to High(Geom.Fluid) do
+    begin
+      id := Geom.Fluid[i];
+      sac1 := Geom.Flags[id] and FlagSac1 <> 0;
+      if (sac1 <> (s = 1)) or not Conn[id] then Continue;
+      k := id div nxy;
+      PW[2 * id] := w[s][k] / Geom.CellVolume;
+      if Conn[id - nxy] and (band[k] > 0) then
+        PW[2 * id + 1] := FPlaneG[s][k] / (band[k] * Sqr(Geom.Dx));
+    end;
+  end;
+  Isolated := Length(Geom.Fluid) - FSacCells[0] - FSacCells[1];
+  // per (sac, plane) G and open-face count, for the section flux correction
+  SetLength(PG, 2 * (Geom.NZ + 1));
+  SetLength(PA, 2 * (Geom.NZ + 1));
+  FillChar(PA[0], 4 * Length(PA), 0);
+  for i := 0 to High(Geom.Fluid) do
+  begin
+    id := Geom.Fluid[i];
+    if Geom.Flags[id - nxy] and FlagFluid = 0 then Continue;
+    if Geom.Flags[id] and FlagSac1 <> 0 then s := 1 else s := 0;
+    Inc(PA[s * (Geom.NZ + 1) + id div nxy]);
+  end;
+  for s := 0 to 1 do
+    for k := 0 to Geom.NZ do PG[s * (Geom.NZ + 1) + k] := FPlaneG[s][k];
+  if FBPlaneG <> nil then clReleaseMemObject(FBPlaneG);
+  if FBPlaneA <> nil then clReleaseMemObject(FBPlaneA);
+  if FBPlaneCorr <> nil then clReleaseMemObject(FBPlaneCorr);
+  FBPlaneG := clCreateBuffer(FCtx, CL_MEM_READ_WRITE or CL_MEM_COPY_HOST_PTR, 4 * Length(PG), @PG[0], @Err);
+  Check(Err, 'clCreateBuffer');
+  FBPlaneA := clCreateBuffer(FCtx, CL_MEM_READ_WRITE or CL_MEM_COPY_HOST_PTR, 4 * Length(PA), @PA[0], @Err);
+  Check(Err, 'clCreateBuffer');
+  FBPlaneCorr := clCreateBuffer(FCtx, CL_MEM_READ_WRITE, 4 * Length(PG), nil, @Err);
+  Check(Err, 'clCreateBuffer');
+  if FBPulse <> nil then clReleaseMemObject(FBPulse);
+  FBPulse := clCreateBuffer(FCtx, CL_MEM_READ_WRITE or CL_MEM_COPY_HOST_PTR, 8 * NativeUInt(N),
+    @PW[0], @Err);
+  Check(Err, 'clCreateBuffer');
+end;
+
+function TSpineSim.Dilation(s: Integer): Double;
+begin
+  if FSacCells[s] > 0 then
+    Result := Exp(PulseDisp / (FSacCells[s] * Geom.CellVolume))
+  else
+    Result := 1;
+end;
+
+function TSpineSim.PulseFlow(t: Double): Double;
+var
+  fc, fr: Double;
+begin
+  Result := 0;
+  if not Pulse then Exit;
+  fc := HeartRate / 60;
+  fr := RespRate / 60;
+  Result := 1000 * (Pi * fc * CardiacML * Sin(2 * Pi * fc * t)
+                  + Pi * fr * RespML * Sin(2 * Pi * fr * t));
+end;
+
+function TSpineSim.PrescribedAxialFlux(s, k: Integer): Double;
+begin
+  Result := FQNow * FPlaneG[s][k];
+end;
+
+function TSpineSim.AxialFlux(s, k: Integer): Double;
+var
+  V: array of Single;
+  i, j, id: Integer;
+  sac1: Boolean;
+begin
+  SetLength(V, 4 * Length(HostC));
+  Check(clEnqueueReadBuffer(FQueue, FBV, 1, 0, 16 * NativeUInt(Length(HostC)), @V[0],
+    0, nil, nil), 'clEnqueueReadBuffer');
+  Result := 0;
+  for j := 0 to Geom.NY - 1 do
+    for i := 0 to Geom.NX - 1 do
+    begin
+      id := Geom.Index(i, j, k);
+      if (Geom.Flags[id] and FlagFluid = 0) or (Geom.Flags[id - Geom.NX * Geom.NY] and FlagFluid = 0) then
+        Continue;
+      sac1 := Geom.Flags[id] and FlagSac1 <> 0;
+      if sac1 <> (s = 1) then Continue;
+      Result := Result + V[4 * id + 2] * Sqr(Geom.Dx);
+    end;
+end;
+
 procedure TSpineSim.ZeroState;
 var
   Z: array[0..7] of Single;
@@ -412,6 +644,7 @@ begin
   begin
     Injected[s] := 0;
     Pending[s] := 0;
+    FOwed[s] := 0;
   end;
 end;
 
@@ -431,6 +664,9 @@ begin
   Zero(FBP, 4 * N); Zero(FBDiv, 4 * N); Zero(FBFlux, 16 * N);
   FillChar(HostC[0], 4 * N, 0);
   Time := 0;
+  FQPrev := 0;
+  FQNow := 0;
+  PulseDisp := 0;
   InjectStart := -1;
   ZeroState;
   FHaveC := False;
@@ -461,11 +697,38 @@ begin
   Check(clSetKernelArg(K, Index, Size, Value), 'clSetKernelArg');
 end;
 
+procedure TSpineSim.CorrectSectionFlux;
+var
+  n: Integer;
+  dx2: Single;
+  glob: NativeUInt;
+begin
+  n := FNFluid;
+  dx2 := Sqr(Geom.Dx);
+  SetArg(FKPlaneFlux, 0, SizeOf(cl_mem), @FBFlags);
+  SetArg(FKPlaneFlux, 1, SizeOf(cl_mem), @FBV);
+  SetArg(FKPlaneFlux, 2, SizeOf(cl_mem), @FBPlaneG);
+  SetArg(FKPlaneFlux, 3, SizeOf(cl_mem), @FBPlaneA);
+  SetArg(FKPlaneFlux, 4, 4, @FQNow);
+  SetArg(FKPlaneFlux, 5, 4, @dx2);
+  SetArg(FKPlaneFlux, 6, SizeOf(cl_mem), @FBPlaneCorr);
+  glob := ((2 * (Geom.NZ + 1) + 63) div 64) * 64;
+  Check(clEnqueueNDRangeKernel(FQueue, FKPlaneFlux, 1, nil, @glob, nil, 0, nil, nil),
+    'clEnqueueNDRangeKernel');
+  SetArg(FKPlaneCorr, 0, SizeOf(cl_mem), @FBFluid);
+  SetArg(FKPlaneCorr, 1, 4, @n);
+  SetArg(FKPlaneCorr, 2, SizeOf(cl_mem), @FBFlags);
+  SetArg(FKPlaneCorr, 3, SizeOf(cl_mem), @FBV);
+  SetArg(FKPlaneCorr, 4, SizeOf(cl_mem), @FBPlaneCorr);
+  Run(FKPlaneCorr);
+end;
+
 procedure TSpineSim.Project(Iters: Integer);
 var
   inv2dx, dx2: Single;
   it, colour, n: Integer;
 begin
+  CorrectSectionFlux;
   n := FNFluid;
   inv2dx := 1 / Geom.Dx;
   dx2 := Sqr(Geom.Dx);
@@ -474,6 +737,8 @@ begin
   SetArg(FKDiv, 2, SizeOf(cl_mem), @FBV);
   SetArg(FKDiv, 3, SizeOf(cl_mem), @FBDiv);
   SetArg(FKDiv, 4, 4, @inv2dx);
+  SetArg(FKDiv, 5, SizeOf(cl_mem), @FBPulse);
+  SetArg(FKDiv, 6, 4, @FQNow);
   Run(FKDiv);
   SetArg(FKPressure, 0, SizeOf(cl_mem), @FBFluid);
   SetArg(FKPressure, 1, 4, @n);
@@ -527,7 +792,7 @@ var
   n0, n1: Integer;
   one: NativeUInt;
   vc: Single;
-  gx, gy, gz, a, dtdx, Q, An, Vs: Single;
+  gx, gy, gz, a, dtdx, Q, An, Vs, dq, sdt: Single;
   zero, umaxBits: LongInt;
   nsub: Integer;
   vsrc, vdst, tmp: cl_mem;
@@ -552,9 +817,17 @@ begin
     begin
       Vs := Max(1, Length(FSrcCells[s])) * Geom.CellVolume;
       jet[s][2] := JetDir * Q * Q / (An * Vs);
-      fs[s] := Q * Dt;
+      // in the grid's undilated cell volumes (see Dilation)
+      FOwed[s] := FOwed[s] + Q * Dt;
+      fs[s] := Q * Dt / Dilation(s);
     end;
   end;
+
+  // the pulsation's flow for this step, and its change as a plug flow
+  FQNow := PulseFlow(Time + Dt);
+  dq := FQNow - FQPrev;
+  FQPrev := FQNow;
+  PulseDisp := PulseDisp + FQNow * Dt;
 
   // forces
   SetArg(FKForces, 0, SizeOf(cl_mem), @FBFluid);
@@ -570,6 +843,8 @@ begin
   SetArg(FKForces, 10, 16, @jet[1]);
   SetArg(FKForces, 11, 4, @RootsDrag);
   SetArg(FKForces, 12, 4, @Dt);
+  SetArg(FKForces, 13, SizeOf(cl_mem), @FBPulse);
+  SetArg(FKForces, 14, 4, @dq);
   Run(FKForces);
 
   // viscosity: Jacobi from FBV into FBV1/FBV2, the result copied back
@@ -632,6 +907,9 @@ begin
   SetArg(FKUpdate, 0, SizeOf(cl_mem), @FBFluid);
   SetArg(FKUpdate, 1, 4, @n);
   SetArg(FKUpdate, 2, SizeOf(cl_mem), @FBFlux);
+  SetArg(FKUpdate, 7, SizeOf(cl_mem), @FBPulse);
+  sdt := FQNow * Dt / nsub;
+  SetArg(FKUpdate, 8, 4, @sdt);
   for it := 1 to nsub do
   begin
     // C1 = C - div F(C)
@@ -703,8 +981,11 @@ begin
     'clEnqueueReadBuffer');
   for s := 0 to 1 do
   begin
-    Pending[s] := St[s];
-    Injected[s] := St[2 + s];
+    Pending[s] := St[s] * Dilation(s);
+    if Pulse or (PulseDisp <> 0) then
+      Injected[s] := FOwed[s] - Pending[s]
+    else
+      Injected[s] := St[2 + s];
   end;
   FHaveC := True;
   ComputeDiagnostics;
@@ -746,6 +1027,14 @@ begin
       if c > LevelMax[s, L] then LevelMax[s, L] := c;
     end;
   end;
+  // the dura's dilation: each cell's true volume is Vcell exp(Phi/V_sac)
+  for s := 0 to 1 do
+    if FSacCells[s] > 0 then
+    begin
+      c := Dilation(s);
+      Present[s] := Present[s] * c;
+      for L := 0 to NLevels - 1 do Profile[s, L] := Profile[s, L] * c;
+    end;
 end;
 
 function TSpineSim.CephaladExtent(s: Integer; Threshold: Single): Single;
@@ -806,6 +1095,27 @@ begin
   end;
 end;
 
+function TSpineSim.MaxDivergenceAt(out KMax: Integer; out Rms: Single): Single;
+var
+  D: array of Single;
+  i, id: Integer;
+  a, ss: Double;
+begin
+  Result := MaxDivergence;
+  SetLength(D, Length(HostC));
+  Check(clEnqueueReadBuffer(FQueue, FBDiv, 1, 0, 4 * NativeUInt(Length(D)), @D[0], 0, nil, nil),
+    'clEnqueueReadBuffer');
+  KMax := -1; ss := 0;
+  for i := 0 to High(Geom.Fluid) do
+  begin
+    id := Geom.Fluid[i];
+    a := Abs(D[id]) * Geom.Dx;
+    ss := ss + a * a;
+    if a >= Result - 1e-9 then KMax := id div (Geom.NX * Geom.NY);
+  end;
+  Rms := Sqrt(ss / Length(Geom.Fluid));
+end;
+
 function TSpineSim.MaxDivergence: Single;
 var
   D: array of Single;
@@ -819,6 +1129,8 @@ begin
   SetArg(FKDiv, 2, SizeOf(cl_mem), @FBV);
   SetArg(FKDiv, 3, SizeOf(cl_mem), @FBDiv);
   SetArg(FKDiv, 4, 4, @invdx);
+  SetArg(FKDiv, 5, SizeOf(cl_mem), @FBPulse);
+  SetArg(FKDiv, 6, 4, @FQNow);
   Run(FKDiv);
   SetLength(D, Length(HostC));
   Check(clEnqueueReadBuffer(FQueue, FBDiv, 1, 0, 4 * NativeUInt(Length(D)), @D[0], 0, nil, nil),

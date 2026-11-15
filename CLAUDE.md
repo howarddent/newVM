@@ -3903,7 +3903,10 @@ packages. Compiled binaries and each demo's own `lib/` output are
     - the demo: `lazbuild --ws=gtk2 demos/GlassSpine/GlassSpine.lpi`;
     - the check: `fpc -O2 -FUlib -Fu../.. -Fi../.. spinecheck.lpr`, which
       takes `--time --tilt --roll --dx --level --iters --jet --cfl --dt
-      --b0 --b1 --every`.
+      --b0 --b1 --every --pulse --cardiac --hr --resp --rr`. Before the
+      injection it runs pulsation alone and prints the computed against
+      the prescribed axial flux at L3, L1, T8 and T2, and where the
+      divergence residual is worst.
     - It needs `HAVE_OPENCL`, because it uses
       `OpenCLAPI.InitializeOpenCLContext`. That picks the GPU with the
       most compute units (the RTX 5070 here) and also requires clFFT.
@@ -3941,6 +3944,17 @@ packages. Compiled binaries and each demo's own `lib/` output are
       Now |div| dx is about 1e-3 of |u|.
     - Buoyancy is Boussinesq, `(baricity - 1) C g_body`, against CSF
       density 1.00059.
+    - **Section flux correction** (`plane_flux`/`plane_correct`, before
+      every projection). The SOR residual, ~1e-3 of the speed per cell,
+      is smooth and of one sign over long stretches. Summed over the
+      thousands of cells below a level, it let the net flux through that
+      level drift by tens of per cent, because SOR barely touches the
+      long axial mode. One work-item per (sac, section) sums the section's
+      flux, and a uniform plug brings it to its prescribed value: `q G_k`
+      with pulsation, zero without, as a closed sac requires. The
+      projection then only works within each section. This also changes
+      the pulsation-free runs slightly; the supine figures in Results came
+      out the same to the level reported (sitting and lateral not rerun).
   - **The drug is not transported by Stam's method.** C, the injectate
     volume fraction, is conservative finite volumes: MUSCL with the MC
     limiter and SSP-RK2 (`c_flux`/`c_update`).
@@ -3960,6 +3974,55 @@ packages. Compiled binaries and each demo's own `lib/` output are
       per-frame capacity it used was stale.
     - The jet is a body force on the source cells,
       `Q^2/(A_needle V_source)`, cephalad, caudad or off.
+  - **CSF pulsation** (2026-11-15, on by default; a group on the form,
+    `--pulse=0` to start with it off).
+    - The flow into the sac through T1 is `q(t) = pi f V sin(2 pi f t)`
+      for a cardiac and a respiratory wave. V is the volume per cycle:
+      0.3 mL a beat at 70 /min and 0.3 mL a breath at 12 /min. These
+      are estimates; cervical MRI stroke volumes are 0.5-0.8 mL, and
+      they fall down the canal.
+    - The CSF enters through a 10 mm band at the T1 end
+      (`PulseBandMM`) and is taken up evenly by every fluid cell, as the
+      dura's compliance. So the volume crossing a level falls linearly
+      with the CSF below it, to nothing at S2.
+    - The projection targets `div u = q pw.x` instead of zero. The
+      `pw.x` term is `w/Vcell`, with `w = 1/N_band - 1/N_sac`, so it
+      sums to zero over each sac.
+    - **The flow is built as a plug.** SOR alone would take thousands of
+      sweeps to set up a flow along the whole sac, so `forces` adds each
+      step's change of q as a uniform flow on every open z face:
+      `pw.y = G_k/(A_k dx^2)`, with `G_k` the volume crossing section k
+      per unit q (`FPlaneG`). The Womersley number is about 20 (Stokes
+      layer 0.4 mm, below dx), so the real profile is nearly flat. The
+      projection only tidies each section, and the section correction
+      above keeps the totals exact.
+    - **Check** (`spinecheck`): the computed flux at L3, L1, T8 and T2 is
+      within 0.5 % of the prescribed one, and |div - s| dx is under 1e-3
+      of the largest speed.
+    - **Isolated cells.** Before the flood fill was added, the flux
+      drifted as much as 160 mm^3/s at L3, and the worst divergence sat
+      at the top cap at 100 % of the speed. The cause is 10 fluid cells
+      at the closed ends that touch the rest only by an edge or a corner.
+      A source there can't drain, and it makes the Neumann problem
+      incompatible. `BuildPulse` floods each sac face by face from a
+      cell half way up and gives the cells it doesn't reach no source.
+    - **Drug** (`c_update` adds `C div u`). Concentration is carried with
+      the fluid (DC/Dt = 0) as a cell "dilates", so `sum C Vcell`
+      oscillates. `Dilation(s) = exp(Phi/V_sac)`, with Phi the volume
+      taken up (`PulseDisp`), converts it back. `Present` and `Profile`
+      are multiplied by it, and the injection's owed volume is divided by
+      it. `Injected` is the true volume owed less the pending. Without
+      that, `Present` read 3.01 mL for 3.00 injected.
+    - **Effect** (supine, 120-125 s): hyperbaric reaches T9-T8 rather
+      than T5, and more of it stays at T12-L2 (at 180 s: L1 0.38 against
+      0.17 mL, T7 0.02 against 0.14). The heartbeat does almost all of
+      this; breathing alone gives T9 at 65 s, against T11 with both. That
+      the oscillation stirs and dilutes the thin heavy sheet on the
+      posterior dura is a reading of the numbers, not tested. Plain
+      0.999 is unchanged (L5-T12). Sitting, lateral and the other
+      results below are without pulsation and weren't rerun.
+    - The cost is the headless check at about 10x real time (17x
+      before); the window still draws about 150 fps.
   - **Rendering** (`uspineview.pas`):
     - C is read back each frame into a LUMINANCE16 3-D texture. The
       geometry is an RGBA8 3-D texture: inside dura, cord, level ring
@@ -3988,13 +4051,15 @@ packages. Compiled binaries and each demo's own `lib/` output are
     - `Advance` accumulates a Single `Time`, so loop on
       `T < tEnd - 0.5 Dt`, not `T < tEnd`. The plain test once never
       ended.
-  - **Results** (3 mL over 15 s at L3-4, 25G, jet cephalad):
+  - **Results** (3 mL over 15 s at L3-4, 25G, jet cephalad; without
+    pulsation - see above for what it changes):
     - **Supine**: at 120 s the hyperbaric solution covers S2-T5,
       pooling in the sacrum and the T6-T9 kyphosis, and reaches T3 (C 1 %)
       by about 4 min. Plain stays at L5-T12.
     - **Sitting**, 120 s: hyperbaric S2-L1; plain rises to T11.
     - **Left lateral**, 120 s: hyperbaric S2-T7.
-  - **Left out**: CSF pulsation, and the injected volume displacing CSF.
+  - **Left out**: the injected volume displacing CSF, the pulse's real
+    waveform, and compliance that varies along the canal.
     The cauda equina drag (`RootsDrag` 5 /s on `FlagRoots` cells, a check
     box) is a guess and off by default.
   - **Command line**:
@@ -4003,7 +4068,8 @@ packages. Compiled binaries and each demo's own `lib/` output are
       exits.
     - `--autorun=<s> [--png=<file>]` runs interactively for s seconds of
       wall time and prints the fps.
-    - Also `--tilt --roll --sol0 --sol1 --level --speed`.
+    - Also `--tilt --roll --sol0 --sol1 --level --speed --pulse=0
+      --tab=method`.
   - `GlassSpine.lpr` has no `{$R *.res}`: an empty `.res` broke the
     resource compile.
   - FPC duplicate identifiers hit again: `T`/`t`, `l`/`L`, and `Color`,

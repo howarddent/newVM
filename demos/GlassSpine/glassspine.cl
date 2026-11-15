@@ -37,6 +37,32 @@
   lost. Buoyancy is Boussinesq: the injectate's density excess
   (baricity - 1) times C times gravity - the only force, since CSF of
   uniform density is in hydrostatic balance whatever the posture.
+
+  CSF PULSATION. Each sac exchanges CSF with the head through its top
+  end: a flow q(t) (mm^3/s, + = into the sac, i.e. caudally) enters a band
+  of cells at the T1 end and is taken up by the dura's compliance, spread
+  evenly over every fluid cell. So the projection drives the divergence to
+  a prescribed source, div u = q pw.x, where pw.x = w / Vcell with
+  w = 1/N_top (band) - 1/N_sac; it sums to zero over a sac, as Neumann
+  walls require. The axial flow this needs runs the length of the sac,
+  which red-black SOR would take thousands of sweeps to build from
+  scratch, so `forces` adds each step's change of q as a plug flow,
+  pw.y q on every open z face (pw.y = the volume crossing that face per
+  unit q, over the face area; Womersley number ~20, so the real profile
+  is nearly flat), and the projection only has to tidy each cross-
+  section. The drug keeps its concentration as a cell dilates
+  (DC/Dt = 0): c_update adds C div u to the conservative update.
+
+  SECTION FLUX CORRECTION. Even so, the per-cell residual the SOR sweeps
+  leave (~1e-3 of the speed) is smooth and of one sign over long
+  stretches, and summed over the thousands of cells below a level it
+  made the net flux through it drift tens of per cent from what the
+  sources dictate - the long axial mode SOR barely touches. So before
+  each projection, plane_flux sums the flux through every cross-section
+  of each sac (one work-item per section) and plane_correct adds the
+  uniform plug that brings it to q G_k (zero without pulsation, so this
+  also holds the buoyant flow's net section flux at zero, as a closed sac
+  requires). The projection then only works within each section.
 */
 
 #define NXY (NX*NY)
@@ -99,7 +125,7 @@ __kernel void forces(__global const int* fluid, int n, __global const uchar* fl,
   float4 g0, float4 g1,      /* (baricity-1)*g in the body frame, mm/s^2, per sac */
   float4 src0, float4 src1,  /* injection sphere: centre (cells), w = radius (cells) */
   float4 jet0, float4 jet1,  /* jet acceleration, mm/s^2 (zero when not injecting) */
-  float drag, float dt)
+  float drag, float dt, __global const float2* pw, float dq)
 {
   int g = get_global_id(0);
   if (g >= n) return;
@@ -128,6 +154,7 @@ __kernel void forces(__global const int* fluid, int n, __global const uchar* fl,
     if ((f | fn) & ROOTS) val /= (1.0f + dt * drag);
     if (a == 0) u.x = val; else if (a == 1) u.y = val; else u.z = val;
   }
+  if (fl[id - NXY] & FLUID) u.z += dq * pw[id].y;
   v[id] = u;
 }
 
@@ -150,15 +177,18 @@ __kernel void diffuse_vel(__global const int* fluid, int n, __global const uchar
   vout[id] = r;
 }
 
-/* the divergence of each fluid cell (closed faces carry zero) */
+/* the divergence of each fluid cell (closed faces carry zero), less the
+   pulsation's prescribed source q pw.x */
 __kernel void divergence(__global const int* fluid, int n,
-  __global const float4* v, __global float* div, float invdx)
+  __global const float4* v, __global float* div, float invdx,
+  __global const float2* pw, float q)
 {
   int g = get_global_id(0);
   if (g >= n) return;
   int id = fluid[g];
   float4 u = v[id];
-  div[id] = (v[id + 1].x - u.x + v[id + NX].y - u.y + v[id + NXY].z - u.z) * invdx;
+  div[id] = (v[id + 1].x - u.x + v[id + NX].y - u.y + v[id + NXY].z - u.z) * invdx
+          - q * pw[id].x;
 }
 
 /* one red-black SOR half-sweep of lap p = div, with zero normal gradient
@@ -277,17 +307,19 @@ __kernel void c_flux(__global const int* fluid, int n, __global const uchar* fl,
   flux[id] = F;
 }
 
-/* one SSP-RK2 stage: cout = a cbase + (1 - a) (cin - div flux) */
+/* one SSP-RK2 stage: cout = a cbase + (1 - a) (cin - div flux + C div u),
+   with div u the pulsation's source (sdt = q times the sub-step) */
 __kernel void c_update(__global const int* fluid, int n,
   __global const float4* flux, __global const float* cin, __global const float* cbase,
-  __global float* cout, float a)
+  __global float* cout, float a, __global const float2* pw, float sdt)
 {
   int g = get_global_id(0);
   if (g >= n) return;
   int id = fluid[g];
   float4 F = flux[id];
   float d = flux[id + 1].x - F.x + flux[id + NX].y - F.y + flux[id + NXY].z - F.z;
-  cout[id] = a * cbase[id] + (1.0f - a) * (cin[id] - d);
+  float ci = cin[id];
+  cout[id] = a * cbase[id] + (1.0f - a) * (ci - d + sdt * pw[id].x * ci);
 }
 
 /* the largest face speed (mm/s), as float bits into *mx (non-negative
@@ -340,4 +372,43 @@ __kernel void inject(__global const int* fluid, int n, __global const uchar* fl,
   if (f <= 0.0f) return;
   float3 d = convert_float3(cellOf(id)) - src.xyz;
   if (dot(d, d) <= src.w * src.w) c[id] += f * (1.0f - c[id]);
+}
+
+/* the flux through each sac's cross-section k (between slices k-1 and
+   k), one work-item per (sac, k), and the plug velocity that would make
+   it q G[s,k]: corr[s,k] = (q G - flux) / (A dx^2) */
+__kernel void plane_flux(__global const uchar* fl, __global const float4* v,
+  __global const float* G, __global const int* A, float q, float dx2,
+  __global float* corr)
+{
+  int g = get_global_id(0);
+  if (g >= 2 * (NZ + 1)) return;
+  int s = g / (NZ + 1);
+  int k = g - s * (NZ + 1);
+  corr[g] = 0.0f;
+  if (k < 1 || k >= NZ || A[g] == 0) return;
+  float sum = 0.0f;
+  int base = k * NXY;
+  for (int j = 0; j < NY; j++)
+    for (int i = 0; i < NX; i++)
+    {
+      int id = base + j * NX + i;
+      uchar f = fl[id];
+      if (!(f & FLUID) || !(fl[id - NXY] & FLUID)) continue;
+      if (((f & SAC1) != 0) != (s == 1)) continue;
+      sum += v[id].z;
+    }
+  corr[g] = (q * G[g] - sum * dx2) / (A[g] * dx2);
+}
+
+__kernel void plane_correct(__global const int* fluid, int n, __global const uchar* fl,
+  __global float4* v, __global const float* corr)
+{
+  int g = get_global_id(0);
+  if (g >= n) return;
+  int id = fluid[g];
+  if (!(fl[id - NXY] & FLUID)) return;
+  int k = id / NXY;
+  int s = (fl[id] & SAC1) != 0;
+  v[id].z += corr[s * (NZ + 1) + k];
 }

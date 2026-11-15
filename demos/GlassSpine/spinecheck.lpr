@@ -17,12 +17,15 @@ program spinecheck;
   Headless checks of GlassSpine's solver (no OpenGL):
     - the geometry: grid, CSF volume per sac;
     - a sac with nothing injected stays at rest;
+    - CSF pulsation alone: the axial flux at several levels against the
+      prescribed one, and the divergence left over;
     - an injection in a given posture: spread, injectate accounted for,
       peak speed, and how fast the GPU runs it.
 
   Build:  fpc -O2 -Fu../.. -Fi../.. spinecheck.lpr
   Run:    ./spinecheck [--time=60] [--tilt=0] [--roll=0] [--dx=1.25]
-                       [--level=1] [--iters=30]
+                       [--level=1] [--iters=30] [--pulse=1] [--cardiac=0.3]
+                       [--hr=70] [--resp=0.3] [--rr=12]
 
 *******************************************************************************}
 
@@ -44,10 +47,15 @@ begin
       Result := StrToFloat(Copy(ParamStr(i), Length(p) + 1, 99));
 end;
 
+const
+  CheckLevels: array[0..3] of Integer = (4, 6, 11, 17);   // L3, L1, T8, T2 (mid-level)
+
 var
   Sim: TSpineSim;
   T, tEnd, tNext: Double;
-  s, L: Integer;
+  s, L, i, k: Integer;
+  qa, qp: Double;
+  qa_s: Single;
   t0: TDateTime;
   wall: Double;
 begin
@@ -60,6 +68,10 @@ begin
     Sim.Dt := Opt('dt', 0.01);
     Sim.Baricity[0] := Opt('b0', 1.02);
     Sim.Baricity[1] := Opt('b1', 0.999);
+    Sim.CardiacML := Opt('cardiac', 0.3);
+    Sim.HeartRate := Opt('hr', 70);
+    Sim.RespML := Opt('resp', 0.3);
+    Sim.RespRate := Opt('rr', 12);
     Sim.Setup(Opt('dx', 1.25), 1);
     with Sim.Geom do
     begin
@@ -69,11 +81,37 @@ begin
     end;
 
     // at rest: nothing injected, a second in the lateral position
+    Sim.Pulse := False;
     Sim.RollDeg := 90;
     Sim.Advance(1.0);
     WriteLn(Format('at rest, 1 s lateral: max speed %.3g mm/s', [Sim.MaxSpeed]));
 
+    // pulsation alone, supine: computed against prescribed axial flux
     Sim.Reset;
+    Sim.RollDeg := 0;
+    Sim.Pulse := True;
+    WriteLn(Format('fluid cells joined only by an edge or corner: %d', [Sim.Isolated]));
+    WriteLn(Format('pulsation: %.2f mL a beat at %.0f /min, %.2f mL a breath at %.0f /min',
+      [Sim.CardiacML, Sim.HeartRate, Sim.RespML, Sim.RespRate]));
+    for i := 1 to 6 do
+    begin
+      Sim.Advance(0.37);
+      Write(Format('  t %4.2f s  q %7.0f mm^3/s  |div| dx/max|u| %.1e |', [Sim.Time,
+        Sim.PulseFlow(Sim.Time), Sim.MaxDivergence / Max(1e-6, Sim.MaxSpeed), Sim.MaxSpeed]));
+      for L in CheckLevels do
+      begin
+        k := Round((0.5 * (Sim.Geom.LevelZ0[L] + Sim.Geom.LevelZ0[L + 1]) - Sim.Geom.Z0) / Sim.Geom.Dx);
+        qa := Sim.AxialFlux(0, k);
+        qp := Sim.PrescribedAxialFlux(0, k);
+        Write(Format(' %s %6.0f/%6.0f', [LevelNames[L], qa, qp]));
+      end;
+      WriteLn(Format('  max |u| %.1f mm/s', [Sim.MaxSpeed]));
+      Sim.MaxDivergenceAt(k, qa_s);
+      WriteLn(Format('    worst residual at k %d of %d, rms %.3g mm/s', [k, Sim.Geom.NZ, qa_s]));
+    end;
+
+    Sim.Reset;
+    Sim.Pulse := Opt('pulse', 1) <> 0;
     Sim.TiltDeg := Opt('tilt', 0);
     Sim.RollDeg := Opt('roll', 0);
     WriteLn(Format('injecting %.1f mL over %.0f s at %s, tilt %.0f, roll %.0f, baricity %.4f / %.4f',
