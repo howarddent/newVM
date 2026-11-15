@@ -483,6 +483,8 @@ const
   AmbResponseMonthHi = 32.5;
   AmbResponseEngland = 30.5;    // England, same months
   AmbOnSceneMin = 33.0;         // suspected stroke, English studies: medians 27-35
+  AmbOnSceneQ1 = 26.0;          // the North East England study's quartiles (median 33)
+  AmbOnSceneQ3 = 41.0;
   AmbHandoverMin = 18.9;        // SECAmb mean handover at hospital (after the door; not added)
   AmbStrokeCallToDoor = 93.0;   // SECAmb AmbCO K1m, Jul 2025 - Jun 2026: mean, 999 call to hospital
   AmbStrokeCallToDoor90 = 139.7;

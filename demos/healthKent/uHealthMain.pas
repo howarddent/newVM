@@ -173,6 +173,7 @@ type
     procedure RunSnapshot(Data: PtrInt);
     procedure AmbBoxClick(Sender: TObject);
     procedure AmbulanceSummary(L: TStrings);
+    procedure VariationSummary(L: TStrings);
     procedure SnapshotException(Sender: TObject; E: Exception);
   end;
 
@@ -1015,6 +1016,8 @@ begin
   L.Add('');
   AmbulanceSummary(L);
   L.Add('');
+  VariationSummary(L);
+  L.Add('');
   BestSiteSummary(L);
 end;
 
@@ -1168,6 +1171,240 @@ begin
   L.Add('  and Sussex too, runs from the call (the response clock can start later), and includes slower');
   L.Add('  conveyances and longer scenes. Whatever the gap is, it is the same for both hospitals and');
   L.Add('  doesn''t change the differences above.');
+end;
+
+// log of the gamma function (Lanczos), for the gamma fit below
+function LnGammaFn(x: Double): Double;
+const
+  C: array[0..5] of Double = (76.18009172947146, -86.50532032941677, 24.01409824083091,
+    -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5);
+var
+  y, t, sum: Double;
+  j: Integer;
+begin
+  y := x; t := x + 5.5;
+  t := t - (x + 0.5) * Ln(t);
+  sum := 1.000000000190015;
+  for j := 0 to 5 do begin y := y + 1; sum := sum + C[j] / y; end;
+  result := -t + Ln(2.5066282746310005 * sum / x);
+end;
+
+// regularised lower incomplete gamma function P(a, x), by its series
+function GammaP(a, x: Double): Double;
+var
+  sum, term, ap: Double;
+  n: Integer;
+begin
+  if x <= 0 then Exit(0);
+  ap := a; term := 1 / a; sum := term;
+  for n := 1 to 2000 do begin
+    ap := ap + 1; term := term * x / ap; sum := sum + term;
+    if Abs(term) < Abs(sum) * 1e-14 then Break;
+  end;
+  result := sum * Exp(-x + a * Ln(x) - LnGammaFn(a));
+end;
+
+// 90th centile over mean of a gamma distribution of shape k
+function GammaP90OverMean(k: Double): Double;
+var
+  lo, hi, mid: Double;
+  it: Integer;
+begin
+  lo := 0; hi := 20 * k + 50;
+  for it := 1 to 80 do begin
+    mid := 0.5 * (lo + hi);
+    if GammaP(k, mid) < 0.9 then lo := mid else hi := mid;
+  end;
+  result := 0.5 * (lo + hi) / k;
+end;
+
+// coefficient of variation of the distribution with this 90th centile over
+// mean: lognormal in closed form, gamma by bisection on its shape
+function LogNormalCV(Ratio: Double): Double;
+const
+  z = 1.2815515655;
+var
+  sg: Double;
+begin
+  sg := z - Sqrt(z * z - 2 * Ln(Ratio));       // ln(ratio) = z sigma - sigma^2/2, smaller root
+  result := Sqrt(Exp(sg * sg) - 1);
+end;
+
+function GammaCV(Ratio: Double): Double;
+var
+  lo, hi, mid: Double;
+  it: Integer;
+begin
+  lo := 0.2; hi := 50;                          // the ratio falls as the shape rises
+  for it := 1 to 60 do begin
+    mid := 0.5 * (lo + hi);
+    if GammaP90OverMean(mid) > Ratio then lo := mid else hi := mid;
+  end;
+  result := 1 / Sqrt(0.5 * (lo + hi));
+end;
+
+// Which varies more from one stroke patient to the next: how long the
+// ambulance takes to come, or how far they live from the hospital? Call to
+// door = response + on scene + drive, taken as independent, so the variances
+// add. The response's spread is between calls, fitted from SECAmb's mean and
+// 90th centile (lognormal and gamma, to show how much the shape matters); on
+// scene from the North East study's quartiles; the drive's is between places,
+// the blue-light drive of every LSOA weighted by its expected strokes.
+procedure TForm1.VariationSummary(L: TStrings);
+const
+  Blue = 2;
+  NH = 3;                                       // WHH, K&C, nearest stroke unit
+  HName: array[0..NH - 1] of string = ('William Harvey', 'Kent and Canterbury', 'nearest stroke unit');
+type
+  TStat = record Mean, SD, SDBetween, P10, P50, P90: Double; end;
+var
+  i, h, k, s, West, a: Integer;
+  Ev: array of Double;
+  T: array[0..NH - 1] of array of Double;
+  Use: array[0..1] of array of Boolean;
+  St: array[0..1, 0..NH - 1] of TStat;
+  DiffSD: array[0..1] of Double;
+  SDR: array[0..1] of Double;                   // lognormal, gamma
+  SDS, vR, vS, vD, vT, RatioR, ObsSD, tu: Double;
+  FitName: array[0..1] of string = ('lognormal', 'gamma');
+
+  function Stat(const X: array of Double; const U: array of Boolean): TStat;
+  var
+    Idx: array of Integer;
+    DW, DM: array of Double;
+    j, n, gap, p, q, tmp, d: Integer;
+    W, c, m: Double;
+  begin
+    SetLength(Idx, LsoaCount); SetLength(DW, DistrictCount); SetLength(DM, DistrictCount);
+    n := 0; W := 0; m := 0;
+    for j := 0 to LsoaCount - 1 do
+      if U[j] then begin
+        Idx[n] := j; Inc(n); W := W + Ev[j]; m := m + Ev[j] * X[j];
+        d := LsoaDistrict[j]; DW[d] := DW[d] + Ev[j]; DM[d] := DM[d] + Ev[j] * X[j];
+      end;
+    m := m / W;
+    result.Mean := m; result.SD := 0; result.SDBetween := 0;
+    for j := 0 to n - 1 do result.SD := result.SD + Ev[Idx[j]] * Sqr(X[Idx[j]] - m);
+    result.SD := Sqrt(result.SD / W);
+    for d := 0 to DistrictCount - 1 do
+      if DW[d] > 0 then result.SDBetween := result.SDBetween + DW[d] * Sqr(DM[d] / DW[d] - m);
+    result.SDBetween := Sqrt(result.SDBetween / W);
+    gap := n div 2;                             // shell sort by X
+    while gap > 0 do begin
+      for p := gap to n - 1 do begin
+        tmp := Idx[p]; q := p;
+        while (q >= gap) and (X[Idx[q - gap]] > X[tmp]) do begin
+          Idx[q] := Idx[q - gap]; Dec(q, gap);
+        end;
+        Idx[q] := tmp;
+      end;
+      gap := gap div 2;
+    end;
+    c := 0; result.P10 := NaN; result.P50 := NaN; result.P90 := NaN;
+    for j := 0 to n - 1 do begin
+      c := c + Ev[Idx[j]];
+      if IsNan(result.P10) and (c >= 0.1 * W) then result.P10 := X[Idx[j]];
+      if IsNan(result.P50) and (c >= 0.5 * W) then result.P50 := X[Idx[j]];
+      if IsNan(result.P90) and (c >= 0.9 * W) then result.P90 := X[Idx[j]];
+    end;
+  end;
+
+  procedure Shares(const Head: string; SDDrive: Double);
+  var
+    f: Integer;
+  begin
+    L.Add('  ' + Head);
+    L.Add('    response fitted as   response  on scene   drive    total SD   response : drive variance');
+    for f := 0 to 1 do begin
+      vR := Sqr(SDR[f]); vS := Sqr(SDS); vD := Sqr(SDDrive); vT := vR + vS + vD;
+      L.Add(Format('    %-18s %8.0f %% %7.0f %% %6.0f %% %8.1f min %14.1f : 1',
+        [FitName[f], 100 * vR / vT, 100 * vS / vT, 100 * vD / vT, Sqrt(vT), vR / vD]));
+    end;
+  end;
+
+begin
+  West := -1;
+  for a := 0 to AreaCount - 1 do
+    if AreaName[a] = 'West Kent' then West := a;
+  SetLength(Ev, LsoaCount);
+  for h := 0 to NH - 1 do SetLength(T[h], LsoaCount);
+  for s := 0 to 1 do SetLength(Use[s], LsoaCount);
+  for i := 0 to LsoaCount - 1 do begin
+    Ev[i] := LsoaCvdEventsOf(i, 0) - LsoaCvdEventsOf(i, 1);     // strokes
+    T[0][i] := LsoaTransportMinutes(i, DriveHospWHH, Blue);
+    T[1][i] := LsoaTransportMinutes(i, DriveHospKCH, Blue);
+    tu := Infinity;
+    for k := 0 to StrokeUnitCount - 1 do
+      tu := Min(tu, LsoaTransportMinutes(i, StrokeUnitHosp[k], Blue));
+    T[2][i] := tu;
+    Use[0][i] := True;
+    Use[1][i] := LsoaArea(i) <> West;
+  end;
+  for s := 0 to 1 do begin
+    for h := 0 to NH - 1 do St[s, h] := Stat(T[h], Use[s]);
+    // the per-place difference K&C - WHH: reuse T[2] as scratch afterwards
+  end;
+  for i := 0 to LsoaCount - 1 do T[2][i] := T[1][i] - T[0][i];
+  for s := 0 to 1 do DiffSD[s] := Stat(T[2], Use[s]).SD;
+
+  RatioR := AmbResponse90Min / AmbResponseMin;
+  SDR[0] := AmbResponseMin * LogNormalCV(RatioR);
+  SDR[1] := AmbResponseMin * GammaCV(RatioR);
+  SDS := (AmbOnSceneQ3 - AmbOnSceneQ1) / 1.349;                 // normal: IQR = 1.349 SD
+  ObsSD := AmbStrokeCallToDoor * LogNormalCV(AmbStrokeCallToDoor90 / AmbStrokeCallToDoor);
+
+  L.Add('STROKE: WHAT MAKES CALL-TO-DOOR TIME VARY, THE AMBULANCE RESPONSE OR THE DRIVE?');
+  L.Add('  Call to door = response + on scene + drive. Taken as independent, their variances add, so');
+  L.Add('  each one''s share of the variance is its share of the patient-to-patient variation.');
+  L.Add('  The response varies from call to call; the drive from place to place.');
+  L.Add('');
+  L.Add('  RESPONSE (between calls). SECAmb publishes a mean and a 90th centile, not the spread, so a');
+  L.Add(Format('  distribution is fitted to both (%.1f and %.0f min, ratio %.2f; an exponential would be 2.30):',
+    [AmbResponseMin, AmbResponse90Min, RatioR]));
+  L.Add(Format('    lognormal: SD %.1f min        gamma: SD %.1f min', [SDR[0], SDR[1]]));
+  L.Add(Format('  ON SCENE (between calls). Quartiles %.0f and %.0f min (North East England study): SD about %.1f min.',
+    [AmbOnSceneQ1, AmbOnSceneQ3, SDS]));
+  L.Add('  DRIVE (between places), blue light, each LSOA weighted by its expected strokes:');
+  L.Add('                                            mean     SD   10th  median   90th   SD between districts');
+  for s := 0 to 1 do begin
+    if s = 0 then L.Add('    Kent and Medway') else L.Add('    North and East Kent');
+    for h := 0 to NH - 1 do
+      L.Add(Format('      to %-30s %7.1f %6.1f %6.1f %7.1f %6.1f %12.1f',
+        [HName[h], St[s, h].Mean, St[s, h].SD, St[s, h].P10, St[s, h].P50, St[s, h].P90, St[s, h].SDBetween]));
+  end;
+  L.Add(Format('  For comparison the response''s 10th to 90th centile span is about %.0f min (lognormal fit).',
+    [AmbResponse90Min - AmbResponseMin * Exp(-1.2815515655 * Sqrt(Ln(1 + Sqr(SDR[0] / AmbResponseMin))))
+       / Sqrt(1 + Sqr(SDR[0] / AmbResponseMin))]));
+  L.Add('');
+  L.Add('  SHARE OF THE VARIANCE IN CALL-TO-DOOR TIME');
+  for s := 0 to 1 do
+    for h := 0 to 1 do
+      if s = 0 then Shares('Kent and Medway, everyone to ' + HName[h], St[s, h].SD)
+      else Shares('North and East Kent, everyone to ' + HName[h], St[s, h].SD);
+  Shares('Kent and Medway, to the nearest stroke unit (as now)', St[0, 2].SD);
+  L.Add('');
+  L.Add('  THE CHOICE OF SITE. Moving from William Harvey to Kent and Canterbury changes each place''s');
+  L.Add(Format('  drive; that change has SD %.1f min across Kent and Medway''s strokes and %.1f across North',
+    [DiffSD[0], DiffSD[1]]));
+  L.Add(Format('  and East Kent''s, against %.0f-%.0f min for the response from one call to the next.',
+    [Min(SDR[0], SDR[1]), Max(SDR[0], SDR[1])]));
+  L.Add('');
+  L.Add('  CHECK. SECAmb''s confirmed strokes, call to hospital arrival: mean ' +
+    Format('%.1f, 90th centile %.0f,', [AmbStrokeCallToDoor, AmbStrokeCallToDoor90]));
+  L.Add(Format('  so SD about %.0f min (lognormal fit). The three components to the nearest stroke unit give',
+    [ObsSD]));
+  L.Add(Format('  %.0f-%.0f min. On that observed spread the response is %.0f-%.0f %% of the variance and the',
+    [Sqrt(Sqr(Min(SDR[0], SDR[1])) + Sqr(SDS) + Sqr(St[0, 2].SD)),
+     Sqrt(Sqr(Max(SDR[0], SDR[1])) + Sqr(SDS) + Sqr(St[0, 2].SD)),
+     100 * Sqr(Min(SDR[0], SDR[1]) / ObsSD), 100 * Sqr(Max(SDR[0], SDR[1]) / ObsSD)]));
+  L.Add(Format('  drive %.0f %%; the rest is on scene and what the model leaves out.',
+    [100 * Sqr(St[0, 2].SD / ObsSD)]));
+  L.Add('');
+  L.Add('  LIMITS. The response figures are for the whole of SECAmb (Kent, Surrey, Sussex), all');
+  L.Add('  Category 2 calls, with no breakdown by place: if ambulances take longer to reach remote places,');
+  L.Add('  part of the response''s variance is really geography and adds to the drive''s. The drive is one');
+  L.Add('  modelled time per LSOA: traffic and day-to-day variation on the same route are not in it.');
+  L.Add('  The on-scene spread is from another region. Independence is assumed.');
 end;
 
 // the best single site for the whole county in each speed scenario, against
