@@ -53,8 +53,15 @@ unit uGlassSpineSim;
       is spread over the same sphere as a body force, acceleration
       Q^2 / (A Vs). For 3 mL in 15 s through a 25G needle that is
       0.75 mN, about 11 m/s^2 over the sphere.
-  The injectate replaces CSF in place: the volume it displaces (~1 mm/s
-  along the sac) is too slow to matter beside the buoyant flow.
+  DISPLACEMENT (Displace, on by default). The injected volume pushes CSF
+  aside: HeadFraction (0.67) of it out through T1 to the head and the
+  rest into the dura, taken up evenly - the spinal canal holds roughly a
+  third of the craniospinal compliance (an estimate). It is a prescribed
+  source like the pulsation's (glassspine.cl's header); the source sphere
+  brings in pure injectate, so the dose goes in exactly, and the dura's
+  share adds to PulseDisp and so to Dilation. Off, the injectate replaces
+  CSF in place (inject_prepare/inject, the first scheme): 1-2 mm/s
+  of displaced flow along the sac is then missing.
 
   CSF PULSATION (Pulse, on by default). CSF moves to and fro between the
   head and the spinal sac with each heartbeat and breath: CSF enters the
@@ -97,8 +104,13 @@ type
     FKForces, FKDiffuse, FKDiv, FKPressure, FKGrad, FKAdvVel, FKFlux,
       FKUpdate, FKMax, FKInject, FKPrep, FKPlaneFlux, FKPlaneCorr: cl_kernel;
     FBFlags, FBFluid, FBV, FBV1, FBV2, FBC, FBC1, FBC2, FBC3, FBP, FBDiv, FBSrc, FBState,
-      FBFlux, FBMax, FBPulse, FBPlaneG, FBPlaneA, FBPlaneCorr: cl_mem;
+      FBFlux, FBMax, FBPulse, FBPlaneG, FBPlaneA, FBPlaneCorr, FBInj, FBInjG: cl_mem;
     FQPrev, FQNow: Single;           // pulsation flow, mm^3/s, last and this step
+    FQiPrev, FQiNow: Single;         // injection's volume flow (Displace), mm^3/s
+    FConn: array of Boolean;         // in a sac's main face-connected body
+    FTopK, FNTop: array[0..1] of Integer;  // the T1 band is k > FTopK; its cells
+    FFaces: array[0..1] of array of Integer;  // open -z faces per plane
+    FInjG: array[0..1] of array of Double;    // as FPlaneG, for the injection
     FSacCells: array[0..1] of Integer;
     FOwed: array[0..1] of Double;    // true mm^3 the injection has asked for
     FPlaneG: array[0..1] of array of Double;   // volume through z plane k per unit q
@@ -109,6 +121,7 @@ type
     FHaveC: Boolean;
     procedure ZeroState;
     procedure BuildPulse;
+    procedure BuildInjectionField;
     procedure CorrectSectionFlux;
     procedure ReleaseBuffers;
     procedure BuildProgram;
@@ -143,6 +156,11 @@ type
     CardiacML, HeartRate, RespML, RespRate: Single;
     PulseDisp: Double;                 // mm^3 taken up by the dura since Reset
     Isolated: Integer;                 // fluid cells off the sacs' main bodies
+    // the injected volume displaces CSF: HeadFraction of it out through T1
+    // to the head, the rest taken up by the dura (off: injectate replaces
+    // CSF in place, the original scheme)
+    Displace: Boolean;
+    HeadFraction: Single;
     LastMaxSpeed: Single;              // mm/s, the last step's largest face speed
     LastSubsteps: Integer;             // the drug's transport sub-steps in the last step
     // read-back and its diagnostics (after ReadBack)
@@ -270,6 +288,8 @@ begin
   NeedleIDmm := 0.26;
   JetDir := 1;
   CFL := 0.3;
+  Displace := True;
+  HeadFraction := 0.67;
   Pulse := True;
   CardiacML := 0.3;
   HeartRate := 70;
@@ -315,6 +335,7 @@ begin
   M(FBFlags); M(FBFluid); M(FBV); M(FBV1); M(FBV2); M(FBC); M(FBC1); M(FBC2);
   M(FBC3); M(FBP); M(FBDiv); M(FBSrc); M(FBState); M(FBFlux); M(FBMax); M(FBPulse);
   M(FBPlaneG); M(FBPlaneA); M(FBPlaneCorr);
+  M(FBInj); M(FBInjG);
   K(FKForces); K(FKDiffuse); K(FKDiv); K(FKPressure); K(FKGrad); K(FKAdvVel);
   K(FKFlux); K(FKUpdate); K(FKMax); K(FKInject); K(FKPrep); K(FKPlaneFlux); K(FKPlaneCorr);
   if FProgram <> nil then clReleaseProgram(FProgram);
@@ -407,8 +428,8 @@ begin
   FBFlux := Buf(16 * N, nil);
   FBMax := Buf(4, nil);
   SetLength(HostC, N);
-  BuildSourceCells;
   BuildPulse;
+  BuildSourceCells;
   Reset;
 end;
 
@@ -445,6 +466,7 @@ begin
   FBSrc := clCreateBuffer(FCtx, CL_MEM_READ_WRITE or CL_MEM_COPY_HOST_PTR, 4 * Length(All),
     @All[0], @Err);
   Check(Err, 'clCreateBuffer');
+  BuildInjectionField;
 end;
 
 procedure TSpineSim.BuildPulse;
@@ -456,7 +478,6 @@ var
   PW: array of Single;              // pairs (w / Vcell, plug)
   sac1: Boolean;
   Err: cl_int;
-  Conn: array of Boolean;           // in the sac's main face-connected body
   Queue: array of Integer;
   qh, qt, d, nbr, seed: Integer;
   Steps: array[0..5] of Integer;
@@ -469,8 +490,8 @@ begin
   // corner (a few, at the closed ends) can't drain, and makes the
   // pressure equation unsolvable: flood each sac from a cell half way up
   // and leave out what the flood doesn't reach
-  SetLength(Conn, N);
-  FillChar(Conn[0], N, 0);
+  SetLength(FConn, N);
+  FillChar(FConn[0], N, 0);
   SetLength(Queue, Length(Geom.Fluid));
   Steps[0] := 1; Steps[1] := -1; Steps[2] := Geom.NX; Steps[3] := -Geom.NX;
   Steps[4] := nxy; Steps[5] := -nxy;
@@ -489,7 +510,7 @@ begin
     if seed < 0 then Continue;
     qh := 0; qt := 1;
     Queue[0] := seed;
-    Conn[seed] := True;
+    FConn[seed] := True;
     while qh < qt do
     begin
       id := Queue[qh];
@@ -497,9 +518,9 @@ begin
       for d := 0 to 5 do
       begin
         nbr := id + Steps[d];
-        if (not Conn[nbr]) and (Geom.Flags[nbr] and FlagFluid <> 0) then
+        if (not FConn[nbr]) and (Geom.Flags[nbr] and FlagFluid <> 0) then
         begin
-          Conn[nbr] := True;
+          FConn[nbr] := True;
           Queue[qt] := nbr;
           Inc(qt);
         end;
@@ -520,11 +541,11 @@ begin
     begin
       id := Geom.Fluid[i];
       sac1 := Geom.Flags[id] and FlagSac1 <> 0;
-      if (sac1 <> (s = 1)) or not Conn[id] then Continue;
+      if (sac1 <> (s = 1)) or not FConn[id] then Continue;
       k := id div nxy;
       Inc(cnt[k]);
       if k > kTop then kTop := k;
-      if Conn[id - nxy] then Inc(band[k]);
+      if FConn[id - nxy] then Inc(band[k]);
     end;
     FSacCells[s] := 0;
     nTop := 0;
@@ -533,6 +554,9 @@ begin
       Inc(FSacCells[s], cnt[k]);
       if k > kTop - nb then Inc(nTop, cnt[k]);
     end;
+    FTopK[s] := kTop - nb;
+    FNTop[s] := nTop;
+    FFaces[s] := Copy(band, 0, Geom.NZ);
     SetLength(w[s], Geom.NZ);
     for k := 0 to Geom.NZ - 1 do
     begin
@@ -549,10 +573,10 @@ begin
     begin
       id := Geom.Fluid[i];
       sac1 := Geom.Flags[id] and FlagSac1 <> 0;
-      if (sac1 <> (s = 1)) or not Conn[id] then Continue;
+      if (sac1 <> (s = 1)) or not FConn[id] then Continue;
       k := id div nxy;
       PW[2 * id] := w[s][k] / Geom.CellVolume;
-      if Conn[id - nxy] and (band[k] > 0) then
+      if FConn[id - nxy] and (band[k] > 0) then
         PW[2 * id + 1] := FPlaneG[s][k] / (band[k] * Sqr(Geom.Dx));
     end;
   end;
@@ -585,6 +609,76 @@ begin
   Check(Err, 'clCreateBuffer');
 end;
 
+procedure TSpineSim.BuildInjectionField;
+var
+  s, i, id, k, nxy, N, nsrc: Integer;
+  sl: array of Double;           // sum of w over each slice
+  w: Double;
+  PW: array of Single;            // float4 per cell: w/Vcell, plug, source part, 0
+  IsSrc: array of Boolean;
+  PG: array of Single;
+  Err: cl_int;
+begin
+  // the injection's volume source as w per cell, summing to zero over a
+  // sac: +1/n_src in the source sphere, -HeadFraction/N_band in the T1
+  // band (to the head) and -(1 - HeadFraction)/N_sac everywhere (dura)
+  nxy := Geom.NX * Geom.NY;
+  N := nxy * Geom.NZ;
+  SetLength(PW, 4 * N);
+  FillChar(PW[0], 16 * N, 0);
+  SetLength(IsSrc, N);
+  FillChar(IsSrc[0], N, 0);
+  SetLength(sl, Geom.NZ);
+  for s := 0 to 1 do
+  begin
+    nsrc := 0;
+    for i := 0 to High(FSrcCells[s]) do
+      if FConn[FSrcCells[s][i]] then
+      begin
+        IsSrc[FSrcCells[s][i]] := True;
+        Inc(nsrc);
+      end;
+    FillChar(sl[0], 8 * Geom.NZ, 0);
+    for i := 0 to High(Geom.Fluid) do
+    begin
+      id := Geom.Fluid[i];
+      if ((Geom.Flags[id] and FlagSac1 <> 0) <> (s = 1)) or not FConn[id] then Continue;
+      k := id div nxy;
+      w := -(1 - HeadFraction) / FSacCells[s];
+      if k > FTopK[s] then w := w - HeadFraction / FNTop[s];
+      if IsSrc[id] and (nsrc > 0) then
+      begin
+        w := w + 1 / nsrc;
+        PW[4 * id + 2] := 1 / nsrc / Geom.CellVolume;
+      end;
+      PW[4 * id] := w / Geom.CellVolume;
+      sl[k] := sl[k] + w;
+    end;
+    SetLength(FInjG[s], Geom.NZ + 1);
+    FInjG[s][0] := 0;
+    for k := 1 to Geom.NZ do FInjG[s][k] := FInjG[s][k - 1] + sl[k - 1];
+    for i := 0 to High(Geom.Fluid) do
+    begin
+      id := Geom.Fluid[i];
+      if ((Geom.Flags[id] and FlagSac1 <> 0) <> (s = 1)) or not FConn[id] then Continue;
+      k := id div nxy;
+      if FConn[id - nxy] and (FFaces[s][k] > 0) then
+        PW[4 * id + 1] := FInjG[s][k] / (FFaces[s][k] * Sqr(Geom.Dx));
+    end;
+  end;
+  SetLength(PG, 2 * (Geom.NZ + 1));
+  for s := 0 to 1 do
+    for k := 0 to Geom.NZ do PG[s * (Geom.NZ + 1) + k] := FInjG[s][k];
+  if FBInj <> nil then clReleaseMemObject(FBInj);
+  if FBInjG <> nil then clReleaseMemObject(FBInjG);
+  FBInj := clCreateBuffer(FCtx, CL_MEM_READ_WRITE or CL_MEM_COPY_HOST_PTR, 16 * NativeUInt(N),
+    @PW[0], @Err);
+  Check(Err, 'clCreateBuffer');
+  FBInjG := clCreateBuffer(FCtx, CL_MEM_READ_WRITE or CL_MEM_COPY_HOST_PTR, 4 * Length(PG),
+    @PG[0], @Err);
+  Check(Err, 'clCreateBuffer');
+end;
+
 function TSpineSim.Dilation(s: Integer): Double;
 begin
   if FSacCells[s] > 0 then
@@ -607,7 +701,7 @@ end;
 
 function TSpineSim.PrescribedAxialFlux(s, k: Integer): Double;
 begin
-  Result := FQNow * FPlaneG[s][k];
+  Result := FQNow * FPlaneG[s][k] + FQiNow * FInjG[s][k];
 end;
 
 function TSpineSim.AxialFlux(s, k: Integer): Double;
@@ -666,6 +760,8 @@ begin
   Time := 0;
   FQPrev := 0;
   FQNow := 0;
+  FQiPrev := 0;
+  FQiNow := 0;
   PulseDisp := 0;
   InjectStart := -1;
   ZeroState;
@@ -712,6 +808,8 @@ begin
   SetArg(FKPlaneFlux, 4, 4, @FQNow);
   SetArg(FKPlaneFlux, 5, 4, @dx2);
   SetArg(FKPlaneFlux, 6, SizeOf(cl_mem), @FBPlaneCorr);
+  SetArg(FKPlaneFlux, 7, SizeOf(cl_mem), @FBInjG);
+  SetArg(FKPlaneFlux, 8, 4, @FQiNow);
   glob := ((2 * (Geom.NZ + 1) + 63) div 64) * 64;
   Check(clEnqueueNDRangeKernel(FQueue, FKPlaneFlux, 1, nil, @glob, nil, 0, nil, nil),
     'clEnqueueNDRangeKernel');
@@ -739,6 +837,8 @@ begin
   SetArg(FKDiv, 4, 4, @inv2dx);
   SetArg(FKDiv, 5, SizeOf(cl_mem), @FBPulse);
   SetArg(FKDiv, 6, 4, @FQNow);
+  SetArg(FKDiv, 7, SizeOf(cl_mem), @FBInj);
+  SetArg(FKDiv, 8, 4, @FQiNow);
   Run(FKDiv);
   SetArg(FKPressure, 0, SizeOf(cl_mem), @FBFluid);
   SetArg(FKPressure, 1, 4, @n);
@@ -792,7 +892,7 @@ var
   n0, n1: Integer;
   one: NativeUInt;
   vc: Single;
-  gx, gy, gz, a, dtdx, Q, An, Vs, dq, sdt: Single;
+  gx, gy, gz, a, dtdx, Q, An, Vs, dq, sdt, dqi, sdti, srcScale: Single;
   zero, umaxBits: LongInt;
   nsub: Integer;
   vsrc, vdst, tmp: cl_mem;
@@ -823,11 +923,17 @@ begin
     end;
   end;
 
-  // the pulsation's flow for this step, and its change as a plug flow
+  // the pulsation's flow for this step, and its change as a plug flow;
+  // likewise the injection's, when it displaces CSF
   FQNow := PulseFlow(Time + Dt);
   dq := FQNow - FQPrev;
   FQPrev := FQNow;
-  PulseDisp := PulseDisp + FQNow * Dt;
+  if Displace and Injecting then FQiNow := DoseML * 1000 / DurationS else FQiNow := 0;
+  dqi := FQiNow - FQiPrev;
+  FQiPrev := FQiNow;
+  // injectate enters in the grid's undilated volumes (see Dilation)
+  srcScale := 1 / Dilation(0);
+  PulseDisp := PulseDisp + (FQNow + (1 - HeadFraction) * FQiNow) * Dt;
 
   // forces
   SetArg(FKForces, 0, SizeOf(cl_mem), @FBFluid);
@@ -845,6 +951,8 @@ begin
   SetArg(FKForces, 12, 4, @Dt);
   SetArg(FKForces, 13, SizeOf(cl_mem), @FBPulse);
   SetArg(FKForces, 14, 4, @dq);
+  SetArg(FKForces, 15, SizeOf(cl_mem), @FBInj);
+  SetArg(FKForces, 16, 4, @dqi);
   Run(FKForces);
 
   // viscosity: Jacobi from FBV into FBV1/FBV2, the result copied back
@@ -910,6 +1018,10 @@ begin
   SetArg(FKUpdate, 7, SizeOf(cl_mem), @FBPulse);
   sdt := FQNow * Dt / nsub;
   SetArg(FKUpdate, 8, 4, @sdt);
+  SetArg(FKUpdate, 9, SizeOf(cl_mem), @FBInj);
+  sdti := FQiNow * Dt / nsub;
+  SetArg(FKUpdate, 10, 4, @sdti);
+  SetArg(FKUpdate, 11, 4, @srcScale);
   for it := 1 to nsub do
   begin
     // C1 = C - div F(C)
@@ -933,7 +1045,7 @@ begin
     tmp := FBC; FBC := FBC2; FBC2 := tmp;
   end;
 
-  if InjectStart >= 0 then
+  if (InjectStart >= 0) and not Displace then
   begin
     n0 := Length(FSrcCells[0]);
     n1 := Length(FSrcCells[1]);
@@ -982,7 +1094,7 @@ begin
   for s := 0 to 1 do
   begin
     Pending[s] := St[s] * Dilation(s);
-    if Pulse or (PulseDisp <> 0) then
+    if Pulse or Displace or (PulseDisp <> 0) then
       Injected[s] := FOwed[s] - Pending[s]
     else
       Injected[s] := St[2 + s];
@@ -1131,6 +1243,8 @@ begin
   SetArg(FKDiv, 4, 4, @invdx);
   SetArg(FKDiv, 5, SizeOf(cl_mem), @FBPulse);
   SetArg(FKDiv, 6, 4, @FQNow);
+  SetArg(FKDiv, 7, SizeOf(cl_mem), @FBInj);
+  SetArg(FKDiv, 8, 4, @FQiNow);
   Run(FKDiv);
   SetLength(D, Length(HostC));
   Check(clEnqueueReadBuffer(FQueue, FBDiv, 1, 0, 4 * NativeUInt(Length(D)), @D[0], 0, nil, nil),

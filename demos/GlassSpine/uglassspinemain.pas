@@ -33,6 +33,7 @@ unit uGlassSpineMain;
     --tilt=<deg> --roll=<deg> --sol0=<n> --sol1=<n> --level=<n>
     --speed=<n>           index into the speed list
     --pulse=0             start with CSF pulsation off
+    --displace=0          injectate replaces CSF in place
     --tab=method          open on the Methodology tab
 
 *******************************************************************************}
@@ -73,7 +74,7 @@ type
     cbLevel, cbNeedle, cbJet, cbSpeed: TComboBox;
     seDose, seDur: TFloatSpinEdit;
     btnPause: TButton;
-    chkRoots, chkPulse: TCheckBox;
+    chkRoots, chkPulse, chkDisplace: TCheckBox;
     seCardML, seHR, seRespML, seRR: TFloatSpinEdit;
     mmInfo: TMemo;
     FPaused, FUpdating: Boolean;
@@ -292,7 +293,7 @@ begin
     cbSol[s].OnChange := @SolutionChange;
   end;
 
-  G := AddGroup('Injection', Y, 182);
+  G := AddGroup('Injection', Y, 208);
   AddLabel(G, 'Interspace', 8, 8);
   cbLevel := AddCombo(G, 110, 4, 110, Interspaces, 1);
   AddLabel(G, 'Volume (mL)', 8, 40);
@@ -311,8 +312,15 @@ begin
   cbNeedle := AddCombo(G, 110, 68, 110, ['22G', '25G', '27G'], 1);
   AddLabel(G, 'Opening', 8, 104);
   cbJet := AddCombo(G, 110, 100, 230, ['facing cephalad', 'facing caudad', 'no jet'], 0);
-  AddButton(G, 'Inject', 8, 134, 160, @InjectClick);
-  AddButton(G, 'Clear', 176, 134, 160, @ClearClick);
+  chkDisplace := TCheckBox.Create(Self);
+  chkDisplace.Parent := G;
+  chkDisplace.SetBounds(8, 130, 330, 22);
+  chkDisplace.Caption := 'Injected volume displaces CSF (2/3 to the head)';
+  chkDisplace.Checked := True;
+  chkDisplace.Hint := 'Off: the injectate replaces CSF in place. Read when Inject is pressed.';
+  chkDisplace.ShowHint := True;
+  AddButton(G, 'Inject', 8, 158, 160, @InjectClick);
+  AddButton(G, 'Clear', 176, 158, 160, @ClearClick);
 
   G := AddGroup('Run', Y, 128);
   AddLabel(G, 'Speed', 8, 8);
@@ -399,6 +407,7 @@ begin
     cbLevel.ItemIndex := EnsureRange(StrToIntDef(OptValue('level', '1'), 1), 0, 2);
     cbSpeed.ItemIndex := EnsureRange(StrToIntDef(OptValue('speed', '3'), 3), 0, High(Speeds));
     chkPulse.Checked := OptValue('pulse', '1') <> '0';
+    chkDisplace.Checked := OptValue('displace', '1') <> '0';
     PulseChange(nil);
     FSim.Baricity[0] := Solutions[cbSol[0].ItemIndex].Baricity;
     FSim.Baricity[1] := Solutions[cbSol[1].ItemIndex].Baricity;
@@ -450,6 +459,7 @@ begin
   FSim.DoseML := seDose.Value;
   FSim.DurationS := seDur.Value;
   FSim.NeedleIDmm := NeedleIDs[cbNeedle.ItemIndex];
+  FSim.Displace := chkDisplace.Checked;
   case cbJet.ItemIndex of
     0: FSim.JetDir := 1;
     1: FSim.JetDir := -1;

@@ -33,7 +33,7 @@ procedure FillMethodology(Lines: TStrings; Sim: TSpineSim);
 implementation
 
 const
-  Text: array[0..60] of string = (
+  Text: array[0..65] of string = (
     'GLASSSPINE - HOW THE SIMULATION WORKS',
     '',
     'GlassSpine follows a spinal anaesthetic as it spreads through the cerebrospinal fluid (CSF) of a '
@@ -115,9 +115,9 @@ const
     '',
     '6. THE INJECTION',
     '',
-    'The needle cannot be resolved (a 25G lumen is a fifth of a cell), so the injectate appears at the '
+    'The needle cannot be resolved (a 25G lumen is a fifth of a cell), so the injectate enters at the '
       + 'chosen rate in a 2.5 mm sphere at the needle tip, 3 mm inside the posterior dura at the chosen '
-      + 'interspace, as C := C + f (1 - C). The bookkeeping of how much has gone in is done on the GPU. '
+      + 'interspace - by default as a true volume source that pushes CSF aside (section 8). '
       + 'The momentum of the jet leaving the needle (flow Q through lumen area A) is spread over the '
       + 'same sphere as a body force of acceleration Q^2 / (A V), directed cephalad or caudad as the '
       + 'needle''s opening faces: a finer needle gives a faster, stronger jet for the same dose and time.',
@@ -156,18 +156,34 @@ const
       + 'to fall to the sacrum, it makes no difference (S2-L1 either way). Plain solution is unaffected '
       + 'in all three positions.',
     '',
-    '8. WHAT IS LEFT OUT',
+    '8. THE INJECTED VOLUME',
+    '',
+    'Injecting 3 mL into a closed sac must push 3 mL of CSF somewhere. Most goes up through the foramen '
+      + 'magnum into the head, and the rest is taken up by the spinal dura and the epidural veins; the '
+      + 'spinal canal holds roughly a third of the craniospinal compliance, so here two thirds of the '
+      + 'injected volume leaves through the T1 end and one third is taken up evenly along the sac (an '
+      + 'estimate). This is the same machinery as the pulsation: the source sphere is a prescribed '
+      + 'source of pure injectate, the outflows are prescribed sinks, the flow is added as a plug and '
+      + 'held exact section by section, and the computed flow matches the prescription to under 1 %.',
+    'For 3 mL over 15 s that is 1-2 mm/s of CSF moving up the sac above the needle (faster where '
+      + 'the sac is narrow) while the '
+      + 'injection lasts. Its effect is small but visible: plain solution is carried a little higher '
+      + '(T11 rather than T12-T11 at about 2.5 minutes, supine), and sitting the hyperbaric solution '
+      + 'reaches T12 rather than L1 at one minute. Untick "Injected volume displaces CSF" to have the '
+      + 'injectate replace CSF in place instead, as C := C + f (1 - C) in the source sphere.',
+    '',
+    '9. WHAT IS LEFT OUT',
     '',
     '  - the true shape of the pulse (here two sines) and where along the canal the dura and epidural '
       + 'veins are most compliant (here everywhere equally);',
-    '  - the injected volume pushing CSF aside (the injectate replaces CSF in place; the displacement is '
-      + 'about 1 mm/s along the sac, small beside the buoyant flow);',
+    '  - the CSF pressure rise an injection causes, and how the compliance shares out between head and '
+      + 'spine with it (here a fixed two thirds and one third);',
     '  - uptake of drug into nerve roots and cord, and its clearance - C here is injectate fraction, not '
       + 'block height, though the two are related;',
     '  - the arachnoid trabeculae and individual nerve roots.',
     'Concentration is the volume fraction of injectate; multiply by the solution''s strength for mg/mL.',
     '',
-    '9. DISPLAY',
+    '10. DISPLAY',
     '',
     'Each frame the concentration is copied to a 3-D texture and ray-marched by a shader: the dura as '
       + 'glass with a bright rim where it is seen edge-on, the cord as an opaque solid, and the drug as a '
@@ -186,7 +202,7 @@ begin
     if Sim <> nil then
     begin
       Lines.Add('');
-      Lines.Add('10. THIS RUN');
+      Lines.Add('11. THIS RUN');
       Lines.Add('');
       Lines.Add(Format('  device: %s', [Sim.DeviceName]));
       Lines.Add(Format('  grid: %d x %d x %d cells of %.2f mm, %d fluid cells a sac, %.1f mL CSF a sac, '
@@ -201,6 +217,11 @@ begin
           [Sim.CardiacML, Sim.HeartRate, Sim.RespML, Sim.RespRate]))
       else
         Lines.Add('  pulsation off');
+      if Sim.Displace then
+        Lines.Add(Format('  the injected volume displaces CSF, %.0f %% of it to the head',
+          [100 * Sim.HeadFraction]))
+      else
+        Lines.Add('  the injectate replaces CSF in place');
     end;
   finally
     Lines.EndUpdate;

@@ -25,7 +25,7 @@ program spinecheck;
   Build:  fpc -O2 -Fu../.. -Fi../.. spinecheck.lpr
   Run:    ./spinecheck [--time=60] [--tilt=0] [--roll=0] [--dx=1.25]
                        [--level=1] [--iters=30] [--pulse=1] [--cardiac=0.3]
-                       [--hr=70] [--resp=0.3] [--rr=12]
+                       [--hr=70] [--resp=0.3] [--rr=12] [--displace=1]
 
 *******************************************************************************}
 
@@ -112,6 +112,7 @@ begin
 
     Sim.Reset;
     Sim.Pulse := Opt('pulse', 1) <> 0;
+    Sim.Displace := Opt('displace', 1) <> 0;
     Sim.TiltDeg := Opt('tilt', 0);
     Sim.RollDeg := Opt('roll', 0);
     WriteLn(Format('injecting %.1f mL over %.0f s at %s, tilt %.0f, roll %.0f, baricity %.4f / %.4f',
@@ -136,6 +137,16 @@ begin
             [s, Sim.Injected[s] / 1000, Sim.Present[s] / 1000,
              LevelText(Sim.CaudalExtent(s, 0.01)), LevelText(Sim.CephaladExtent(s, 0.01))]));
         WriteLn(Format(' | max |u| %.1f mm/s, %d sub, C %.1e..%.4f', [Sim.LastMaxSpeed, Sim.LastSubsteps, Sim.CMin, Sim.CMax]));
+        if (Opt('fluxcheck', 0) <> 0) and Sim.Injecting then
+        begin
+          Write('    axial flux computed/prescribed, mm^3/s:');
+          for L in CheckLevels do
+          begin
+            k := Round((0.5 * (Sim.Geom.LevelZ0[L] + Sim.Geom.LevelZ0[L + 1]) - Sim.Geom.Z0) / Sim.Geom.Dx);
+            Write(Format(' %s %6.0f/%6.0f', [LevelNames[L], Sim.AxialFlux(0, k), Sim.PrescribedAxialFlux(0, k)]));
+          end;
+          WriteLn;
+        end;
         tNext := tNext + Opt('every', 5);
       end;
     end;

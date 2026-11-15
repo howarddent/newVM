@@ -3903,7 +3903,9 @@ packages. Compiled binaries and each demo's own `lib/` output are
     - the demo: `lazbuild --ws=gtk2 demos/GlassSpine/GlassSpine.lpi`;
     - the check: `fpc -O2 -FUlib -Fu../.. -Fi../.. spinecheck.lpr`, which
       takes `--time --tilt --roll --dx --level --iters --jet --cfl --dt
-      --b0 --b1 --every --pulse --cardiac --hr --resp --rr`. Before the
+      --b0 --b1 --every --pulse --cardiac --hr --resp --rr --displace
+      --fluxcheck`; `--fluxcheck=1` also prints the axial flux at each
+      report while injecting. Before the
       injection it runs pulsation alone and prints the computed against
       the prescribed axial flux at L3, L1, T8 and T2, and where the
       divergence residual is worst.
@@ -4029,6 +4031,37 @@ packages. Compiled binaries and each demo's own `lib/` output are
       solution has only a short way to fall to the sacrum.
     - The cost is the headless check at about 10x real time (17x
       before); the window still draws about 150 fps.
+  - **Injected volume displaces CSF** (2026-11-15, `Displace`, on by
+    default; a check box in the Injection group read at Inject,
+    `--displace=0`). Off is the first scheme: the injectate replaces CSF
+    in place (`inject_prepare`/`inject`).
+    - A second prescribed source like the pulsation's, `pwi` (float4,
+      `BuildInjectionField`, rebuilt with the source cells at each
+      Inject): `w = +1/n_src` in the source sphere,
+      `-HeadFraction/N_band` in the T1 band and `-(1 - HeadFraction)/N_sac`
+      everywhere. `.y` is its plug and `.z` the source part alone.
+      `plane_flux` targets `q G + qi Gi`.
+    - `HeadFraction` 0.67 is an estimate: the spinal canal holds roughly a
+      third of the craniospinal compliance. The dura's share adds to
+      `PulseDisp`, so `Dilation` covers it.
+    - `c_update` brings in pure injectate through `.z` (C = 1, divided by
+      `Dilation(0)`); the rest of the divergence leaves or dilates at the
+      local C. So the dose goes in exactly (3.00 mL in, 3.00 present)
+      with no capacity bookkeeping, and `Injected` is the volume owed.
+    - `BuildPulse` now keeps its flood fill (`FConn`), the T1 band
+      (`FTopK`, `FNTop`) and the open faces per plane (`FFaces`) for this,
+      and `Setup` builds the pulse before the source cells.
+    - **Check** (`--fluxcheck=1`, pulsation off): during the injection
+      the computed flux at L3, L1, T8 and T2 is 176/177, 162/163, 150/150
+      and 137/137 mm^3/s against prescribed. That is 1-2 mm/s up the sac:
+      0.9 at L3, about 200 mm^2, and more where the thoracic sac is
+      narrow.
+    - **Effect** (pulsation on), small:
+      - Supine at 155 s: plain reaches T11 rather than T12-T11, and at
+        180 s 0.10 against 0.06 mL at T12. Hyperbaric is at T8 rather than
+        T8-T7, with 0.013 against 0.022 mL at T7.
+      - Sitting at 65 s: hyperbaric reaches T12 rather than L1, and plain
+        T12-T11 rather than T12.
   - **Rendering** (`uspineview.pas`):
     - C is read back each frame into a LUMINANCE16 3-D texture. The
       geometry is an RGBA8 3-D texture: inside dura, cord, level ring
@@ -4064,8 +4097,9 @@ packages. Compiled binaries and each demo's own `lib/` output are
       by about 4 min. Plain stays at L5-T12.
     - **Sitting**, 120 s: hyperbaric S2-L1; plain rises to T11.
     - **Left lateral**, 120 s: hyperbaric S2-T7.
-  - **Left out**: the injected volume displacing CSF, the pulse's real
-    waveform, and compliance that varies along the canal.
+  - **Left out**: the pressure rise an injection causes and how it shares
+    the compliance (a fixed 2/3 to the head), the pulse's real waveform,
+    and compliance that varies along the canal.
     The cauda equina drag (`RootsDrag` 5 /s on `FlagRoots` cells, a check
     box) is a guess and off by default.
   - **Command line**:
@@ -4075,7 +4109,7 @@ packages. Compiled binaries and each demo's own `lib/` output are
     - `--autorun=<s> [--png=<file>]` runs interactively for s seconds of
       wall time and prints the fps.
     - Also `--tilt --roll --sol0 --sol1 --level --speed --pulse=0
-      --tab=method`.
+      --displace=0 --tab=method`.
   - `GlassSpine.lpr` has no `{$R *.res}`: an empty `.res` broke the
     resource compile.
   - FPC duplicate identifiers hit again: `T`/`t`, `l`/`L`, and `Color`,

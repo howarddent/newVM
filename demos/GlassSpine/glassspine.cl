@@ -53,6 +53,16 @@
   section. The drug keeps its concentration as a cell dilates
   (DC/Dt = 0): c_update adds C div u to the conservative update.
 
+  THE INJECTED VOLUME (Displace) is a second prescribed source of the
+  same kind, pwi (float4): .x = w/Vcell with w = +1/n_src in the source
+  sphere, -HeadFraction/N_band in the T1 band (CSF pushed out to the
+  head) and -(1 - HeadFraction)/N_sac everywhere (the dura's share), .y
+  its plug, .z the source sphere's part alone. In c_update the source
+  part brings in pure injectate (C = 1, scaled to undilated volumes) and
+  the rest leaves or dilates at the local C, so the dose goes in exactly.
+  The old replace-in-place injection (inject_prepare/inject) is kept for
+  Displace off.
+
   SECTION FLUX CORRECTION. Even so, the per-cell residual the SOR sweeps
   leave (~1e-3 of the speed) is smooth and of one sign over long
   stretches, and summed over the thousands of cells below a level it
@@ -125,7 +135,8 @@ __kernel void forces(__global const int* fluid, int n, __global const uchar* fl,
   float4 g0, float4 g1,      /* (baricity-1)*g in the body frame, mm/s^2, per sac */
   float4 src0, float4 src1,  /* injection sphere: centre (cells), w = radius (cells) */
   float4 jet0, float4 jet1,  /* jet acceleration, mm/s^2 (zero when not injecting) */
-  float drag, float dt, __global const float2* pw, float dq)
+  float drag, float dt, __global const float2* pw, float dq,
+  __global const float4* pwi, float dqi)
 {
   int g = get_global_id(0);
   if (g >= n) return;
@@ -154,7 +165,7 @@ __kernel void forces(__global const int* fluid, int n, __global const uchar* fl,
     if ((f | fn) & ROOTS) val /= (1.0f + dt * drag);
     if (a == 0) u.x = val; else if (a == 1) u.y = val; else u.z = val;
   }
-  if (fl[id - NXY] & FLUID) u.z += dq * pw[id].y;
+  if (fl[id - NXY] & FLUID) u.z += dq * pw[id].y + dqi * pwi[id].y;
   v[id] = u;
 }
 
@@ -181,14 +192,14 @@ __kernel void diffuse_vel(__global const int* fluid, int n, __global const uchar
    pulsation's prescribed source q pw.x */
 __kernel void divergence(__global const int* fluid, int n,
   __global const float4* v, __global float* div, float invdx,
-  __global const float2* pw, float q)
+  __global const float2* pw, float q, __global const float4* pwi, float qi)
 {
   int g = get_global_id(0);
   if (g >= n) return;
   int id = fluid[g];
   float4 u = v[id];
   div[id] = (v[id + 1].x - u.x + v[id + NX].y - u.y + v[id + NXY].z - u.z) * invdx
-          - q * pw[id].x;
+          - q * pw[id].x - qi * pwi[id].x;
 }
 
 /* one red-black SOR half-sweep of lap p = div, with zero normal gradient
@@ -311,7 +322,8 @@ __kernel void c_flux(__global const int* fluid, int n, __global const uchar* fl,
    with div u the pulsation's source (sdt = q times the sub-step) */
 __kernel void c_update(__global const int* fluid, int n,
   __global const float4* flux, __global const float* cin, __global const float* cbase,
-  __global float* cout, float a, __global const float2* pw, float sdt)
+  __global float* cout, float a, __global const float2* pw, float sdt,
+  __global const float4* pwi, float sdti, float srcScale)
 {
   int g = get_global_id(0);
   if (g >= n) return;
@@ -319,7 +331,12 @@ __kernel void c_update(__global const int* fluid, int n,
   float4 F = flux[id];
   float d = flux[id + 1].x - F.x + flux[id + NX].y - F.y + flux[id + NXY].z - F.z;
   float ci = cin[id];
-  cout[id] = a * cbase[id] + (1.0f - a) * (ci - d + sdt * pw[id].x * ci);
+  float4 wi = pwi[id];
+  /* the injection: pure injectate in through the source (wi.z), and the
+     rest of its divergence - CSF leaving for the head or the dura - at
+     the local concentration */
+  float si = sdti * (srcScale * wi.z + (wi.x - wi.z) * ci);
+  cout[id] = a * cbase[id] + (1.0f - a) * (ci - d + sdt * pw[id].x * ci + si);
 }
 
 /* the largest face speed (mm/s), as float bits into *mx (non-negative
@@ -379,7 +396,7 @@ __kernel void inject(__global const int* fluid, int n, __global const uchar* fl,
    it q G[s,k]: corr[s,k] = (q G - flux) / (A dx^2) */
 __kernel void plane_flux(__global const uchar* fl, __global const float4* v,
   __global const float* G, __global const int* A, float q, float dx2,
-  __global float* corr)
+  __global float* corr, __global const float* Gi, float qi)
 {
   int g = get_global_id(0);
   if (g >= 2 * (NZ + 1)) return;
@@ -398,7 +415,7 @@ __kernel void plane_flux(__global const uchar* fl, __global const float4* v,
       if (((f & SAC1) != 0) != (s == 1)) continue;
       sum += v[id].z;
     }
-  corr[g] = (q * G[g] - sum * dx2) / (A[g] * dx2);
+  corr[g] = (q * G[g] + qi * Gi[g] - sum * dx2) / (A[g] * dx2);
 }
 
 __kernel void plane_correct(__global const int* fluid, int n, __global const uchar* fl,
