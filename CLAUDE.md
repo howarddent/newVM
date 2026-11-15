@@ -4062,6 +4062,37 @@ packages. Compiled binaries and each demo's own `lib/` output are
         T8-T7, with 0.013 against 0.022 mL at T7.
       - Sitting at 65 s: hyperbaric reaches T12 rather than L1, and plain
         T12-T11 rather than T12.
+  - **Head-down tilt** (2026-11-15, `spinecheck --tilt=<-deg>`, pulsation
+    and displacement on, 3 mL at L3-4). Run to compare with Der
+    Anaesthesist 2009 (doi 10.1007/s00101-009-1661-6), which tested
+    hyperbaric bupivacaine in straight and curved subarachnoid models at
+    0-15 deg head down. Hyperbaric cephalad edge (C 1 %):
+
+    | Head down | 65 s | 95 s | 125 s | 185 s | 245 s |
+    |---|---|---|---|---|---|
+    | 0 | T11 | T10 | T9 | T7 | T6-T5 |
+    | 5 | T11 | T10-T9 | | | |
+    | 10 | T11-T10 | T9 | | | |
+    | 15 | T11 | T10 | T7 | T4-T3 | T2 |
+
+    - 5 and 10 deg were run to 120 s only.
+    - Up to about 35 s every tilt is the same, because the jet dominates.
+    - The tilt mainly empties the sacrum. S1+S2 holds 0.68 mL flat at
+      120 s, 0.46 at 10 deg and 0.17 at 15 deg. The thorax (T1-T11) holds
+      0.48 against 0.68 mL at 300 s.
+    - Plain 0.999 drifts towards the sacrum, uphill when head down: S2-S1
+      to T11 at 15 deg.
+    - **Against the paper**:
+      - It agrees that 15 deg is what moves the sacral pool.
+      - It disagrees about lying flat. The paper found diffusion governed
+        the supine spread, and spill over the lordosis into the thorax
+        only at 15 deg. GlassSpine has no diffusion, yet the solution
+        crosses into the thorax supine, by gravity along the curve.
+        Injecting near the lordosis apex may explain it; the paper's
+        injection site and geometry weren't checked, from the abstract
+        only.
+      - The 3-4 extra levels at 15 deg by 4 min may be more than
+        clinical trials show; their head-down results are mixed.
   - **Rendering** (`uspineview.pas`):
     - C is read back each frame into a LUMINANCE16 3-D texture. The
       geometry is an RGBA8 3-D texture: inside dura, cord, level ring
