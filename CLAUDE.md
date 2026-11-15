@@ -3880,6 +3880,134 @@ packages. Compiled binaries and each demo's own `lib/` output are
   with the user's. The memo tabulates the valves and the inverse rule
   `R = (Fs - F)/(F - Fa)`. `--snapshot=<file.png>` saves the plot, prints
   the memo and exits.
+- **`GlassSpine`** (added 2026-11-15) — spinal anaesthesia in real time:
+  bupivacaine spreading under gravity through a transparent dural sac,
+  on the GPU by OpenCL, drawn by OpenGL. Two sacs run side by side in one
+  grid, each with its own solution: hyperbaric 1.020 (blue) and plain
+  0.999 (amber) by default. Gravity is fixed, pointing down the screen,
+  and the sacs rotate under it.
+  - **Units**:
+    - `uspinegeom.pas` (`TSpineGeom`): the sac and cord from S2 to T1
+      (19 levels, about 544 mm long).
+    - `glassspine.cl`: the kernels.
+    - `uglassspinesim.pas` (`TSpineSim`): the simulation.
+    - `uspineview.pas` (`TSpineView`, a `TOpenGLControl`): the view.
+    - `uglassspinemain.pas`: the form, with its controls built in code.
+      The view and profile sit on a "Simulation" tab beside a
+      "Methodology" tab: a word-wrapped memo filled by
+      `uglassspinemethod.pas` (`FillMethodology`), plain prose for a
+      reader, ending with this run's grid and solver figures read from
+      `TSpineSim`. `--tab=method` opens on it.
+    - `spinecheck.lpr`: the headless check.
+  - **Build and run**:
+    - the demo: `lazbuild --ws=gtk2 demos/GlassSpine/GlassSpine.lpi`;
+    - the check: `fpc -O2 -FUlib -Fu../.. -Fi../.. spinecheck.lpr`, which
+      takes `--time --tilt --roll --dx --level --iters --jet --cfl --dt
+      --b0 --b1 --every`.
+    - It needs `HAVE_OPENCL`, because it uses
+      `OpenCLAPI.InitializeOpenCLContext`. That picks the GPU with the
+      most compute units (the RTX 5070 here) and also requires clFFT.
+  - **Posture**:
+    - **Tilt** is head up or down: +90 is sitting, negative is
+      Trendelenburg. **Roll** is about the long axis: +90 is left
+      lateral, 180 prone.
+    - `PostureMatrix(Tilt, Roll)` is `Rz(tilt) Rx(-roll) Base`. Base maps
+      body x (the patient's left) to world -Z, y (anterior) to +Y and z
+      (head) to +X.
+    - The fluid feels `g_body = R^T (0, -9810, 0)` mm/s^2. There are no
+      fictitious forces, since the turning is taken as slow.
+    - Right-drag in the view sets the posture (`OnPosture`), and so do
+      the sliders and presets (supine, sitting, left and right lateral,
+      prone, head down 15, head up 15). Left-drag only orbits the camera.
+  - **Geometry**:
+    - Sections are ellipses (`LevelAX`/`LevelAY`), with the cord down to
+      the conus at L1-L2. The sagittal curve has its apex at L3 and its
+      nadir at T8 (Hirabayashi 1995), about 34 mm deep.
+    - These figures are typical estimates, not one patient's.
+    - At dx 1.25 mm the grid is 38 x 44 x 441 with about 72k fluid
+      cells, 69.8 mL of CSF per sac. Every kernel runs only over the
+      compacted fluid-cell list.
+    - `Flags` bits: `FlagFluid`, `FlagCord`, `FlagSac1`, `FlagRoots`
+      (the cauda equina), `FlagRing`/`FlagKey` (the level rings drawn).
+  - **Fluid: Stam's Stable Fluids on a MAC grid.** Velocity uses
+    semi-Lagrangian advection (RK2 backtrace), implicit Jacobi viscosity
+    (nu 0.7 mm^2/s) and two projections, the first with half the
+    iterations. Pressure is red-black SOR (omega 1.7, 30 iterations,
+    warm-started), with Neumann conditions at the walls.
+    - Storage is a float4 per cell whose `.x/.y/.z` are the velocities on
+      its -x/-y/-z faces. Closed faces stay 0 and are never written.
+    - **Why staggered**: on Stam's collocated grid, the central-difference
+      divergence left the flow far from divergence-free next to the dura.
+      Now |div| dx is about 1e-3 of |u|.
+    - Buoyancy is Boussinesq, `(baricity - 1) C g_body`, against CSF
+      density 1.00059.
+  - **The drug is not transported by Stam's method.** C, the injectate
+    volume fraction, is conservative finite volumes: MUSCL with the MC
+    limiter and SSP-RK2 (`c_flux`/`c_update`).
+    - It is sub-cycled to CFL 0.3. The step's largest face speed comes
+      from an `atomic_max` reduction (`max_speed`), read back each step.
+    - Semi-Lagrangian and MacCormack transport of C were both tried, and
+      both gained or lost 10-90 % of the dose. The finite-volume scheme
+      is exact: 3.00 mL injected, 3.00 mL present.
+  - **Injection**:
+    - The source is a 2.5 mm sphere 3 mm inside the posterior dura at
+      L2-3, L3-4 or L4-5 (`InjectionPoint`).
+    - The dose, duration and needle (22/25/27G, IDs 0.41/0.26/0.21 mm)
+      are set on the form.
+    - The bookkeeping (pending, injected, fraction f) runs on the GPU in
+      `inject_prepare`, a single work-item kernel writing a state buffer,
+      and `inject` sets `C += f (1 - C)`. On the host it went wrong: the
+      per-frame capacity it used was stale.
+    - The jet is a body force on the source cells,
+      `Q^2/(A_needle V_source)`, cephalad, caudad or off.
+  - **Rendering** (`uspineview.pas`):
+    - C is read back each frame into a LUMINANCE16 3-D texture. The
+      geometry is an RGBA8 3-D texture: inside dura, cord, level ring
+      and key ring.
+    - A GLSL 1.20 ray-march draws the dura as glass with a Fresnel rim,
+      the cord as opaque Lambert, and the drug by emission and absorption
+      with opacity proportional to sqrt C.
+    - The dura's normals come from a gradient at 1.5 dx, which stopped
+      them sparkling. The cord hit is refined by 5 bisection steps, which
+      removed its speckle.
+    - Each sac has its own model-view, offset perpendicular to its long
+      axis on screen.
+    - Text labels are LCL bitmap textures, and a gravity arrow is drawn
+      in pixel space.
+    - `ResetView`: yaw 0, pitch 12, distance 1000.
+  - **Real-time stepping** (`AppIdle`): simulated time is owed to the
+    clock (`FDebt`, wall time x the speed choice of 0.5-20x), and whole
+    `Dt` = 0.01 s steps are taken, with the remainder carried to the
+    next frame.
+    - At most 40 steps are taken a frame, and a shortfall beyond that is
+      dropped, so the window stays responsive.
+    - An earlier `Advance(dt)` per frame rounded the remainder away and
+      ran about 1.5x fast.
+    - The headless check runs about 17x real time. The window draws at
+      about 150 fps, still 42 fps at 10x.
+    - `Advance` accumulates a Single `Time`, so loop on
+      `T < tEnd - 0.5 Dt`, not `T < tEnd`. The plain test once never
+      ended.
+  - **Results** (3 mL over 15 s at L3-4, 25G, jet cephalad):
+    - **Supine**: at 120 s the hyperbaric solution covers S2-T5,
+      pooling in the sacrum and the T6-T9 kyphosis, and reaches T3 (C 1 %)
+      by about 4 min. Plain stays at L5-T12.
+    - **Sitting**, 120 s: hyperbaric S2-L1; plain rises to T11.
+    - **Left lateral**, 120 s: hyperbaric S2-T7.
+  - **Left out**: CSF pulsation, and the injected volume displacing CSF.
+    The cauda equina drag (`RootsDrag` 5 /s on `FlagRoots` cells, a check
+    box) is a guess and off by default.
+  - **Command line**:
+    - `--snapshot=<prefix> --time=<s>` saves the view, the profile plot
+      (mL per level, a `TVMPlot2D`) and the window, prints the memo and
+      exits.
+    - `--autorun=<s> [--png=<file>]` runs interactively for s seconds of
+      wall time and prints the fps.
+    - Also `--tilt --roll --sol0 --sol1 --level --speed`.
+  - `GlassSpine.lpr` has no `{$R *.res}`: an empty `.res` broke the
+    resource compile.
+  - FPC duplicate identifiers hit again: `T`/`t`, `l`/`L`, and `Color`,
+    `Caption`, `Parent` and `Tag` as parameters on a control or form.
 - **`SpectralDiff`** — Chebyshev spectral differentiation of
   `f(x) = exp(x)*sin(5x)` (the example function, from Trefethen's
   *Spectral Methods in MATLAB*) via `DCT1` (newVM.pas's FFTW-backed
