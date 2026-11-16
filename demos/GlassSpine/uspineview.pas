@@ -511,6 +511,25 @@ var
     ssx := (a / d * 0.5 + 0.5) * Width;
     ssy := (b / d * 0.5 + 0.5) * Height;
   end;
+  { one row of the rings' key, row 0 at the top; the text's right edge
+    sits 12 px from the view's }
+  procedure LegendRow(Row: Integer; const S: string; r, g, b: Single);
+  var
+    k: Integer;
+    tx, ty: Single;
+  begin
+    k := TextTex(S, RGBToColor(215, 215, 205), 8, False);
+    tx := Width - 12 - FLabels[k].W;
+    ty := 22 + (1 - Row) * 18;
+    glLineWidth(4);
+    glColor4f(r, g, b, 1);
+    glBegin(GL_LINES);
+    glVertex2f(tx - 30, ty);
+    glVertex2f(tx - 8, ty);
+    glEnd;
+    glLineWidth(1);
+    DrawText(k, tx, ty, False);
+  end;
 begin
   glViewport(0, 0, Width, Height);
   glClearColor(0.07, 0.08, 0.10, 1);
@@ -670,6 +689,14 @@ begin
   glLineWidth(1);
   ti := TextTex('g', RGBToColor(240, 240, 240), 11, True);
   DrawText(ti, x + 22, y + 26, True);
+
+  // the rings' key, bottom right: a swatch (a ring seen edge on) and its text
+  if ShowLabels then
+  begin
+    LegendRow(0, 'Lower border of T4 (nipple), T10 (umbilicus), L1 (groin)',
+      1.0, 0.35, 0.30);
+    LegendRow(1, 'Vertebral level boundaries', 0.95, 0.95, 0.75);
+  end;
 end;
 
 procedure TSpineView.Paint;

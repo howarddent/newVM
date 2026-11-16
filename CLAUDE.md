@@ -3904,7 +3904,7 @@ packages. Compiled binaries and each demo's own `lib/` output are
     - the check: `fpc -O2 -FUlib -Fu../.. -Fi../.. spinecheck.lpr`, which
       takes `--time --tilt --roll --dx --level --iters --jet --cfl --dt
       --b0 --b1 --every --pulse --cardiac --hr --resp --rr --displace
-      --fluxcheck`; `--fluxcheck=1` also prints the axial flux at each
+      --diff --fluxcheck` (`--diff` in mm^2/s); `--fluxcheck=1` also prints the axial flux at each
       report while injecting. Before the
       injection it runs pulsation alone and prints the computed against
       the prescribed axial flux at L3, L1, T8 and T2, and where the
@@ -4093,6 +4093,41 @@ packages. Compiled binaries and each demo's own `lib/` output are
         only.
       - The 3-4 extra levels at 15 deg by 4 min may be more than
         clinical trials show; their head-down results are mixed.
+  - **Drug diffusion** (2026-11-15, off by default; "Drug diffusion" in the
+    Run group: none, molecular 7e-4, 0.1, 1 or 10 mm^2/s, applied live).
+    Added to test the paper's claim that diffusion decides the supine
+    spread.
+    - `c_flux` adds Fick's `D dt/dx^2 (C_L - C_R)` on every open face, so
+      the dura and cord are no-flux and the dose is still exact.
+    - It is explicit, so the drug's sub-steps also keep `D dt/dx^2 <= 0.15`
+      (cap raised from 64 to 256 sub-steps). 10 mm^2/s still needs only
+      one sub-step at Dt 0.01.
+    - Molecular (7e-4 mm^2/s, under 1 mm in 5 min) gives the same figures
+      as none, to the third decimal.
+    - **Results**: hyperbaric cephalad edge at 245 s, and mL in the sacrum
+      (S1+S2) and thorax (T1-T11) at 300 s:
+
+      | D, mm^2/s | Flat: edge | sacrum | thorax | 15 deg down: edge | sacrum | thorax |
+      |---|---|---|---|---|---|---|
+      | 0 | T6-T5 | 0.63 | 0.48 | T2 | 0.17 | 0.68 |
+      | 0.1 | T6 | 0.57 | 0.37 | T3-T2 | 0.19 | 0.62 |
+      | 1 | T9 | 0.33 | 0.16 | T7 | 0.20 | 0.28 |
+      | 10 | T9 | 0.24 | 0.21 | T9 | 0.22 | 0.22 |
+
+    - **Diffusion takes posture out, not in.** It dilutes the injectate,
+      and with it the density excess that buoyancy acts on. So the
+      cephalad spread shrinks rather than grows, and at 10 mm^2/s flat and
+      15 deg give the same answer. There, hyperbaric and plain are almost
+      identical blobs (S2..T9).
+    - 1 mm^2/s sits between the two: 15 deg still adds two levels.
+    - So the paper's "diffusion decides it supine", and gravity winning
+      only from 10 deg, would need an effective D of about 1-10 mm^2/s.
+      That is 10^3-10^4 times molecular, and would have to come from
+      mixing that GlassSpine resolves explicitly (jet, pulsation) or
+      leaves out (the nerve roots' stirring, the real waveform).
+    - The model carries one scalar, so diffusing the drug also diffuses
+      the glucose that makes it heavy. Glucose's molecular D is similar
+      (about 6.7e-4 mm^2/s).
   - **Rendering** (`uspineview.pas`):
     - C is read back each frame into a LUMINANCE16 3-D texture. The
       geometry is an RGBA8 3-D texture: inside dura, cord, level ring
@@ -4107,6 +4142,9 @@ packages. Compiled binaries and each demo's own `lib/` output are
       axis on screen.
     - Text labels are LCL bitmap textures, and a gravity arrow is drawn
       in pixel space.
+    - The level rings are cream, and red at the lower borders of T4, T10
+      and L1 (the nipple, umbilicus and groin dermatomes). A key in the
+      bottom right says so, shown with the labels.
     - `ResetView`: yaw 0, pitch 12, distance 1000.
   - **Real-time stepping** (`AppIdle`): simulated time is owed to the
     clock (`FDebt`, wall time x the speed choice of 0.5-20x), and whole
@@ -4140,7 +4178,8 @@ packages. Compiled binaries and each demo's own `lib/` output are
     - `--autorun=<s> [--png=<file>]` runs interactively for s seconds of
       wall time and prints the fps.
     - Also `--tilt --roll --sol0 --sol1 --level --speed --pulse=0
-      --displace=0 --tab=method`.
+      --displace=0 --diff=<0..4> --tab=method` (`--diff` an index into
+      the diffusion list).
   - `GlassSpine.lpr` has no `{$R *.res}`: an empty `.res` broke the
     resource compile.
   - FPC duplicate identifiers hit again: `T`/`t`, `l`/`L`, and `Color`,
