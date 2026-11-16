@@ -4125,6 +4125,38 @@ packages. Compiled binaries and each demo's own `lib/` output are
       That is 10^3-10^4 times molecular, and would have to come from
       mixing that GlassSpine resolves explicitly (jet, pulsation) or
       leaves out (the nerve roots' stirring, the real waveform).
+    - **30 minutes supine** (2026-11-16, `--time=1800 --every=300`, about
+      7 min of wall time each). Cephalad edge (C 1 %):
+
+      | D, mm^2/s | Solution | 5 min | 10 min | 15 min | 20 min | 25 min |
+      |---|---|---|---|---|---|---|
+      | 0 | hyperbaric | T5 | T4-T3 | T3 | T3 | T3 |
+      | 0.1 | hyperbaric | T6-T5 | T5-T4 | T4 | T4 | T4 |
+      | 1 | hyperbaric | T9 | T9-T8 | T8 | T8-T7 | T7 |
+      | 0, 0.1 | plain | T11 | T11 | T11-T10 | T10 | T10 |
+      | 1 | plain | T11 | T11-T10 | T10 | T10-T9 | T9 |
+
+      At 30 min:
+
+      | D, mm^2/s | Hyperbaric thorax (T1-T11) | Hyperbaric sacrum (S1+S2) | Plain thorax | Plain sacrum |
+      |---|---|---|---|---|
+      | 0 | 0.67 | 0.50 | 0.12 | 0 |
+      | 0.1 | 0.49 | 0.36 | 0.13 | 0.06 |
+      | 1 | 0.30 | 0.32 | 0.22 | 0.15 |
+
+      Values are in mL, and the dose stayed at 3.00 mL throughout.
+      - **Against typical clinical figures** (from memory, not one trial):
+        hyperbaric 0.5 % peaks at T4-T6 by 20-30 min, and plain at T7-T10.
+        - At D 0 the edge has stopped rising by 15 min, a level or two
+          high.
+        - 0.1 holds at T4 from 15 min, the best match.
+        - At 1 the edge is still creeping at T7 at 30 min, and hyperbaric
+          and plain converge to about 2 levels apart.
+      - Somewhere between 0.1 and 1 mm^2/s would probably give a peak
+        near T5 with a gap of about 4 levels. That hasn't been run.
+      - The 1 % edge is arbitrary, and a block usually reaches a level or
+        two above the drug, so read the edges between runs rather than as
+        block heights.
     - The model carries one scalar, so diffusing the drug also diffuses
       the glucose that makes it heavy. Glucose's molecular D is similar
       (about 6.7e-4 mm^2/s).
