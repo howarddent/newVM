@@ -303,18 +303,25 @@ inline float faceC(__global const float* c, __global const uchar* fl, int L, int
 }
 
 /* the volume flux of injectate through each open lower face, times
-   dt/dx (so in cell volumes); closed faces carry none */
+   dt/dx (so in cell volumes); closed faces carry none, which is also the
+   no-flux wall condition for the optional diffusion: dfac = D dt/dx^2
+   adds Fick's -D dC/dn across each open face */
 __kernel void c_flux(__global const int* fluid, int n, __global const uchar* fl,
-  __global const float4* v, __global const float* c, __global float4* flux, float dtdx)
+  __global const float4* v, __global const float* c, __global float4* flux, float dtdx,
+  float dfac)
 {
   int g = get_global_id(0);
   if (g >= n) return;
   int id = fluid[g];
   float4 u = v[id];
   float4 F = (float4)(0.0f);
-  if (fl[id - 1] & FLUID)   F.x = dtdx * u.x * faceC(c, fl, id - 1, id, 1, u.x);
-  if (fl[id - NX] & FLUID)  F.y = dtdx * u.y * faceC(c, fl, id - NX, id, NX, u.y);
-  if (fl[id - NXY] & FLUID) F.z = dtdx * u.z * faceC(c, fl, id - NXY, id, NXY, u.z);
+  float ci = c[id];
+  if (fl[id - 1] & FLUID)
+    F.x = dtdx * u.x * faceC(c, fl, id - 1, id, 1, u.x) + dfac * (c[id - 1] - ci);
+  if (fl[id - NX] & FLUID)
+    F.y = dtdx * u.y * faceC(c, fl, id - NX, id, NX, u.y) + dfac * (c[id - NX] - ci);
+  if (fl[id - NXY] & FLUID)
+    F.z = dtdx * u.z * faceC(c, fl, id - NXY, id, NXY, u.z) + dfac * (c[id - NXY] - ci);
   flux[id] = F;
 }
 

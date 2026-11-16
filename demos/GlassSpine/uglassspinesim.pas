@@ -151,6 +151,10 @@ type
     Injected: array[0..1] of Double;   // mm^3 actually added so far (at ReadBack)
     Pending: array[0..1] of Double;    // mm^3 owed but not yet added
     CFL: Single;                       // target Courant number for the drug's transport
+    // the drug's diffusion coefficient, mm^2/s (0 = none). Bupivacaine's
+    // molecular value in CSF is about 7e-4; larger values stand in for
+    // mixing the model doesn't resolve
+    DiffusionD: Single;
     // CSF pulsation: volume per cycle through T1 (mL) and rate (/min)
     Pulse: Boolean;
     CardiacML, HeartRate, RespML, RespRate: Single;
@@ -288,6 +292,7 @@ begin
   NeedleIDmm := 0.26;
   JetDir := 1;
   CFL := 0.3;
+  DiffusionD := 0;
   Displace := True;
   HeadFraction := 0.67;
   Pulse := True;
@@ -892,7 +897,7 @@ var
   n0, n1: Integer;
   one: NativeUInt;
   vc: Single;
-  gx, gy, gz, a, dtdx, Q, An, Vs, dq, sdt, dqi, sdti, srcScale: Single;
+  gx, gy, gz, a, dtdx, dfac, Q, An, Vs, dq, sdt, dqi, sdti, srcScale: Single;
   zero, umaxBits: LongInt;
   nsub: Integer;
   vsrc, vdst, tmp: cl_mem;
@@ -1003,9 +1008,13 @@ begin
   Run(FKMax);
   Check(clEnqueueReadBuffer(FQueue, FBMax, 1, 0, 4, @umaxBits, 0, nil, nil), 'clEnqueueReadBuffer');
   LastMaxSpeed := PSingle(@umaxBits)^;
-  nsub := Max(1, Min(64, Ceil(LastMaxSpeed * Dt / (Geom.Dx * CFL))));
+  // diffusion is explicit too: D dt/dx^2 <= 1/6 in 3-D, kept to 0.15
+  nsub := Max(1, Min(256, Max(Ceil(LastMaxSpeed * Dt / (Geom.Dx * CFL)),
+    Ceil(Max(0, DiffusionD) * Dt / (Sqr(Geom.Dx) * 0.15)))));
   LastSubsteps := nsub;
   dtdx := Dt / nsub / Geom.Dx;
+  dfac := Max(0, DiffusionD) * Dt / nsub / Sqr(Geom.Dx);
+  SetArg(FKFlux, 7, 4, @dfac);
   SetArg(FKFlux, 0, SizeOf(cl_mem), @FBFluid);
   SetArg(FKFlux, 1, 4, @n);
   SetArg(FKFlux, 2, SizeOf(cl_mem), @FBFlags);

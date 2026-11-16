@@ -91,8 +91,12 @@ const
       + 'carries more than 0.3 of a cell per sub-step; the fastest face speed is found on the GPU each '
       + 'step. The injected dose is now conserved exactly.',
     '',
-    'No molecular diffusion is added: bupivacaine''s (about 0.001 mm^2/s) is far smaller than the slight '
-      + 'smoothing the scheme itself introduces at this resolution.',
+    'By default no diffusion is added: bupivacaine''s molecular diffusion (about 7e-4 mm^2/s) spreads it '
+      + 'under a millimetre in five minutes, less than one cell and less than the slight smoothing the '
+      + 'scheme itself introduces. For comparison the Run group offers Fick diffusion of the drug, -D grad C '
+      + 'across every open face (no flux through the dura or cord), at the molecular value or at 0.1, 1 '
+      + 'or 10 mm^2/s, which stand in for mixing the model does not resolve. It is explicit, and the drug''s '
+      + 'sub-steps are also kept to D dt/dx^2 <= 0.15.',
     '',
     '4. POSTURE AND GRAVITY',
     '',
@@ -217,6 +221,10 @@ begin
           [Sim.CardiacML, Sim.HeartRate, Sim.RespML, Sim.RespRate]))
       else
         Lines.Add('  pulsation off');
+      if Sim.DiffusionD > 0 then
+        Lines.Add(Format('  drug diffusion %.3g mm^2/s', [Sim.DiffusionD]))
+      else
+        Lines.Add('  no drug diffusion');
       if Sim.Displace then
         Lines.Add(Format('  the injected volume displaces CSF, %.0f %% of it to the head',
           [100 * Sim.HeadFraction]))

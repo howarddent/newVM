@@ -71,7 +71,7 @@ type
     tbTilt, tbRoll, tbOpacity: TTrackBar;
     lblTilt, lblRoll, lblTime, lblStatus: TLabel;
     cbSol: array[0..1] of TComboBox;
-    cbLevel, cbNeedle, cbJet, cbSpeed: TComboBox;
+    cbLevel, cbNeedle, cbJet, cbSpeed, cbDiff: TComboBox;
     seDose, seDur: TFloatSpinEdit;
     btnPause: TButton;
     chkRoots, chkPulse, chkDisplace: TCheckBox;
@@ -103,6 +103,7 @@ type
     procedure PauseClick(Sender: TObject);
     procedure ResetViewClick(Sender: TObject);
     procedure RootsClick(Sender: TObject);
+    procedure DiffChange(Sender: TObject);
     procedure OpacityChange(Sender: TObject);
     procedure PulseChange(Sender: TObject);
     procedure PageChange(Sender: TObject);
@@ -129,6 +130,10 @@ const
     (Name: 'Mildly hyperbaric (b 1.005)'; Short: 'hyperbaric 1.005'; Baricity: 1.0050),
     (Name: 'Hypobaric (b 0.995)'; Short: 'hypobaric 0.995'; Baricity: 0.9950));
   Speeds: array[0..5] of Single = (0.5, 1, 2, 5, 10, 20);
+  // the drug's diffusion coefficient choices, mm^2/s
+  DiffValues: array[0..4] of Single = (0, 7e-4, 0.1, 1, 10);
+  DiffNames: array[0..4] of string = ('none', 'molecular, 7e-4 mm^2/s',
+    '0.1 mm^2/s', '1 mm^2/s', '10 mm^2/s');
   NeedleIDs: array[0..2] of Single = (0.41, 0.26, 0.21);   // 22G, 25G, 27G lumen, mm
 
 implementation
@@ -322,7 +327,7 @@ begin
   AddButton(G, 'Inject', 8, 158, 160, @InjectClick);
   AddButton(G, 'Clear', 176, 158, 160, @ClearClick);
 
-  G := AddGroup('Run', Y, 128);
+  G := AddGroup('Run', Y, 158);
   AddLabel(G, 'Speed', 8, 8);
   cbSpeed := AddCombo(G, 60, 4, 110, ['x 0.5', 'real time', 'x 2', 'x 5', 'x 10', 'x 20'], 3);
   btnPause := AddButton(G, 'Pause', 180, 4, 76, @PauseClick);
@@ -339,6 +344,12 @@ begin
   tbOpacity.SetBounds(80, 80, G.ClientWidth - 88, 30);
   tbOpacity.Min := 1; tbOpacity.Max := 40; tbOpacity.Position := 9;
   tbOpacity.OnChange := @OpacityChange;
+  AddLabel(G, 'Drug diffusion', 8, 118);
+  cbDiff := AddCombo(G, 110, 114, 230, DiffNames, 0);
+  cbDiff.Hint := 'Fick diffusion of the drug. Bupivacaine''s molecular value in CSF is about '
+    + '7e-4 mm^2/s; the larger values stand in for mixing the model doesn''t resolve.';
+  cbDiff.ShowHint := True;
+  cbDiff.OnChange := @DiffChange;
 
   G := AddGroup('CSF pulsation (volume through T1 per cycle)', Y, 112);
   chkPulse := TCheckBox.Create(Self);
@@ -406,6 +417,8 @@ begin
     cbSol[1].ItemIndex := EnsureRange(StrToIntDef(OptValue('sol1', '1'), 1), 0, High(Solutions));
     cbLevel.ItemIndex := EnsureRange(StrToIntDef(OptValue('level', '1'), 1), 0, 2);
     cbSpeed.ItemIndex := EnsureRange(StrToIntDef(OptValue('speed', '3'), 3), 0, High(Speeds));
+    cbDiff.ItemIndex := EnsureRange(StrToIntDef(OptValue('diff', '0'), 0), 0, High(DiffValues));
+    FSim.DiffusionD := DiffValues[cbDiff.ItemIndex];
     chkPulse.Checked := OptValue('pulse', '1') <> '0';
     chkDisplace.Checked := OptValue('displace', '1') <> '0';
     PulseChange(nil);
@@ -569,6 +582,11 @@ end;
 procedure TfmGlassSpine.ResetViewClick(Sender: TObject);
 begin
   FView.ResetView;
+end;
+
+procedure TfmGlassSpine.DiffChange(Sender: TObject);
+begin
+  if FSim <> nil then FSim.DiffusionD := DiffValues[cbDiff.ItemIndex];
 end;
 
 procedure TfmGlassSpine.RootsClick(Sender: TObject);

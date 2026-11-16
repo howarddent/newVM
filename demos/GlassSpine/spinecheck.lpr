@@ -26,6 +26,7 @@ program spinecheck;
   Run:    ./spinecheck [--time=60] [--tilt=0] [--roll=0] [--dx=1.25]
                        [--level=1] [--iters=30] [--pulse=1] [--cardiac=0.3]
                        [--hr=70] [--resp=0.3] [--rr=12] [--displace=1]
+                       [--diff=<mm^2/s>]
 
 *******************************************************************************}
 
@@ -65,6 +66,7 @@ begin
     Sim.PressureIters := Round(Opt('iters', 30));
     Sim.JetDir := Round(Opt('jet', 1));
     Sim.CFL := Opt('cfl', 0.3);
+    Sim.DiffusionD := Opt('diff', 0);
     Sim.Dt := Opt('dt', 0.01);
     Sim.Baricity[0] := Opt('b0', 1.02);
     Sim.Baricity[1] := Opt('b1', 0.999);
@@ -115,9 +117,9 @@ begin
     Sim.Displace := Opt('displace', 1) <> 0;
     Sim.TiltDeg := Opt('tilt', 0);
     Sim.RollDeg := Opt('roll', 0);
-    WriteLn(Format('injecting %.1f mL over %.0f s at %s, tilt %.0f, roll %.0f, baricity %.4f / %.4f',
+    WriteLn(Format('injecting %.1f mL over %.0f s at %s, tilt %.0f, roll %.0f, baricity %.4f / %.4f, diffusion %.3g mm^2/s',
       [Sim.DoseML, Sim.DurationS, Interspaces[Sim.Interspace], Sim.TiltDeg, Sim.RollDeg,
-       Sim.Baricity[0], Sim.Baricity[1]]));
+       Sim.Baricity[0], Sim.Baricity[1], Sim.DiffusionD]));
     Sim.StartInjection;
     tEnd := Opt('time', 60);
     tNext := 5;
