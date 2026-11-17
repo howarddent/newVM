@@ -97,7 +97,10 @@ uses
   Classes, SysUtils, DynLibs;
 
 const
-  {$IFDEF WINDOWS}
+  // {$IF DEFINED(...)}, not {$IFDEF ...}: FPC only accepts {$ELSEIF} in a
+  // chain opened with {$IF}, and rejects it otherwise with the misleading
+  // "ENDIF without IF(N)DEF". Same trap Graphs/uVMSpeech.pas hit.
+  {$IF DEFINED(WINDOWS)}
   OpenCLLibName = 'OpenCL.dll';
   clFFTLibName = 'clFFT.dll';
   // Confirmed working build/install outputs across the machines this
@@ -106,6 +109,19 @@ const
   // name.
   clFFTLibFallbackPath = 'C:\Users\howard\clFFT\src\clFFTpas\clFFT.dll';
   clFFTLibFallbackPath2 = 'C:\Users\howar\vcpkg\installed\x64-windows\bin\clFFT.dll';
+  {$ELSEIF DEFINED(DARWIN)}
+  // macOS ships OpenCL as a framework, at a fixed versionless path, so
+  // there is no "might not be installed" case for the core API the way
+  // there is on Linux/Windows - it dlopen's on every Mac. It is formally
+  // deprecated by Apple (Metal is the supported GPU API, and newVMMetal.pas
+  // is this repo's answer to that), but still fully functional: OpenCL 1.2
+  // exposing the M4 Max's GPU as 40 compute units. clFFT is a separate
+  // third-party library that is NOT installed here, hence the empty name -
+  // see LoadOpenCLAPI below for why that is no longer fatal.
+  OpenCLLibName = '/System/Library/Frameworks/OpenCL.framework/OpenCL';
+  clFFTLibName = '';
+  clFFTLibFallbackPath = '';
+  clFFTLibFallbackPath2 = '';
   {$ELSE}
   OpenCLLibName = 'libOpenCL.so.1';
   clFFTLibName = 'libclFFT.so.0';
@@ -276,6 +292,9 @@ type
   TclfftGetTmpBufSize = function(plHandle: clfftPlanHandle; buffersize: PNativeUInt): clfftStatus; cdecl;
 
 var
+  // True when clFFT loaded. Core OpenCL does not depend on it; newVMCL.pas's
+  // FFT/IFFT do, and should say so rather than call through a nil pointer.
+  clFFTAvailable: Boolean = False;
   clfftSetup: TclfftSetup;
   clfftTeardown: TclfftTeardown;
   clfftCreateDefaultPlan: TclfftCreateDefaultPlan;
@@ -303,6 +322,11 @@ function InitializeOpenCLContext(out Ctx: cl_context; out Queue: cl_command_queu
 
 implementation
 
+{$IFDEF DARWIN}
+uses
+  Math;
+{$ENDIF}
+
 var
   OpenCLHandle: TLibHandle = NilHandle;
   clFFTHandle: TLibHandle = NilHandle;
@@ -320,15 +344,26 @@ begin
     Exit;
   end;
 
-  clFFTHandle := LoadLibrary(clFFTLibName);
-  if (clFFTHandle = NilHandle) and (clFFTLibFallbackPath <> '') then
-    clFFTHandle := LoadLibrary(clFFTLibFallbackPath);
-  if (clFFTHandle = NilHandle) and (clFFTLibFallbackPath2 <> '') then
-    clFFTHandle := LoadLibrary(clFFTLibFallbackPath2);
-  if clFFTHandle = NilHandle then begin
-    Result := False;
-    Exit;
+  // clFFT is OPTIONAL, and its absence is no longer fatal to the whole
+  // API. It is a separate third-party library used by exactly one caller,
+  // newVMCL.pas's FFT/IFFT; everything else here - context creation,
+  // buffers, and running a caller's own .cl kernels - is core OpenCL and
+  // needs none of it. Failing the entire load when clFFT was missing kept
+  // demos/GlassSpine (whose kernels are its own and which never calls a
+  // clfft* entry point) off any machine without it, macOS included.
+  //
+  // clFFTAvailable records what happened, so the FFT path can give a clear
+  // error instead of calling through a nil pointer. On Linux and Windows,
+  // where clFFT is installed, nothing about this changes.
+  if clFFTLibName <> '' then
+  begin
+    clFFTHandle := LoadLibrary(clFFTLibName);
+    if (clFFTHandle = NilHandle) and (clFFTLibFallbackPath <> '') then
+      clFFTHandle := LoadLibrary(clFFTLibFallbackPath);
+    if (clFFTHandle = NilHandle) and (clFFTLibFallbackPath2 <> '') then
+      clFFTHandle := LoadLibrary(clFFTLibFallbackPath2);
   end;
+  clFFTAvailable := clFFTHandle <> NilHandle;
 
   Pointer(clGetPlatformIDs)         := LoadCLProc(OpenCLHandle, 'clGetPlatformIDs');
   Pointer(clGetDeviceIDs)           := LoadCLProc(OpenCLHandle, 'clGetDeviceIDs');
@@ -355,6 +390,8 @@ begin
   // clfftInitSetupData deliberately NOT resolved/called - see this unit's
   // own header comment for why (not exported by this machine's clFFT.dll
   // build, and not required - clfftSetup(nil) works without it).
+  if clFFTAvailable then
+  begin
   Pointer(clfftSetup)               := LoadCLProc(clFFTHandle, 'clfftSetup');
   Pointer(clfftTeardown)            := LoadCLProc(clFFTHandle, 'clfftTeardown');
   Pointer(clfftCreateDefaultPlan)   := LoadCLProc(clFFTHandle, 'clfftCreateDefaultPlan');
@@ -365,9 +402,18 @@ begin
   Pointer(clfftEnqueueTransform)    := LoadCLProc(clFFTHandle, 'clfftEnqueueTransform');
   Pointer(clfftDestroyPlan)         := LoadCLProc(clFFTHandle, 'clfftDestroyPlan');
   Pointer(clfftGetTmpBufSize)       := LoadCLProc(clFFTHandle, 'clfftGetTmpBufSize');
+  end;
 
-  Result := Assigned(clGetPlatformIDs) and Assigned(clCreateContext) and Assigned(clfftSetup)
-    and Assigned(clfftEnqueueTransform);
+  // Success now means the CORE API is usable. clFFT, when present, must
+  // still be complete - a half-resolved clFFT would fail confusingly later
+  // - but its absence simply leaves clFFTAvailable False.
+  Result := Assigned(clGetPlatformIDs) and Assigned(clCreateContext)
+    and Assigned(clCreateProgramWithSource) and Assigned(clEnqueueNDRangeKernel);
+  if clFFTAvailable and not (Assigned(clfftSetup) and Assigned(clfftEnqueueTransform)) then
+  begin
+    clFFTAvailable := False;
+    clFFTHandle := NilHandle;
+  end;
 end;
 
 function InitializeOpenCLContext(out Ctx: cl_context; out Queue: cl_command_queue;
@@ -470,24 +516,43 @@ begin
     Exit;
   end;
 
-  Status := clfftSetup(nil);
-  if Status <> CL_SUCCESS then begin
-    ErrMsg := 'clfftSetup failed with code ' + IntToStr(Status);
-    clReleaseCommandQueue(Queue);
-    clReleaseContext(Ctx);
-    Ctx := nil;
-    Queue := nil;
-    Exit;
+  // Only when clFFT is actually present - a caller running its own kernels
+  // (demos/GlassSpine) needs a context and a queue, not an FFT library.
+  if clFFTAvailable then
+  begin
+    Status := clfftSetup(nil);
+    if Status <> CL_SUCCESS then begin
+      ErrMsg := 'clfftSetup failed with code ' + IntToStr(Status);
+      clReleaseCommandQueue(Queue);
+      clReleaseContext(Ctx);
+      Ctx := nil;
+      Queue := nil;
+      Exit;
+    end;
   end;
 
   Result := True;
 end;
 
 initialization
+  {$IFDEF DARWIN}
+  // FOURTH time this repo has hit this - see MetalAPI.pas (Apple's AGX
+  // driver), AccelerateSparse.pas (Accelerate's sparse kernels) and the
+  // git history's "Fix Windows EInvalidOp crash from MKL LAPACKE complex
+  // solve calls". FPC's default AArch64 FPCR leaves floating-point
+  // exception trapping armed in a way clang-generated code does not, and
+  // Apple's OpenCL driver, like every other vendor library here, never
+  // expected a caller with traps on: without this, the first call into it
+  // dies with a bare EAccessViolation inside the system libraries and no
+  // Pascal stack. Masking once, before the library is even loaded, fixes
+  // it. Darwin-only so the Linux and Windows paths are untouched.
+  SetExceptionMask([exInvalidOp, exDenormalized, exZeroDivide,
+                    exOverflow, exUnderflow, exPrecision]);
+  {$ENDIF}
   OpenCLAPILoaded := LoadOpenCLAPI;
 
 finalization
-  if OpenCLAPILoaded then clfftTeardown();
+  if OpenCLAPILoaded and clFFTAvailable then clfftTeardown();
   if clFFTHandle <> NilHandle then UnloadLibrary(clFFTHandle);
   if OpenCLHandle <> NilHandle then UnloadLibrary(OpenCLHandle);
 

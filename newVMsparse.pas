@@ -1007,6 +1007,16 @@ begin
 end;
 {$ENDIF}
 
+{ The Accelerate bodies, included only when they are actually the backend.
+  Both halves of this condition matter: without the HAVE_ACCELERATE_SPARSE
+  half the include fires on a machine that has no AccelerateSparse in its
+  uses clause, and every identifier in it is undefined - which is exactly
+  what an unconditional include did to the MKL build on the Linux box (50
+  compile errors, caught only by building there). Without the NOT HAVE_MKL
+  half, a machine with both would compile two bodies for every routine.
+  MKL wins where both are present, matching the gate on the block above. }
+{$IF DEFINED(HAVE_ACCELERATE_SPARSE) AND NOT DEFINED(HAVE_MKL)}
 {$I newVMsparseAccel.inc}
+{$ENDIF}
 
 end.
