@@ -132,6 +132,7 @@ const
 
   CL_DEVICE_NAME = $102B;
   CL_DEVICE_MAX_COMPUTE_UNITS = $1002;
+  CL_PLATFORM_NAME = $0902;
   CL_PROGRAM_BUILD_LOG = $1183;
 
   CL_MEM_READ_WRITE   = LongWord(1 shl 0);
@@ -188,6 +189,8 @@ type
 // ==== OpenCL core (OpenCL.dll) ====
 type
   Tcl_GetPlatformIDs = function(num_entries: cl_uint; platforms: Pcl_platform_id; num_platforms: Pcl_uint): cl_int; cdecl;
+  Tcl_GetPlatformInfo = function(platform_: cl_platform_id; param_name: cl_uint; param_value_size: NativeUInt;
+    param_value: Pointer; param_value_size_ret: PNativeUInt): cl_int; cdecl;
   Tcl_GetDeviceIDs = function(platform_: cl_platform_id; device_type: cl_device_type; num_entries: cl_uint;
     devices: Pcl_device_id; num_devices: Pcl_uint): cl_int; cdecl;
   Tcl_GetDeviceInfo = function(device: cl_device_id; param_name: cl_uint; param_value_size: NativeUInt;
@@ -228,6 +231,7 @@ type
 
 var
   clGetPlatformIDs: Tcl_GetPlatformIDs;
+  clGetPlatformInfo: Tcl_GetPlatformInfo;
   clGetDeviceIDs: Tcl_GetDeviceIDs;
   clGetDeviceInfo: Tcl_GetDeviceInfo;
   clCreateContext: Tcl_CreateContext;
@@ -331,6 +335,7 @@ begin
   end;
 
   Pointer(clGetPlatformIDs)         := LoadCLProc(OpenCLHandle, 'clGetPlatformIDs');
+  Pointer(clGetPlatformInfo)        := LoadCLProc(OpenCLHandle, 'clGetPlatformInfo');
   Pointer(clGetDeviceIDs)           := LoadCLProc(OpenCLHandle, 'clGetDeviceIDs');
   Pointer(clGetDeviceInfo)          := LoadCLProc(OpenCLHandle, 'clGetDeviceInfo');
   Pointer(clCreateContext)          := LoadCLProc(OpenCLHandle, 'clCreateContext');
@@ -378,6 +383,8 @@ var
   NumPlatforms, NumDevices, CU: cl_uint;
   BestCU: cl_uint;
   BestDevice: cl_device_id;
+  IsMesa, BestIsMesa: Boolean;
+  PlatName: array[0..255] of AnsiChar;
   Sz: NativeUInt;
   p, d : Integer;
   Err: cl_int;
@@ -419,9 +426,25 @@ begin
   // an integrated one in the common case. Falls back to CL_DEVICE_TYPE_ALL
   // on the first platform (this function's original fallback) only if NO
   // platform exposes a GPU device at all.
+  //
+  // One card can also appear on two platforms at once: Mesa's rusticl
+  // and the vendor's own driver (seen on a Radeon Pro W6600 with AMD's
+  // ROCm OpenCL installed beside Mesa). The two don't even agree on the
+  // compute units - rusticl reports 28 for that card, ROCm 14 - so the
+  // count can't tell them apart, and rusticl's cost per kernel launch is
+  // several times the vendor driver's (demos/GlassSpine: 18.7 s against
+  // 4.3 s for the same run, results identical). So a GPU on any other
+  // platform beats one on rusticl whatever the counts; the count decides
+  // only between devices of the same kind. rusticl is still used when it
+  // is the only platform with a GPU.
   BestDevice := nil;
   BestCU := 0;
+  BestIsMesa := False;
   for p := 0 to NumPlatforms-1 do begin
+    FillChar(PlatName, SizeOf(PlatName), 0);
+    IsMesa := Assigned(clGetPlatformInfo)
+      and (clGetPlatformInfo(Platforms[p], CL_PLATFORM_NAME, SizeOf(PlatName) - 1, @PlatName, nil) = CL_SUCCESS)
+      and (Pos('rusticl', LowerCase(string(PAnsiChar(@PlatName)))) > 0);
     NumDevices := 0;
     if (clGetDeviceIDs(Platforms[p], CL_DEVICE_TYPE_GPU, 0, nil, @NumDevices) <> CL_SUCCESS)
       or (NumDevices = 0) then Continue;
@@ -430,9 +453,11 @@ begin
     for d := 0 to NumDevices-1 do begin
       CU := 0;
       if (clGetDeviceInfo(PlatDevices[d], CL_DEVICE_MAX_COMPUTE_UNITS, SizeOf(CU), @CU, @Sz) = CL_SUCCESS)
-        and ((BestDevice = nil) or (CU > BestCU)) then begin
+        and ((BestDevice = nil) or (BestIsMesa and not IsMesa)
+          or ((BestIsMesa = IsMesa) and (CU > BestCU))) then begin
         BestDevice := PlatDevices[d];
         BestCU := CU;
+        BestIsMesa := IsMesa;
       end;
     end;
   end;

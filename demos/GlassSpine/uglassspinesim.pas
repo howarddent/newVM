@@ -116,6 +116,12 @@ type
     FPlaneG: array[0..1] of array of Double;   // volume through z plane k per unit q
     FKernelSrc: string;
     FNFluid: Integer;
+    // the fluid cells of each red-black colour, and a pressure kernel
+    // bound to each, so a half-sweep is one launch with no argument set
+    FBColour: array[0..1] of cl_mem;
+    FKColour: array[0..1] of cl_kernel;
+    FNColour: array[0..1] of Integer;
+    FGColour: array[0..1] of NativeUInt;
     FGlobal: NativeUInt;
     FSrcCells: array[0..1] of array of Integer;
     FHaveC: Boolean;
@@ -341,6 +347,8 @@ begin
   M(FBC3); M(FBP); M(FBDiv); M(FBSrc); M(FBState); M(FBFlux); M(FBMax); M(FBPulse);
   M(FBPlaneG); M(FBPlaneA); M(FBPlaneCorr);
   M(FBInj); M(FBInjG);
+  M(FBColour[0]); M(FBColour[1]);
+  K(FKColour[1]); FKColour[0] := nil;
   K(FKForces); K(FKDiffuse); K(FKDiv); K(FKPressure); K(FKGrad); K(FKAdvVel);
   K(FKFlux); K(FKUpdate); K(FKMax); K(FKInject); K(FKPrep); K(FKPlaneFlux); K(FKPlaneCorr);
   if FProgram <> nil then clReleaseProgram(FProgram);
@@ -385,6 +393,8 @@ begin
   FKDiffuse := MakeK('diffuse_vel');
   FKDiv := MakeK('divergence');
   FKPressure := MakeK('pressure_rb');
+  FKColour[0] := FKPressure;
+  FKColour[1] := MakeK('pressure_rb');
   FKGrad := MakeK('subtract_grad');
   FKAdvVel := MakeK('advect_vel');
   FKFlux := MakeK('c_flux');
@@ -400,6 +410,8 @@ procedure TSpineSim.Setup(ADx, ACurvature: Single);
 var
   Err: cl_int;
   N: Integer;
+  ci, i, id: Integer;
+  ColList: array of LongInt;
   function Buf(Size: NativeUInt; Host: Pointer): cl_mem;
   var
     Flags: cl_mem_flags;
@@ -420,6 +432,23 @@ begin
   BuildProgram;
   FBFlags := Buf(N, @Geom.Flags[0]);
   FBFluid := Buf(4 * FNFluid, @Geom.Fluid[0]);
+  for ci := 0 to 1 do
+  begin
+    SetLength(ColList, FNFluid);
+    FNColour[ci] := 0;
+    for i := 0 to FNFluid - 1 do
+    begin
+      id := Geom.Fluid[i];
+      if ((id mod Geom.NX) + ((id div Geom.NX) mod Geom.NY)
+        + (id div (Geom.NX * Geom.NY))) and 1 = ci then
+      begin
+        ColList[FNColour[ci]] := id;
+        Inc(FNColour[ci]);
+      end;
+    end;
+    FGColour[ci] := ((FNColour[ci] + 63) div 64) * 64;
+    FBColour[ci] := Buf(4 * Max(1, FNColour[ci]), @ColList[0]);
+  end;
   FBV := Buf(16 * N, nil);
   FBV1 := Buf(16 * N, nil);
   FBV2 := Buf(16 * N, nil);
@@ -845,19 +874,20 @@ begin
   SetArg(FKDiv, 7, SizeOf(cl_mem), @FBInj);
   SetArg(FKDiv, 8, 4, @FQiNow);
   Run(FKDiv);
-  SetArg(FKPressure, 0, SizeOf(cl_mem), @FBFluid);
-  SetArg(FKPressure, 1, 4, @n);
-  SetArg(FKPressure, 2, SizeOf(cl_mem), @FBFlags);
-  SetArg(FKPressure, 3, SizeOf(cl_mem), @FBP);
-  SetArg(FKPressure, 4, SizeOf(cl_mem), @FBDiv);
-  SetArg(FKPressure, 5, 4, @dx2);
-  SetArg(FKPressure, 7, 4, @Omega);
+  for colour := 0 to 1 do
+  begin
+    SetArg(FKColour[colour], 0, SizeOf(cl_mem), @FBColour[colour]);
+    SetArg(FKColour[colour], 1, 4, @FNColour[colour]);
+    SetArg(FKColour[colour], 2, SizeOf(cl_mem), @FBFlags);
+    SetArg(FKColour[colour], 3, SizeOf(cl_mem), @FBP);
+    SetArg(FKColour[colour], 4, SizeOf(cl_mem), @FBDiv);
+    SetArg(FKColour[colour], 5, 4, @dx2);
+    SetArg(FKColour[colour], 6, 4, @Omega);
+  end;
   for it := 1 to Iters do
     for colour := 0 to 1 do
-    begin
-      SetArg(FKPressure, 6, 4, @colour);
-      Run(FKPressure);
-    end;
+      Check(clEnqueueNDRangeKernel(FQueue, FKColour[colour], 1, nil, @FGColour[colour],
+        nil, 0, nil, nil), 'clEnqueueNDRangeKernel');
   SetArg(FKGrad, 0, SizeOf(cl_mem), @FBFluid);
   SetArg(FKGrad, 1, 4, @n);
   SetArg(FKGrad, 2, SizeOf(cl_mem), @FBFlags);

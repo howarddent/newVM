@@ -130,6 +130,8 @@ const
     (Name: 'Mildly hyperbaric (b 1.005)'; Short: 'hyperbaric 1.005'; Baricity: 1.0050),
     (Name: 'Hypobaric (b 0.995)'; Short: 'hypobaric 0.995'; Baricity: 0.9950));
   Speeds: array[0..5] of Single = (0.5, 1, 2, 5, 10, 20);
+  // longest a frame spends stepping the simulation before it is drawn
+  StepBudgetMs = 30;
   // the drug's diffusion coefficient choices, mm^2/s
   DiffValues: array[0..4] of Single = (0, 7e-4, 0.1, 1, 10);
   DiffNames: array[0..4] of string = ('none', 'molecular, 7e-4 mm^2/s',
@@ -640,8 +642,9 @@ begin
   begin
     try
       // whole steps only, the remainder carried to the next frame; at most
-      // 40 a frame, so the window stays responsive when the GPU can't
-      // keep up with the chosen speed (the shortfall is then dropped)
+      // 40 a frame and at most StepBudgetMs of stepping, so the window
+      // stays responsive when the GPU can't keep up with the chosen speed
+      // (the shortfall is then dropped)
       FDebt := FDebt + dt * Speeds[cbSpeed.ItemIndex];
       n := Floor(FDebt / FSim.Dt);
       if n > 40 then
@@ -651,7 +654,16 @@ begin
       end
       else
         FDebt := FDebt - n * FSim.Dt;
-      for i := 1 to n do FSim.Step;
+      for i := 1 to n do
+      begin
+        FSim.Step;
+        if (i < n) and (GetTickCount64 - now_ >= StepBudgetMs) then
+        begin
+          n := i;
+          FDebt := 0;
+          Break;
+        end;
+      end;
       if n > 0 then FSim.ReadBack;
     except
       on E: Exception do

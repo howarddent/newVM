@@ -204,15 +204,14 @@ __kernel void divergence(__global const int* fluid, int n,
 
 /* one red-black SOR half-sweep of lap p = div, with zero normal gradient
    at the walls (a solid neighbour drops out of the stencil). p carries
-   dt/rho. */
-__kernel void pressure_rb(__global const int* fluid, int n, __global const uchar* fl,
-  __global float* p, __global const float* div, float dx2, int colour, float omega)
+   dt/rho. cells lists the fluid cells of one colour only, so a launch
+   does no work on the other colour. */
+__kernel void pressure_rb(__global const int* cells, int n, __global const uchar* fl,
+  __global float* p, __global const float* div, float dx2, float omega)
 {
   int g = get_global_id(0);
   if (g >= n) return;
-  int id = fluid[g];
-  int3 c = cellOf(id);
-  if (((c.x + c.y + c.z) & 1) != colour) return;
+  int id = cells[g];
   float s = 0.0f;
   int cnt = 0;
   if (fl[id - 1] & FLUID)   { s += p[id - 1];   cnt++; }
