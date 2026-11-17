@@ -77,6 +77,71 @@ from where.
 
 Other developers are welcome to use and extend this code.
 
+## healthKent: William Harvey or Kent and Canterbury
+
+`demos/healthKent` maps Kent and Medway's expected heart attack and
+stroke admissions and the drive times to its acute hospitals over
+OpenStreetMap roads, in three speed scenarios (free-flow car, weekday
+morning peak, blue light). Its memo compares William Harvey (Ashford)
+and Kent and Canterbury as a single centre. Mean minutes are weighted
+by expected admissions:
+
+| Speeds | Whole county: WHH / K&C | North and East Kent: WHH / K&C | North and East Kent quicker to K&C |
+|---|---|---|---|
+| Free-flow car | 34.6 / 37.0 | 33.3 / 31.7 | 52 % |
+| Morning peak | 41.9 / 45.3 | 40.4 / 39.0 | 53 % |
+| Blue light | 29.6 / 30.9 | 28.3 / 26.3 | 53 % |
+
+For the whole county Ashford is nearer, because the M20 brings West
+Kent 12-14 minutes closer to it. Leave West Kent out (4,222 of the
+5,887 admissions a year) and Canterbury is narrowly nearer, by about
+2 minutes. That is within what the assumed speeds and approximate
+hospital positions could move.
+
+Is that difference significant against the ambulance's response? Tick
+"999 ambulance" and every time becomes 999 call to hospital door: South
+East Coast Ambulance Service's mean Category 2 response (27.8 min,
+November 2025 to October 2026, NHS England's Ambulance Quality
+Indicators), an assumed 33 minutes on scene, then the drive. On blue
+lights:
+
+| | Response | On scene | Drive, WHH / K&C | Call to door, WHH / K&C |
+|---|---|---|---|---|
+| Whole county | 27.8 | 33 | 29.6 / 30.9 | 90.4 / 91.7 |
+| North and East Kent | 27.8 | 33 | 28.3 / 26.3 | 89.1 / 87.1 |
+
+Response and on scene are two thirds of the total, and they don't
+depend on the hospital. The average difference between the two sites,
+1.3 to 2 minutes, is about 2 % of the call-to-door time, a fifth or
+less of the 10-minute swing between SECAmb's best and worst months,
+and small next to the 28 minutes between a mean and a 90th-centile
+response. For single districts it is not small: from 17.6 minutes
+quicker to Canterbury (Thanet) to 15.1 quicker to Ashford (Ashford).
+
+For stroke alone (3,284 expected admissions a year), counting a
+district's difference as significant when it is at least that 10-minute
+swing in the response, it is significant in five districts: Thanet
+(17.6 min quicker to Canterbury) and Canterbury (15.9), and Ashford
+(15.1 quicker to Ashford), Tunbridge Wells (10.6) and Folkestone and
+Hythe (10.0). Dover, Maidstone, Tonbridge and Malling and Sevenoaks are
+borderline (7-10 minutes); Swale, Medway, Dartford and Gravesham are
+not.
+
+The map can also draw the admissions' median lines: a north-south and
+an east-west line, each with half the expected admissions on either
+side. They cross at TQ 81807 61037, north-east of Maidstone, and the
+quadrants they make are not equal:
+
+| Area | NW | NE | SW | SE |
+|---|---|---|---|---|
+| Kent and Medway | 27.1 % | 22.9 % | 22.9 % | 27.1 % |
+| North and East Kent | 32.9 % | 17.0 % | 17.1 % | 32.9 % |
+
+So admissions lie along a north-west to south-east diagonal, from
+Dartford and Medway to Ashford, Canterbury, Dover and Folkestone, and
+more so once West Kent is left out. Counting only STEMIs changes these
+shares by 0.1 point at most.
+
 ## Licence
 
 Copyright (C) 2026 Howard Dent.
@@ -100,7 +165,18 @@ own, the recorded data under `demos/BioSpectra/data/` (see its
 `README.md` for sources and terms), and the place, outline and county
 tables in `demos/CanterburyRain/*.inc` (GeoNames, CC BY 4.0; Natural
 Earth, public domain; ONS boundaries and Met Office averages, Open
-Government Licence).
+Government Licence), and the Kent and Medway tables in
+`demos/healthKent/kentdata.inc` (ONS boundaries, population estimates
+and area measurements, and the English Indices of Deprivation 2025,
+Open Government Licence; roads and railways from OpenStreetMap, ODbL)
+and `demos/healthKent/cvddata.inc` (ONS population and Census 2021
+ethnicity, NHS England QOF, GP registration and Hospital Episode
+Statistics figures, and OHID Fingertips smoking, obesity and admission ratios,
+Open Government Licence), and `demos/healthKent/drivedata.inc` (drive
+times and isochrones computed from OpenStreetMap roads, ODbL, for three
+speed scenarios: free-flow car, weekday morning peak with A and B road
+speeds anchored to the DfT's local A road travel time figures, Open
+Government Licence, and blue light at 1.25 times free-flow).
 
 ## Screenshots
 

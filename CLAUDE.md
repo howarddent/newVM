@@ -2014,6 +2014,49 @@ solid, frequency and time domain both, and a FEM4 example. Units:
   lower the drag (lubricated, less tightly packed bowel) is a reading, not
   modelled. The sweeps, plots, animations and earlier figures were not
   rerun.
+- **The chest follows BMI** (2026-11-10, the default on the torso;
+  `--nochest` keeps the 70 kg chest at any `--weight`). Lung elastance,
+  FRC, lower-airway resistance, rib-cage elastance and the abdominal load
+  move from their 70 kg values to obese/normal ratios measured in
+  anaesthetised, paralysed supine adults. The full ratio applies at BMI 49
+  (150 kg, 1.75 m), with exponential interpolation in BMI below that (Pelosi 1998
+  found FRC and compliance exponential in BMI). Nothing changes at 70 kg,
+  1.75 m. `--el --frc --raw --erc --irc --eab` override each value.
+  - **Ratios**: lung E x1.93 and FRC x0.39 (Pelosi 1996), Raw to
+    4.7 cmH2O/(L/s) (Pelosi's obese Rmin,L), rib cage E x1.14 (Behazin
+    2010's chest-wall compliance). Rib-cage inertance scales with the
+    abdominal wall's mass per area, since fat adds mass but not area.
+  - **The abdominal load ratio (`AbdomenRatio` 2.015) is calibrated, not
+    measured.** It is the value that makes the whole chest wall (rib cage
+    in parallel with the FEM diaphragm and abdomen) Behazin's x1.14 stiffer
+    at 0.25 Hz, found from `--zfile` runs. 150 kg: 12.7 cmH2O/L against 8.0, so
+    k_f 60.9 kPa/m, under a wall of 1248 cm2 and a diaphragm of 803 cm2,
+    on a 14.6 L cavity.
+  - **Modes of the 150 kg man** (`--weight=150 --abfat=46`, exact by
+    `--eigdump`, 12 mm mesh, residuals below 1e-13). The volume-coupled
+    modes are:
+    - 4.44 Hz, zeta 0.142, 29 mL/mm, 69 % on the wall;
+    - 5.93 Hz, zeta 0.10, 16 mL/mm, 73 % on the wall;
+    - weaker modes at 7.13, 7.65, 7.97 and 8.43 Hz (3-7 mL/mm).
+
+    The two main modes for the other cases:
+
+    | Case | First mode | Second mode |
+    |---|---|---|
+    | 70 kg | 3.53 Hz, zeta 0.18, 24 mL/mm, 35 % wall | 5.28 Hz |
+    | 150 kg, `--nochest` | 3.69 Hz, zeta 0.17, 29 mL/mm, 65 % wall | 4.89 Hz |
+
+    A 9 mm mesh (119k unknowns) moves the main two modes by under 0.3 %
+    and the others by under 1 %. Raising only the abdominal load
+    (`--nochest --eab=16.12`) gives 4.43 Hz and 5.93 Hz, so the shift is
+    the abdominal load's. The lung, airway and rib-cage changes only lower
+    zeta from 0.150 to 0.142. The first mode therefore rests on the
+    calibrated 2.015, and `--abfat=46` was my choice. The jet's 200 /min (3.33 Hz) now
+    sits below the first mode, which falls at about 266 /min.
+    **These modes were all run at alpha 5 /s**, before `DragForFat` was
+    added, so they match `--alpha=5`. With the default drag, 46 % fat
+    gets 15 /s and the 70 kg man 70 /s, so the zetas above would be much
+    higher (70 kg overdamped). They were not rerun.
 - `HFJVView` (`HFJVView.lpi`, `uWallAnim`/`uWallView`/`uHFJVViewForm`;
   `lazbuild --ws=gtk2`): `anim_wall.py`'s animation as a Lazarus program.
   It reads an `--anim` file (default `mesh/wall_anim_200.txt`) and draws
@@ -3614,6 +3657,326 @@ packages. Compiled binaries and each demo's own `lib/` output are
   counter, a `DOMString` node-name comparison needs a `UnicodeString(...)`
   cast, and a local named `Text` inside a form method collides with the
   inherited property.
+- **`healthKent`** (added 2026-11-12) — Kent and Medway (the NHS Kent
+  and Medway ICB area: 12 Kent districts plus Medway, 1,107 LSOAs) on an
+  OpenGL map, `uKentMap.TKentMapView`, modelled on CanterburyRain's county
+  map. Fill by population density (ONS mid-2024 LSOA estimates over ONS
+  Standard Area Measurement land area, log purples) or by an English
+  Indices of Deprivation 2025 national decile (IMD or any of its seven
+  domains, RdBu, decile 1 red). Check boxes for district and LSOA
+  outlines, built-up areas over 50,000, motorways, trunk roads, primary A
+  roads, railways (OSM), the population barycentre and the geographic
+  centre. Wheel zooms, drag pans, a click selects an LSOA. A memo gives the
+  selected LSOA, totals, the centres as grid references and lat/lon, and a
+  table by district; a Sources tab is a glossary of every dataset and term
+  (`uKentData`'s `Sources`/`Glossary` tables). Things worth knowing:
+  - **All data compiled in** (`kentdata.inc`, 2.7 MB) by
+    `make_kent_data.py`, whose header has every download URL and query;
+    the raw files were in `~/data/healthKent-src/`. Boundaries are
+    Douglas-Peucker simplified (12 m; routes 20 m).
+  - **LSOA boundaries are BFE (to low water)**: ONS's BFC/BGC LSOA layers
+    need a token, and the open BSC one is 200 m generalised. So the land
+    mask is stencil bit `$80` from the coastline-clipped district (LAD
+    2024 BFC) rings, each LSOA uses bit `$01` and fills where the stencil
+    is `$81`; roads and LSOA outlines are drawn only where `$80` is set.
+    That keeps the Thames/Medway/Swale mudflats sea-coloured and stops
+    routes at the area's edge without any clipping in Python.
+  - **Towns are ONS built-up areas (2022)**, populations summed from the
+    mid-2024 LSOA estimates via the LSOA21 -> BUA22 best-fit lookup,
+    positions the population-weighted mean of LSOA label points; GeoNames
+    is not used (the user asked for the latest government figures).
+  - **Barycentre** = population-weighted mean of LSOA label points, by
+    `MatMult` of a (1, N) population row with the (N, 2) [E N] matrix:
+    TQ 87980 58078 (51.2908N 0.6946E), in Maidstone 011D between
+    Maidstone and Sittingbourne, 7.1 km NNW of the geographic centre
+    (TQ 90195 51369). ONS's LSOA population-weighted centroids aren't on
+    its open service. `BNGToWGS84` is the inverse of `bng.py`'s transform
+    and round-trips it to 1e-6 deg.
+  - FPC gotcha hit again: locals `X` and `x` collide (case-insensitive).
+  - **Expected heart attack and stroke admissions** (2026-11-12, third
+    fill; the combo box switches between per km2 a year, log YlOrRd, and
+    the risk-factor ratio against England at the same age and sex,
+    diverging). `make_cvd_data.py` writes `cvddata.inc` from downloads in
+    `~/data/healthKent-src/cvd/` (its header has every URL); uKentData does
+    the arithmetic so the relative risks (`CvdRR...`) stay editable.
+    events = sum over 36 age-sex bands of pop x I x M:
+    - I: England's 2024-25 HES emergency admissions for MI (I21-I22) and
+      stroke (I61-I64), the same codes as OHID's Local Health indicators.
+      HES gives age only for episodes and sex only overall, so the age
+      profile is the episodes' and the sex split is the same at every age.
+    - M: product of (1 + p(RR-1))/(1 + pbar(RR-1)) over smoking, obesity
+      and QOF diabetes, hypertension, CKD 3-5 and AF, times ethnicity (Census 2021
+      South Asian/Black shares) and residual deprivation, each over
+      England's average. The RRs are assumed round values (smoking 2,
+      obesity 1.2, diabetes 2, hypertension 1.6, CKD 1.4, AF 1.5, South Asian 1.4,
+      Black 0.75, deprivation 1.3 between deciles 1 and 10).
+    - QOF prevalence: Poisson fit across all England's practices of
+      register ~ exp(beta z) sum_b n_b r_b (z = patients' mean IMD score),
+      then each practice's O/E is shared out to LSOAs by its patients there
+      (April 2025 lists). **One age curve for both sexes**: separate male
+      and female curves came out with women's diabetes above men's, since
+      practices' sex ratios barely vary. **The age bands are collinear
+      across practices** (hypertension 135/1000 at age 0-4 before), so log r
+      has a second-difference penalty (`SMOOTH` 0.01) and HYP/AF start at 18.
+    - Smoking: Fingertips APS 2023-25 by LSOA IMD 2025 decile (18.6 % most
+      deprived to 4.7 % least), England's 2025 age and sex gradients, then
+      each district's APS shrunk towards the model (log prior SD 0.15:
+      district CIs are about +-4 points).
+    - **Obesity** (added the same day, `CvdRRObesity` 1.2): Fingertips 93881,
+      Active Lives 2024/25 (BMI 30+ from adjusted self-report), the same
+      recipe as smoking (`calibrate` in the script does both): England by
+      LSOA deprivation decile - IMD 2019's deciles, the only ones published,
+      applied to IMD 2025's - age and sex, then each district's survey value
+      shrunk in. RR 1.2 is the effect **beyond** the diabetes and hypertension
+      obesity causes, which the model already counts: ERFC (Lancet 2011)
+      gives 1.44 for obese adjusted for age, sex and smoking, 1.13 also for
+      BP, diabetes and cholesterol. Kent 28.4 % against England 26.6 %.
+      Admissions 5,868 -> 5,887; MSOA r unchanged at 0.70.
+    - Computed lazily (`NeedCvd`): MatMult needs CBLAS, which the `.lpr`
+      initialises after the units do - in `initialization` it crashed.
+      Pop (N x 36) `*` `Exp`(summed log multipliers), `MatMult` with the
+      rate column; each component's effect drops its log term.
+    - **Results** (with obesity): 5,887 admissions a year against 5,977
+      from age and sex alone (ratio 0.985); 0.08-49 per km2, ratios 0.73-1.70 (east Sheppey,
+      Thanet, Romney Marsh high; west Kent low). Against OHID's observed
+      MSOA ratios (2016/17-20/21, 219 MSOAs) r = 0.70, IMD alone 0.68, but
+      observed Kent is 0.88: the model ranks better than it levels.
+    - **Heart attack and stroke barycentre** (same day, check box, purple
+      marker): `CvdBarycentre`, the barycentre weighted by expected
+      admissions; `PopulationBarycentre` now shares `WeightedBarycentre`
+      with it. TQ 90831 57402, 2.9 km ESE of the population one: 2.4 km of
+      that is age and sex alone (the memo separates them), the risk factors
+      add 0.8 km ENE (before obesity: TQ 90732 57380, 0.7 km). With both shown, each label goes on the side away from
+      the other marker (23 px apart at full view). The side panel overflowed
+      with the extra check box: the memo went from 240 to 200 px, colour
+      bars to 150 px, the key's lines to 16 px.
+  - **North, East and West Kent** (2026-11-12, an "Areas" check group;
+    all three = Kent and Medway; `--areas=north,east` etc.). Whole
+    districts, following the acute trusts' catchments (uKentData's
+    `AreaDistricts`): North = Dartford, Gravesham, Medway, Swale; East =
+    Ashford, Canterbury, Dover, Folkestone and Hythe, Thanet; West =
+    Maidstone, Sevenoaks, Tonbridge and Malling, Tunbridge Wells. Not the
+    NHS's four HCPs, which split Sevenoaks (Swanley) and pair Swale with
+    Medway; LSOA-level HCP membership isn't compiled in. Unchosen LSOAs
+    are grey, the chosen districts outlined heavier, and the view fits
+    them (`TKentMapView.SetAreas`). Every memo total, district table,
+    decile share and admissions figure is for the choice (the MSOA check
+    stays whole-area). A "by area" table puts each area, the combination
+    and Kent and Medway side by side, with each one's two barycentres and
+    geographic centre (`GeographicCentre` now takes a district mask). With
+    more than one area chosen the map shows each area's own centres as
+    smaller markers labelled with its name (`SetAreaCentre`) beside the
+    combination's. North 686,716 (admissions ratio 1.03), East 677,906
+    (0.99, 23 % aged 65+), West 567,062 (0.92, IMD score 15.3 against
+    23.6-24.1). FPC trap hit: setting `rgColour.ItemIndex` in `FormCreate`
+    fires its OnClick and so `ShowInfo`, which then ran before the area
+    masks existed (an access violation with any `--colour` but 0), so
+    `ApplyAreas` runs first; and a local `Inc` array hides `System.Inc`.
+  - **Road corridors** (2026-11-12, in the admissions memo): expected
+    admissions, share, population share and ratio north of the A2/M2,
+    between it and the M20, and south of the M20, split by area
+    (`uKentData.LsoaCorridor`, by LSOA label point). A2/M2 is the trunk
+    route (A2 trunk + M2, not the old A2 through the Medway towns). Each
+    road is the median northing of its OSM points in 500 m easting bins,
+    interpolated and held level past its ends, so Thanet, Deal and Sandwich
+    count as north of the A2 and Dover as north of the M20; the memo gives
+    those end effects. Kent and Medway: 51.1 % / 13.8 % / 35.2 %.
+  - **Drive times and isochrones** (2026-11-12, at the user's request
+    after asking whether vascular/stroke/PCI should sit in Ashford or
+    Canterbury). `make_drive_data.py` writes `drivedata.inc` (~160 kB)
+    from an Overpass download of every drivable OSM road in the box,
+    motorway to residential (`~/data/healthKent-src/roads/drive_roads.json`,
+    90 MB, query in the script's header): a directed graph (one-way,
+    roundabouts, motorways), free-flow car speeds by class capped by mph
+    tags, points joining at 20 km/h at the nearest non-trunk node of the
+    largest strongly connected component (without that, 3 LSOAs snapped
+    onto an island and were unreachable), scipy Dijkstra on the reversed
+    graph per hospital. Seven acute hospitals (approximate positions), plus
+    "nearer of William Harvey and K&C" and "nearest of all" - nine
+    "domains". Isochrones (15/30/45/60) are contourpy contours of the same
+    times on a 500 m grid, 3x3-smoothed over road-near cells only and
+    masked off Kent's land (district rings, even-odd) and >1.5 km from a
+    road. Before that masking, contours ran offshore and along the coast.
+    Some coast-following lines are real: Ramsgate and the Romney Marsh
+    coast sit on the 30-minute line to WHH-or-K&C.
+    - Map: a fifth fill, `kcmDrive` (10-minute bands, RdYlGn reversed),
+      the domain in the combo box, which also sets the isochrones; layers
+      "Isochrones" (magenta, half hours heavier - dashed lines read as
+      railways) and "Hospitals" (red squares, chosen larger). Each level's
+      longest line is labelled. The side panel was compacted to fit: fill
+      choices in two columns, layers in three with short captions.
+    - Memo: every domain's admissions-weighted mean, 90th percentile and
+      shares within 15/30/45 and over 60 minutes, the chosen one by
+      district; a selected LSOA lists its time to every hospital.
+      East Kent, WHH 30.6 min mean against K&C 26.1; Thanet 50.9 against
+      29.8. A second section (`WhhKchSummary`) always covers the whole
+      of Kent and Medway, whatever areas are chosen: William Harvey against
+      Kent and Canterbury as a single county centre - overall (mean, median,
+      90th percentile, shares within 30/45/60, longest, admission-hours),
+      by area and by district sorted by the difference. Whole county: WHH
+      34.6 min mean against 37.0, 0.4 % against 6.1 % over an hour (West
+      Kent 21.6 % to K&C). `--drive=<0..8>` picks the domain; snapshot adds
+      `_drive`/`_drive_whh_kch`.
+    - **Speed scenarios** (same day, a "Drive speeds" radio group,
+      `--speeds=<0..2>`). `drivedata.inc` (now ~470 kB) holds every domain's
+      times and isochrones three times over, `LsoaDriveMinutes(i, Domain,
+      Scenario)`:
+      - **free-flow car**, as above;
+      - **weekday morning peak**: free-flow times a factor by road group
+        (motorway, trunk, A/B, minor, residential) and urban or rural
+        (`PEAK`). An edge is urban if its speed tag is 30 mph or less and
+        rural if 40 or more; an untagged edge takes the density of the
+        nearest LSOA label point (urban from 1500/km2). The A/B factors
+        (0.61 urban, 0.88 rural) were tuned to put the length-weighted
+        peak speeds at DfT's local A road figures (16.6 and 32.4 mph here).
+        The other groups' factors are assumed;
+      - **blue light**: 1.25 x free-flow, capped at 113 km/h on motorways
+        and dual carriageways and 100 elsewhere. The 1.25 is a round
+        value from published ambulance studies (London, a rural pilot;
+        see Sources), not measured in Kent.
+      The memo's domain table and district table follow the chosen
+      scenario; `WhhKchSummary` gives all three overall, then areas and
+      districts for the chosen one; a selected LSOA shows all three.
+      Whole county, mean minutes WHH against K&C: free-flow 34.6 / 37.0,
+      peak 41.9 / 45.3, blue light 29.6 / 30.9; share over an hour
+      0.4 / 6.1 %, 9.7 / 19.0 %, 0 / 0.7 %. East Kent: 30.6 / 26.1,
+      37.3 / 32.9, 25.2 / 21.0. So traffic keeps the ranking and widens
+      both gaps; blue light narrows them. Snapshot adds
+      `_drive_whh_kch_peak`/`_blue`.
+    - **North and East Kent only** (same day, end of `WhhKchSummary`,
+      whatever areas are chosen): the same per-scenario rows over the
+      4,222 admissions outside West Kent, plus each scenario's share
+      quicker to either site. K&C wins narrowly: 31.7 / 33.3 min free-flow,
+      39.0 / 40.4 peak, 26.3 / 28.3 blue light, 52-53 % of admissions
+      quicker to K&C.
+    - **Best single site** (same day, a tenth domain `DriveBestDomain`,
+      after `DriveNearestDomain`; code that meant "the last domain" by
+      `DriveDomainCount - 1` now names `DriveNearestDomain`). For each
+      scenario `make_drive_data.py` runs a forward Dijkstra from every
+      LSOA's join node (~4 min a scenario, ~15 min for the whole script)
+      and takes the node in Kent's land with the lowest admissions-weighted
+      mean time (motorway and trunk nodes excluded, as for joining). The
+      weights come from `healthKent --events=<file.csv>` (written by the
+      `.lpr` before the form is created), so the script now takes that
+      file as a second argument:
+      `./healthKent --events=~/data/healthKent-src/cvd/lsoa_events.csv`, then
+      `python3 make_drive_data.py <roads.json> <events.csv>`. It writes
+      `BestSiteE/N/Mean` per scenario and the domain's times and
+      isochrones. All three scenarios pick the same point: TQ 78696
+      57925 (51.2924N 0.5615E), by the A249 at Detling between M20 J7 and
+      M2 J5. Mean 26.8 / 32.5 / 22.6 min (free-flow / peak / blue light)
+      against Maidstone Hospital 30.5 / 37.2 / 25.6, WHH 34.6 / 41.9 / 29.6
+      and K&C 37.0 / 45.3 / 30.9; nobody over an hour free-flow (6.5 % at
+      peak). East Kent pays: 38.2 min free-flow against 26.1 to K&C. Map:
+      a green star (larger when chosen) under the Hospitals layer; its
+      label goes above it, since the population barycentre's label runs
+      through it. (It used to be ringed by dark green contours of the
+      sites within 2 and 5 min of the best mean, `BestZone*`; removed
+      2026-11-13 at the user's request.)
+      Memo: `BestSiteSummary`, after `WhhKchSummary`; a selected LSOA
+      shows its time to the site too. Legend key rows are now 14 px
+      (`KeyPitch`) to fit its line. Snapshot adds `_drive_best`.
+    - **Weight by MI + stroke, MI or STEMI** (same day, a "Weight by" combo
+      beside Drive speeds, `--weighting=<0..2>`; `uKentData.SetCvdEventKind`,
+      then `TKentMapView.EventKindChanged`). Everything weighted by
+      admissions follows the choice: the admissions fill (its per-km2 scale
+      shrinks with the kind, `CvdDensityLoOf/HiOf`), the barycentre and its
+      label, the drive-time memo and the best single site. `ComputeCvd` does
+      all three at once with a (36, 3) rate matrix (`CvdEvAll`/`CvdAgeAll`/
+      `CvdEffAll`), and the MSOA check always uses MI + stroke, since OHID's
+      observed ratios are for the two together. Same risk-factor multipliers
+      for all three kinds.
+      - **STEMI share from HES's 4-character diagnoses** (`make_cvd_data.py`
+        now reads `DIAG_4_01` too): I21.0-I21.3 STEMI, I21.4 NSTEMI, with
+        I21.9 and I22 given the same share. The episodes' STEMI odds by age
+        (under 35 and 85+ pooled) times a female odds ratio from episodes by
+        sex (0.785), scaled so England's share matches emergency admissions
+        (27,159 STEMI, 45,835 NSTEMI: 37.2 %; episodes give 28 %, as NSTEMI
+        has more episodes per admission). Within the model both sexes have
+        the same age profile, as HES gives age only overall. `CvdStemiShare`:
+        men 0.49 at 35-39 down to 0.33 at 75+, women 0.43 down to 0.28.
+      - **Drive data**: `--events` now writes `events,mi,stemi`, and
+        `make_drive_data.py` finds the best site for each (`KINDS`) in the
+        same Dijkstra pass. There are 12 stored domains: the best site for
+        kind k is `DriveBestDomain + k`. The user picks from
+        `DriveChoiceCount` (10), and `LsoaDriveMinutes`/`DriveDataDomain`
+        map `DriveBestDomain` to the chosen kind's. `BestSiteE/N/Mean` are
+        `[kind * DriveScenarioCount + scenario]` (`BestSiteIndex`).
+      - **Results**: Kent and Medway 5,887 MI + stroke, 2,602 MI and 965
+        STEMI admissions a year. **Nothing moves**: all three kinds pick the
+        same best site in every scenario (free-flow means 26.8 / 26.7 /
+        26.6 min). WHH against K&C, whole county, is 34.6 / 37.0 for all
+        three; North and East Kent is 33.3 / 31.7 for MI + stroke and MI,
+        33.3 / 31.8 for STEMI. The barycentre moves 0.3 km west (STEMI TQ
+        90558 57572). STEMI's younger, more male profile changes the weights
+        too little. The memo's best-site section adds a table by kind.
+        Snapshot adds `_drive_best_stemi` and `_cvd_stemi`.
+    - **Median lines** (2026-11-13, layer "Median lines", `--medians`, off by
+      default): a north-south line at the weighted median easting and an
+      east-west one at the weighted median northing of the chosen kind's
+      expected admissions, over the chosen areas
+      (`uKentData.CvdMedianLines`, by LSOA label point). Each line sits
+      halfway between the two neighbouring LSOAs whose split comes nearest
+      to half, so no LSOA lies on it and each side is exactly what the memo
+      says. The map labels each quadrant with its share; the memo gives
+      the lines, the crossing and the shares. Two medians halve each
+      direction but don't make equal quarters. Kent and Medway, MI +
+      stroke: easting 581807, northing 161037 (crossing TQ 81807 61037,
+      9.7 km WNW of the admissions barycentre); NW 27.1 / NE 22.9 / SW 22.9
+      / SE 27.1 %, so admissions lie along a NW-SE diagonal (Medway and
+      Dartford against Ashford, Folkestone and the east coast). North and
+      East Kent: NW 32.9 / NE 17.0 / SW 17.1 / SE 32.9 %. The extra check
+      box row came out of the memo (200 to 164 px); the legend went to
+      290 px for the extra key row. Snapshot adds `_medians` and
+      `_medians_north_east`.
+    - **999 ambulance** (2026-11-13, a check box under Drive speeds,
+      `--ambulance`): asked as "what part of the total is response time
+      against the drive, and is the WHH/K&C difference significant next to
+      it". With it ticked, every time is 999 call to hospital door:
+      SECAmb's mean Category 2 response plus an assumed on-scene time
+      plus the modelled drive (`uKentData.SetAmbulance`;
+      `LsoaDriveMinutes` adds `AmbulanceMinutes`, `LsoaTransportMinutes`
+      is the plain drive). The thresholds, fill bands and isochrone
+      labels move up by 60 min (`TimeShift`); the isochrones themselves
+      are the same lines. Constants in `uKentData`, all from NHS
+      England's Ambulance Quality Indicators CSVs (RYD = SECAmb):
+      Category 2 mean 27.8 min (A30/A10, Nov 2025 - Oct 2026; England
+      30.5), 90th centile 56, monthly means 22.5-32.5, handover 18.9 (not
+      added: it is after the door); confirmed strokes, 999 call to
+      hospital arrival, mean 93.0, 90th 139.7, 5,621 patients (AmbCO K1m,
+      Jul 2025 - Jun 2026). AQI has no on-scene time; 33 min is the North
+      East study's median, with SSNAP's national medians 27-32. Refresh
+      them by hand when the AQI files move on. The memo section
+      `AmbulanceSummary` (shown ticked or not) answers the question on
+      blue lights: response + on scene are 67 % of a ~90-minute call to
+      door; WHH/K&C differ by 1.3 min county-wide (1.4 % of the total)
+      and 2.0 for North and East Kent, against a 10-min swing between
+      SECAmb's best and worst months and 28 min between mean and 90th-
+      centile response; but by district from -17.6 (Thanet) to +15.1
+      (Ashford); and the farther unit costs ~254 ambulance-hours a year
+      in round trips. The stroke check (27.8 + 33 + 18.4 min to the
+      nearest HASU: Darent Valley, Maidstone, William Harvey) gives 79.2
+      against SECAmb's 93.0. The constants cancel in every comparison
+      between hospitals, so nothing else in the memo changes. Snapshot
+      adds `_drive_whh_kch_ambulance`.
+      - **Stroke only, by district** (same day, at the user's request):
+        `AmbulanceSummary` is now weighted by expected strokes (MI +
+        stroke less MI) whatever "Weight by" says, and adds a district
+        table. A district's mean difference is "significant" at 10 min
+        or more (the swing between SECAmb's best and worst monthly
+        means), "borderline" from 5, judged on the value as printed to
+        0.1 min; a column gives the share of its strokes where the sites
+        differ by 10+. Blue light, 3,284 strokes a year: significant
+        Thanet -17.6 and Canterbury -15.9 (K&C quicker), Ashford +15.1,
+        Tunbridge Wells +10.6 and Folkestone and Hythe +10.0 (WHH
+        quicker); borderline Dover -7.3, Maidstone +9.9, Tonbridge and
+        Malling +8.9, Sevenoaks +8.7. The 10-minute line is my choice,
+        not a clinical threshold.
+  - `--snapshot=<prefix>` saves density/IMD/health/admissions (per km2 and
+    ratio)/zoomed maps and the window, prints the memo and exits;
+    `--colour=<0..4>`, `--domain=<0..7>`, `--cvd=<0|1>`, `--areas=<list>`,
+    `--drive=<0..9>`, `--speeds=<0..2>`, `--weighting=<0..2>`, `--medians`,
+    `--ambulance`.
 - **`newPoly`** — least-squares polynomial fitting with
   `newPolymath.pas`'s `TPolynomial.Fit` (see its own section above),
   shown on two `TVMPlot2D` components stacked in one form, the fit above
@@ -3657,6 +4020,342 @@ packages. Compiled binaries and each demo's own `lib/` output are
   with the user's. The memo tabulates the valves and the inverse rule
   `R = (Fs - F)/(F - Fa)`. `--snapshot=<file.png>` saves the plot, prints
   the memo and exits.
+- **`GlassSpine`** (added 2026-11-15) — spinal anaesthesia in real time:
+  bupivacaine spreading under gravity through a transparent dural sac,
+  on the GPU by OpenCL, drawn by OpenGL. Two sacs run side by side in one
+  grid, each with its own solution: hyperbaric 1.020 (blue) and plain
+  0.999 (amber) by default. Gravity is fixed, pointing down the screen,
+  and the sacs rotate under it.
+  - **Units**:
+    - `uspinegeom.pas` (`TSpineGeom`): the sac and cord from S2 to T1
+      (19 levels, about 544 mm long).
+    - `glassspine.cl`: the kernels.
+    - `uglassspinesim.pas` (`TSpineSim`): the simulation.
+    - `uspineview.pas` (`TSpineView`, a `TOpenGLControl`): the view.
+    - `uglassspinemain.pas`: the form, with its controls built in code.
+      The view and profile sit on a "Simulation" tab beside a
+      "Methodology" tab: a word-wrapped memo filled by
+      `uglassspinemethod.pas` (`FillMethodology`), plain prose for a
+      reader, ending with this run's grid and solver figures read from
+      `TSpineSim`. `--tab=method` opens on it.
+    - `spinecheck.lpr`: the headless check.
+  - **Build and run**:
+    - the demo: `lazbuild --ws=gtk2 demos/GlassSpine/GlassSpine.lpi`;
+    - the check: `fpc -O2 -FUlib -Fu../.. -Fi../.. spinecheck.lpr`, which
+      takes `--time --tilt --roll --dx --level --iters --jet --cfl --dt
+      --b0 --b1 --every --pulse --cardiac --hr --resp --rr --displace
+      --diff --fluxcheck` (`--diff` in mm^2/s); `--fluxcheck=1` also prints the axial flux at each
+      report while injecting. Before the
+      injection it runs pulsation alone and prints the computed against
+      the prescribed axial flux at L3, L1, T8 and T2, and where the
+      divergence residual is worst.
+    - It needs `HAVE_OPENCL`, because it uses
+      `OpenCLAPI.InitializeOpenCLContext`. That picks the GPU with the
+      most compute units (the RTX 5070 here) and also requires clFFT.
+  - **Posture**:
+    - **Tilt** is head up or down: +90 is sitting, negative is
+      Trendelenburg. **Roll** is about the long axis: +90 is left
+      lateral, 180 prone.
+    - `PostureMatrix(Tilt, Roll)` is `Rz(tilt) Rx(-roll) Base`. Base maps
+      body x (the patient's left) to world -Z, y (anterior) to +Y and z
+      (head) to +X.
+    - The fluid feels `g_body = R^T (0, -9810, 0)` mm/s^2. There are no
+      fictitious forces, since the turning is taken as slow.
+    - Right-drag in the view sets the posture (`OnPosture`), and so do
+      the sliders and presets (supine, sitting, left and right lateral,
+      prone, head down 15, head up 15). Left-drag only orbits the camera.
+  - **Geometry**:
+    - Sections are ellipses (`LevelAX`/`LevelAY`), with the cord down to
+      the conus at L1-L2. The sagittal curve has its apex at L3 and its
+      nadir at T8 (Hirabayashi 1995), about 34 mm deep.
+    - These figures are typical estimates, not one patient's.
+    - At dx 1.25 mm the grid is 38 x 44 x 441 with about 72k fluid
+      cells, 69.8 mL of CSF per sac. Every kernel runs only over the
+      compacted fluid-cell list.
+    - `Flags` bits: `FlagFluid`, `FlagCord`, `FlagSac1`, `FlagRoots`
+      (the cauda equina), `FlagRing`/`FlagKey` (the level rings drawn).
+  - **Fluid: Stam's Stable Fluids on a MAC grid.** Velocity uses
+    semi-Lagrangian advection (RK2 backtrace), implicit Jacobi viscosity
+    (nu 0.7 mm^2/s) and two projections, the first with half the
+    iterations. Pressure is red-black SOR (omega 1.7, 30 iterations,
+    warm-started), with Neumann conditions at the walls.
+    - Storage is a float4 per cell whose `.x/.y/.z` are the velocities on
+      its -x/-y/-z faces. Closed faces stay 0 and are never written.
+    - **Why staggered**: on Stam's collocated grid, the central-difference
+      divergence left the flow far from divergence-free next to the dura.
+      Now |div| dx is about 1e-3 of |u|.
+    - Buoyancy is Boussinesq, `(baricity - 1) C g_body`, against CSF
+      density 1.00059.
+    - **Section flux correction** (`plane_flux`/`plane_correct`, before
+      every projection). The SOR residual, ~1e-3 of the speed per cell,
+      is smooth and of one sign over long stretches. Summed over the
+      thousands of cells below a level, it let the net flux through that
+      level drift by tens of per cent, because SOR barely touches the
+      long axial mode. One work-item per (sac, section) sums the section's
+      flux, and a uniform plug brings it to its prescribed value: `q G_k`
+      with pulsation, zero without, as a closed sac requires. The
+      projection then only works within each section. This also changes
+      the pulsation-free runs slightly; the supine, sitting and lateral
+      figures in Results came out the same to the level reported.
+  - **The drug is not transported by Stam's method.** C, the injectate
+    volume fraction, is conservative finite volumes: MUSCL with the MC
+    limiter and SSP-RK2 (`c_flux`/`c_update`).
+    - It is sub-cycled to CFL 0.3. The step's largest face speed comes
+      from an `atomic_max` reduction (`max_speed`), read back each step.
+    - Semi-Lagrangian and MacCormack transport of C were both tried, and
+      both gained or lost 10-90 % of the dose. The finite-volume scheme
+      is exact: 3.00 mL injected, 3.00 mL present.
+  - **Injection**:
+    - The source is a 2.5 mm sphere 3 mm inside the posterior dura at
+      L2-3, L3-4 or L4-5 (`InjectionPoint`).
+    - The dose, duration and needle (22/25/27G, IDs 0.41/0.26/0.21 mm)
+      are set on the form.
+    - The bookkeeping (pending, injected, fraction f) runs on the GPU in
+      `inject_prepare`, a single work-item kernel writing a state buffer,
+      and `inject` sets `C += f (1 - C)`. On the host it went wrong: the
+      per-frame capacity it used was stale.
+    - The jet is a body force on the source cells,
+      `Q^2/(A_needle V_source)`, cephalad, caudad or off.
+  - **CSF pulsation** (2026-11-15, on by default; a group on the form,
+    `--pulse=0` to start with it off).
+    - The flow into the sac through T1 is `q(t) = pi f V sin(2 pi f t)`
+      for a cardiac and a respiratory wave. V is the volume per cycle:
+      0.3 mL a beat at 70 /min and 0.3 mL a breath at 12 /min. These
+      are estimates; cervical MRI stroke volumes are 0.5-0.8 mL, and
+      they fall down the canal.
+    - The CSF enters through a 10 mm band at the T1 end
+      (`PulseBandMM`) and is taken up evenly by every fluid cell, as the
+      dura's compliance. So the volume crossing a level falls linearly
+      with the CSF below it, to nothing at S2.
+    - The projection targets `div u = q pw.x` instead of zero. The
+      `pw.x` term is `w/Vcell`, with `w = 1/N_band - 1/N_sac`, so it
+      sums to zero over each sac.
+    - **The flow is built as a plug.** SOR alone would take thousands of
+      sweeps to set up a flow along the whole sac, so `forces` adds each
+      step's change of q as a uniform flow on every open z face:
+      `pw.y = G_k/(A_k dx^2)`, with `G_k` the volume crossing section k
+      per unit q (`FPlaneG`). The Womersley number is about 20 (Stokes
+      layer 0.4 mm, below dx), so the real profile is nearly flat. The
+      projection only tidies each section, and the section correction
+      above keeps the totals exact.
+    - **Check** (`spinecheck`): the computed flux at L3, L1, T8 and T2 is
+      within 0.5 % of the prescribed one, and |div - s| dx is under 1e-3
+      of the largest speed.
+    - **Isolated cells.** Before the flood fill was added, the flux
+      drifted as much as 160 mm^3/s at L3, and the worst divergence sat
+      at the top cap at 100 % of the speed. The cause is 10 fluid cells
+      at the closed ends that touch the rest only by an edge or a corner.
+      A source there can't drain, and it makes the Neumann problem
+      incompatible. `BuildPulse` floods each sac face by face from a
+      cell half way up and gives the cells it doesn't reach no source.
+    - **Drug** (`c_update` adds `C div u`). Concentration is carried with
+      the fluid (DC/Dt = 0) as a cell "dilates", so `sum C Vcell`
+      oscillates. `Dilation(s) = exp(Phi/V_sac)`, with Phi the volume
+      taken up (`PulseDisp`), converts it back. `Present` and `Profile`
+      are multiplied by it, and the injection's owed volume is divided by
+      it. `Injected` is the true volume owed less the pending. Without
+      that, `Present` read 3.01 mL for 3.00 injected.
+    - **Effect** (supine, 120-125 s): hyperbaric reaches T9-T8 rather
+      than T5, and more of it stays at T12-L2 (at 180 s: L1 0.38 against
+      0.17 mL, T7 0.02 against 0.14). The heartbeat does almost all of
+      this; breathing alone gives T9 at 65 s, against T11 with both. That
+      the oscillation stirs and dilutes the thin heavy sheet on the
+      posterior dura is a reading of the numbers, not tested. Plain
+      0.999 is unchanged (L5-T12).
+    - **Sitting and left lateral** (rerun the same day, 125 s, off/on):
+      sitting is unchanged, hyperbaric S2-L1 and plain L5-L4..T12-T11
+      both ways. Left lateral, hyperbaric reaches T9 rather than T7 (T10
+      rather than T9 at 65 s), and plain S1..T12-T11 both ways. So
+      pulsation slows the hyperbaric spread wherever it runs a long way
+      downhill along the sac, and does nothing when sitting, where the
+      solution has only a short way to fall to the sacrum.
+    - The cost is the headless check at about 10x real time (17x
+      before); the window still draws about 150 fps.
+  - **Injected volume displaces CSF** (2026-11-15, `Displace`, on by
+    default; a check box in the Injection group read at Inject,
+    `--displace=0`). Off is the first scheme: the injectate replaces CSF
+    in place (`inject_prepare`/`inject`).
+    - A second prescribed source like the pulsation's, `pwi` (float4,
+      `BuildInjectionField`, rebuilt with the source cells at each
+      Inject): `w = +1/n_src` in the source sphere,
+      `-HeadFraction/N_band` in the T1 band and `-(1 - HeadFraction)/N_sac`
+      everywhere. `.y` is its plug and `.z` the source part alone.
+      `plane_flux` targets `q G + qi Gi`.
+    - `HeadFraction` 0.67 is an estimate: the spinal canal holds roughly a
+      third of the craniospinal compliance. The dura's share adds to
+      `PulseDisp`, so `Dilation` covers it.
+    - `c_update` brings in pure injectate through `.z` (C = 1, divided by
+      `Dilation(0)`); the rest of the divergence leaves or dilates at the
+      local C. So the dose goes in exactly (3.00 mL in, 3.00 present)
+      with no capacity bookkeeping, and `Injected` is the volume owed.
+    - `BuildPulse` now keeps its flood fill (`FConn`), the T1 band
+      (`FTopK`, `FNTop`) and the open faces per plane (`FFaces`) for this,
+      and `Setup` builds the pulse before the source cells.
+    - **Check** (`--fluxcheck=1`, pulsation off): during the injection
+      the computed flux at L3, L1, T8 and T2 is 176/177, 162/163, 150/150
+      and 137/137 mm^3/s against prescribed. That is 1-2 mm/s up the sac:
+      0.9 at L3, about 200 mm^2, and more where the thoracic sac is
+      narrow.
+    - **Effect** (pulsation on), small:
+      - Supine at 155 s: plain reaches T11 rather than T12-T11, and at
+        180 s 0.10 against 0.06 mL at T12. Hyperbaric is at T8 rather than
+        T8-T7, with 0.013 against 0.022 mL at T7.
+      - Sitting at 65 s: hyperbaric reaches T12 rather than L1, and plain
+        T12-T11 rather than T12.
+  - **Head-down tilt** (2026-11-15, `spinecheck --tilt=<-deg>`, pulsation
+    and displacement on, 3 mL at L3-4). Run to compare with Der
+    Anaesthesist 2009 (doi 10.1007/s00101-009-1661-6), which tested
+    hyperbaric bupivacaine in straight and curved subarachnoid models at
+    0-15 deg head down. Hyperbaric cephalad edge (C 1 %):
+
+    | Head down | 65 s | 95 s | 125 s | 185 s | 245 s |
+    |---|---|---|---|---|---|
+    | 0 | T11 | T10 | T9 | T7 | T6-T5 |
+    | 5 | T11 | T10-T9 | | | |
+    | 10 | T11-T10 | T9 | | | |
+    | 15 | T11 | T10 | T7 | T4-T3 | T2 |
+
+    - 5 and 10 deg were run to 120 s only.
+    - Up to about 35 s every tilt is the same, because the jet dominates.
+    - The tilt mainly empties the sacrum. S1+S2 holds 0.68 mL flat at
+      120 s, 0.46 at 10 deg and 0.17 at 15 deg. The thorax (T1-T11) holds
+      0.48 against 0.68 mL at 300 s.
+    - Plain 0.999 drifts towards the sacrum, uphill when head down: S2-S1
+      to T11 at 15 deg.
+    - **Against the paper**:
+      - It agrees that 15 deg is what moves the sacral pool.
+      - It disagrees about lying flat. The paper found diffusion governed
+        the supine spread, and spill over the lordosis into the thorax
+        only at 15 deg. GlassSpine has no diffusion, yet the solution
+        crosses into the thorax supine, by gravity along the curve.
+        Injecting near the lordosis apex may explain it; the paper's
+        injection site and geometry weren't checked, from the abstract
+        only.
+      - The 3-4 extra levels at 15 deg by 4 min may be more than
+        clinical trials show; their head-down results are mixed.
+  - **Drug diffusion** (2026-11-15, off by default; "Drug diffusion" in the
+    Run group: none, molecular 7e-4, 0.1, 1 or 10 mm^2/s, applied live).
+    Added to test the paper's claim that diffusion decides the supine
+    spread.
+    - `c_flux` adds Fick's `D dt/dx^2 (C_L - C_R)` on every open face, so
+      the dura and cord are no-flux and the dose is still exact.
+    - It is explicit, so the drug's sub-steps also keep `D dt/dx^2 <= 0.15`
+      (cap raised from 64 to 256 sub-steps). 10 mm^2/s still needs only
+      one sub-step at Dt 0.01.
+    - Molecular (7e-4 mm^2/s, under 1 mm in 5 min) gives the same figures
+      as none, to the third decimal.
+    - **Results**: hyperbaric cephalad edge at 245 s, and mL in the sacrum
+      (S1+S2) and thorax (T1-T11) at 300 s:
+
+      | D, mm^2/s | Flat: edge | sacrum | thorax | 15 deg down: edge | sacrum | thorax |
+      |---|---|---|---|---|---|---|
+      | 0 | T6-T5 | 0.63 | 0.48 | T2 | 0.17 | 0.68 |
+      | 0.1 | T6 | 0.57 | 0.37 | T3-T2 | 0.19 | 0.62 |
+      | 1 | T9 | 0.33 | 0.16 | T7 | 0.20 | 0.28 |
+      | 10 | T9 | 0.24 | 0.21 | T9 | 0.22 | 0.22 |
+
+    - **Diffusion takes posture out, not in.** It dilutes the injectate,
+      and with it the density excess that buoyancy acts on. So the
+      cephalad spread shrinks rather than grows, and at 10 mm^2/s flat and
+      15 deg give the same answer. There, hyperbaric and plain are almost
+      identical blobs (S2..T9).
+    - 1 mm^2/s sits between the two: 15 deg still adds two levels.
+    - So the paper's "diffusion decides it supine", and gravity winning
+      only from 10 deg, would need an effective D of about 1-10 mm^2/s.
+      That is 10^3-10^4 times molecular, and would have to come from
+      mixing that GlassSpine resolves explicitly (jet, pulsation) or
+      leaves out (the nerve roots' stirring, the real waveform).
+    - **30 minutes supine** (2026-11-16, `--time=1800 --every=300`, about
+      7 min of wall time each). Cephalad edge (C 1 %):
+
+      | D, mm^2/s | Solution | 5 min | 10 min | 15 min | 20 min | 25 min |
+      |---|---|---|---|---|---|---|
+      | 0 | hyperbaric | T5 | T4-T3 | T3 | T3 | T3 |
+      | 0.1 | hyperbaric | T6-T5 | T5-T4 | T4 | T4 | T4 |
+      | 1 | hyperbaric | T9 | T9-T8 | T8 | T8-T7 | T7 |
+      | 0, 0.1 | plain | T11 | T11 | T11-T10 | T10 | T10 |
+      | 1 | plain | T11 | T11-T10 | T10 | T10-T9 | T9 |
+
+      At 30 min:
+
+      | D, mm^2/s | Hyperbaric thorax (T1-T11) | Hyperbaric sacrum (S1+S2) | Plain thorax | Plain sacrum |
+      |---|---|---|---|---|
+      | 0 | 0.67 | 0.50 | 0.12 | 0 |
+      | 0.1 | 0.49 | 0.36 | 0.13 | 0.06 |
+      | 1 | 0.30 | 0.32 | 0.22 | 0.15 |
+
+      Values are in mL, and the dose stayed at 3.00 mL throughout.
+      - **Against typical clinical figures** (from memory, not one trial):
+        hyperbaric 0.5 % peaks at T4-T6 by 20-30 min, and plain at T7-T10.
+        - At D 0 the edge has stopped rising by 15 min, a level or two
+          high.
+        - 0.1 holds at T4 from 15 min, the best match.
+        - At 1 the edge is still creeping at T7 at 30 min, and hyperbaric
+          and plain converge to about 2 levels apart.
+      - Somewhere between 0.1 and 1 mm^2/s would probably give a peak
+        near T5 with a gap of about 4 levels. That hasn't been run.
+      - The 1 % edge is arbitrary, and a block usually reaches a level or
+        two above the drug, so read the edges between runs rather than as
+        block heights.
+    - The model carries one scalar, so diffusing the drug also diffuses
+      the glucose that makes it heavy. Glucose's molecular D is similar
+      (about 6.7e-4 mm^2/s).
+  - **Rendering** (`uspineview.pas`):
+    - C is read back each frame into a LUMINANCE16 3-D texture. The
+      geometry is an RGBA8 3-D texture: inside dura, cord, level ring
+      and key ring.
+    - A GLSL 1.20 ray-march draws the dura as glass with a Fresnel rim,
+      the cord as opaque Lambert, and the drug by emission and absorption
+      with opacity proportional to sqrt C.
+    - The dura's normals come from a gradient at 1.5 dx, which stopped
+      them sparkling. The cord hit is refined by 5 bisection steps, which
+      removed its speckle.
+    - Each sac has its own model-view, offset perpendicular to its long
+      axis on screen.
+    - Text labels are LCL bitmap textures, and a gravity arrow is drawn
+      in pixel space.
+    - The level rings are cream, and red at the lower borders of T4, T10
+      and L1 (the nipple, umbilicus and groin dermatomes). A key in the
+      bottom right says so, shown with the labels.
+    - `ResetView`: yaw 0, pitch 12, distance 1000.
+  - **Real-time stepping** (`AppIdle`): simulated time is owed to the
+    clock (`FDebt`, wall time x the speed choice of 0.5-20x), and whole
+    `Dt` = 0.01 s steps are taken, with the remainder carried to the
+    next frame.
+    - At most 40 steps are taken a frame, and a shortfall beyond that is
+      dropped, so the window stays responsive.
+    - An earlier `Advance(dt)` per frame rounded the remainder away and
+      ran about 1.5x fast.
+    - The headless check runs about 17x real time. The window draws at
+      about 150 fps, still 42 fps at 10x.
+    - `Advance` accumulates a Single `Time`, so loop on
+      `T < tEnd - 0.5 Dt`, not `T < tEnd`. The plain test once never
+      ended.
+  - **Results** (3 mL over 15 s at L3-4, 25G, jet cephalad; without
+    pulsation - see above for what it changes):
+    - **Supine**: at 120 s the hyperbaric solution covers S2-T5,
+      pooling in the sacrum and the T6-T9 kyphosis, and reaches T3 (C 1 %)
+      by about 4 min. Plain stays at L5-T12.
+    - **Sitting**, 120 s: hyperbaric S2-L1; plain rises to T11.
+    - **Left lateral**, 120 s: hyperbaric S2-T7.
+  - **Left out**: the pressure rise an injection causes and how it shares
+    the compliance (a fixed 2/3 to the head), the pulse's real waveform,
+    and compliance that varies along the canal.
+    The cauda equina drag (`RootsDrag` 5 /s on `FlagRoots` cells, a check
+    box) is a guess and off by default.
+  - **Command line**:
+    - `--snapshot=<prefix> --time=<s>` saves the view, the profile plot
+      (mL per level, a `TVMPlot2D`) and the window, prints the memo and
+      exits.
+    - `--autorun=<s> [--png=<file>]` runs interactively for s seconds of
+      wall time and prints the fps.
+    - Also `--tilt --roll --sol0 --sol1 --level --speed --pulse=0
+      --displace=0 --diff=<0..4> --tab=method` (`--diff` an index into
+      the diffusion list).
+  - `GlassSpine.lpr` has no `{$R *.res}`: an empty `.res` broke the
+    resource compile.
+  - FPC duplicate identifiers hit again: `T`/`t`, `l`/`L`, and `Color`,
+    `Caption`, `Parent` and `Tag` as parameters on a control or form.
 - **`SpectralDiff`** — Chebyshev spectral differentiation of
   `f(x) = exp(x)*sin(5x)` (the example function, from Trefethen's
   *Spectral Methods in MATLAB*) via `DCT1` (newVM.pas's FFTW-backed

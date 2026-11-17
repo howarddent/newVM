@@ -1,0 +1,2024 @@
+{
+  This file is part of newVM.
+  Copyright (C) 2026 Howard Dent
+  SPDX-License-Identifier: GPL-3.0-or-later
+
+  newVM is free software: you can redistribute it and/or modify it under
+  the terms of the GNU General Public License as published by the Free
+  Software Foundation, either version 3 of the License, or (at your
+  option) any later version. It is distributed WITHOUT ANY WARRANTY; see
+  the file LICENSE at the top of the repository for details.
+}
+
+unit uHealthMain;
+
+{*******************************************************************************
+
+     Main form for the healthKent demo: Kent and Medway (the NHS Kent and
+     Medway ICB area) by LSOA, on two tabs.
+
+     MAP - uKentMap.TKentMapView, coloured by
+       - population density: mid-2024 ONS estimates over ONS land area,
+         people per km2 on a log scale (sequential purples), or
+       - deprivation: an English Indices of Deprivation 2025 national
+         decile, for the IMD or any of its seven domains (a combo box);
+         diverging red (decile 1, most deprived) to blue (decile 10,
+         least deprived),
+       - expected emergency admissions for heart attack or stroke (uKentData
+         has the model): per km2 a year on a log scale (ColorBrewer
+         YlOrRd), or as the risk-factor ratio against an English
+         population of the same age and sex (blue below, red above);
+         the combo box picks which,
+       - or no fill,
+     "Weight by" chooses what the admissions count - heart attack and
+     stroke, heart attack only, or STEMI only (uKentData's
+     SetCvdEventKind; --weighting=<0..2>) - and everything weighted by
+     admissions follows: the fill, the barycentres, the drive-time means
+     and the best single site, which has its own site for each choice.
+     with check boxes for district and LSOA outlines, built-up areas over
+     50,000 people, motorways, trunk roads, primary A roads, railways,
+     the population barycentre, the heart attack and stroke barycentre
+     (weighted by expected admissions), the geographic centre and the
+     admissions' weighted median lines (--medians: a north-south and an
+     east-west line, each with half the admissions either side, and the
+     share in each quadrant they make). Wheel zooms,
+     drag pans, a click selects an LSOA and the memo shows its figures.
+     The legend beside the map shows the colour scale (and, for
+     deprivation, the share of residents in each decile) and the line and
+     marker key.
+
+     AREAS: check boxes choose North, East and West Kent (whole districts,
+     as uKentData's header defines them), separately or in any
+     combination; all three is Kent and Medway. LSOAs outside the choice
+     are grey, the memo's totals, district tables, decile shares and
+     admissions are for the choice, and a "by area" table gives each
+     area, the combination and Kent and Medway side by side: population,
+     share, density, % aged 65+, mean IMD score, expected admissions and
+     ratio, and each one's population and admissions barycentres and
+     geographic centre. The map shows the combination's centres, plus,
+     when more than one area is chosen, each area's own (smaller markers,
+     labelled with the area's name).
+
+     The memo also gives the area's totals, the population barycentre
+     (computed with newVM - see uKentData) as a grid reference and
+     latitude/longitude, how far and which way it lies from the geographic
+     centre, and a table by district.
+
+     SOURCES - a glossary of every dataset compiled in (publisher,
+     edition, licence, link and what the demo uses it for) and of the
+     terms used, from uKentData's Sources and Glossary tables.
+
+     For the admissions the memo adds, for a selected LSOA, its estimated
+     risk factors and each one's effect on the expected admissions; for
+     the area, the totals, a table by district, and the model's check
+     against OHID's observed MSOA admission ratios.
+
+     COMMAND LINE: --snapshot=<prefix> saves the map coloured by density
+     (<prefix>_density.png), by IMD decile (<prefix>_imd.png), by health
+     deprivation (<prefix>_health.png), by expected admissions per km2
+     (<prefix>_cvd.png) and by risk-factor ratio (<prefix>_cvdratio.png),
+     a zoomed view round the barycentre (<prefix>_zoom.png) and the window
+     (<prefix>_window.bmp), prints the memo and exits. --colour=<0..3>
+     picks the fill (0 density, 1 deprivation, 2 admissions, 3 none),
+     --domain=<0..7> the deprivation measure, --cvd=<0|1> admissions per
+     km2 or the ratio, --areas=<list> the areas (e.g. north,east; default
+     all three), --ambulance ticks "999 ambulance".
+
+     999 AMBULANCE (a check box under Drive speeds): every time becomes 999
+     call to hospital door - SECAmb's mean Category 2 response plus an
+     on-scene time plus the drive (uKentData's header has the figures and
+     sources); the 15/30/45/60-minute thresholds and the fill bands move up
+     by 60 minutes. Ticked or not, the drive-time memo has a section
+     setting the drive, and the William Harvey / Kent and Canterbury
+     difference, against the response time and its spread, with a check
+     against SECAmb's published 999-call-to-hospital time for strokes.
+
+*******************************************************************************}
+
+{$mode objfpc}{$H+}
+
+interface
+
+uses
+  Classes, SysUtils, Math, StrUtils, Forms, Controls, Graphics, Dialogs,
+  ExtCtrls, StdCtrls, ComCtrls,
+  uKentData, uKentMap;
+
+type
+
+  { TForm1 }
+
+  TForm1 = class(TForm)
+    btnReset: TButton;
+    btnSave: TButton;
+    cbDomain: TComboBox;
+    cgAreas: TCheckGroup;
+    cgLayers: TCheckGroup;
+    dlgSave: TSaveDialog;
+    lblDomain: TLabel;
+    lblStatus: TLabel;
+    lblTitle: TLabel;
+    memInfo: TMemo;
+    memSources: TMemo;
+    pbLegend: TPaintBox;
+    pcMain: TPageControl;
+    pnlButtons: TPanel;
+    pnlMap: TPanel;
+    pnlSide: TPanel;
+    pnlStatus: TPanel;
+    rgColour: TRadioGroup;
+    rgSpeeds: TRadioGroup;
+    pnlDriveRow: TPanel;
+    gbEvents: TGroupBox;
+    cbEvents: TComboBox;
+    tabMap: TTabSheet;
+    tabSources: TTabSheet;
+    procedure btnResetClick(Sender: TObject);
+    procedure btnSaveClick(Sender: TObject);
+    procedure cbDomainChange(Sender: TObject);
+    procedure cbEventsChange(Sender: TObject);
+    procedure cgAreasItemClick(Sender: TObject; Index: integer);
+    procedure cgLayersItemClick(Sender: TObject; Index: integer);
+    procedure FormCreate(Sender: TObject);
+    procedure FormShow(Sender: TObject);
+    procedure pbLegendPaint(Sender: TObject);
+    procedure rgColourClick(Sender: TObject);
+    procedure rgSpeedsClick(Sender: TObject);
+  private
+    FMap: TKentMapView;
+    FBaryE, FBaryN, FGeoE, FGeoN, FCvdE, FCvdN: Double;
+    FMedE, FMedN: Double;                 // admissions' weighted median lines
+    FMedQ: array[0..3] of Double;         // their quadrants' shares: NW, NE, SW, SE
+    FSnapshot: string;
+    FShown: Boolean;
+    FDepDomain, FCvdMeasure, FDriveDomain, FDriveScenario, FBoxMode: Integer;
+    FAreas: TAreaSet;
+    FInc, FDistInc: TBoolArray;    // the chosen areas' LSOAs and districts
+    FAmbBox: TCheckBox;            // 999 ambulance: call to hospital door
+    procedure FillMeasureBox;
+    procedure ApplyAreas;
+    procedure AreaTable(L: TStrings);
+    procedure ApplyColouring;
+    procedure ApplyLayers;
+    procedure LsoaSelected(Sender: TObject; Lsoa: Integer);
+    procedure ViewChanged(Sender: TObject);
+    procedure ShowInfo;
+    procedure CvdSummary(L: TStrings);
+    procedure CorridorSummary(L: TStrings; Total: Double);
+    procedure DriveSummary(L: TStrings);
+    procedure WhhKchSummary(L: TStrings);
+    procedure BestSiteSummary(L: TStrings);
+    procedure FillSources;
+    function DecileShare(Domain, Decile: Integer): Double;
+    procedure RunSnapshot(Data: PtrInt);
+    procedure AmbBoxClick(Sender: TObject);
+    procedure AmbulanceSummary(L: TStrings);
+    procedure VariationSummary(L: TStrings);
+    procedure SnapshotException(Sender: TObject; E: Exception);
+  end;
+
+var
+  Form1: TForm1;
+
+implementation
+
+{$R *.lfm}
+
+const
+  // colour radio items
+  ciDensity = 0; ciDeprivation = 1; ciCvd = 2; ciDrive = 3; ciNone = 4;
+  CvdMeasureName: array[0..1] of string = (
+    'Admissions per km2 a year', 'Risk-factor ratio (against England, same age and sex)');
+
+  // check group items
+  liDistricts = 0; liLsoas = 1; liTowns = 2; liMotorways = 3; liTrunk = 4;
+  liPrimary = 5; liRail = 6; liBary = 7; liGeo = 8; liCvdBary = 9;
+  liIsochrones = 10; liHospitals = 11; liMedians = 12;
+
+// what the chosen event kind counts, for the memo
+function EventsPhrase: string;
+begin
+  case CvdEventKind of
+    0: result := 'acute MI or stroke';
+    1: result := 'acute MI';
+  else
+    result := 'STEMI (ST elevation MI)';
+  end;
+end;
+
+function Thousands(v: Double): string;
+begin
+  result := FormatFloat('#,##0', v);
+end;
+
+// FPC's Format has no '+' flag
+function Signed(v: Double): string;
+begin
+  result := FormatFloat('+0.0;-0.0;0.0', v);
+end;
+
+// compass point of the bearing from (E0, N0) to (E1, N1)
+function Compass(E0, N0, E1, N1: Double): string;
+const
+  Pts: array[0..15] of string = ('N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
+                                 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW');
+var
+  b: Double;
+begin
+  b := RadToDeg(ArcTan2(E1 - E0, N1 - N0));
+  if b < 0 then b := b + 360;
+  result := Pts[Round(b / 22.5) mod 16] + Format(' (%.0f deg)', [b]);
+end;
+
+{ TForm1 }
+
+procedure TForm1.FormCreate(Sender: TObject);
+var
+  d: Integer;
+  lab: string;
+begin
+  FMap := TKentMapView.Create(Self);
+  FMap.Parent := pnlMap;
+  FMap.Align := alClient;
+  FMap.OnSelectLsoa := @LsoaSelected;
+  FMap.OnViewChange := @ViewChanged;
+
+  FAreas := AllAreas;
+  if Application.HasOption('areas') then begin
+    FAreas := [];
+    lab := LowerCase(Application.GetOptionValue('areas'));
+    for d := 0 to AreaCount - 1 do
+      if Pos(LowerCase(Copy(AreaName[d], 1, 4)), lab) > 0 then Include(FAreas, d);
+    if FAreas = [] then FAreas := AllAreas;
+  end;
+  for d := 0 to AreaCount - 1 do cgAreas.Checked[d] := d in FAreas;
+  // which events weight everything: --weighting=<0 MI + stroke, 1 MI, 2 STEMI>
+  for d := 0 to CvdEventKindCount - 1 do cbEvents.Items.Add(CvdEventKindShort[d]);
+  if Application.HasOption('weighting') then
+    SetCvdEventKind(StrToIntDef(Application.GetOptionValue('weighting'), 0));
+  cbEvents.ItemIndex := CvdEventKind;   // before ApplyAreas: cbEventsChange exits while FInc is nil
+  ApplyAreas;      // before anything that can reach ShowInfo, which needs FInc
+
+  FBoxMode := -1;
+  if Application.HasOption('colour') then
+    rgColour.ItemIndex := EnsureRange(StrToIntDef(Application.GetOptionValue('colour'), 0), 0, ciNone);
+  if Application.HasOption('domain') then
+    FDepDomain := EnsureRange(StrToIntDef(Application.GetOptionValue('domain'), 0), 0, DomainCount - 1);
+  if Application.HasOption('cvd') then
+    FCvdMeasure := EnsureRange(StrToIntDef(Application.GetOptionValue('cvd'), 0), 0, 1);
+  FDriveDomain := DriveNearestDomain;
+  if Application.HasOption('drive') then
+    FDriveDomain := EnsureRange(StrToIntDef(Application.GetOptionValue('drive'), 0), 0, DriveChoiceCount - 1);
+  FMap.SetDriveDomain(FDriveDomain);
+  if Application.HasOption('speeds') then
+    FDriveScenario := EnsureRange(StrToIntDef(Application.GetOptionValue('speeds'), 0), 0, DriveScenarioCount - 1);
+  rgSpeeds.ItemIndex := FDriveScenario;   // may fire rgSpeedsClick, which needs FInc: after ApplyAreas
+  FMap.SetDriveScenario(FDriveScenario);
+  // 999 ambulance: under the speeds, the room taken from the legend
+  FAmbBox := TCheckBox.Create(Self);
+  FAmbBox.Parent := pnlDriveRow;
+  FAmbBox.Align := alBottom;
+  FAmbBox.BorderSpacing.Left := 8;
+  FAmbBox.Caption := Format('999 ambulance: + response %.1f + on scene %.0f min (call to door)',
+    [AmbResponseMin, AmbOnSceneMin]);
+  FAmbBox.Hint := 'SECAmb''s mean Category 2 response (NHS England AmbSYS) and an on-scene time from '
+    + 'English studies, added to every drive time - see Sources';
+  FAmbBox.ShowHint := True;
+  pnlDriveRow.Height := pnlDriveRow.Height + 22;
+  pbLegend.Height := pbLegend.Height - 12;
+  SetAmbulance(Application.HasOption('ambulance'));
+  FAmbBox.Checked := AmbulanceOn;
+  FAmbBox.OnClick := @AmbBoxClick;
+  FMap.AmbulanceChanged;
+  for d := 0 to cgLayers.Items.Count - 1 do
+    cgLayers.Checked[d] := d in [liDistricts, liTowns, liMotorways, liTrunk, liRail, liBary, liGeo, liCvdBary,
+      liIsochrones, liHospitals];
+  cgLayers.Checked[liMedians] := Application.HasOption('medians');
+  ApplyLayers;
+  ApplyColouring;
+  FillSources;
+  ShowInfo;
+  ViewChanged(nil);
+  pcMain.ActivePage := tabMap;
+  FSnapshot := Application.GetOptionValue('snapshot');
+  if FSnapshot <> '' then Application.OnException := @SnapshotException;
+end;
+
+// the chosen areas: their masks, centres (combined, and each area's own
+// when more than one is chosen) and the map's grey-out
+procedure TForm1.ApplyAreas;
+var
+  a: Integer;
+  c: TKentCentres;
+  m, dm: TBoolArray;
+  several: Boolean;
+begin
+  FInc := AreaLsoaMask(FAreas);
+  FDistInc := AreaDistrictMask(FAreas);
+  PopulationBarycentre(FInc, FBaryE, FBaryN);
+  GeographicCentre(FDistInc, FGeoE, FGeoN);
+  CvdBarycentre(FInc, FCvdE, FCvdN);
+  FMap.SetBarycentre(FBaryE, FBaryN);
+  FMap.SetGeoCentre(FGeoE, FGeoN);
+  FMap.SetCvdBarycentre(FCvdE, FCvdN);
+  CvdMedianLines(FInc, FMedE, FMedN, FMedQ);
+  FMap.SetMedianLines(FMedE, FMedN, FMedQ);
+  several := (FAreas <> []) and (FAreas <> [0]) and (FAreas <> [1]) and (FAreas <> [2]);
+  for a := 0 to AreaCount - 1 do begin
+    c.BE := NaN;
+    if several and (a in FAreas) then begin
+      m := AreaLsoaMask([a]);
+      dm := AreaDistrictMask([a]);
+      PopulationBarycentre(m, c.BE, c.BN);
+      CvdBarycentre(m, c.CE, c.CN);
+      GeographicCentre(dm, c.GE, c.GN);
+    end;
+    FMap.SetAreaCentre(a, c);
+  end;
+  if (FMap.Selected >= 0) and not FInc[FMap.Selected] then FMap.Selected := -1;
+  FMap.SetAreas(FAreas);
+  lblTitle.Caption := AreaSetName(FAreas)
+    + IfThen(FAreas = AllAreas, ' (NHS Kent and Medway ICB area)', '');
+end;
+
+procedure TForm1.cgAreasItemClick(Sender: TObject; Index: integer);
+var
+  a: Integer;
+  S: TAreaSet;
+begin
+  S := [];
+  for a := 0 to AreaCount - 1 do
+    if cgAreas.Checked[a] then Include(S, a);
+  if S = [] then begin                        // keep at least one
+    cgAreas.Checked[Index] := True;
+    Exit;
+  end;
+  FAreas := S;
+  ApplyAreas;
+  pbLegend.Invalidate;
+  ShowInfo;
+end;
+
+procedure TForm1.FormShow(Sender: TObject);
+begin
+  if FShown then Exit;
+  FShown := True;
+  if FSnapshot <> '' then Application.QueueAsyncCall(@RunSnapshot, 0);
+end;
+
+// the combo box lists the deprivation measures or the two admissions
+// measures, whichever fill is chosen; each keeps its own selection
+procedure TForm1.FillMeasureBox;
+var
+  m, d: Integer;
+begin
+  if rgColour.ItemIndex in [ciCvd, ciDrive] then m := rgColour.ItemIndex else m := ciDeprivation;
+  if m = FBoxMode then Exit;
+  FBoxMode := m;
+  cbDomain.Items.BeginUpdate;
+  try
+    cbDomain.Items.Clear;
+    if m = ciCvd then
+      for d := 0 to High(CvdMeasureName) do cbDomain.Items.Add(CvdMeasureName[d])
+    else if m = ciDrive then
+      for d := 0 to DriveChoiceCount - 1 do cbDomain.Items.Add(DriveDomainName(d))
+    else
+      for d := 0 to DomainCount - 1 do cbDomain.Items.Add(DomainName[d]);
+  finally
+    cbDomain.Items.EndUpdate;
+  end;
+  if m = ciCvd then begin
+    cbDomain.ItemIndex := FCvdMeasure;
+    lblDomain.Caption := 'Admissions measure:';
+  end else if m = ciDrive then begin
+    cbDomain.ItemIndex := FDriveDomain;
+    lblDomain.Caption := 'Drive time to (also sets the isochrones):';
+  end else begin
+    cbDomain.ItemIndex := FDepDomain;
+    lblDomain.Caption := 'Deprivation measure (index or domain):';
+  end;
+end;
+
+procedure TForm1.ApplyColouring;
+begin
+  FillMeasureBox;
+  cbDomain.Enabled := rgColour.ItemIndex in [ciDeprivation, ciCvd, ciDrive];
+  lblDomain.Enabled := cbDomain.Enabled;
+  case rgColour.ItemIndex of
+    ciDensity: FMap.SetColouring(kcmDensity, FDepDomain);
+    ciDeprivation: FMap.SetColouring(kcmDeprivation, FDepDomain);
+    ciCvd: FMap.SetColouring(kcmCvd, FCvdMeasure);
+    ciDrive: FMap.SetColouring(kcmDrive, FDriveDomain);
+  else
+    FMap.SetColouring(kcmNone, FDepDomain);
+  end;
+  pbLegend.Invalidate;
+  ShowInfo;
+end;
+
+procedure TForm1.ApplyLayers;
+begin
+  FMap.ShowDistricts := cgLayers.Checked[liDistricts];
+  FMap.ShowLsoaLines := cgLayers.Checked[liLsoas];
+  FMap.ShowTowns := cgLayers.Checked[liTowns];
+  FMap.ShowMotorways := cgLayers.Checked[liMotorways];
+  FMap.ShowTrunk := cgLayers.Checked[liTrunk];
+  FMap.ShowPrimary := cgLayers.Checked[liPrimary];
+  FMap.ShowRail := cgLayers.Checked[liRail];
+  FMap.ShowBarycentre := cgLayers.Checked[liBary];
+  FMap.ShowGeoCentre := cgLayers.Checked[liGeo];
+  FMap.ShowCvdBarycentre := cgLayers.Checked[liCvdBary];
+  FMap.ShowIsochrones := cgLayers.Checked[liIsochrones];
+  FMap.ShowHospitals := cgLayers.Checked[liHospitals];
+  FMap.ShowMedianLines := cgLayers.Checked[liMedians];
+  pbLegend.Invalidate;
+end;
+
+procedure TForm1.rgColourClick(Sender: TObject);
+begin
+  ApplyColouring;
+end;
+
+procedure TForm1.rgSpeedsClick(Sender: TObject);
+begin
+  if (rgSpeeds.ItemIndex < 0) or (FInc = nil) then Exit;
+  FDriveScenario := rgSpeeds.ItemIndex;
+  FMap.SetDriveScenario(FDriveScenario);
+  pbLegend.Invalidate;
+  ShowInfo;
+end;
+
+procedure TForm1.AmbBoxClick(Sender: TObject);
+begin
+  if FInc = nil then Exit;
+  SetAmbulance(FAmbBox.Checked);
+  FMap.AmbulanceChanged;
+  pbLegend.Invalidate;
+  ShowInfo;
+end;
+
+procedure TForm1.cbEventsChange(Sender: TObject);
+begin
+  if (cbEvents.ItemIndex < 0) or (FInc = nil) then Exit;
+  SetCvdEventKind(cbEvents.ItemIndex);
+  FMap.EventKindChanged;
+  ApplyAreas;        // the barycentres move
+  ApplyColouring;    // map, legend and memo
+end;
+
+procedure TForm1.cbDomainChange(Sender: TObject);
+begin
+  if cbDomain.ItemIndex < 0 then Exit;
+  if FBoxMode = ciCvd then FCvdMeasure := cbDomain.ItemIndex
+  else if FBoxMode = ciDrive then begin
+    FDriveDomain := cbDomain.ItemIndex;
+    FMap.SetDriveDomain(FDriveDomain);
+  end else FDepDomain := cbDomain.ItemIndex;
+  ApplyColouring;
+end;
+
+procedure TForm1.cgLayersItemClick(Sender: TObject; Index: integer);
+begin
+  ApplyLayers;
+end;
+
+procedure TForm1.btnResetClick(Sender: TObject);
+begin
+  FMap.ResetView;
+end;
+
+procedure TForm1.btnSaveClick(Sender: TObject);
+begin
+  dlgSave.FileName := 'kent_map.png';
+  if not dlgSave.Execute then Exit;
+  if FMap.SaveToPNG(dlgSave.FileName) then
+    lblStatus.Caption := 'Map saved to ' + dlgSave.FileName
+  else
+    lblStatus.Caption := 'Could not save the map';
+end;
+
+procedure TForm1.LsoaSelected(Sender: TObject; Lsoa: Integer);
+begin
+  ShowInfo;
+end;
+
+procedure TForm1.ViewChanged(Sender: TObject);
+begin
+  lblStatus.Caption := Format('Zoom %.1fx - wheel to zoom, drag to pan, click an area for its figures. '
+    + 'Population: ONS %s estimates; deprivation: English Indices of Deprivation 2025; '
+    + 'admissions: a model (see the memo and Sources).',
+    [FMap.Zoom, PopulationYear]);
+end;
+
+// share of the area's residents living in LSOAs of national decile Decile
+function TForm1.DecileShare(Domain, Decile: Integer): Double;
+var
+  i: Integer;
+  s, t: Int64;
+begin
+  s := 0; t := 0;
+  for i := 0 to LsoaCount - 1 do
+    if FInc[i] then begin
+      t := t + LsoaPop[i];
+      if LsoaDecileOf(i, Domain) = Decile then s := s + LsoaPop[i];
+    end;
+  result := 100 * s / Max(t, 1);
+end;
+
+procedure TForm1.ShowInfo;
+var
+  L: TStringList;
+  i, d, t, dom: Integer;
+  la, lo, dist, km, dE, dN: Double;
+  Pop, Low: array of Int64;
+  Land, ScoreSum: array of Double;
+  KccE, KccN: Double;
+  Inc: array of Boolean;
+  tp: Int64;
+  tl: Double;
+  nl: Integer;
+begin
+  dom := FDepDomain;
+  L := TStringList.Create;
+  try
+    i := FMap.Selected;
+    if i >= 0 then begin
+      L.Add('SELECTED AREA: ' + LsoaName[i] + '  (' + LsoaCode[i] + ')');
+      L.Add('  district           ' + DistrictName[LsoaDistrict[i]]);
+      if LsoaBUA[i] <> '' then
+        L.Add('  built-up area      ' + LsoaBUA[i]);
+      L.Add(Format('  population         %s (%s)', [Thousands(LsoaPop[i]), PopulationYear]));
+      L.Add(Format('  land area          %.3f km2', [LsoaLandKm2[i]]));
+      L.Add(Format('  density            %s people per km2', [Thousands(LsoaDensity(i))]));
+      L.Add('  Indices of Deprivation 2025      score    rank of 33,755   decile');
+      for d := 0 to DomainCount - 1 do
+        L.Add(Format('    %-32s %7.3f  %8s        %2d%s',
+          [DomainName[d], LsoaScoreOf(i, d), Thousands(LsoaRankOf(i, d)), LsoaDecileOf(i, d),
+           IfThen(LsoaDecileOf(i, d) = 1, '  most deprived 10 %',
+             IfThen(LsoaDecileOf(i, d) = 10, '  least deprived 10 %', ''))]));
+      L.Add(Format('  Expected %s admissions: %.1f a year (%.2f per km2);',
+        [CvdEventText, LsoaCvdEvents(i), LsoaCvdDensity(i)]));
+      L.Add(Format('    from age and sex alone %.1f, so a risk-factor ratio of %.2f (England 1)',
+        [LsoaCvdAgeOnly(i), LsoaCvdRatio(i)]));
+      L.Add('    estimated risk factor            % of 18+    effect on admissions');
+      for d := 0 to CvdComponentCount - 1 do
+        if d < CvdPrevCount then
+          L.Add(Format('      %-28s %7.1f      %7s %%',
+            [CvdComponentName[d], LsoaCvdPrevalence(i, d), Signed(100 * (LsoaCvdEffect(i, d) - 1))]))
+        else
+          L.Add(Format('      %-28s %7s      %7s %%',
+            [CvdComponentName[d], '', Signed(100 * (LsoaCvdEffect(i, d) - 1))]));
+      L.Add(Format('    (smoking and obesity from surveys; the rest diagnosed prevalence - %.0f %% of residents''',
+        [100 * CvdPracticeCoverage[i]]));
+      L.Add('    GP patients are at practices with QOF data.');
+      L.Add(Format('    South Asian %.1f %%, Black %.1f %% of residents, Census 2021. MSOA: %s.)',
+        [100 * LsoaSouthAsian[i], 100 * LsoaBlack[i], MsoaName[LsoaMsoa[i]]]));
+      if MsoaObservedSAR[LsoaMsoa[i]] > 0 then
+        L.Add(Format('    MSOA ratio: model %.2f, observed %.2f (OHID, MI and stroke admissions 2016/17-20/21; MI + stroke model)',
+          [MsoaModelSAR(LsoaMsoa[i]), MsoaObservedSAR[LsoaMsoa[i]]]));
+      if AmbulanceOn then
+        L.Add(Format('  %-41s free-flow car   morning peak   blue light',
+          [Format('999 call to door, min (%.1f + drive)', [AmbulanceMinutes])]))
+      else
+        L.Add('  Drive time (modelled), minutes            free-flow car   morning peak   blue light');
+      for d := 0 to HospitalCount - 1 do
+        L.Add(Format('    %-38s %12.1f %14.1f %12.1f', [Copy(HospitalName[d], 1, 38),
+          LsoaDriveMinutes(i, d, 0), LsoaDriveMinutes(i, d, 1), LsoaDriveMinutes(i, d, 2)]));
+      d := DriveBestDomain;
+      L.Add(Format('    %-38s %12.1f %14.1f %12.1f', ['best single site, ' + CvdEventKindShort[CvdEventKind] + ' (each scenario''s)',
+        LsoaDriveMinutes(i, d, 0), LsoaDriveMinutes(i, d, 1), LsoaDriveMinutes(i, d, 2)]));
+      L.Add('');
+    end else
+      L.Add('Click an area on the map for its population, deprivation, expected ' + CvdEventText + ' admissions and drive times.' + LineEnding);
+
+    tp := 0; tl := 0; nl := 0;
+    for i := 0 to LsoaCount - 1 do
+      if FInc[i] then begin
+        tp := tp + LsoaPop[i]; tl := tl + LsoaLandKm2[i]; nl := nl + 1;   // the local Inc hides System.Inc
+      end;
+    L.Add(UpperCase(AreaSetName(FAreas))
+      + IfThen(FAreas = AllAreas, ' (NHS Kent and Medway ICB area)', ''));
+    L.Add(Format('  population %s (%s), land %s km2, %s people per km2, %d LSOAs',
+      [Thousands(tp), PopulationYear, Thousands(tl), Thousands(tp / tl), nl]));
+    L.Add('');
+    AreaTable(L);
+    BNGToWGS84(FBaryE, FBaryN, la, lo);
+    L.Add('');
+    L.Add('  Population barycentre  ' + GridRef(FBaryE, FBaryN) + '  ' + LatLonText(la, lo));
+    t := NearestTown(FBaryE, FBaryN, km);
+    i := LsoaAt(FBaryE, FBaryN);
+    if i < 0 then i := NearestLsoa(FBaryE, FBaryN);
+    L.Add(Format('    in %s (%s), %.1f km from %s', [LsoaName[i], DistrictName[LsoaDistrict[i]], km, TownName[t]]));
+    BNGToWGS84(FGeoE, FGeoN, la, lo);
+    L.Add('  Geographic centre      ' + GridRef(FGeoE, FGeoN) + '  ' + LatLonText(la, lo));
+    i := LsoaAt(FGeoE, FGeoN);
+    if i < 0 then i := NearestLsoa(FGeoE, FGeoN);
+    L.Add(Format('    in %s (%s)', [LsoaName[i], DistrictName[LsoaDistrict[i]]]));
+    dE := FBaryE - FGeoE;
+    dN := FBaryN - FGeoN;
+    dist := Hypot(dE, dN) / 1000;
+    L.Add(Format('  The barycentre is %.1f km %s of the geographic centre:',
+      [dist, Compass(FGeoE, FGeoN, FBaryE, FBaryN)]));
+    if FAreas = AllAreas then begin
+      L.Add('  drawn towards the Medway towns and the Thames-side and Maidstone populations.');
+      SetLength(Inc, LsoaCount);
+      for i := 0 to LsoaCount - 1 do Inc[i] := DistrictName[LsoaDistrict[i]] <> 'Medway';
+      PopulationBarycentre(Inc, KccE, KccN);
+      L.Add('  Kent County Council area alone (without Medway): ' + GridRef(KccE, KccN)
+        + Format(', %.1f km %s of the combined one', [Hypot(KccE - FBaryE, KccN - FBaryN) / 1000,
+          Compass(FBaryE, FBaryN, KccE, KccN)]));
+    end;
+
+    // by district
+    SetLength(Pop, DistrictCount);
+    SetLength(Low, DistrictCount);
+    SetLength(Land, DistrictCount);
+    SetLength(ScoreSum, DistrictCount);
+    for d := 0 to DistrictCount - 1 do begin
+      Pop[d] := 0; Low[d] := 0; Land[d] := 0; ScoreSum[d] := 0;
+    end;
+    for i := 0 to LsoaCount - 1 do begin
+      if not FInc[i] then Continue;
+      d := LsoaDistrict[i];
+      Pop[d] := Pop[d] + LsoaPop[i];
+      Land[d] := Land[d] + LsoaLandKm2[i];
+      ScoreSum[d] := ScoreSum[d] + LsoaPop[i] * LsoaScoreOf(i, dom);
+      if LsoaDecileOf(i, dom) <= 2 then Low[d] := Low[d] + LsoaPop[i];
+    end;
+    L.Add('');
+    L.Add('BY DISTRICT - deprivation measure: ' + DomainName[dom]);
+    L.Add('  district                 population   land km2   per km2   mean score*   in deciles 1-2');
+    for d := 0 to DistrictCount - 1 do
+      if FDistInc[d] then
+      L.Add(Format('  %-23s %11s %10.1f %9s %13.2f %12.1f %%',
+        [DistrictName[d], Thousands(Pop[d]), Land[d], Thousands(Pop[d] / Land[d]),
+         ScoreSum[d] / Pop[d], 100 * Low[d] / Pop[d]]));
+    L.Add('  * population-weighted mean of the LSOA scores; deciles 1-2 = the most deprived');
+    L.Add('    20 % of LSOAs in England.');
+    L.Add('');
+    CvdSummary(L);
+    L.Add('');
+    DriveSummary(L);
+    L.Add('');
+    L.Add(Format('TOWNS (ONS built-up areas over %s, %s population)', [Thousands(TownMinPopulation), PopulationYear]));
+    for t := 0 to TownCount - 1 do begin
+      i := LsoaAt(TownE[t], TownN[t]);
+      if i < 0 then i := NearestLsoa(TownE[t], TownN[t]);
+      if FInc[i] then
+        L.Add(Format('  %-24s %9s  %s', [TownName[t], Thousands(TownPop[t]), AreaName[LsoaArea(i)]]));
+    end;
+    memInfo.Lines.Text := L.Text;
+  finally
+    L.Free;
+  end;
+end;
+
+// North, East and West Kent separately, the chosen combination and Kent
+// and Medway: population, age, deprivation, expected admissions and the
+// three centres of each
+procedure TForm1.AreaTable(L: TStrings);
+type
+  TRow = record
+    Name: string;
+    Pop, Old, Land, Score, Ev, Ag, BE, BN, CE, CN, GE, GN: Double;
+  end;
+var
+  Rows: array of TRow;
+  tot: Double;
+
+  procedure AddRow(const AName: string; S: TAreaSet);
+  var
+    r: TRow;
+    m, dm: TBoolArray;
+    i, b: Integer;
+  begin
+    r.Name := AName;
+    r.Pop := 0; r.Old := 0; r.Land := 0; r.Score := 0; r.Ev := 0; r.Ag := 0;
+    m := AreaLsoaMask(S);
+    dm := AreaDistrictMask(S);
+    for i := 0 to LsoaCount - 1 do
+      if m[i] then begin
+        r.Pop := r.Pop + LsoaPop[i];
+        r.Land := r.Land + LsoaLandKm2[i];
+        r.Score := r.Score + LsoaPop[i] * LsoaScoreOf(i, 0);
+        r.Ev := r.Ev + LsoaCvdEvents(i);
+        r.Ag := r.Ag + LsoaCvdAgeOnly(i);
+        for b := 0 to 2 * CvdBandCount - 1 do
+          if b mod CvdBandCount >= 13 then          // 65-69 and over
+            r.Old := r.Old + LsoaAgePop[i * 2 * CvdBandCount + b];
+      end;
+    PopulationBarycentre(m, r.BE, r.BN);
+    CvdBarycentre(m, r.CE, r.CN);
+    GeographicCentre(dm, r.GE, r.GN);
+    SetLength(Rows, Length(Rows) + 1);
+    Rows[High(Rows)] := r;
+  end;
+
+var
+  a, k: Integer;
+  mark: string;
+begin
+  for a := 0 to AreaCount - 1 do AddRow(AreaName[a], [a]);
+  if (FAreas <> AllAreas) and (AreaSetName(FAreas) <> AreaName[0])
+    and (AreaSetName(FAreas) <> AreaName[1]) and (AreaSetName(FAreas) <> AreaName[2]) then
+    AddRow(AreaSetName(FAreas), FAreas);
+  AddRow('Kent and Medway', AllAreas);
+  tot := Rows[High(Rows)].Pop;
+  L.Add('BY AREA (whole districts: see the Sources tab)        * = chosen');
+  L.Add('                                                                 IMD   admissions a year');
+  L.Add('  area                        population  share  per km2  65+ %  score*   expected  ratio');
+  for k := 0 to High(Rows) do
+    with Rows[k] do begin
+      mark := ' ';
+      if (k < AreaCount) and (k in FAreas) then mark := '*';
+      L.Add(Format('  %-26s%s %10s %5.1f %% %8s %6.1f %7.2f %10.0f %6.2f',
+        [Name, mark, Thousands(Pop), 100 * Pop / tot, Thousands(Pop / Land), 100 * Old / Pop,
+         Score / Pop, Ev, Ev / Ag]));
+    end;
+  L.Add('  * population-weighted mean IMD 2025 score; ratio = expected admissions against England''s');
+  L.Add('    rates for the same ages and sexes.');
+  L.Add('');
+  L.Add('  centres                     population barycentre   admissions barycentre   geographic centre');
+  for k := 0 to High(Rows) do
+    with Rows[k] do
+      L.Add(Format('  %-27s %-23s %-23s %s', [Name, GridRef(BE, BN), GridRef(CE, CN), GridRef(GE, GN)]));
+end;
+
+// the admissions model, for the chosen areas and by district
+procedure TForm1.CvdSummary(L: TStrings);
+var
+  i, d, n: Integer;
+  ev, ag, rm, ri, ok, mk, la, lo, w, wE, wN, tl: Double;
+  Ev_, Ag_, Land, Smk, Obe, Ad: array of Double;
+  b: Integer;
+begin
+  ev := 0; ag := 0; tl := 0;
+  for i := 0 to LsoaCount - 1 do begin
+    if not FInc[i] then Continue;
+    tl := tl + LsoaLandKm2[i];
+    ev := ev + LsoaCvdEvents(i);
+    ag := ag + LsoaCvdAgeOnly(i);
+  end;
+  L.Add('EXPECTED ' + UpperCase(CvdEventText) + ' ADMISSIONS (a model - see Sources and the glossary; Weight by chooses)');
+  L.Add(Format('  %s emergency admissions a year for %s; %s from age and sex alone',
+    [Thousands(ev), EventsPhrase, Thousands(ag)]));
+  L.Add(Format('  at England''s %s rates (HES), a risk-factor ratio of %.3f; %.2f per km2 a year.',
+    [CvdHesYear, ev / ag, ev / tl]));
+  L.Add('  Risk factors: smoking (APS by deprivation decile, age and sex, scaled to each district),');
+  L.Add('  obesity (Active Lives ' + CvdObesityPeriod + ', the same way; BMI 30+ beyond the diabetes and');
+  L.Add('  hypertension it causes), diagnosed diabetes, hypertension, CKD 3-5 and AF (QOF ' + CvdQofYear + ',');
+  L.Add('  fitted by age and deprivation across England''s practices and shared out to LSOAs),');
+  L.Add('  ethnicity (Census 2021)');
+  L.Add(Format('  and residual deprivation. Relative risks: smoking %.1f, obesity %.1f, diabetes %.1f, hypertension %.1f,',
+    [CvdRRSmoking, CvdRRObesity, CvdRRFactor[0], CvdRRFactor[1]]));
+  L.Add(Format('  CKD %.1f, AF %.1f, South Asian %.2f, Black %.2f, deprivation %.1f (decile 1 against 10) - assumed.',
+    [CvdRRFactor[2], CvdRRFactor[3], CvdRRSouthAsian, CvdRRBlack, CvdRRDeprivation]));
+  if CvdEventKind = 2 then begin
+    L.Add(Format('  STEMI: HES %s''s STEMI share of typed MI admissions at each age and sex (England %s STEMI,',
+      [CvdHesYear, Thousands(CvdStemiAdmissions)]));
+    L.Add(Format('  %s NSTEMI: %.1f %%; women''s odds %.2f x men''s) times the MI model. Unchanged risk factors.',
+      [Thousands(CvdNstemiAdmissions), 100 * CvdStemiAdmissions / (CvdStemiAdmissions + CvdNstemiAdmissions),
+       CvdStemiFemaleOR]));
+  end else if CvdEventKind = 1 then
+    L.Add('  Heart attack only: England''s MI rates (I21-I22) with the same risk-factor multipliers.');
+  CvdMsoaCheck(rm, ri, n, ok, mk);
+  L.Add(Format('  Check of the MI + stroke model against OHID''s observed MSOA admission ratios (2016/17-20/21, all %d', [n]));
+  L.Add('  of Kent and Medway''s MSOAs, whatever areas are chosen):');
+  L.Add(Format('    correlation %.2f (the IMD score alone: %.2f). Observed Kent ratio %.2f against the model''s %.2f:',
+    [rm, ri, ok, mk]));
+  L.Add('    Kent''s admissions run below what its risk factors predict - the model ranks areas better than');
+  L.Add('    it sets the level, and the observed period is older.');
+  BNGToWGS84(FCvdE, FCvdN, la, lo);
+  L.Add('');
+  L.Add('  ' + UpperCase(Copy(CvdEventText, 1, 1)) + Copy(CvdEventText, 2, 99) + ' barycentre  ' + GridRef(FCvdE, FCvdN) + '  ' + LatLonText(la, lo));
+  i := LsoaAt(FCvdE, FCvdN);
+  if i < 0 then i := NearestLsoa(FCvdE, FCvdN);
+  L.Add(Format('    in %s (%s): the expected admissions'' weighted mean position,', [LsoaName[i], DistrictName[LsoaDistrict[i]]]));
+  L.Add(Format('    %.1f km %s of the population barycentre.',
+    [Hypot(FCvdE - FBaryE, FCvdN - FBaryN) / 1000, Compass(FBaryE, FBaryN, FCvdE, FCvdN)]));
+  // weighted by the age-sex expectation alone, to separate age from the risk factors
+  w := 0; wE := 0; wN := 0;
+  for i := 0 to LsoaCount - 1 do begin
+    if not FInc[i] then Continue;
+    w := w + LsoaCvdAgeOnly(i);
+    wE := wE + LsoaCvdAgeOnly(i) * LsoaLabelE[i];
+    wN := wN + LsoaCvdAgeOnly(i) * LsoaLabelN[i];
+  end;
+  wE := wE / w; wN := wN / w;
+  L.Add(Format('    Age and sex alone move it %.1f km %s (the older east and coast);',
+    [Hypot(wE - FBaryE, wN - FBaryN) / 1000, Compass(FBaryE, FBaryN, wE, wN)]));
+  L.Add(Format('    the risk factors a further %.1f km %s.',
+    [Hypot(FCvdE - wE, FCvdN - wN) / 1000, Compass(wE, wN, FCvdE, FCvdN)]));
+  // weighted median lines and the quadrants they make
+  L.Add('');
+  L.Add('  Median lines (half the expected ' + CvdEventText + ' admissions either side of each):');
+  BNGToWGS84(FMedE, FMedN, la, lo);
+  L.Add(Format('    north-south line at easting %d (%.4f%s), east-west line at northing %d (%.4fN),',
+    [Trunc(FMedE), Abs(lo), IfThen(lo < 0, 'W', 'E'), Trunc(FMedN), la]));
+  L.Add('    crossing at ' + GridRef(FMedE, FMedN) + Format(', %.1f km %s of the barycentre.',
+    [Hypot(FMedE - FCvdE, FMedN - FCvdN) / 1000, Compass(FCvdE, FCvdN, FMedE, FMedN)]));
+  L.Add(Format('    Quadrants: NW %.1f %%, NE %.1f %%, SW %.1f %%, SE %.1f %%.',
+    [FMedQ[0], FMedQ[1], FMedQ[2], FMedQ[3]]));
+  L.Add(Format('    West %.1f / east %.1f %%, north %.1f / south %.1f %% (to the nearest whole LSOA).',
+    [FMedQ[0] + FMedQ[2], FMedQ[1] + FMedQ[3], FMedQ[0] + FMedQ[1], FMedQ[2] + FMedQ[3]]));
+  L.Add('    Two medians halve each direction but needn''t make equal quarters: larger NE and SW');
+  L.Add('    quadrants mean the admissions lie along a SW-NE diagonal, larger NW and SE along NW-SE.');
+
+  CorridorSummary(L, ev);
+
+  SetLength(Ev_, DistrictCount); SetLength(Ag_, DistrictCount); SetLength(Land, DistrictCount);
+  SetLength(Smk, DistrictCount); SetLength(Obe, DistrictCount); SetLength(Ad, DistrictCount);
+  for d := 0 to DistrictCount - 1 do begin
+    Ev_[d] := 0; Ag_[d] := 0; Land[d] := 0; Smk[d] := 0; Obe[d] := 0; Ad[d] := 0;
+  end;
+  for i := 0 to LsoaCount - 1 do begin
+    if not FInc[i] then Continue;
+    d := LsoaDistrict[i];
+    Ev_[d] := Ev_[d] + LsoaCvdEvents(i);
+    Ag_[d] := Ag_[d] + LsoaCvdAgeOnly(i);
+    Land[d] := Land[d] + LsoaLandKm2[i];
+    for b := 0 to 2 * CvdBandCount - 1 do begin
+      Smk[d] := Smk[d] + LsoaAgePop[i * 2 * CvdBandCount + b] * Min(1, CvdSmokeLsoa[i] * CvdSmokeBand[b]);
+      Obe[d] := Obe[d] + LsoaAgePop[i * 2 * CvdBandCount + b] * Min(1, CvdObesityLsoa[i] * CvdObesityBand[b]);
+      Ad[d] := Ad[d] + LsoaAgePop[i * 2 * CvdBandCount + b] * EnsureRange((5 * (b mod CvdBandCount) + 5 - 18) / 5, 0, 1);
+    end;
+  end;
+  L.Add('');
+  L.Add('                                                          smoking           obesity');
+  L.Add('  district                admissions/yr   per km2   ratio   model   APS     model   ALS');
+  for d := 0 to DistrictCount - 1 do
+    if FDistInc[d] then
+    L.Add(Format('  %-23s %12.0f %9.2f %7.2f %6.1f %6.1f %7.1f %6.1f',
+      [DistrictName[d], Ev_[d], Ev_[d] / Land[d], Ev_[d] / Ag_[d], 100 * Smk[d] / Ad[d],
+       100 * DistrictSmokeAPS[d], 100 * Obe[d] / Ad[d], 100 * DistrictObesitySurvey[d]]));
+  L.Add('  ratio = against England''s rates for the same ages and sexes. Smoking and obesity are % of');
+  L.Add('  adults; APS is the Annual Population Survey ' + CvdSmokePeriod + ', ALS Active Lives ' + CvdObesityPeriod + '.');
+  L.Add('  Their district samples are small, so the model only leans towards them.');
+end;
+
+// expected admissions by road corridor: north of the A2/M2, between it
+// and the M20, south of the M20 (uKentData's LsoaCorridor)
+procedure TForm1.CorridorSummary(L: TStrings; Total: Double);
+var
+  i, c, a: Integer;
+  Ev_, Ag_, Pop: array[0..CorridorCount - 1] of Double;
+  ByArea: array[0..CorridorCount - 1, 0..AreaCount - 1] of Double;
+  pt, aE0, aE1, mE0, mE1, eastA2, eastM20: Double;
+  hdr, row: string;
+begin
+  pt := 0; eastA2 := 0; eastM20 := 0;
+  A2M2Extent(aE0, aE1); M20Extent(mE0, mE1);
+  for c := 0 to CorridorCount - 1 do begin
+    Ev_[c] := 0; Ag_[c] := 0; Pop[c] := 0;
+    for a := 0 to AreaCount - 1 do ByArea[c, a] := 0;
+  end;
+  for i := 0 to LsoaCount - 1 do begin
+    if not FInc[i] then Continue;
+    c := LsoaCorridor(i);
+    Ev_[c] := Ev_[c] + LsoaCvdEvents(i);
+    Ag_[c] := Ag_[c] + LsoaCvdAgeOnly(i);
+    Pop[c] := Pop[c] + LsoaPop[i];
+    pt := pt + LsoaPop[i];
+    ByArea[c, LsoaArea(i)] := ByArea[c, LsoaArea(i)] + LsoaCvdEvents(i);
+    if (c = 0) and (LsoaLabelE[i] > aE1) and (LsoaLabelN[i] < A2M2Northing(aE1) + 17000) then
+      eastA2 := eastA2 + LsoaCvdEvents(i);          // Deal, Walmer, Sandwich - not Thanet
+    if (c < 2) and (LsoaLabelE[i] > mE1) then
+      eastM20 := eastM20 + LsoaCvdEvents(i);
+  end;
+  L.Add('');
+  L.Add('  By road corridor (each LSOA by its label point):');
+  hdr := '  corridor                admissions/yr   share  population  ratio';
+  for a := 0 to AreaCount - 1 do
+    if a in FAreas then hdr := hdr + Format('  %11s', [Copy(AreaName[a], 1, Pos(' ', AreaName[a]) - 1)]);
+  L.Add(hdr);
+  for c := 0 to CorridorCount - 1 do begin
+    row := Format('  %-23s %12.0f %6.1f%% %10.1f%% %6.2f',
+      [CorridorName[c], Ev_[c], 100 * Ev_[c] / Total, 100 * Pop[c] / pt, IfThen(Ag_[c] > 0, Ev_[c] / Max(Ag_[c], 1e-12), 0)]);
+    for a := 0 to AreaCount - 1 do
+      if a in FAreas then row := row + Format('  %11.0f', [ByArea[c, a]]);
+    L.Add(row);
+  end;
+  L.Add('  A2/M2 = the trunk route: A2 from Dartford, M2 from Strood to Brenley Corner, A2 through');
+  L.Add('  Canterbury to Dover (not the old A2 through the Medway towns). Each road is held level');
+  L.Add('  past its ends, so Thanet, Deal and Sandwich count as north of the A2, and Dover, Deal');
+  L.Add(Format('  and Thanet as north of the M20. Deal and Sandwich alone are %.0f a year (%.1f %%);', [eastA2, 100 * eastA2 / Total]));
+  L.Add(Format('  everything east of the M20''s end north of it, %.0f (%.1f %%).', [eastM20, 100 * eastM20 / Total]));
+end;
+
+// the scenario tables' column headings, the thresholds moved up by TimeShift
+function ThresholdHeader: string;
+var
+  z: Integer;
+begin
+  z := TimeShift;
+  result := '                                mean  median  90 % within'
+    + Format('%7s %7s %7s %6s', ['<=' + IntToStr(30 + z), '<=' + IntToStr(45 + z),
+      '<=' + IntToStr(60 + z), '>' + IntToStr(60 + z)])
+    + '    longest  hours/yr';
+end;
+
+// the heading's word for the times: drive, or 999 call to door
+function TimeWhat: string;
+begin
+  if AmbulanceOn then
+    result := Format('999 CALL TO HOSPITAL DOOR (%.1f min response + %.0f on scene + the drive)',
+      [AmbResponseMin, AmbOnSceneMin])
+  else
+    result := 'DRIVE TIMES TO HOSPITAL';
+end;
+
+// a domain's name within 42 characters
+function DriveDomainLabel(d: Integer): string;
+begin
+  if d < HospitalCount then result := HospitalName[d] else result := DriveDomainName(d);
+  result := StringReplace(result, 'Queen Elizabeth the Queen Mother', 'QEQM', []);
+  result := StringReplace(result, 'Kent and Canterbury', 'K&C', []);
+  result := StringReplace(result, 'Nearest of all seven acute hospitals', 'Nearest of all seven', []);
+  result := Copy(result, 1, 42);
+end;
+
+// drive times weighted by expected admissions: every choice side by side,
+// then the chosen one by district
+procedure TForm1.DriveSummary(L: TStrings);
+const
+  Lim0: array[0..3] of Integer = (15, 30, 45, 60);
+var
+  Lim: array[0..3] of Integer;
+  i, dm, d, k: Integer;
+  W, Wt, Sum, p90: Double;
+  Within: array[0..3] of Double;
+  Idx: array of Integer;
+  T: array of Double;
+  DEv, DT: array of Double;
+
+  procedure SortByTime;                         // shell sort of Idx by T
+  var
+    gap, a, b, tmp: Integer;
+  begin
+    gap := Length(Idx) div 2;
+    while gap > 0 do begin
+      for a := gap to High(Idx) do begin
+        tmp := Idx[a]; b := a;
+        while (b >= gap) and (T[Idx[b - gap]] > T[tmp]) do begin
+          Idx[b] := Idx[b - gap]; Dec(b, gap);
+        end;
+        Idx[b] := tmp;
+      end;
+      gap := gap div 2;
+    end;
+  end;
+
+begin
+  SetLength(T, LsoaCount);
+  for k := 0 to 3 do Lim[k] := Lim0[k] + TimeShift;
+  L.Add(TimeWhat + ', weighted by expected ' + CvdEventText + ' admissions');
+  L.Add('  Speeds: ' + UpperCase(DriveScenarioName[FDriveScenario])
+    + ' (choose under Drive speeds; OpenStreetMap roads - see Sources)');
+  L.Add('  to                                          mean   90 % within'
+    + Format('%7s %7s %7s %6s min', ['<=' + IntToStr(Lim[0]), '<=' + IntToStr(Lim[1]), '<=' + IntToStr(Lim[2]),
+      '>' + IntToStr(Lim[3])]));
+  for dm := 0 to DriveChoiceCount - 1 do begin
+    SetLength(Idx, 0);
+    W := 0; Sum := 0;
+    for k := 0 to 3 do Within[k] := 0;
+    for i := 0 to LsoaCount - 1 do begin
+      if not FInc[i] then Continue;
+      T[i] := LsoaDriveMinutes(i, dm, FDriveScenario);
+      Wt := LsoaCvdEvents(i);
+      W := W + Wt; Sum := Sum + Wt * T[i];
+      for k := 0 to 3 do if T[i] <= Lim[k] then Within[k] := Within[k] + Wt;
+      SetLength(Idx, Length(Idx) + 1); Idx[High(Idx)] := i;
+    end;
+    SortByTime;
+    Wt := 0; p90 := 0;
+    for k := 0 to High(Idx) do begin
+      Wt := Wt + LsoaCvdEvents(Idx[k]);
+      if Wt >= 0.9 * W then begin p90 := T[Idx[k]]; Break; end;
+    end;
+    L.Add(Format('  %s %-42s %5.1f %8.1f %9.1f%% %6.1f%% %6.1f%% %6.1f%%',
+      [IfThen(dm = FDriveDomain, '>', ' '), DriveDomainLabel(dm), Sum / W, p90,
+       100 * Within[0] / W, 100 * Within[1] / W, 100 * Within[2] / W, 100 * (W - Within[3]) / W]));
+  end;
+  L.Add('  > the choice on the map. By district, mean minutes for the chosen areas:');
+  SetLength(DEv, DistrictCount); SetLength(DT, DistrictCount);
+  for i := 0 to LsoaCount - 1 do begin
+    if not FInc[i] then Continue;
+    d := LsoaDistrict[i];
+    DEv[d] := DEv[d] + LsoaCvdEvents(i);
+    DT[d] := DT[d] + LsoaCvdEvents(i) * LsoaDriveMinutes(i, FDriveDomain, FDriveScenario);
+  end;
+  for d := 0 to DistrictCount - 1 do
+    if FDistInc[d] and (DEv[d] > 0) then
+      L.Add(Format('    %-23s %6.0f admissions/yr   %5.1f min to %s',
+        [DistrictName[d], DEv[d], DT[d] / DEv[d], DriveDomainShort(FDriveDomain)]));
+  L.Add('');
+  WhhKchSummary(L);
+  L.Add('');
+  AmbulanceSummary(L);
+  L.Add('');
+  VariationSummary(L);
+  L.Add('');
+  BestSiteSummary(L);
+end;
+
+function WeightedQuantile(const T: array of Double; const Use: array of Boolean; P: Double): Double; forward;
+
+// 999 call to hospital door for STROKE, broken into SECAmb's response, on
+// scene and the drive, on blue lights: how big the William Harvey / Kent and
+// Canterbury difference is against the response time and its spread, overall
+// and district by district. Weighted by expected stroke admissions (MI +
+// stroke less MI), whatever the "Weight by" choice. The response and on-scene
+// times are the same whichever hospital, so they cancel in the difference;
+// the drive figures here are always the plain drive, whether or not the 999
+// ambulance box is ticked. A district's difference counts as significant
+// when it is at least the 10-minute swing between SECAmb's best and worst
+// months (AmbResponseMonthHi - Lo), borderline from half that.
+procedure TForm1.AmbulanceSummary(L: TStrings);
+const
+  Blue = 2;
+var
+  i, d, a, West, k, j, n, nSig, nBord: Integer;
+  Ev, Fix, Sw, St, tu, dd, Swing, mW, mK: Double;
+  W, TW, TK: array[0..1] of Double;          // [0] Kent and Medway, [1] North and East Kent
+  DEv, DW, DK, DBig: array of Double;
+  Ord: array of Integer;
+  Verdict, Quicker, SigList, BordList: string;
+
+  procedure Row(const Nm: string; Drive: Double);
+  begin
+    L.Add(Format('    %-28s %8.1f %9.1f %7.1f %11.1f %10.0f %%',
+      [Nm, AmbResponseMin, AmbOnSceneMin, Drive, Fix + Drive, 100 * Drive / (Fix + Drive)]));
+  end;
+
+  procedure DiffRow(k: Integer);
+  begin
+    dd := (TK[k] - TW[k]) / W[k];
+    L.Add(Format('    %-28s %8s %9s %7s %11s   %.1f %% of the total',
+      ['difference, K&C - WHH', '0', '0', Signed(dd), Signed(dd), 100 * Abs(dd) / (Fix + TW[k] / W[k])]));
+  end;
+
+  function DistDiff(d: Integer): Double;
+  begin
+    result := (DK[d] - DW[d]) / DEv[d];
+  end;
+
+begin
+  Fix := AmbResponseMin + AmbOnSceneMin;
+  Swing := AmbResponseMonthHi - AmbResponseMonthLo;
+  West := -1;
+  for a := 0 to AreaCount - 1 do
+    if AreaName[a] = 'West Kent' then West := a;
+  for k := 0 to 1 do begin W[k] := 0; TW[k] := 0; TK[k] := 0; end;
+  SetLength(DEv, DistrictCount); SetLength(DW, DistrictCount);
+  SetLength(DK, DistrictCount); SetLength(DBig, DistrictCount);
+  Sw := 0; St := 0;
+  for i := 0 to LsoaCount - 1 do begin
+    Ev := LsoaCvdEventsOf(i, 0) - LsoaCvdEventsOf(i, 1);    // strokes
+    mW := LsoaTransportMinutes(i, DriveHospWHH, Blue);
+    mK := LsoaTransportMinutes(i, DriveHospKCH, Blue);
+    for k := 0 to 1 do
+      if (k = 0) or (LsoaArea(i) <> West) then begin
+        W[k] := W[k] + Ev;
+        TW[k] := TW[k] + Ev * mW;
+        TK[k] := TK[k] + Ev * mK;
+      end;
+    d := LsoaDistrict[i];
+    DEv[d] := DEv[d] + Ev;
+    DW[d] := DW[d] + Ev * mW;
+    DK[d] := DK[d] + Ev * mK;
+    if Abs(mK - mW) >= Swing then DBig[d] := DBig[d] + Ev;
+    tu := Infinity;
+    for k := 0 to StrokeUnitCount - 1 do
+      tu := Min(tu, LsoaTransportMinutes(i, StrokeUnitHosp[k], Blue));
+    Sw := Sw + Ev; St := St + Ev * tu;
+  end;
+  // districts by the difference, quickest to K&C first
+  SetLength(Ord, 0);
+  for d := 0 to DistrictCount - 1 do
+    if DEv[d] > 0 then begin
+      n := Length(Ord);
+      SetLength(Ord, n + 1);
+      j := n;
+      while (j > 0) and (DistDiff(Ord[j - 1]) > DistDiff(d)) do begin
+        Ord[j] := Ord[j - 1]; Dec(j);
+      end;
+      Ord[j] := d;
+    end;
+
+  L.Add('STROKE: 999 CALL TO HOSPITAL DOOR, THE RESPONSE AGAINST THE DRIVE (William Harvey or Kent and Canterbury)');
+  L.Add('  Weighted by expected stroke admissions, whatever "Weight by" says. Stroke is a Category 2 call.');
+  L.Add(Format('  SECAmb Category 2, Nov 2025 - Oct 2026 (NHS England AmbSYS): call to arrival mean %.1f min,',
+    [AmbResponseMin]));
+  L.Add(Format('  90th centile %.0f, monthly means %.1f to %.1f (England %.1f). On scene %.0f min, assumed', [AmbResponse90Min,
+    AmbResponseMonthLo, AmbResponseMonthHi, AmbResponseEngland, AmbOnSceneMin]));
+  L.Add('  (English studies of suspected stroke, medians 27-35). Then the drive, on blue lights. Handover');
+  L.Add(Format('  inside the hospital (SECAmb mean %.1f min) comes after the door and is left out.', [AmbHandoverMin]));
+  L.Add('  weighted means, minutes          response  on scene   drive  call to door  drive share');
+  L.Add(Format('  Kent and Medway (%s strokes a year)', [Thousands(W[0])]));
+  Row('to William Harvey', TW[0] / W[0]);
+  Row('to Kent and Canterbury', TK[0] / W[0]);
+  DiffRow(0);
+  L.Add(Format('  North and East Kent (%s a year)', [Thousands(W[1])]));
+  Row('to William Harvey', TW[1] / W[1]);
+  Row('to Kent and Canterbury', TK[1] / W[1]);
+  DiffRow(1);
+  L.Add(Format('  Response and on scene are %.0f %% of the county''s mean call-to-door time; the drive is the rest.',
+    [100 * Fix / (Fix + TW[0] / W[0])]));
+  L.Add('');
+  L.Add(Format('  BY DISTRICT. Significant: the district''s mean difference is at least the %.0f-minute swing', [Swing]));
+  L.Add('  between SECAmb''s best and worst months; borderline from half that. "10+ min" is the share of');
+  L.Add('  the district''s strokes living where the two sites differ by 10 minutes or more.');
+  L.Add('  district              strokes/yr  WHH drive  K&C drive  K&C-WHH  % of door  quicker  10+ min  significant?');
+  nSig := 0; nBord := 0; SigList := ''; BordList := '';
+  for j := 0 to High(Ord) do begin
+    d := Ord[j];
+    dd := DistDiff(d);
+    // judged on the value as printed, to 0.1 min
+    if Round(10 * Abs(dd)) >= Round(10 * Swing) then begin
+      Verdict := 'yes'; Inc(nSig);
+      if SigList <> '' then SigList := SigList + ', ';
+      SigList := SigList + DistrictName[d];
+    end else if Round(10 * Abs(dd)) >= Round(5 * Swing) then begin
+      Verdict := 'borderline'; Inc(nBord);
+      if BordList <> '' then BordList := BordList + ', ';
+      BordList := BordList + DistrictName[d];
+    end else
+      Verdict := 'no';
+    if dd < 0 then Quicker := 'K&C' else Quicker := 'WHH';
+    L.Add(Format('  %-22s %9.0f %10.1f %10.1f %8s %9.0f %%  %-7s %6.0f %%   %s',
+      [DistrictName[d], DEv[d], DW[d] / DEv[d], DK[d] / DEv[d], Signed(dd),
+       100 * Abs(dd) / (Fix + Min(DW[d], DK[d]) / DEv[d]), Quicker, 100 * DBig[d] / DEv[d], Verdict]));
+  end;
+  if SigList = '' then SigList := 'none';
+  if BordList = '' then BordList := 'none';
+  L.Add(Format('  Significant (%d): %s.', [nSig, SigList]));
+  L.Add(Format('  Borderline (%d): %s.', [nBord, BordList]));
+  L.Add(Format('  County-wide the average gap (%.1f min; %.1f for North and East Kent) is well inside the',
+    [Abs(TK[0] - TW[0]) / W[0], Abs(TK[1] - TW[1]) / W[1]]));
+  L.Add(Format('  month-to-month swing in the response and the %.0f minutes between a mean and a 90th-centile',
+    [AmbResponse90Min - AmbResponseMin]));
+  L.Add('  response, because districts nearer each site cancel. For the districts flagged significant, the');
+  L.Add('  choice of site moves their strokes'' arrival by more than SECAmb''s own month-to-month variation.');
+  L.Add('  West Kent''s nearest stroke units are Maidstone and Darent Valley; its rows are for completeness.');
+  L.Add('');
+  L.Add('  Check against SECAmb''s confirmed strokes, 999 call to hospital arrival (AmbCO, July 2025 -');
+  L.Add(Format('  June 2026, %s patients): published mean %.1f min, 90th centile %.0f. Model: %.1f response',
+    [Thousands(AmbStrokePatients), AmbStrokeCallToDoor, AmbStrokeCallToDoor90, AmbResponseMin]));
+  L.Add(Format('  + %.0f on scene + %.1f blue-light drive to the nearest hyper-acute stroke unit (Darent Valley,',
+    [AmbOnSceneMin, St / Sw]));
+  L.Add(Format('  Maidstone or William Harvey) = %.1f, %.0f minutes short. The published figure covers Surrey',
+    [Fix + St / Sw, AmbStrokeCallToDoor - (Fix + St / Sw)]));
+  L.Add('  and Sussex too, runs from the call (the response clock can start later), and includes slower');
+  L.Add('  conveyances and longer scenes. Whatever the gap is, it is the same for both hospitals and');
+  L.Add('  doesn''t change the differences above.');
+end;
+
+// log of the gamma function (Lanczos), for the gamma fit below
+function LnGammaFn(x: Double): Double;
+const
+  C: array[0..5] of Double = (76.18009172947146, -86.50532032941677, 24.01409824083091,
+    -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5);
+var
+  y, t, sum: Double;
+  j: Integer;
+begin
+  y := x; t := x + 5.5;
+  t := t - (x + 0.5) * Ln(t);
+  sum := 1.000000000190015;
+  for j := 0 to 5 do begin y := y + 1; sum := sum + C[j] / y; end;
+  result := -t + Ln(2.5066282746310005 * sum / x);
+end;
+
+// regularised lower incomplete gamma function P(a, x), by its series
+function GammaP(a, x: Double): Double;
+var
+  sum, term, ap: Double;
+  n: Integer;
+begin
+  if x <= 0 then Exit(0);
+  ap := a; term := 1 / a; sum := term;
+  for n := 1 to 2000 do begin
+    ap := ap + 1; term := term * x / ap; sum := sum + term;
+    if Abs(term) < Abs(sum) * 1e-14 then Break;
+  end;
+  result := sum * Exp(-x + a * Ln(x) - LnGammaFn(a));
+end;
+
+// 90th centile over mean of a gamma distribution of shape k
+function GammaP90OverMean(k: Double): Double;
+var
+  lo, hi, mid: Double;
+  it: Integer;
+begin
+  lo := 0; hi := 20 * k + 50;
+  for it := 1 to 80 do begin
+    mid := 0.5 * (lo + hi);
+    if GammaP(k, mid) < 0.9 then lo := mid else hi := mid;
+  end;
+  result := 0.5 * (lo + hi) / k;
+end;
+
+// coefficient of variation of the distribution with this 90th centile over
+// mean: lognormal in closed form, gamma by bisection on its shape
+function LogNormalCV(Ratio: Double): Double;
+const
+  z = 1.2815515655;
+var
+  sg: Double;
+begin
+  sg := z - Sqrt(z * z - 2 * Ln(Ratio));       // ln(ratio) = z sigma - sigma^2/2, smaller root
+  result := Sqrt(Exp(sg * sg) - 1);
+end;
+
+function GammaCV(Ratio: Double): Double;
+var
+  lo, hi, mid: Double;
+  it: Integer;
+begin
+  lo := 0.2; hi := 50;                          // the ratio falls as the shape rises
+  for it := 1 to 60 do begin
+    mid := 0.5 * (lo + hi);
+    if GammaP90OverMean(mid) > Ratio then lo := mid else hi := mid;
+  end;
+  result := 1 / Sqrt(0.5 * (lo + hi));
+end;
+
+// Which varies more from one stroke patient to the next: how long the
+// ambulance takes to come, or how far they live from the hospital? Call to
+// door = response + on scene + drive, taken as independent, so the variances
+// add. The response's spread is between calls, fitted from SECAmb's mean and
+// 90th centile (lognormal and gamma, to show how much the shape matters); on
+// scene from the North East study's quartiles; the drive's is between places,
+// the blue-light drive of every LSOA weighted by its expected strokes.
+procedure TForm1.VariationSummary(L: TStrings);
+const
+  Blue = 2;
+  NH = 3;                                       // WHH, K&C, nearest stroke unit
+  HName: array[0..NH - 1] of string = ('William Harvey', 'Kent and Canterbury', 'nearest stroke unit');
+type
+  TStat = record Mean, SD, SDBetween, P10, P50, P90: Double; end;
+var
+  i, h, k, s, West, a: Integer;
+  Ev: array of Double;
+  T: array[0..NH - 1] of array of Double;
+  Use: array[0..1] of array of Boolean;
+  St: array[0..1, 0..NH - 1] of TStat;
+  DiffSD: array[0..1] of Double;
+  SDR: array[0..1] of Double;                   // lognormal, gamma
+  SDS, vR, vS, vD, vT, RatioR, ObsSD, tu: Double;
+  FitName: array[0..1] of string = ('lognormal', 'gamma');
+
+  function Stat(const X: array of Double; const U: array of Boolean): TStat;
+  var
+    Idx: array of Integer;
+    DW, DM: array of Double;
+    j, n, gap, p, q, tmp, d: Integer;
+    W, c, m: Double;
+  begin
+    SetLength(Idx, LsoaCount); SetLength(DW, DistrictCount); SetLength(DM, DistrictCount);
+    n := 0; W := 0; m := 0;
+    for j := 0 to LsoaCount - 1 do
+      if U[j] then begin
+        Idx[n] := j; Inc(n); W := W + Ev[j]; m := m + Ev[j] * X[j];
+        d := LsoaDistrict[j]; DW[d] := DW[d] + Ev[j]; DM[d] := DM[d] + Ev[j] * X[j];
+      end;
+    m := m / W;
+    result.Mean := m; result.SD := 0; result.SDBetween := 0;
+    for j := 0 to n - 1 do result.SD := result.SD + Ev[Idx[j]] * Sqr(X[Idx[j]] - m);
+    result.SD := Sqrt(result.SD / W);
+    for d := 0 to DistrictCount - 1 do
+      if DW[d] > 0 then result.SDBetween := result.SDBetween + DW[d] * Sqr(DM[d] / DW[d] - m);
+    result.SDBetween := Sqrt(result.SDBetween / W);
+    gap := n div 2;                             // shell sort by X
+    while gap > 0 do begin
+      for p := gap to n - 1 do begin
+        tmp := Idx[p]; q := p;
+        while (q >= gap) and (X[Idx[q - gap]] > X[tmp]) do begin
+          Idx[q] := Idx[q - gap]; Dec(q, gap);
+        end;
+        Idx[q] := tmp;
+      end;
+      gap := gap div 2;
+    end;
+    c := 0; result.P10 := NaN; result.P50 := NaN; result.P90 := NaN;
+    for j := 0 to n - 1 do begin
+      c := c + Ev[Idx[j]];
+      if IsNan(result.P10) and (c >= 0.1 * W) then result.P10 := X[Idx[j]];
+      if IsNan(result.P50) and (c >= 0.5 * W) then result.P50 := X[Idx[j]];
+      if IsNan(result.P90) and (c >= 0.9 * W) then result.P90 := X[Idx[j]];
+    end;
+  end;
+
+  procedure Shares(const Head: string; SDDrive: Double);
+  var
+    f: Integer;
+  begin
+    L.Add('  ' + Head);
+    L.Add('    response fitted as   response  on scene   drive    total SD   response : drive variance');
+    for f := 0 to 1 do begin
+      vR := Sqr(SDR[f]); vS := Sqr(SDS); vD := Sqr(SDDrive); vT := vR + vS + vD;
+      L.Add(Format('    %-18s %8.0f %% %7.0f %% %6.0f %% %8.1f min %14.1f : 1',
+        [FitName[f], 100 * vR / vT, 100 * vS / vT, 100 * vD / vT, Sqrt(vT), vR / vD]));
+    end;
+  end;
+
+begin
+  West := -1;
+  for a := 0 to AreaCount - 1 do
+    if AreaName[a] = 'West Kent' then West := a;
+  SetLength(Ev, LsoaCount);
+  for h := 0 to NH - 1 do SetLength(T[h], LsoaCount);
+  for s := 0 to 1 do SetLength(Use[s], LsoaCount);
+  for i := 0 to LsoaCount - 1 do begin
+    Ev[i] := LsoaCvdEventsOf(i, 0) - LsoaCvdEventsOf(i, 1);     // strokes
+    T[0][i] := LsoaTransportMinutes(i, DriveHospWHH, Blue);
+    T[1][i] := LsoaTransportMinutes(i, DriveHospKCH, Blue);
+    tu := Infinity;
+    for k := 0 to StrokeUnitCount - 1 do
+      tu := Min(tu, LsoaTransportMinutes(i, StrokeUnitHosp[k], Blue));
+    T[2][i] := tu;
+    Use[0][i] := True;
+    Use[1][i] := LsoaArea(i) <> West;
+  end;
+  for s := 0 to 1 do begin
+    for h := 0 to NH - 1 do St[s, h] := Stat(T[h], Use[s]);
+    // the per-place difference K&C - WHH: reuse T[2] as scratch afterwards
+  end;
+  for i := 0 to LsoaCount - 1 do T[2][i] := T[1][i] - T[0][i];
+  for s := 0 to 1 do DiffSD[s] := Stat(T[2], Use[s]).SD;
+
+  RatioR := AmbResponse90Min / AmbResponseMin;
+  SDR[0] := AmbResponseMin * LogNormalCV(RatioR);
+  SDR[1] := AmbResponseMin * GammaCV(RatioR);
+  SDS := (AmbOnSceneQ3 - AmbOnSceneQ1) / 1.349;                 // normal: IQR = 1.349 SD
+  ObsSD := AmbStrokeCallToDoor * LogNormalCV(AmbStrokeCallToDoor90 / AmbStrokeCallToDoor);
+
+  L.Add('STROKE: WHAT MAKES CALL-TO-DOOR TIME VARY, THE AMBULANCE RESPONSE OR THE DRIVE?');
+  L.Add('  Call to door = response + on scene + drive. Taken as independent, their variances add, so');
+  L.Add('  each one''s share of the variance is its share of the patient-to-patient variation.');
+  L.Add('  The response varies from call to call; the drive from place to place.');
+  L.Add('');
+  L.Add('  RESPONSE (between calls). SECAmb publishes a mean and a 90th centile, not the spread, so a');
+  L.Add(Format('  distribution is fitted to both (%.1f and %.0f min, ratio %.2f; an exponential would be 2.30):',
+    [AmbResponseMin, AmbResponse90Min, RatioR]));
+  L.Add(Format('    lognormal: SD %.1f min        gamma: SD %.1f min', [SDR[0], SDR[1]]));
+  L.Add(Format('  ON SCENE (between calls). Quartiles %.0f and %.0f min (North East England study): SD about %.1f min.',
+    [AmbOnSceneQ1, AmbOnSceneQ3, SDS]));
+  L.Add('  DRIVE (between places), blue light, each LSOA weighted by its expected strokes:');
+  L.Add('                                            mean     SD   10th  median   90th   SD between districts');
+  for s := 0 to 1 do begin
+    if s = 0 then L.Add('    Kent and Medway') else L.Add('    North and East Kent');
+    for h := 0 to NH - 1 do
+      L.Add(Format('      to %-30s %7.1f %6.1f %6.1f %7.1f %6.1f %12.1f',
+        [HName[h], St[s, h].Mean, St[s, h].SD, St[s, h].P10, St[s, h].P50, St[s, h].P90, St[s, h].SDBetween]));
+  end;
+  L.Add(Format('  For comparison the response''s 10th to 90th centile span is about %.0f min (lognormal fit).',
+    [AmbResponse90Min - AmbResponseMin * Exp(-1.2815515655 * Sqrt(Ln(1 + Sqr(SDR[0] / AmbResponseMin))))
+       / Sqrt(1 + Sqr(SDR[0] / AmbResponseMin))]));
+  L.Add('');
+  L.Add('  SHARE OF THE VARIANCE IN CALL-TO-DOOR TIME');
+  for s := 0 to 1 do
+    for h := 0 to 1 do
+      if s = 0 then Shares('Kent and Medway, everyone to ' + HName[h], St[s, h].SD)
+      else Shares('North and East Kent, everyone to ' + HName[h], St[s, h].SD);
+  Shares('Kent and Medway, to the nearest stroke unit (as now)', St[0, 2].SD);
+  L.Add('');
+  L.Add('  THE CHOICE OF SITE. Moving from William Harvey to Kent and Canterbury changes each place''s');
+  L.Add(Format('  drive; that change has SD %.1f min across Kent and Medway''s strokes and %.1f across North',
+    [DiffSD[0], DiffSD[1]]));
+  L.Add(Format('  and East Kent''s, against %.0f-%.0f min for the response from one call to the next.',
+    [Min(SDR[0], SDR[1]), Max(SDR[0], SDR[1])]));
+  L.Add('');
+  L.Add('  CHECK. SECAmb''s confirmed strokes, call to hospital arrival: mean ' +
+    Format('%.1f, 90th centile %.0f,', [AmbStrokeCallToDoor, AmbStrokeCallToDoor90]));
+  L.Add(Format('  so SD about %.0f min (lognormal fit). The three components to the nearest stroke unit give',
+    [ObsSD]));
+  L.Add(Format('  %.0f-%.0f min. On that observed spread the response is %.0f-%.0f %% of the variance and the',
+    [Sqrt(Sqr(Min(SDR[0], SDR[1])) + Sqr(SDS) + Sqr(St[0, 2].SD)),
+     Sqrt(Sqr(Max(SDR[0], SDR[1])) + Sqr(SDS) + Sqr(St[0, 2].SD)),
+     100 * Sqr(Min(SDR[0], SDR[1]) / ObsSD), 100 * Sqr(Max(SDR[0], SDR[1]) / ObsSD)]));
+  L.Add(Format('  drive %.0f %%; the rest is on scene and what the model leaves out.',
+    [100 * Sqr(St[0, 2].SD / ObsSD)]));
+  L.Add('');
+  L.Add('  LIMITS. The response figures are for the whole of SECAmb (Kent, Surrey, Sussex), all');
+  L.Add('  Category 2 calls, with no breakdown by place: if ambulances take longer to reach remote places,');
+  L.Add('  part of the response''s variance is really geography and adds to the drive''s. The drive is one');
+  L.Add('  modelled time per LSOA: traffic and day-to-day variation on the same route are not in it.');
+  L.Add('  The on-scene spread is from another region. Independence is assumed.');
+end;
+
+// the best single site for the whole county in each speed scenario, against
+// the existing hospitals nearest it and the two in the WHH/K&C question
+procedure TForm1.BestSiteSummary(L: TStrings);
+const
+  HospMaidstone = 2;
+var
+  Doms: array[0..3] of Integer;
+  All: array of Boolean;
+  TS: array of Double;
+  sc, k, i, a, t: Integer;
+  W, Ev, Sum, Mx, Q30, Q45, Q60, la, lo, km: Double;
+  AEv: array[0..AreaCount - 1] of Double;
+  AT: array[0..3, 0..AreaCount - 1] of Double;
+  nm: string;
+begin
+  Doms[0] := DriveBestDomain; Doms[1] := HospMaidstone; Doms[2] := DriveHospWHH; Doms[3] := DriveHospKCH;
+  SetLength(All, LsoaCount); SetLength(TS, LsoaCount);
+  for i := 0 to LsoaCount - 1 do All[i] := True;
+  L.Add('BEST SINGLE SITE FOR THE WHOLE OF KENT AND MEDWAY (green star on the map, with the Hospitals layer)');
+  L.Add('  The road-network point with the lowest mean drive time from every LSOA, weighted by expected');
+  L.Add('  ' + CvdEventText + ' admissions (Weight by chooses),');
+  W := 0;
+  for i := 0 to LsoaCount - 1 do W := W + LsoaCvdEvents(i);
+  L.Add(Format('  over all %s a year, found for each speed scenario (see Glossary).', [Thousands(W)]));
+  for sc := 0 to DriveScenarioCount - 1 do begin
+    if (sc > 0) and (BestSiteE[BestSiteIndex(sc)] = BestSiteE[BestSiteIndex(0)]) and (BestSiteN[BestSiteIndex(sc)] = BestSiteN[BestSiteIndex(0)]) then begin
+      L.Add('  ' + DriveScenarioName[sc] + ': the same point');
+      Continue;
+    end;
+    BNGToWGS84(BestSiteE[BestSiteIndex(sc)], BestSiteN[BestSiteIndex(sc)], la, lo);
+    i := LsoaAt(BestSiteE[BestSiteIndex(sc)], BestSiteN[BestSiteIndex(sc)]);
+    if i < 0 then i := NearestLsoa(BestSiteE[BestSiteIndex(sc)], BestSiteN[BestSiteIndex(sc)]);
+    t := NearestTown(BestSiteE[BestSiteIndex(sc)], BestSiteN[BestSiteIndex(sc)], km);
+    L.Add(Format('  %s: %s  %s, in %s (%s), %.1f km from %s',
+      [DriveScenarioName[sc], GridRef(BestSiteE[BestSiteIndex(sc)], BestSiteN[BestSiteIndex(sc)]), LatLonText(la, lo),
+       LsoaName[i], DistrictName[LsoaDistrict[i]], km, TownName[t]]));
+  end;
+  L.Add(ThresholdHeader);
+  for sc := 0 to DriveScenarioCount - 1 do begin
+    L.Add('  ' + DriveScenarioName[sc]);
+    for k := 0 to High(Doms) do begin
+      W := 0; Sum := 0; Mx := 0; Q30 := 0; Q45 := 0; Q60 := 0;
+      for i := 0 to LsoaCount - 1 do begin
+        TS[i] := LsoaDriveMinutes(i, Doms[k], sc);
+        Ev := LsoaCvdEvents(i);
+        W := W + Ev; Sum := Sum + Ev * TS[i];
+        Mx := Max(Mx, TS[i]);
+        if TS[i] <= 30 + TimeShift then Q30 := Q30 + Ev;
+        if TS[i] <= 45 + TimeShift then Q45 := Q45 + Ev;
+        if TS[i] <= 60 + TimeShift then Q60 := Q60 + Ev;
+      end;
+      if Doms[k] = DriveBestDomain then nm := 'Best single site' else nm := HospitalShort[Doms[k]];
+      L.Add(Format('    %-26s %5.1f  %6.1f  %9.1f %8.1f%% %6.1f%% %6.1f%% %5.1f%% %8.1f %9.0f',
+        [nm, Sum / W, WeightedQuantile(TS, All, 0.5), WeightedQuantile(TS, All, 0.9),
+         100 * Q30 / W, 100 * Q45 / W, 100 * Q60 / W, 100 * (W - Q60) / W, Mx, Sum / 60]));
+    end;
+  end;
+  for a := 0 to AreaCount - 1 do begin
+    AEv[a] := 0;
+    for k := 0 to High(Doms) do AT[k, a] := 0;
+  end;
+  for i := 0 to LsoaCount - 1 do begin
+    a := LsoaArea(i); Ev := LsoaCvdEvents(i);
+    AEv[a] := AEv[a] + Ev;
+    for k := 0 to High(Doms) do AT[k, a] := AT[k, a] + Ev * LsoaDriveMinutes(i, Doms[k], FDriveScenario);
+  end;
+  L.Add('');
+  L.Add('  area, mean minutes (' + DriveScenarioName[FDriveScenario] + ')   best site   Maidstone   William Harvey   K&C');
+  for a := 0 to AreaCount - 1 do
+    L.Add(Format('  %-36s %9.1f %11.1f %16.1f %5.1f',
+      [AreaName[a], AT[0, a] / AEv[a], AT[1, a] / AEv[a], AT[2, a] / AEv[a], AT[3, a] / AEv[a]]));
+  // the best site under each weighting, for the chosen scenario, with each
+  // weighting's mean to its own site and to the two East Kent hospitals
+  L.Add('');
+  L.Add('  by what is counted (' + DriveScenarioName[FDriveScenario] + '), weighted mean minutes:');
+  L.Add('    weighting      a year   best site         from MI+stroke site   to it    WHH    K&C   (East Kent: site  K&C)');
+  for k := 0 to CvdEventKindCount - 1 do begin
+    sc := k * DriveScenarioCount + FDriveScenario;
+    W := 0; Sum := 0; Mx := 0; Q30 := 0; Q45 := 0; Q60 := 0;
+    for i := 0 to LsoaCount - 1 do begin
+      Ev := LsoaCvdEventsOf(i, k);
+      W := W + Ev;
+      Sum := Sum + Ev * (LsoaDriveMin[(FDriveScenario * DriveDomainCount + DriveBestDomain + k) * LsoaCount + i] + AmbulanceMinutes);
+      Mx := Mx + Ev * LsoaDriveMinutes(i, DriveHospWHH, FDriveScenario);
+      Q30 := Q30 + Ev * LsoaDriveMinutes(i, DriveHospKCH, FDriveScenario);
+      if LsoaArea(i) = 1 then begin
+        Q45 := Q45 + Ev * (LsoaDriveMin[(FDriveScenario * DriveDomainCount + DriveBestDomain + k) * LsoaCount + i] + AmbulanceMinutes);
+        Q60 := Q60 + Ev * LsoaDriveMinutes(i, DriveHospKCH, FDriveScenario);
+      end;
+    end;
+    Ev := 0;
+    for i := 0 to LsoaCount - 1 do if LsoaArea(i) = 1 then Ev := Ev + LsoaCvdEventsOf(i, k);
+    L.Add(Format('    %-12s %7s   %s %9.1f km %9.1f %6.1f %6.1f %16.1f %5.1f',
+      [CvdEventKindShort[k], Thousands(W), GridRef(BestSiteE[sc], BestSiteN[sc]),
+       Hypot(BestSiteE[sc] - BestSiteE[FDriveScenario], BestSiteN[sc] - BestSiteN[FDriveScenario]) / 1000,
+       Sum / W, Mx / W, Q30 / W, Q45 / Ev, Q60 / Ev]));
+  end;
+  if (BestSiteE[DriveScenarioCount + FDriveScenario] = BestSiteE[FDriveScenario])
+    and (BestSiteE[2 * DriveScenarioCount + FDriveScenario] = BestSiteE[FDriveScenario])
+    and (BestSiteN[DriveScenarioCount + FDriveScenario] = BestSiteN[FDriveScenario])
+    and (BestSiteN[2 * DriveScenarioCount + FDriveScenario] = BestSiteN[FDriveScenario]) then begin
+    L.Add('  All three pick the same point. STEMI is a larger share of MI in younger people and men, but');
+    L.Add('  that moves the weights too little to shift the site or the WHH/K&C comparison.');
+  end;
+  L.Add('  The A249 between M20 junction 7 and M2 junction 5 joins the two motorways with Medway and Swale');
+  L.Add('  to the north, so a site there beats every existing hospital. Drive time only: no ambulance');
+  L.Add('  dispatch, land, buildings or staffing, and one centre for 1.9 million is larger than most networks.');
+end;
+
+// admissions-weighted quantile P of minutes T over the LSOAs with Use[i]
+function WeightedQuantile(const T: array of Double; const Use: array of Boolean; P: Double): Double;
+var
+  Idx: array of Integer;
+  i, n, gap, a, b, tmp: Integer;
+  W, c: Double;
+begin
+  SetLength(Idx, LsoaCount);
+  n := 0; W := 0;
+  for i := 0 to LsoaCount - 1 do
+    if Use[i] then begin Idx[n] := i; Inc(n); W := W + LsoaCvdEvents(i); end;
+  SetLength(Idx, n);
+  gap := n div 2;                               // shell sort by T
+  while gap > 0 do begin
+    for a := gap to n - 1 do begin
+      tmp := Idx[a]; b := a;
+      while (b >= gap) and (T[Idx[b - gap]] > T[tmp]) do begin
+        Idx[b] := Idx[b - gap]; Dec(b, gap);
+      end;
+      Idx[b] := tmp;
+    end;
+    gap := gap div 2;
+  end;
+  c := 0; result := NaN;
+  for a := 0 to n - 1 do begin
+    c := c + LsoaCvdEvents(Idx[a]);
+    if c >= P * W then Exit(T[Idx[a]]);
+  end;
+end;
+
+// one centre for the whole of Kent and Medway, whatever areas are chosen:
+// William Harvey (Ashford) against Kent and Canterbury
+procedure TForm1.WhhKchSummary(L: TStrings);
+const
+  Hosp: array[0..1] of Integer = (DriveHospWHH, DriveHospKCH);
+var
+  i, h, d, a, k, n: Integer;
+  T: array[0..1] of array of Double;
+  All: array of Boolean;
+  W, Ev, Sum, Mx, Q30, Q45, Q60: Double;
+  DEv: array of Double;
+  DT: array[0..1] of array of Double;
+  AEv: array[0..AreaCount - 1] of Double;
+  AT, AOver: array[0..1, 0..AreaCount - 1] of Double;
+  Order: array of Integer;
+  Diff: array of Double;
+  NearerWHH: Double;
+  TS: array of Double;
+  sc, West: Integer;
+  NE: array of Boolean;
+
+  // One row per hospital per speed scenario, over the LSOAs with Use set.
+  procedure ScenarioRows(const Use: array of Boolean; const ChosenNote: string);
+  var
+    i, h, sc: Integer;
+    W, Ev, Sum, Mx, Q30, Q45, Q60: Double;
+  begin
+    for sc := 0 to DriveScenarioCount - 1 do begin
+      L.Add('  ' + DriveScenarioName[sc] + IfThen(sc = FDriveScenario, ChosenNote, ''));
+      for h := 0 to 1 do begin
+        W := 0; Sum := 0; Mx := 0; Q30 := 0; Q45 := 0; Q60 := 0;
+        for i := 0 to LsoaCount - 1 do begin
+          TS[i] := LsoaDriveMinutes(i, Hosp[h], sc);
+          if not Use[i] then Continue;
+          Ev := LsoaCvdEvents(i);
+          W := W + Ev;
+          Sum := Sum + Ev * TS[i];
+          Mx := Max(Mx, TS[i]);
+          if TS[i] <= 30 + TimeShift then Q30 := Q30 + Ev;
+          if TS[i] <= 45 + TimeShift then Q45 := Q45 + Ev;
+          if TS[i] <= 60 + TimeShift then Q60 := Q60 + Ev;
+        end;
+        L.Add(Format('    %-26s %5.1f  %6.1f  %9.1f %8.1f%% %6.1f%% %6.1f%% %5.1f%% %8.1f %9.0f',
+          [HospitalShort[Hosp[h]], Sum / W, WeightedQuantile(TS, Use, 0.5), WeightedQuantile(TS, Use, 0.9),
+           100 * Q30 / W, 100 * Q45 / W, 100 * Q60 / W, 100 * (W - Q60) / W, Mx, Sum / 60]));
+      end;
+    end;
+  end;
+
+begin
+  SetLength(All, LsoaCount);
+  for h := 0 to 1 do begin
+    SetLength(T[h], LsoaCount);
+    SetLength(DT[h], DistrictCount);
+  end;
+  SetLength(DEv, DistrictCount);
+  for a := 0 to AreaCount - 1 do begin
+    AEv[a] := 0;
+    for h := 0 to 1 do begin AT[h, a] := 0; AOver[h, a] := 0; end;
+  end;
+  W := 0; NearerWHH := 0;
+  for i := 0 to LsoaCount - 1 do begin
+    All[i] := True;
+    Ev := LsoaCvdEvents(i);
+    W := W + Ev;
+    d := LsoaDistrict[i]; a := LsoaArea(i);
+    DEv[d] := DEv[d] + Ev; AEv[a] := AEv[a] + Ev;
+    for h := 0 to 1 do begin
+      T[h][i] := LsoaDriveMinutes(i, Hosp[h], FDriveScenario);
+      DT[h][d] := DT[h][d] + Ev * T[h][i];
+      AT[h, a] := AT[h, a] + Ev * T[h][i];
+      if T[h][i] > 60 + TimeShift then AOver[h, a] := AOver[h, a] + Ev;
+    end;
+    if T[0][i] < T[1][i] then NearerWHH := NearerWHH + Ev;
+  end;
+
+  L.Add('ONE CENTRE FOR THE WHOLE OF KENT AND MEDWAY: WILLIAM HARVEY (ASHFORD) OR KENT AND CANTERBURY');
+  L.Add(Format('  All %s expected admissions a year, whatever areas are chosen, in each speed scenario.', [Thousands(W)]));
+  L.Add(ThresholdHeader);
+  SetLength(TS, LsoaCount);
+  ScenarioRows(All, '  (chosen: the tables below)');
+  L.Add(Format('  %s: %.0f %% of admissions are quicker to William Harvey, %.0f %% to Kent and Canterbury.',
+    [DriveScenarioName[FDriveScenario], 100 * NearerWHH / W, 100 * (W - NearerWHH) / W]));
+  L.Add('');
+  L.Add(Format('  area           admissions/yr   to WHH   to K&C   over %3d min: WHH   K&C', [60 + TimeShift]));
+  for a := 0 to AreaCount - 1 do
+    L.Add(Format('  %-14s %12.0f %8.1f %8.1f %16.1f%% %5.1f%%',
+      [AreaName[a], AEv[a], AT[0, a] / AEv[a], AT[1, a] / AEv[a],
+       100 * AOver[0, a] / AEv[a], 100 * AOver[1, a] / AEv[a]]));
+  L.Add('');
+  // districts, largest William Harvey advantage first
+  n := 0;
+  SetLength(Order, DistrictCount); SetLength(Diff, DistrictCount);
+  for d := 0 to DistrictCount - 1 do
+    if DEv[d] > 0 then begin
+      Diff[d] := (DT[1][d] - DT[0][d]) / DEv[d];
+      k := n;
+      while (k > 0) and (Diff[Order[k - 1]] < Diff[d]) do begin Order[k] := Order[k - 1]; Dec(k); end;
+      Order[k] := d; Inc(n);
+    end;
+  L.Add('  district                admissions/yr   to WHH   to K&C   K&C - WHH  (mean minutes)');
+  for k := 0 to n - 1 do begin
+    d := Order[k];
+    L.Add(Format('  %-23s %10.0f %9.1f %8.1f %10s',
+      [DistrictName[d], DEv[d], DT[0][d] / DEv[d], DT[1][d] / DEv[d], Signed(Diff[d])]));
+  end;
+  L.Add('  West Kent decides it: the M20 puts Maidstone, Tonbridge, Sevenoaks and Tunbridge Wells');
+  L.Add('  12-14 minutes nearer Ashford, outweighing Thanet and Canterbury''s 20 minutes the other way.');
+  L.Add('  In practice West and North Kent use their own hospitals. Area and district tables: '
+    + DriveScenarioName[FDriveScenario] + '.');
+
+  // the same comparison without West Kent
+  West := -1;
+  for a := 0 to AreaCount - 1 do
+    if AreaName[a] = 'West Kent' then West := a;
+  SetLength(NE, LsoaCount);
+  Ev := 0;
+  for i := 0 to LsoaCount - 1 do begin
+    NE[i] := LsoaArea(i) <> West;
+    if NE[i] then Ev := Ev + LsoaCvdEvents(i);
+  end;
+  L.Add('');
+  L.Add('  NORTH AND EAST KENT ONLY (WEST KENT LEFT OUT)');
+  L.Add(Format('  %s expected admissions a year, whatever areas are chosen.', [Thousands(Ev)]));
+  L.Add(ThresholdHeader);
+  ScenarioRows(NE, '');
+  for sc := 0 to DriveScenarioCount - 1 do begin
+    NearerWHH := 0;
+    for i := 0 to LsoaCount - 1 do
+      if NE[i] and (LsoaDriveMinutes(i, DriveHospWHH, sc) < LsoaDriveMinutes(i, DriveHospKCH, sc)) then
+        NearerWHH := NearerWHH + LsoaCvdEvents(i);
+    L.Add(Format('  %s: %.0f %% quicker to William Harvey, %.0f %% to Kent and Canterbury.',
+      [DriveScenarioName[sc], 100 * NearerWHH / Ev, 100 * (Ev - NearerWHH) / Ev]));
+  end;
+  L.Add('  Without West Kent the balance tips to Kent and Canterbury: Thanet, Canterbury, Dover and');
+  L.Add('  Swale are nearer it, Ashford, Folkestone and the North Kent districts nearer Ashford');
+  L.Add('  (see the district table above). The margin is about 2 minutes, within what the assumed');
+  L.Add('  speeds and approximate hospital positions could move.');
+end;
+
+procedure TForm1.pbLegendPaint(Sender: TObject);
+const
+  BarX = 10;
+  BarW = 24;
+  KeyPitch = 14;     // line and marker key rows
+var
+  cv: TCanvas;
+  y, y0, h, i, dec, dom: Integer;
+  v, t: Double;
+  lab: string;
+const
+  Ticks: array[0..6] of Double = (10, 30, 100, 300, 1000, 3000, 10000);
+  CvdTicks: array[0..7] of Double = (0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30);
+  RatioTicks: array[0..6] of Double = (0.6, 0.7, 0.85, 1, 1.2, 1.4, 1.7);
+
+  procedure KeyLine(yy: Integer; AColour: TColor; W: Integer; const Txt: string; Dashed: Boolean);
+  begin
+    cv.Pen.Style := psSolid;
+    cv.Pen.Color := AColour;
+    cv.Pen.Width := W;
+    cv.Line(BarX, yy, BarX + 34, yy);
+    if Dashed then begin
+      cv.Pen.Color := clWhite;
+      cv.Pen.Width := 1;
+      cv.Line(BarX + 3, yy, BarX + 10, yy);
+      cv.Line(BarX + 17, yy, BarX + 24, yy);
+    end;
+    cv.Pen.Width := 1;
+    cv.TextOut(BarX + 42, yy - cv.TextHeight(Txt) div 2, Txt);
+  end;
+
+begin
+  cv := pbLegend.Canvas;
+  cv.Brush.Color := clForm;
+  cv.FillRect(0, 0, pbLegend.Width, pbLegend.Height);
+  cv.Font.Color := clWindowText;
+  cv.Brush.Style := bsClear;
+  y0 := 22;
+  case rgColour.ItemIndex of
+    0: begin
+      cv.TextOut(BarX, 2, 'People per km2 (' + PopulationYear + ', log scale)');
+      h := 108;
+      for y := 0 to h - 1 do begin
+        t := 1 - y / (h - 1);
+        v := Power(10, Log10(DensityLo) + t * (Log10(DensityHi) - Log10(DensityLo)));
+        cv.Pen.Color := DensityColour(v);
+        cv.Line(BarX, y0 + y, BarX + BarW, y0 + y);
+      end;
+      cv.Pen.Color := clBlack;
+      cv.Rectangle(BarX, y0, BarX + BarW, y0 + h);
+      for i := 0 to High(Ticks) do begin
+        y := y0 + Round((Log10(DensityHi) - Log10(Ticks[i])) / (Log10(DensityHi) - Log10(DensityLo)) * (h - 1));
+        cv.Line(BarX + BarW, y, BarX + BarW + 5, y);
+        lab := Thousands(Ticks[i]);
+        cv.TextOut(BarX + BarW + 8, y - cv.TextHeight(lab) div 2, lab);
+      end;
+      y0 := y0 + h + 14;
+    end;
+    1: begin
+      dom := FDepDomain;
+      cv.TextOut(BarX, 2, 'National decile (IoD 2025) - % of residents');
+      h := 17;
+      for dec := 1 to 10 do begin
+        y := y0 + (dec - 1) * h;
+        cv.Brush.Style := bsSolid;
+        cv.Brush.Color := DecileColour(dec);
+        cv.Pen.Color := clBlack;
+        cv.Rectangle(BarX, y, BarX + BarW, y + h - 3);
+        cv.Brush.Style := bsClear;
+        lab := Format('%2d  %5.1f %%', [dec, DecileShare(dom, dec)]);
+        if dec = 1 then lab := lab + '   most deprived'
+        else if dec = 10 then lab := lab + '   least deprived';
+        cv.TextOut(BarX + BarW + 8, y + (h - 3 - cv.TextHeight(lab)) div 2, lab);
+      end;
+      y0 := y0 + 10 * h + 10;
+    end;
+    2: begin
+      h := 108;
+      if FCvdMeasure = 0 then begin
+        cv.TextOut(BarX, 2, 'Expected ' + CvdEventKindShort[CvdEventKind] + ' admissions per km2 a year');
+        for y := 0 to h - 1 do begin
+          t := 1 - y / (h - 1);
+          v := Power(10, Log10(CvdDensityLo) + t * (Log10(CvdDensityHi) - Log10(CvdDensityLo)));
+          cv.Pen.Color := CvdDensityColour(v);
+          cv.Line(BarX, y0 + y, BarX + BarW, y0 + y);
+        end;
+        cv.Pen.Color := clBlack;
+        cv.Rectangle(BarX, y0, BarX + BarW, y0 + h);
+        for i := 0 to High(CvdTicks) do begin
+          if (CvdTicks[i] < CvdDensityLo * 0.999) or (CvdTicks[i] > CvdDensityHi) then Continue;
+          y := y0 + Round((Log10(CvdDensityHi) - Log10(CvdTicks[i])) / (Log10(CvdDensityHi) - Log10(CvdDensityLo)) * (h - 1));
+          cv.Line(BarX + BarW, y, BarX + BarW + 5, y);
+          lab := FloatToStr(CvdTicks[i]);
+          cv.TextOut(BarX + BarW + 8, y - cv.TextHeight(lab) div 2, lab);
+        end;
+      end else begin
+        cv.TextOut(BarX, 2, 'Risk-factor ratio (1 = England, same age and sex)');
+        for y := 0 to h - 1 do begin
+          t := 1 - y / (h - 1);
+          v := Power(CvdRatioSpan, 2 * t - 1);
+          cv.Pen.Color := CvdRatioColour(v);
+          cv.Line(BarX, y0 + y, BarX + BarW, y0 + y);
+        end;
+        cv.Pen.Color := clBlack;
+        cv.Rectangle(BarX, y0, BarX + BarW, y0 + h);
+        for i := 0 to High(RatioTicks) do begin
+          y := y0 + Round((1 - (Ln(RatioTicks[i]) / Ln(CvdRatioSpan) + 1) / 2) * (h - 1));
+          cv.Line(BarX + BarW, y, BarX + BarW + 5, y);
+          lab := FormatFloat('0.0#', RatioTicks[i]);
+          if RatioTicks[i] = 1 then lab := lab + '  England';
+          cv.TextOut(BarX + BarW + 8, y - cv.TextHeight(lab) div 2, lab);
+        end;
+      end;
+      y0 := y0 + h + 14;
+    end;
+    ciDrive: begin
+      if AmbulanceOn then
+        cv.TextOut(BarX, 2, '999 call to door, min (' + DriveScenarioName[FDriveScenario] + ') - share of admissions')
+      else
+        cv.TextOut(BarX, 2, 'Minutes, ' + DriveScenarioName[FDriveScenario] + ' - share of admissions');
+      h := 15;
+      for dec := 0 to DriveBandCount - 1 do begin
+        y := y0 + dec * h;
+        cv.Brush.Style := bsSolid;
+        cv.Brush.Color := DriveBandColour(dec);
+        cv.Pen.Color := clBlack;
+        cv.Rectangle(BarX, y, BarX + BarW, y + h - 3);
+        cv.Brush.Style := bsClear;
+        v := 0; t := 0;
+        for i := 0 to LsoaCount - 1 do
+          if FInc[i] then begin
+            t := t + LsoaCvdEvents(i);
+            if EnsureRange(Floor((LsoaDriveMinutes(i, FDriveDomain, FDriveScenario) - TimeShift) / DriveBandMinutes),
+                 0, DriveBandCount - 1) = dec then
+              v := v + LsoaCvdEvents(i);
+          end;
+        if (dec = 0) and (TimeShift > 0) then
+          lab := Format('<%d    %5.1f %%', [TimeShift + DriveBandMinutes, 100 * v / t])
+        else if dec < DriveBandCount - 1 then
+          lab := Format('%2d-%2d  %5.1f %%', [TimeShift + dec * DriveBandMinutes, TimeShift + (dec + 1) * DriveBandMinutes, 100 * v / t])
+        else
+          lab := Format('%2d+    %5.1f %%', [TimeShift + dec * DriveBandMinutes, 100 * v / t]);
+        cv.TextOut(BarX + BarW + 8, y + (h - 3 - cv.TextHeight(lab)) div 2, lab);
+      end;
+      y0 := y0 + DriveBandCount * h + 10;
+    end;
+  else
+    begin
+      cv.TextOut(BarX, 2, 'No fill');
+      y0 := 26;
+    end;
+  end;
+  // line and marker key
+  if cgLayers.Checked[liMotorways] then begin KeyLine(y0, clMotorway, 3, 'motorway', False); Inc(y0, KeyPitch); end;
+  if cgLayers.Checked[liTrunk] then begin KeyLine(y0, clTrunk, 3, 'trunk road (primary route)', False); Inc(y0, KeyPitch); end;
+  if cgLayers.Checked[liPrimary] then begin KeyLine(y0, clPrimary, 2, 'primary A road', False); Inc(y0, KeyPitch); end;
+  if cgLayers.Checked[liRail] then begin KeyLine(y0, clRail, 4, 'railway', True); Inc(y0, KeyPitch); end;
+  cv.Pen.Width := 1;
+  if cgLayers.Checked[liTowns] then begin
+    cv.Brush.Style := bsSolid; cv.Brush.Color := clWhite; cv.Pen.Color := clBlack;
+    cv.Ellipse(BarX + 13, y0 - 4, BarX + 21, y0 + 4);
+    cv.Brush.Style := bsClear;
+    cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, Format('town over %s', [Thousands(TownMinPopulation)]));
+    Inc(y0, KeyPitch);
+  end;
+  if cgLayers.Checked[liBary] then begin
+    cv.Brush.Style := bsSolid; cv.Brush.Color := clBary; cv.Pen.Color := clBlack;
+    cv.Ellipse(BarX + 10, y0 - 7, BarX + 24, y0 + 7);
+    cv.Brush.Style := bsClear;
+    cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, 'population barycentre');
+    Inc(y0, KeyPitch);
+  end;
+  if cgLayers.Checked[liCvdBary] then begin
+    cv.Brush.Style := bsSolid; cv.Brush.Color := clCvdBary; cv.Pen.Color := clBlack;
+    cv.Ellipse(BarX + 10, y0 - 7, BarX + 24, y0 + 7);
+    cv.Brush.Style := bsClear;
+    cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, CvdEventText + ' barycentre');
+    Inc(y0, KeyPitch);
+  end;
+  if cgLayers.Checked[liGeo] then begin
+    cv.Brush.Style := bsSolid; cv.Brush.Color := TColor($1A1A1A); cv.Pen.Color := clBlack;
+    cv.Polygon([Point(BarX + 17, y0 - 6), Point(BarX + 23, y0), Point(BarX + 17, y0 + 6), Point(BarX + 11, y0)]);
+    cv.Brush.Style := bsClear;
+    cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, 'geographic centre');
+    Inc(y0, KeyPitch);
+  end;
+  if cgLayers.Checked[liIsochrones] then begin
+    KeyLine(y0, clIsochrone, 3, 'isochrones to ' + DriveDomainShort(FDriveDomain) + ': '
+      + Format('%.0f, %.0f, %.0f, %.0f min', [15 + AmbulanceMinutes, 30 + AmbulanceMinutes,
+        45 + AmbulanceMinutes, 60 + AmbulanceMinutes]), False);
+    Inc(y0, KeyPitch);
+  end;
+  if cgLayers.Checked[liHospitals] then begin
+    cv.Brush.Style := bsSolid; cv.Brush.Color := clHospital; cv.Pen.Color := clWhite;
+    cv.Rectangle(BarX + 10, y0 - 7, BarX + 24, y0 + 7);
+    cv.Brush.Style := bsClear;
+    cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, 'acute hospital (chosen: larger)');
+    Inc(y0, KeyPitch);
+    cv.Brush.Style := bsSolid; cv.Brush.Color := TColor($3C8C14); cv.Pen.Color := TColor($3C8C14);
+    cv.Polygon([Point(BarX + 17, y0 - 7), Point(BarX + 19, y0 - 2), Point(BarX + 24, y0 - 2), Point(BarX + 20, y0 + 1),
+      Point(BarX + 22, y0 + 7), Point(BarX + 17, y0 + 3), Point(BarX + 12, y0 + 7), Point(BarX + 14, y0 + 1),
+      Point(BarX + 10, y0 - 2), Point(BarX + 15, y0 - 2)]);
+    cv.Brush.Style := bsClear;
+    cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, 'best single site');
+    Inc(y0, KeyPitch);
+  end;
+  if cgLayers.Checked[liMedians] then begin
+    KeyLine(y0, clMedian, 3, 'median lines of admissions; % in each quadrant', False);
+    Inc(y0, KeyPitch);
+  end;
+  if not ((FAreas = AllAreas) or (FAreas = [0]) or (FAreas = [1]) or (FAreas = [2]))
+    and (cgLayers.Checked[liBary] or cgLayers.Checked[liCvdBary] or cgLayers.Checked[liGeo]) then
+    cv.TextOut(BarX, y0 - cv.TextHeight('T') div 2, 'small markers: each chosen area''s own centres');
+  cv.Brush.Style := bsSolid;
+end;
+
+procedure TForm1.FillSources;
+var
+  L: TStringList;
+  i: Integer;
+begin
+  L := TStringList.Create;
+  try
+    L.Add('INFORMATION SOURCES');
+    L.Add('');
+    L.Add('Everything on the map is compiled into the program from the datasets below '
+      + '(make_kent_data.py builds kentdata.inc from them), so it runs offline. The area is '
+      + 'the NHS Kent and Medway Integrated Care Board: the 12 Kent County Council districts '
+      + 'plus Medway, 1,107 LSOAs.');
+    L.Add('');
+    for i := 0 to High(Sources) do
+      with Sources[i] do begin
+        L.Add(Format('%d. %s', [i + 1, Title]));
+        L.Add('     Publisher:  ' + Publisher);
+        L.Add('     Edition:    ' + Edition);
+        L.Add('     Licence:    ' + Licence);
+        L.Add('     Link:       ' + URL);
+        L.Add('     Used for:   ' + Use);
+        L.Add('');
+      end;
+    L.Add('Coordinate conversion: British National Grid to WGS84 latitude/longitude by the '
+      + 'Ordnance Survey''s published transverse Mercator and Helmert formulae '
+      + '("A guide to coordinate systems in Great Britain"), accurate to a few metres.');
+    L.Add('');
+    L.Add('Contains public sector information licensed under the Open Government Licence v3.0. '
+      + 'Contains OS data (c) Crown copyright and database right. Map data (c) OpenStreetMap '
+      + 'contributors, ODbL.');
+    L.Add('');
+    L.Add('');
+    L.Add('GLOSSARY OF TERMS');
+    L.Add('');
+    for i := 0 to High(Glossary) do begin
+      L.Add(Glossary[i].Term);
+      L.Add('     ' + Glossary[i].Meaning);
+      L.Add('');
+    end;
+    memSources.Lines.Text := L.Text;
+    memSources.SelStart := 0;
+  finally
+    L.Free;
+  end;
+end;
+
+procedure TForm1.SnapshotException(Sender: TObject; E: Exception);
+begin
+  WriteLn(StdErr, 'error: ', E.ClassName, ': ', E.Message);
+  Halt(2);
+end;
+
+procedure TForm1.RunSnapshot(Data: PtrInt);
+
+  procedure Save(const Suffix: string);
+  var
+    F: string;
+  begin
+    Application.ProcessMessages;
+    F := FSnapshot + '_' + Suffix + '.png';
+    if FMap.SaveToPNG(F) then WriteLn('saved ', F)
+    else begin
+      WriteLn(StdErr, 'could not save ', F);
+      ExitCode := 1;
+    end;
+  end;
+
+var
+  i: Integer;
+  ok: Boolean;
+begin
+  Application.ProcessMessages;
+  rgColour.ItemIndex := ciDensity; ApplyColouring; Save('density');
+  FDepDomain := 0; rgColour.ItemIndex := ciDeprivation; ApplyColouring; Save('imd');
+  FDepDomain := 4; FBoxMode := -1; ApplyColouring; Save('health');
+  FCvdMeasure := 0; rgColour.ItemIndex := ciCvd; ApplyColouring; Save('cvd');
+  FCvdMeasure := 1; FBoxMode := -1; ApplyColouring; Save('cvdratio');
+  FCvdMeasure := 0; FBoxMode := -1; ApplyColouring;
+  rgColour.ItemIndex := ciDrive; ApplyColouring; Save('drive');
+  FDriveDomain := HospitalCount; FMap.SetDriveDomain(FDriveDomain); FBoxMode := -1; ApplyColouring; Save('drive_whh_kch');
+  i := FDriveScenario;
+  rgSpeeds.ItemIndex := 1; rgSpeedsClick(nil); Save('drive_whh_kch_peak');
+  rgSpeeds.ItemIndex := 2; rgSpeedsClick(nil); Save('drive_whh_kch_blue');
+  ok := FAmbBox.Checked;                         // 999 call to door, blue light, WHH/K&C
+  rgSpeeds.ItemIndex := 2; rgSpeedsClick(nil);
+  FAmbBox.Checked := True; AmbBoxClick(nil); Save('drive_whh_kch_ambulance');
+  FAmbBox.Checked := ok; AmbBoxClick(nil);
+  rgSpeeds.ItemIndex := i; rgSpeedsClick(nil);
+  FDriveDomain := DriveBestDomain; FMap.SetDriveDomain(FDriveDomain); FBoxMode := -1; ApplyColouring; Save('drive_best');
+  i := cbEvents.ItemIndex;
+  cbEvents.ItemIndex := 2; cbEventsChange(nil); Save('drive_best_stemi');
+  rgColour.ItemIndex := ciCvd; FBoxMode := -1; ApplyColouring; Save('cvd_stemi');
+  cbEvents.ItemIndex := i; cbEventsChange(nil);
+  rgColour.ItemIndex := ciDrive; FBoxMode := -1; ApplyColouring;
+  FDriveDomain := DriveNearestDomain; FMap.SetDriveDomain(FDriveDomain); FBoxMode := -1;
+  rgColour.ItemIndex := ciCvd; ApplyColouring;
+  ok := cgLayers.Checked[liMedians];
+  cgLayers.Checked[liMedians] := True; ApplyLayers; Save('medians');
+  FAreas := [0, 1]; ApplyAreas; ApplyColouring; Save('medians_north_east');
+  FAreas := AllAreas; ApplyAreas; ApplyColouring;
+  cgLayers.Checked[liMedians] := ok; ApplyLayers;
+  // zoom on the barycentre, with its LSOA selected
+  FMap.SetView(FBaryE, FBaryN, 6);
+  i := LsoaAt(FBaryE, FBaryN);
+  FMap.Selected := i;
+  ShowInfo;
+  Save('zoom');
+  Application.ProcessMessages;
+  with GetFormImage do
+    try
+      SaveToFile(FSnapshot + '_window.bmp');
+    finally
+      Free;
+    end;
+  WriteLn(memInfo.Lines.Text);
+  Application.Terminate;
+end;
+
+end.

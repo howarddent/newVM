@@ -38,6 +38,10 @@ unit uJetMain;
      remembered and put back when an option with calculated data is
      chosen again (SetGroupAvailability); the memo says so too.
 
+     Lindholm has calculated curves only: its measured vectors were the
+     Cook cannula's, copied in error, and have been removed, so its
+     Measured box is greyed out (TCatheter.HasMeasured).
+
      Dropped from the original: the TeeChart SVG export and cursor tool.
 
 *******************************************************************************}
@@ -96,7 +100,11 @@ var
 begin
   FX := DrivingPressures;
   for c := Low(TJetCath) to High(TJetCath) do
+  begin
     FCatheters[c] := TCatheter.Create(c);
+    // no bench data (Lindholm): its Measured box is greyed out for good
+    cgMeasured.CheckEnabled[Ord(c)] := FCatheters[c].HasMeasured;
+  end;
 
   FPlot := TVMPlot2D.Create(Self);
   FPlot.Parent := Self;
@@ -257,7 +265,7 @@ begin
         end;
       end;
 
-      if cgMeasured.Checked[Ord(c)] then
+      if cgMeasured.Checked[Ord(c)] and Cath.HasMeasured then
       begin
         Flow := Cath.MeasuredFlow;
         if Option in [poMach, poExitVelocity] then

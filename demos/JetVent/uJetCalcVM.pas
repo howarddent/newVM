@@ -200,6 +200,8 @@ type
     constructor Create(Cath_Type: TJetCath);
     { any length and bore (m), no measured data }
     constructor CreateCustom(const AName: string; ALength, ADiameter: Double);
+    { True when the cannula has bench data (Lindholm has none) }
+    function HasMeasured: Boolean;
 
     { Crane resistance coefficient: InletK + f L/D + bend excess + outlet }
     function ResistanceK: Double;
@@ -298,11 +300,9 @@ begin
         Diameter := 2.0e-3;
         BendDeg := 45;
         BendRD := 2.0;      // ASSUMED: bend radius 4 mm, not measured
-        MeasuredFlow      := TVMobj.Create(1, 7, [18.3, 30.8, 40.9, 50.7, 59.6, 68.4, 79.0]);
-        EntrainedFlow     := TVMobj.Create(1, 7, [40, 66, 88, 113, 133, 150, 166]);
-        MeasuredStallFlow := TVMobj.Create(1, 7, [16, 27, 38, 46, 63, 72, 82]);
-        MeasuredStall22   := TVMobj.Create(1, 7, [2, 8, 11, 15, 21, 26, 30]);
-        MeasuredStall15   := TVMobj.Create(1, 7, [0, 0, 0, 0, 0, 0, 0]);
+        // No measured data: the vectors once here were the Cook cannula's,
+        // copied in error. They are left empty (0 x 0), so HasMeasured is
+        // False and only the calculated Lindholm curves are plotted.
       end;
     Cook:
       begin
@@ -376,6 +376,11 @@ begin
   Radius := Diameter / 2;
   Area := Pi * Sqr(Radius);
   Reynolds_342 := Round(342 * Diameter * O2_Density_RT / O2_dyn_Viscosity_RT);
+end;
+
+function TCatheter.HasMeasured: Boolean;
+begin
+  Result := MeasuredFlow.Cols > 0;
 end;
 
 const

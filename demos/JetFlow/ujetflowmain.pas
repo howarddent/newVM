@@ -35,9 +35,9 @@ unit ujetflowmain;
      calculated flow's difference from it; and in the memo, the whole
      bench series against the calculated flows. Outside 0.5 .. 3.5 bar it
      says so rather than extrapolating. Only the display changes: every
-     result still comes from the calculated flow. (JetVent's Cook data
-     repeat the Lindholm's measured flows exactly, so the two show the
-     same bench values.)
+     result still comes from the calculated flow. The Lindholm has no
+     bench data (JetVent's were the Cook's, copied in error, and have been
+     removed), so for it the check box is greyed out.
 
      For a cannula of that bore and length (TCatheter.CreateCustom in
      ../JetVent/uJetCalcVM.pas) it shows:
@@ -138,6 +138,7 @@ type
     FCanD, FCanL: array[TJetCath] of Double;
     FCanName: array[TJetCath] of string;
     FCanFlow: array[TJetCath, 0..NumPressures - 1] of Double;   // measured l/min
+    FCanHasBench: array[TJetCath] of Boolean;                    // False: no measured data (Lindholm)
     function MeasuredFlowAt(c: TJetCath; P: Double; out Flow: Double): Boolean;
     procedure MatchCannula;
     procedure Recalculate;
@@ -179,8 +180,10 @@ begin
       FCanD[c] := Cath.Diameter * 1000;
       FCanL[c] := Cath.Length * 100;
       FCanName[c] := Cath.Name;
-      for i := 0 to NumPressures - 1 do
-        FCanFlow[c, i] := Cath.MeasuredFlow[0, i];
+      FCanHasBench[c] := Cath.HasMeasured;
+      if FCanHasBench[c] then
+        for i := 0 to NumPressures - 1 do
+          FCanFlow[c, i] := Cath.MeasuredFlow[0, i];
       cbCannula.Items.Add(Format('%s  (%.2f mm, %.1f cm)', [Cath.Name, FCanD[c], FCanL[c]]));
     finally
       Cath.Free;
@@ -317,7 +320,8 @@ begin
 
     lblFlow.Caption := Format('%.1f l/min', [Q]);
 
-    cbMeasured.Enabled := cbCannula.ItemIndex > 0;
+    cbMeasured.Enabled := (cbCannula.ItemIndex > 0)
+      and FCanHasBench[TJetCath(cbCannula.ItemIndex - 1)];
     ShowBench := cbMeasured.Enabled and cbMeasured.Checked;
     SelCath := Low(TJetCath);
     if ShowBench then

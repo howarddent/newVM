@@ -1,0 +1,10 @@
+object fmGlassSpine: TfmGlassSpine
+  Left = 100
+  Height = 960
+  Top = 60
+  Width = 1500
+  Caption = 'GlassSpine'
+  OnCreate = FormCreate
+  OnDestroy = FormDestroy
+  OnShow = FormShow
+end
