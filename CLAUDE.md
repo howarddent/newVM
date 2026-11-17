@@ -2101,6 +2101,18 @@ the host units. Three findings from the standalone probe that preceded it
   the same pattern `uSDRplay.pas` uses for `sdrplay_api.dll`. On Unix the
   fallback is a *name* rather than a path (`libclFFT.so.2`), since a real
   Linux dev machine had only the newer SONAME with no `.so.0` symlink.
+- **Device choice: a vendor driver beats Mesa's rusticl** (2026-11-17,
+  `InitializeOpenCLContext`). Among GPUs the most compute units wins, but
+  a GPU on any platform whose name isn't `rusticl` beats one on rusticl
+  whatever the counts (`clGetPlatformInfo`, bound for this). rusticl is
+  still used when it is the only platform with a GPU. Why: on the P620's
+  Radeon Pro W6600 with AMD's ROCm OpenCL installed beside Mesa, the same
+  card appears on both platforms with different counts (rusticl 28, ROCm
+  14), and rusticl's cost per kernel launch is several times ROCm's - see
+  `demos/GlassSpine`'s P620 notes. ROCm needs the user in the `render`
+  group (`/dev/kfd`); without it the AMD platform lists no device and
+  rusticl is used. `OCL_ICD_VENDORS=<dir holding one .icd>` forces one
+  platform for a test. The suite passes on ROCm.
 
 #### `MetalAPI.pas`
 
@@ -3911,7 +3923,8 @@ packages. Compiled binaries and each demo's own `lib/` output are
       divergence residual is worst.
     - It needs `HAVE_OPENCL`, because it uses
       `OpenCLAPI.InitializeOpenCLContext`. That picks the GPU with the
-      most compute units (the RTX 5070 here) and also requires clFFT.
+      most compute units (the RTX 5070 here), a vendor driver before
+      Mesa's rusticl, and also requires clFFT.
   - **Posture**:
     - **Tilt** is head up or down: +90 is sitting, negative is
       Trendelenburg. **Roll** is about the long axis: +90 is left
@@ -3938,7 +3951,11 @@ packages. Compiled binaries and each demo's own `lib/` output are
     semi-Lagrangian advection (RK2 backtrace), implicit Jacobi viscosity
     (nu 0.7 mm^2/s) and two projections, the first with half the
     iterations. Pressure is red-black SOR (omega 1.7, 30 iterations,
-    warm-started), with Neumann conditions at the walls.
+    warm-started), with Neumann conditions at the walls. Each colour has
+    its own cell list and its own bound `pressure_rb` kernel
+    (`FBColour`/`FKColour`), so a half-sweep is one launch over that
+    colour's cells with no argument set; output is unchanged from one
+    list with a colour test.
     - Storage is a float4 per cell whose `.x/.y/.z` are the velocities on
       its -x/-y/-z faces. Closed faces stay 0 and are never written.
     - **Why staggered**: on Stam's collocated grid, the central-difference
@@ -4186,8 +4203,23 @@ packages. Compiled binaries and each demo's own `lib/` output are
       dropped, so the window stays responsive.
     - An earlier `Advance(dt)` per frame rounded the remainder away and
       ran about 1.5x fast.
+    - Stepping also stops once a frame has spent `StepBudgetMs` (30 ms)
+      on it, the shortfall dropped likewise (2026-11-17). Without that, a
+      GPU that can't reach the chosen speed took all 40 steps before each
+      draw.
     - The headless check runs about 17x real time. The window draws at
       about 150 fps, still 42 fps at 10x.
+    - **On the P620** (Radeon Pro W6600, 2026-11-17; `spinecheck
+      --time=20`, pulsation on, the output identical on both drivers):
+      - Mesa rusticl: 18.7 s, about real time. The window at the default
+        x5 drew 2.4-3 fps before the step budget and 22-27 fps with it.
+      - AMD ROCm OpenCL 7.2.4 (`rocm-opencl` from repo.radeon.com, device
+        `gfx1032`): 4.3 s. The window draws 38 fps and simulates 90 s in
+        20 s of wall time.
+      - On rusticl the cost is the launches, not the arithmetic: about
+        50 us for each of a step's hundred-odd kernels, 90 of them
+        pressure half-sweeps. Halving the cells a half-sweep visits gave
+        4 %, and an explicit work-group size nothing.
     - `Advance` accumulates a Single `Time`, so loop on
       `T < tEnd - 0.5 Dt`, not `T < tEnd`. The plain test once never
       ended.
