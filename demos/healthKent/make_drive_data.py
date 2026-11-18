@@ -44,7 +44,8 @@
 # district rings, as the map) or more than 1.5 km from a road are masked out. The map draws them on land only.
 #
 # Choices ("domains"): each hospital, the nearer (in time) of William Harvey
-# and Kent and Canterbury, the nearest of all of them, and the best single
+# and Kent and Canterbury, the nearer of QEQM (Margate) and Kent and
+# Canterbury, the nearer of William Harvey and QEQM, the nearest of all of them, and the best single
 # site (below).
 #
 # Best single site: for each speed scenario and kind of event, the network
@@ -97,7 +98,7 @@ HOSPITALS = [
     ('Kent and Canterbury', 'Kent and Canterbury Hospital, Canterbury', 51.2672, 1.0856),
     ('QEQM', 'Queen Elizabeth the Queen Mother Hospital, Margate', 51.3778, 1.3907),
 ]
-WHH, KCH = 4, 5
+WHH, KCH, QEQM = 4, 5, 6
 LEVELS = [15, 30, 45, 60]
 KINDS = ['events', 'mi', 'stemi']   # events CSV columns: MI + stroke, MI, STEMI
 GRID = 500.0
@@ -300,9 +301,12 @@ def main(path, events):
             dist = dijkstra(GT, indices=int(k))
             bls.append(dist[ln] + la)
             bgs.append((dist[gnod] + gacc).reshape(GE.shape))
-        # the two combined choices, then the best sites
-        all_l.append(list(lt) + [np.minimum(lt[WHH], lt[KCH]), lt.min(axis=0)] + bls)
-        dom_g = gt + [np.minimum(gt[WHH], gt[KCH]), np.min(gt, axis=0)] + bgs
+        # the four combined choices, then the best sites
+        all_l.append(list(lt) + [np.minimum(lt[WHH], lt[KCH]), np.minimum(lt[QEQM], lt[KCH]),
+                                 np.minimum(lt[WHH], lt[QEQM]),
+                                 lt.min(axis=0)] + bls)
+        dom_g = gt + [np.minimum(gt[WHH], gt[KCH]), np.minimum(gt[QEQM], gt[KCH]),
+                      np.minimum(gt[WHH], gt[QEQM]), np.min(gt, axis=0)] + bgs
         iso += [(sc,) + x for x in isochrones(dom_g, ge, gn, far)]
     print('isochrone lines', len(iso), 'points', sum(len(x[3]) for x in iso))
     write(all_l, iso, best, stamp)
@@ -335,8 +339,10 @@ def write(all_l, iso, best, stamp):
         fh.write('  HospitalCount = %d;\n' % len(HOSPITALS))
         fh.write('  DriveDomainCount = %d;\n' % len(all_l[0]))
         fh.write('  DriveScenarioCount = %d;\n' % len(SCENARIOS))
-        fh.write('  DriveHospWHH = %d;\n  DriveHospKCH = %d;\n' % (WHH, KCH))
-        fh.write('  DriveNearestDomain = %d;\n  DriveBestDomain = %d;\n' % (len(HOSPITALS) + 1, len(HOSPITALS) + 2))
+        fh.write('  DriveHospWHH = %d;\n  DriveHospKCH = %d;\n  DriveHospQEQM = %d;\n' % (WHH, KCH, QEQM))
+        fh.write('  // HospitalCount: nearer of WHH and K&C; then the nearer of QEQM and K&C, of WHH and QEQM\n')
+        fh.write('  DriveQeqmKchDomain = %d;\n  DriveWhhQeqmDomain = %d;\n' % (len(HOSPITALS) + 1, len(HOSPITALS) + 2))
+        fh.write('  DriveNearestDomain = %d;\n  DriveBestDomain = %d;\n' % (len(HOSPITALS) + 3, len(HOSPITALS) + 4))
         fh.write('  // best site domains: DriveBestDomain + kind (0 MI + stroke, 1 MI, 2 STEMI)\n')
         fh.write('  DriveBestKindCount = %d;\n' % len(KINDS))
         fh.write(arr('DriveScenarioName', 'string', [pas(x) for x in SCENARIOS], '%s', 3))

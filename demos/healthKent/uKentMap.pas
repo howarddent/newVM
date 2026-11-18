@@ -20,14 +20,21 @@ unit uKentMap;
      population density, a deprivation decile, or the expected heart
      attack and stroke admissions (per km2, or as a risk-factor ratio
      against England - SetColouring's Domain 0 or 1), with optional
-     district and LSOA outlines, towns over 50,000, motorways, trunk
-     roads, primary A roads, railways, the population barycentre, the
+     district and LSOA outlines, towns over 50,000 and of 10,000-50,000, motorways, trunk
+     roads, primary A roads, railways, rivers and canals, the population barycentre, the
      heart attack and stroke barycentre (weighted by expected admissions)
      and
      geographic centre. Built on uCountyMap (CanterburyRain). The
      admissions follow uKentData's chosen event kind (MI + stroke, MI or
      STEMI): its density scale, barycentre label and best single site
      (call EventKindChanged after SetCvdEventKind).
+
+     PHYSICAL (kcmPhysical): the land is uKentRelief's shaded relief (OS
+     Terrain 50 on 100 m cells), one GL texture over the grid's box drawn
+     where the land stencil is set, built on first use; LSOAs outside the
+     chosen areas get a translucent grey wash instead of a solid fill.
+     Rivers (ShowRivers) are OSM rivers and canals, drawn under the
+     railways and roads, the main ones heavier.
 
      SUB-AREAS (SetAreas): LSOAs outside the chosen North/East/West Kent
      areas are drawn grey whatever the fill, the chosen districts get a
@@ -81,10 +88,10 @@ uses
   Classes, SysUtils, Math, Controls, Graphics,
   IntfGraphics, FPImage, FPWritePNG,
   GL, OpenGLContext,
-  uKentData;
+  uKentData, uKentRelief;
 
 type
-  TKentColourMode = (kcmNone, kcmDensity, kcmDeprivation, kcmCvd, kcmDrive);
+  TKentColourMode = (kcmNone, kcmDensity, kcmDeprivation, kcmCvd, kcmDrive, kcmPhysical);
   TSelectLsoaEvent = procedure(Sender: TObject; Lsoa: Integer) of object;
 
   TKentCentres = record
@@ -103,8 +110,10 @@ type
   private
     FMode: TKentColourMode;
     FDomain: Integer;
-    FShowDistricts, FShowLsoaLines, FShowTowns: Boolean;
-    FShowMotorways, FShowTrunk, FShowPrimary, FShowRail: Boolean;
+    FShowDistricts, FShowLsoaLines, FShowTowns, FShowSmallTowns: Boolean;
+    FShowMotorways, FShowTrunk, FShowPrimary, FShowRail, FShowRivers: Boolean;
+    FReliefTex: GLuint;             // the shaded relief, built on first use
+    FReliefBuilt: Boolean;
     FShowBarycentre, FShowGeoCentre, FShowCvdBarycentre: Boolean;
     FShowIsochrones, FShowHospitals, FShowMedians: Boolean;
     FMedE, FMedN: Double;
@@ -128,6 +137,7 @@ type
     FDragCenE, FDragCenN: Double;
     // labels
     FTownTex: array[0..TownCount - 1] of TKentTextTexture;
+    FSmallTownTex: array[0..SmallTownCount - 1] of TKentTextTexture;
     FBaryTex, FGeoTex, FCvdTex: TKentTextTexture;
     FAreaTex: array[0..AreaCount - 1] of TKentTextTexture;
     FHospTex: array[0..HospitalCount - 1] of TKentTextTexture;
@@ -140,6 +150,8 @@ type
     procedure ToWorld(PX, PY: Double; out E, N: Double);
     function RenderScene: Boolean;
     procedure DrawRoutes;
+    procedure DrawRivers;
+    procedure DrawRelief;
     procedure DrawMarkers;
     procedure DrawIsochrones;
     procedure FindIsoLabels;
@@ -156,10 +168,12 @@ type
     procedure SetShowDistricts(V: Boolean);
     procedure SetShowLsoaLines(V: Boolean);
     procedure SetShowTowns(V: Boolean);
+    procedure SetShowSmallTowns(V: Boolean);
     procedure SetShowMotorways(V: Boolean);
     procedure SetShowTrunk(V: Boolean);
     procedure SetShowPrimary(V: Boolean);
     procedure SetShowRail(V: Boolean);
+    procedure SetShowRivers(V: Boolean);
     procedure SetShowBarycentre(V: Boolean);
     procedure SetShowGeoCentre(V: Boolean);
     procedure SetShowCvdBarycentre(V: Boolean);
@@ -199,10 +213,13 @@ type
     property ShowDistricts: Boolean read FShowDistricts write SetShowDistricts;
     property ShowLsoaLines: Boolean read FShowLsoaLines write SetShowLsoaLines;
     property ShowTowns: Boolean read FShowTowns write SetShowTowns;
+    // built-up areas of 10,000 to 50,000: a smaller dot and label
+    property ShowSmallTowns: Boolean read FShowSmallTowns write SetShowSmallTowns;
     property ShowMotorways: Boolean read FShowMotorways write SetShowMotorways;
     property ShowTrunk: Boolean read FShowTrunk write SetShowTrunk;
     property ShowPrimary: Boolean read FShowPrimary write SetShowPrimary;
     property ShowRail: Boolean read FShowRail write SetShowRail;
+    property ShowRivers: Boolean read FShowRivers write SetShowRivers;
     property ShowBarycentre: Boolean read FShowBarycentre write SetShowBarycentre;
     property ShowGeoCentre: Boolean read FShowGeoCentre write SetShowGeoCentre;
     property ShowCvdBarycentre: Boolean read FShowCvdBarycentre write SetShowCvdBarycentre;
@@ -229,6 +246,7 @@ const
   clTrunk = TColor($3A8A1F);        // RGB(31, 138, 58)
   clPrimary = TColor($0062C8);      // RGB(200, 98, 0)
   clRail = TColor($303030);
+  clRiver = TColor($E6A03C);         // RGB(60, 160, 230): lighter than the motorways
   clBary = TColor($1C1CD8);         // RGB(216, 28, 28)
   clCvdBary = TColor($A01E8C);      // RGB(140, 30, 160)
   clOutside = TColor($CFCFCF);      // LSOAs outside the chosen areas
@@ -264,6 +282,7 @@ const
 
 type
   TRGB = record r, g, b: Byte; end;
+  TBox = record Left, Top, Right, Bottom: Double; end;   // a label's box, pixels
 
 const
   // ColorBrewer Purples, 9 classes
@@ -396,7 +415,10 @@ end;
 
 destructor TKentMapView.Destroy;
 begin
-  if HandleAllocated and MakeCurrent then FreeTextures;
+  if HandleAllocated and MakeCurrent then begin
+    FreeTextures;
+    if FReliefBuilt then glDeleteTextures(1, @FReliefTex);
+  end;
   inherited Destroy;
 end;
 
@@ -576,10 +598,12 @@ end;
 procedure TKentMapView.SetShowDistricts(V: Boolean); begin SetBool(FShowDistricts, V); end;
 procedure TKentMapView.SetShowLsoaLines(V: Boolean); begin SetBool(FShowLsoaLines, V); end;
 procedure TKentMapView.SetShowTowns(V: Boolean); begin SetBool(FShowTowns, V); end;
+procedure TKentMapView.SetShowSmallTowns(V: Boolean); begin SetBool(FShowSmallTowns, V); end;
 procedure TKentMapView.SetShowMotorways(V: Boolean); begin SetBool(FShowMotorways, V); end;
 procedure TKentMapView.SetShowTrunk(V: Boolean); begin SetBool(FShowTrunk, V); end;
 procedure TKentMapView.SetShowPrimary(V: Boolean); begin SetBool(FShowPrimary, V); end;
 procedure TKentMapView.SetShowRail(V: Boolean); begin SetBool(FShowRail, V); end;
+procedure TKentMapView.SetShowRivers(V: Boolean); begin SetBool(FShowRivers, V); end;
 procedure TKentMapView.SetShowBarycentre(V: Boolean); begin SetBool(FShowBarycentre, V); end;
 procedure TKentMapView.SetShowGeoCentre(V: Boolean); begin SetBool(FShowGeoCentre, V); end;
 procedure TKentMapView.SetShowCvdBarycentre(V: Boolean); begin SetBool(FShowCvdBarycentre, V); end;
@@ -647,6 +671,12 @@ begin
   FreeTextures;
   for i := 0 to TownCount - 1 do
     FTownTex[i] := CreateTextTexture(TownName[i], 9, True);
+  for i := 0 to SmallTownCount - 1 do
+    // map labels stop at the first comma: 'Longfield, New Ash Green and Hartley' -> 'Longfield'
+    if Pos(',', SmallTownName[i]) > 0 then
+      FSmallTownTex[i] := CreateTextTexture(Copy(SmallTownName[i], 1, Pos(',', SmallTownName[i]) - 1), 8, False)
+    else
+      FSmallTownTex[i] := CreateTextTexture(SmallTownName[i], 8, False);
   FBaryTex := CreateTextTexture('population barycentre', 9, True);
   FGeoTex := CreateTextTexture('geographic centre', 9, True);
   FCvdTex := CreateTextTexture(CvdEventText + ' barycentre', 9, True);
@@ -676,6 +706,7 @@ var
   i: Integer;
 begin
   for i := 0 to TownCount - 1 do Del(FTownTex[i]);
+  for i := 0 to SmallTownCount - 1 do Del(FSmallTownTex[i]);
   Del(FBaryTex);
   Del(FGeoTex);
   Del(FCvdTex);
@@ -715,6 +746,71 @@ end;
 
 // ---- drawing ------------------------------------------------------------------
 
+// the shaded relief as one texture over the grid's box, where the stencil
+// allows (the caller sets it to land)
+procedure TKentMapView.DrawRelief;
+var
+  Pix: TReliefPixels;
+  x0, y0, x1, y1: Double;
+begin
+  if not FReliefBuilt then begin
+    ReliefImage(Pix);
+    glGenTextures(1, @FReliefTex);
+    glBindTexture(GL_TEXTURE_2D, FReliefTex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, ReliefCols, ReliefRows, 0, GL_RGB, GL_UNSIGNED_BYTE, @Pix[0]);
+    FReliefBuilt := True;
+  end;
+  ToPixel(ReliefE0, ReliefN0, x0, y0);
+  ToPixel(ReliefE0 + ReliefCols * ReliefCell, ReliefN0 + ReliefRows * ReliefCell, x1, y1);
+  glEnable(GL_TEXTURE_2D);
+  glBindTexture(GL_TEXTURE_2D, FReliefTex);
+  glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+  glBegin(GL_QUADS);
+    glTexCoord2f(0, 0); glVertex2d(x0, y0);
+    glTexCoord2f(1, 0); glVertex2d(x1, y0);
+    glTexCoord2f(1, 1); glVertex2d(x1, y1);
+    glTexCoord2f(0, 1); glVertex2d(x0, y1);
+  glEnd;
+  glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+  glDisable(GL_TEXTURE_2D);
+end;
+
+// rivers and canals: the main ones heavier, the rest only once zoomed in a little
+procedure TKentMapView.DrawRivers;
+
+  procedure Strokes(Kind: Integer);
+  var
+    r, k: Integer;
+    px, py: Double;
+  begin
+    for r := 0 to RiverCount - 1 do begin
+      if RiverKind[r] <> Kind then Continue;
+      glBegin(GL_LINE_STRIP);
+        for k := RiverStart[r] to RiverStart[r + 1] - 1 do begin
+          ToPixel(RiverPtE[k], RiverPtN[k], px, py);
+          glVertex2d(px, py);
+        end;
+      glEnd;
+    end;
+  end;
+
+var
+  zw: Single;
+begin
+  zw := Min(1.8, 1 + 0.2 * Log2(FZoom));
+  GLColour(clRiver, 0.9);
+  glLineWidth(1.0 * zw);
+  Strokes(RiverMinor);
+  GLColour(clRiver);
+  glLineWidth(2.4 * zw);
+  Strokes(RiverMain);
+end;
+
 procedure TKentMapView.DrawRoutes;
 
   procedure Strokes(Kind: Integer);
@@ -747,6 +843,7 @@ var
   zw: Single;
 begin
   zw := Min(1.6, 1 + 0.15 * Log2(FZoom));     // a little thicker when zoomed in
+  if FShowRivers then DrawRivers;
   if FShowRail then begin
     GLColour(clRail);
     glLineWidth(3 * zw);
@@ -951,14 +1048,67 @@ procedure TKentMapView.DrawMarkers;
   end;
 
 var
-  i: Integer;
+  i, k, nb: Integer;
   x, y, r: Double;
-  both, cvdEast: Boolean;
+  both, cvdEast, right: Boolean;
+  Boxes: array of TBox;          // labels placed so far, so later ones can avoid them
+
+  function LabelBox(const Tex: TKentTextTexture; X, Y: Double; AtRight: Boolean): TBox;
+  begin
+    if AtRight then result.Left := X else result.Left := X - Tex.W - 4;
+    result.Right := result.Left + Tex.W + 4;
+    result.Top := Y - Tex.H / 2 - 1;
+    result.Bottom := Y + Tex.H / 2 + 1;
+  end;
+
+  function Overlap(const B: TBox): Double;   // area over labels placed so far, and off screen
+  var
+    j: Integer;
+  begin
+    result := 0;
+    if (B.Left < 0) or (B.Right > Width) then result := 1e9;
+    for j := 0 to nb - 1 do
+      result := result + Max(0, Min(B.Right, Boxes[j].Right) - Max(B.Left, Boxes[j].Left))
+                       * Max(0, Min(B.Bottom, Boxes[j].Bottom) - Max(B.Top, Boxes[j].Top));
+  end;
+
+var
+  SmallRight: array of Boolean;
+
 begin
+  SetLength(Boxes, TownCount + SmallTownCount);
+  SetLength(SmallRight, SmallTownCount);
+  nb := 0;
+  // dots first, then labels. The larger towns' labels go where they always were, to
+  // the right; each smaller town's to the right of its dot, or the left if that
+  // overlaps less (another label, or off screen). Smaller labels are drawn first,
+  // so a larger town's stays readable where they still meet.
   if FShowTowns then
     for i := 0 to TownCount - 1 do begin
       ToPixel(TownE[i], TownN[i], x, y);
       Disc(x, y, 4, clWhite);
+      Boxes[nb] := LabelBox(FTownTex[i], x + 6, y, True); Inc(nb);
+    end;
+  if FShowSmallTowns then
+    for k := 0 to SmallTownCount - 1 do begin
+      ToPixel(SmallTownE[k], SmallTownN[k], x, y);
+      Disc(x, y, 2.8, clWhite);
+      right := Overlap(LabelBox(FSmallTownTex[k], x + 5, y, True))
+               <= Overlap(LabelBox(FSmallTownTex[k], x - 5, y, False));
+      SmallRight[k] := right;
+      if right then Boxes[nb] := LabelBox(FSmallTownTex[k], x + 5, y, True)
+      else Boxes[nb] := LabelBox(FSmallTownTex[k], x - 5, y, False);
+      Inc(nb);
+    end;
+  if FShowSmallTowns then
+    for k := 0 to SmallTownCount - 1 do begin
+      ToPixel(SmallTownE[k], SmallTownN[k], x, y);
+      if SmallRight[k] then DrawLabel(FSmallTownTex[k], x + 5, y, True)
+      else DrawLabel(FSmallTownTex[k], x - 5, y, False);
+    end;
+  if FShowTowns then
+    for i := 0 to TownCount - 1 do begin
+      ToPixel(TownE[i], TownN[i], x, y);
       DrawLabel(FTownTex[i], x + 6, y, True);
     end;
   if FShowGeoCentre and not IsNan(FGeoE) then begin
@@ -1086,12 +1236,17 @@ begin
   glBegin(GL_QUADS);
     glVertex2d(0, 0); glVertex2d(Width, 0); glVertex2d(Width, Height); glVertex2d(0, Height);
   glEnd;
+  if FMode = kcmPhysical then DrawRelief;
 
   // ---- LSOA fills (bit $01), on land only; outside the chosen areas grey ----
   if (FMode <> kcmNone) or (FAreas <> AllAreas) then begin
     glStencilMask($01);
+    if FMode = kcmPhysical then begin        // the relief stays; outside the areas a grey wash
+      glEnable(GL_BLEND);
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    end;
     for i := 0 to LsoaCount - 1 do begin
-      if (FMode = kcmNone) and FLsoaOn[i] then Continue;
+      if (FMode in [kcmNone, kcmPhysical]) and FLsoaOn[i] then Continue;
       ToPixel(LsoaBoxE0(i), LsoaBoxN0(i), x0, y0);
       ToPixel(LsoaBoxE1(i), LsoaBoxN1(i), x1, y1);
       if (x1 < 0) or (y1 < 0) or (x0 > Width) or (y0 > Height) then Continue;   // off screen
@@ -1104,6 +1259,7 @@ begin
       glStencilFunc(GL_EQUAL, $81, $81);
       glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);       // write mask $01: clears only this LSOA's bit
       if FLsoaOn[i] then GLColour(LsoaFillColour(FMode, FDomain, i, FDriveScenario))
+      else if FMode = kcmPhysical then GLColour(clOutside, 0.7)
       else GLColour(clOutside);
       glBegin(GL_QUADS);
         glVertex2d(x0 - 1, y0 - 1); glVertex2d(x1 + 1, y0 - 1);

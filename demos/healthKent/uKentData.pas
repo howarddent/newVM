@@ -186,7 +186,7 @@ type
   end;
 
 const
-  Sources: array[0..20] of TSourceEntry = (
+  Sources: array[0..22] of TSourceEntry = (
     (Title: 'Lower layer Super Output Area population estimates (small area, 2021-based), mid-2024';
      Publisher: 'Office for National Statistics (via Nomis, dataset NM_2014_1)';
      Edition: 'mid-2024 estimates, released 7 November 2025 - the latest published';
@@ -325,7 +325,19 @@ const
      URL: 'https://www.strokeaudit.org/';
      Use: '999 ambulance option: on scene 33 min - the North East study''s median (IQR 26-41) and the top of the '
        + 'national SSNAP medians, 27-32 min in 2019-2023; NHS England recommends 30 at most. No routine '
-       + 'statistic publishes it.')
+       + 'statistic publishes it.'),
+    (Title: 'OS Terrain 50 - ASCII grid';
+     Publisher: 'Ordnance Survey (OS OpenData)';
+     Edition: 'May 2026 release, 50 m grid (a terrain model: ground level, without buildings or trees)';
+     Licence: 'Open Government Licence v3.0';
+     URL: 'https://www.ordnancesurvey.co.uk/products/os-terrain-50';
+     Use: 'Heights for the physical map: averaged onto 100 m cells, tinted by height and hill-shaded from the north-west (uKentRelief); the memo''s heights.'),
+    (Title: 'OpenStreetMap - waterway=river and waterway=canal';
+     Publisher: 'OpenStreetMap contributors (via the Overpass API)';
+     Edition: 'downloaded 17 November 2026';
+     Licence: 'Open Database Licence (ODbL) 1.0';
+     URL: 'https://www.openstreetmap.org/copyright';
+     Use: 'The Rivers layer: rivers and canals, the main ones (Medway, Thames, Stour, Rother, Darent, Beult, Eden, Teise) heavier.')
   );
 
   Glossary: array[0..21] of TGlossaryEntry = (
@@ -456,7 +468,9 @@ procedure M20Extent(out E0, E1: Double);
 
 // drive times (see the header). Domains 0 .. HospitalCount - 1 are the
 // hospitals, then the nearer of William Harvey and Kent and Canterbury
-// (HospitalCount), the nearest of all (DriveNearestDomain), and the best
+// (HospitalCount), the nearer of QEQM (Margate) and Kent and Canterbury
+// (DriveQeqmKchDomain), the nearer of William Harvey and QEQM
+// (DriveWhhQeqmDomain), the nearest of all (DriveNearestDomain), and the best
 // single site for the scenario (DriveBestDomain, BestSiteE/N)
 function DriveDomainName(d: Integer): string;
 function DriveDomainShort(d: Integer): string;
@@ -1057,6 +1071,8 @@ function DriveDomainName(d: Integer): string;
 begin
   if d < HospitalCount then result := HospitalName[d]
   else if d = HospitalCount then result := 'Nearer of William Harvey and Kent and Canterbury'
+  else if d = DriveQeqmKchDomain then result := 'Nearer of QEQM (Margate) and Kent and Canterbury'
+  else if d = DriveWhhQeqmDomain then result := 'Nearer of William Harvey and QEQM'
   else if d >= DriveBestDomain then result := 'Best single site (lowest county mean time)'
   else result := 'Nearest of all seven acute hospitals';
 end;
@@ -1065,6 +1081,8 @@ function DriveDomainShort(d: Integer): string;
 begin
   if d < HospitalCount then result := HospitalShort[d]
   else if d = HospitalCount then result := 'WHH or K&C'
+  else if d = DriveQeqmKchDomain then result := 'QEQM or K&C'
+  else if d = DriveWhhQeqmDomain then result := 'WHH or QEQM'
   else if d >= DriveBestDomain then result := 'best site'
   else result := 'nearest';
 end;
@@ -1121,6 +1139,8 @@ function DriveDomainHas(d, h: Integer): Boolean;
 begin
   if d < HospitalCount then result := h = d
   else if d = HospitalCount then result := (h = DriveHospWHH) or (h = DriveHospKCH)
+  else if d = DriveQeqmKchDomain then result := (h = DriveHospQEQM) or (h = DriveHospKCH)
+  else if d = DriveWhhQeqmDomain then result := (h = DriveHospWHH) or (h = DriveHospQEQM)
   else result := d = DriveNearestDomain;
 end;
 

@@ -176,7 +176,10 @@ Open Government Licence), and `demos/healthKent/drivedata.inc` (drive
 times and isochrones computed from OpenStreetMap roads, ODbL, for three
 speed scenarios: free-flow car, weekday morning peak with A and B road
 speeds anchored to the DfT's local A road travel time figures, Open
-Government Licence, and blue light at 1.25 times free-flow).
+Government Licence, and blue light at 1.25 times free-flow), and
+`demos/healthKent/physicaldata.inc` (heights from Ordnance Survey's OS
+Terrain 50, Open Government Licence; rivers and canals from
+OpenStreetMap, ODbL).
 
 ## Screenshots
 

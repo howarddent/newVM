@@ -33,7 +33,8 @@
 #   - Towns: ONS built-up areas (2022), via the LSOA (2021) -> BUA (2022)
 #     best-fit lookup; a town's population is the sum of its LSOAs'
 #     mid-2024 estimates, its position their population-weighted mean
-#     (LSOA label points). Those over TOWN_MIN are kept.
+#     (LSOA label points). Those over TOWN_MIN are the towns; those over
+#     SMALL_TOWN_MIN and up to TOWN_MIN the smaller towns (SmallTown*).
 #   - Roads and rail: OpenStreetMap (ODbL) via the Overpass API -
 #     highway = motorway / trunk / primary and railway = rail (no
 #     service tracks), converted to BNG with bng.py and simplified.
@@ -76,6 +77,7 @@ here = os.path.dirname(os.path.abspath(__file__))
 SIMPLIFY_M = 12.0          # LSOA / district boundary tolerance, m
 ROUTE_SIMPLIFY_M = 20.0
 TOWN_MIN = 50000
+SMALL_TOWN_MIN = 10000     # the smaller towns, a layer of their own
 
 def P(name):
     return os.path.join(src, name)
@@ -198,8 +200,12 @@ for l in lsoas:
     if l['bua']:
         t = towns.setdefault(l['bua'], [0, 0.0, 0.0, 0])
         t[0] += l['pop']; t[1] += l['pop'] * l['e']; t[2] += l['pop'] * l['n']; t[3] += 1
-towns = sorted(((re.sub(r' \(.*\)$', '', nm), t[0], t[1] / t[0], t[2] / t[0], t[3]) for nm, t in towns.items() if t[0] > TOWN_MIN),
+all_towns = towns
+towns = sorted(((re.sub(r' \(.*\)$', '', nm), t[0], t[1] / t[0], t[2] / t[0], t[3]) for nm, t in all_towns.items() if t[0] > TOWN_MIN),
                key=lambda t: -t[1])
+small_towns = sorted(((re.sub(r' \(.*\)$', '', nm), t[0], t[1] / t[0], t[2] / t[0], t[3])
+                      for nm, t in all_towns.items() if SMALL_TOWN_MIN < t[0] <= TOWN_MIN),
+                     key=lambda t: -t[1])
 
 # ---- roads and rail -------------------------------------------------------------
 # coarse land mask (1 km cells) from heavily simplified district rings, to
@@ -297,6 +303,11 @@ with open(os.path.join(here, 'kentdata.inc'), 'w', encoding='utf-8') as fh:
     fh.write(arr('TownLsoas', 'Integer', [t[4] for t in towns], '%d', 10))
     fh.write(arr('TownE', 'Single', [t[2] for t in towns], '%.0f', 10))
     fh.write(arr('TownN', 'Single', [t[3] for t in towns], '%.0f', 10))
+    fh.write('  SmallTownCount = %d;\n  SmallTownMinPopulation = %d;\n' % (len(small_towns), SMALL_TOWN_MIN))
+    fh.write(arr('SmallTownName', 'string', [pas(t[0]) for t in small_towns], '%s', 4))
+    fh.write(arr('SmallTownPop', 'Integer', [t[1] for t in small_towns], '%d', 10))
+    fh.write(arr('SmallTownE', 'Single', [t[2] for t in small_towns], '%.0f', 10))
+    fh.write(arr('SmallTownN', 'Single', [t[3] for t in small_towns], '%.0f', 10))
     fh.write('  // 0 motorway, 1 trunk road, 2 primary A road, 3 railway\n')
     fh.write(arr('RouteKind', 'Byte', rt_kind, '%d', 30))
     fh.write(arr('RouteRef', 'string', [pas(s) for s in rt_ref], '%s', 8))
@@ -309,6 +320,6 @@ print('%d LSOAs, %d rings, %d points; %d districts, %d rings, %d points' %
       (len(lsoas), len(ring_start) - 1, len(pe), len(lads), len(lring_start) - 1, len(le)))
 print('population %s %d; land %.1f km2' % (pop_year, tot, sum(l['land'] for l in lsoas)))
 print('%d routes, %d points; OSM %s' % (len(routes), len(re_), osm_stamp))
-for t in towns:
+for t in towns + small_towns:
     print('  %-28s %7d  (%d LSOAs)' % (t[0], t[1], t[4]))
 print('barycentre E %.0f N %.0f' % (sum(l['pop'] * l['e'] for l in lsoas) / tot, sum(l['pop'] * l['n'] for l in lsoas) / tot))

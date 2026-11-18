@@ -3687,7 +3687,7 @@ packages. Compiled binaries and each demo's own `lib/` output are
       90th percentile, shares within 30/45/60, longest, admission-hours),
       by area and by district sorted by the difference. Whole county: WHH
       34.6 min mean against 37.0, 0.4 % against 6.1 % over an hour (West
-      Kent 21.6 % to K&C). `--drive=<0..8>` picks the domain; snapshot adds
+      Kent 21.6 % to K&C). `--drive=<n>` picks the domain; snapshot adds
       `_drive`/`_drive_whh_kch`.
     - **Speed scenarios** (same day, a "Drive speeds" radio group,
       `--speeds=<0..2>`). `drivedata.inc` (now ~470 kB) holds every domain's
@@ -3844,10 +3844,90 @@ packages. Compiled binaries and each demo's own `lib/` output are
         quicker); borderline Dover -7.3, Maidstone +9.9, Tonbridge and
         Malling +8.9, Sevenoaks +8.7. The 10-minute line is my choice,
         not a clinical threshold.
+    - **Nearer of QEQM and K&C, nearer of WHH and QEQM** (2026-11-18, two
+      drive-time choices after "Nearer of William Harvey and Kent and
+      Canterbury": `DriveQeqmKchDomain` 8, `DriveWhhQeqmDomain` 9). The fill,
+      isochrones and memo use the time to the nearer of the pair, and the pair
+      are drawn as the chosen hospitals. Choosing either adds a memo section
+      (`PairSummary(L, HA, HB)`): by district, mean minutes to each, to the
+      nearer, and the share of admissions nearer the first. `make_drive_data.py`
+      was rerun for each; every other domain's times came out identical. The
+      choices after them moved up two: `--drive=10` is now the nearest of all
+      and `--drive=11` the best single site. Free-flow, whole county, mean
+      minutes:
+
+      | Pair | first | second | nearer | nearer the first |
+      |---|---|---|---|---|
+      | QEQM / K&C | 50.8 | 37.0 | 34.7 | 12.5 % |
+      | WHH / QEQM | 34.6 | 50.8 | 29.2 | 80.5 % |
+
+      (WHH / K&C gives 30.0.) Thanet is wholly nearer QEQM and Dover 43 %
+      against K&C; against WHH, Canterbury goes 31.5 % and Dover 39 % to WHH.
+      Snapshot adds `_drive_qeqm_kch` and `_drive_whh_qeqm` and prints both
+      sections.
+  - **Physical map** (2026-11-17, fill "Physical (relief, rivers)",
+    `--colour=4`; "Nothing" is now 5): shaded relief with rivers, main
+    roads and railways. `make_physical_data.py <physical dir> <src dir>`
+    writes `physicaldata.inc` (2.75 MB, read by the new unit `uKentRelief`) from files in
+    `~/data/healthKent-src/physical/`. The script's header has the URLs.
+    - **Height**: OS Terrain 50 (OGL; the GB ASCII-grid zip, 162 MB, no
+      key, TQ and TR tiles). It is a ground model, so buildings and trees
+      are left out. It is averaged onto a 1010 x 660 grid of 100 m cells
+      over the districts' box (plus 1 km), stored as `SmallInt`
+      decimetres, south row first.
+    - **Rivers**: OSM `waterway=river|canal`, 1,137 lines. Ten named
+      rivers are `RiverMain` and drawn heavier: the Medway, Thames, Great
+      Stour, Stour, Rother, Darent, Beult, Eden and Teise.
+    - **Shading**: `ReliefImage` gives each cell a height tint (green at
+      0 m, through yellow, to brown at 250 m) times a hillshade lit from
+      the north-west at 45 deg, with heights exaggerated 5x. A flat cell
+      keeps its tint.
+    - **Drawing**: the map uploads the shading once as a GL texture (RGB,
+      `GL_LINEAR`) and draws it where the land stencil is set. LSOAs
+      outside the chosen areas get a translucent grey wash instead of a
+      solid fill. Rivers are a new "Rivers" layer, drawn under the
+      railways and roads in RGB(60, 160, 230). That blue is lighter than
+      the motorways', which was too close to it.
+    - **Layers**: choosing Physical ticks rivers, the main roads, rail,
+      towns and districts, and unticks the centres, hospitals,
+      isochrones, median lines and LSOA outlines. The form saves the
+      layers first (`FPreLayers`) and `RestoreLayers` puts them back on
+      leaving Physical.
+    - **Memo**: a "PHYSICAL MAP" section with the highest cell, 248 m at
+      TQ 43550 56350 (Betsom's Hill, 251 m). It also gives the
+      population- and admissions-weighted mean heights of the chosen
+      areas' LSOA label points (49 / 49 m), and the admissions' share by
+      height band. That is 14.6 % under 10 m, 48.3 % at 10-50 m and
+      2.4 % at 150 m or more. A selected LSOA shows its label point's
+      height.
+    - **Snapshot**: adds `_physical`, `_physical_large_towns`,
+      `_physical_zoom` (Medway gap and Maidstone, 3x) and
+      `_physical_window.bmp`, and prints the section.
+      Every other snapshot map is pixel-identical to before.
+  - **Towns of 10,000-50,000** (2026-11-17, layer "Towns 10-50,000",
+    ticked by the physical map, off otherwise). They are the same ONS
+    built-up areas as the towns over 50,000, made the same way by
+    `make_kent_data.py` (`SMALL_TOWN_MIN`). They go in separate
+    `SmallTown*` arrays, so the `Town*` arrays and everything built on
+    them (`NearestTown`, the memo's town lines) are unchanged; rerunning
+    the script only added those arrays to `kentdata.inc`.
+    - **The 23 towns** run from Ramsgate (42,777) to Kings Hill (10,057).
+      The names are ONS's: Larkfield is the Aylesford/East Malling built-up
+      area, and Herne is listed apart from Herne Bay.
+    - **Drawing**: a smaller dot and an 8-point plain label, cut at the
+      first comma (so "Longfield, New Ash Green and Hartley" shows as
+      "Longfield").
+    - **Label placement**: the larger towns' labels stay where they were.
+      Each smaller one goes right of its dot, or left when that overlaps
+      the labels already placed or the window edge less. The smaller
+      labels are drawn first, so the larger ones stay readable.
+      Northfleet, a few hundred metres from Gravesend, still crowds it at
+      full view.
+    - **Memo**: the towns table lists them after the larger towns.
   - `--snapshot=<prefix>` saves density/IMD/health/admissions (per km2 and
     ratio)/zoomed maps and the window, prints the memo and exits;
-    `--colour=<0..4>`, `--domain=<0..7>`, `--cvd=<0|1>`, `--areas=<list>`,
-    `--drive=<0..9>`, `--speeds=<0..2>`, `--weighting=<0..2>`, `--medians`,
+    `--colour=<0..5>`, `--domain=<0..7>`, `--cvd=<0|1>`, `--areas=<list>`,
+    `--drive=<0..11>`, `--speeds=<0..2>`, `--weighting=<0..2>`, `--medians`,
     `--ambulance`.
 - **`newPoly`** — least-squares polynomial fitting with
   `newPolymath.pas`'s `TPolynomial.Fit` (see its own section above),

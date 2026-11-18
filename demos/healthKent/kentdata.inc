@@ -22309,6 +22309,31 @@ const
     167019, 155087, 142314, 165168, 174131, 168322, 170092, 172753, 158173, 164154,
     136598, 139920
   );
+  SmallTownCount = 23;
+  SmallTownMinPopulation = 10000;
+  SmallTownName: array[0..22] of string = (
+    'Ramsgate', 'Tonbridge', 'Dover', 'Whitstable',
+    'Northfleet', 'Larkfield', 'Deal', 'Sevenoaks',
+    'Broadstairs', 'Herne Bay', 'Faversham', 'Swanley',
+    'Minster', 'Longfield, New Ash Green and Hartley', 'Swanscombe', 'Herne',
+    'Hythe', 'Sheerness', 'Snodland', 'Southborough',
+    'Coxheath', 'Hoo St Werburgh', 'Kings Hill'
+  );
+  SmallTownPop: array[0..22] of Integer = (
+    42777, 38327, 36819, 31070, 30031, 29146, 28885, 27462, 24886, 24618,
+    22547, 18563, 17842, 17155, 15948, 14401, 13677, 13496, 12239, 10820,
+    10563, 10213, 10057
+  );
+  SmallTownE: array[0..22] of Single = (
+    637471, 559249, 630450, 611247, 563014, 570967, 636862, 552441, 638725, 618167,
+    601448, 551311, 594733, 560804, 559717, 617671, 615734, 592172, 569851, 558150,
+    575207, 578486, 567862
+  );
+  SmallTownN: array[0..22] of Single = (
+    165574, 147012, 142197, 165633, 173290, 158358, 151847, 155583, 168317, 167940,
+    161258, 168809, 172522, 167084, 174681, 166458, 134658, 174475, 162004, 142339,
+    151627, 172898, 155381
+  );
   // 0 motorway, 1 trunk road, 2 primary A road, 3 railway
   RouteKind: array[0..10531] of Byte = (
     3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,

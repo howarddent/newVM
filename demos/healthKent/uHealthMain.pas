@@ -78,8 +78,9 @@ unit uHealthMain;
      deprivation (<prefix>_health.png), by expected admissions per km2
      (<prefix>_cvd.png) and by risk-factor ratio (<prefix>_cvdratio.png),
      a zoomed view round the barycentre (<prefix>_zoom.png) and the window
-     (<prefix>_window.bmp), prints the memo and exits. --colour=<0..3>
-     picks the fill (0 density, 1 deprivation, 2 admissions, 3 none),
+     (<prefix>_window.bmp), prints the memo and exits. --colour=<0..5>
+     picks the fill (0 density, 1 deprivation, 2 admissions, 3 drive time,
+     4 physical, 5 none),
      --domain=<0..7> the deprivation measure, --cvd=<0|1> admissions per
      km2 or the ratio, --areas=<list> the areas (e.g. north,east; default
      all three), --ambulance ticks "999 ambulance".
@@ -102,7 +103,7 @@ interface
 uses
   Classes, SysUtils, Math, StrUtils, Forms, Controls, Graphics, Dialogs,
   ExtCtrls, StdCtrls, ComCtrls,
-  uKentData, uKentMap;
+  uKentData, uKentMap, uKentRelief;
 
 type
 
@@ -153,6 +154,7 @@ type
     FShown: Boolean;
     FDepDomain, FCvdMeasure, FDriveDomain, FDriveScenario, FBoxMode: Integer;
     FAreas: TAreaSet;
+    FPreLayers: array of Boolean;  // the layers before Physical was chosen, nil when it isn't
     FInc, FDistInc: TBoolArray;    // the chosen areas' LSOAs and districts
     FAmbBox: TCheckBox;            // 999 ambulance: call to hospital door
     procedure FillMeasureBox;
@@ -160,13 +162,17 @@ type
     procedure AreaTable(L: TStrings);
     procedure ApplyColouring;
     procedure ApplyLayers;
+    procedure ShowPhysicalLayers;
+    procedure RestoreLayers;
     procedure LsoaSelected(Sender: TObject; Lsoa: Integer);
     procedure ViewChanged(Sender: TObject);
     procedure ShowInfo;
+    procedure AddPhysical(L: TStrings);
     procedure CvdSummary(L: TStrings);
     procedure CorridorSummary(L: TStrings; Total: Double);
     procedure DriveSummary(L: TStrings);
     procedure WhhKchSummary(L: TStrings);
+    procedure PairSummary(L: TStrings; HA, HB: Integer);
     procedure BestSiteSummary(L: TStrings);
     procedure FillSources;
     function DecileShare(Domain, Decile: Integer): Double;
@@ -186,7 +192,7 @@ implementation
 
 const
   // colour radio items
-  ciDensity = 0; ciDeprivation = 1; ciCvd = 2; ciDrive = 3; ciNone = 4;
+  ciDensity = 0; ciDeprivation = 1; ciCvd = 2; ciDrive = 3; ciPhysical = 4; ciNone = 5;
   CvdMeasureName: array[0..1] of string = (
     'Admissions per km2 a year', 'Risk-factor ratio (against England, same age and sex)');
 
@@ -194,6 +200,7 @@ const
   liDistricts = 0; liLsoas = 1; liTowns = 2; liMotorways = 3; liTrunk = 4;
   liPrimary = 5; liRail = 6; liBary = 7; liGeo = 8; liCvdBary = 9;
   liIsochrones = 10; liHospitals = 11; liMedians = 12;
+  liRivers = 13; liSmallTowns = 14;
 
 // what the chosen event kind counts, for the memo
 function EventsPhrase: string;
@@ -294,6 +301,7 @@ begin
     cgLayers.Checked[d] := d in [liDistricts, liTowns, liMotorways, liTrunk, liRail, liBary, liGeo, liCvdBary,
       liIsochrones, liHospitals];
   cgLayers.Checked[liMedians] := Application.HasOption('medians');
+  if rgColour.ItemIndex = ciPhysical then ShowPhysicalLayers;
   ApplyLayers;
   ApplyColouring;
   FillSources;
@@ -409,6 +417,7 @@ begin
     ciDeprivation: FMap.SetColouring(kcmDeprivation, FDepDomain);
     ciCvd: FMap.SetColouring(kcmCvd, FCvdMeasure);
     ciDrive: FMap.SetColouring(kcmDrive, FDriveDomain);
+    ciPhysical: FMap.SetColouring(kcmPhysical, FDepDomain);
   else
     FMap.SetColouring(kcmNone, FDepDomain);
   end;
@@ -416,15 +425,44 @@ begin
   ShowInfo;
 end;
 
+// the physical map: rivers, the main roads and railways on, the centres, hospitals and
+// other overlays off (each can be ticked again)
+procedure TForm1.ShowPhysicalLayers;
+var
+  d: Integer;
+begin
+  if FPreLayers = nil then begin
+    SetLength(FPreLayers, cgLayers.Items.Count);
+    for d := 0 to cgLayers.Items.Count - 1 do FPreLayers[d] := cgLayers.Checked[d];
+  end;
+  for d in [liRivers, liMotorways, liTrunk, liPrimary, liRail, liTowns, liSmallTowns, liDistricts] do
+    cgLayers.Checked[d] := True;
+  for d in [liIsochrones, liLsoas, liBary, liGeo, liCvdBary, liHospitals, liMedians] do
+    cgLayers.Checked[d] := False;
+  ApplyLayers;
+end;
+
+// leaving Physical: the layers as they were before it
+procedure TForm1.RestoreLayers;
+var
+  d: Integer;
+begin
+  for d := 0 to cgLayers.Items.Count - 1 do cgLayers.Checked[d] := FPreLayers[d];
+  FPreLayers := nil;
+  ApplyLayers;
+end;
+
 procedure TForm1.ApplyLayers;
 begin
   FMap.ShowDistricts := cgLayers.Checked[liDistricts];
   FMap.ShowLsoaLines := cgLayers.Checked[liLsoas];
   FMap.ShowTowns := cgLayers.Checked[liTowns];
+  FMap.ShowSmallTowns := cgLayers.Checked[liSmallTowns];
   FMap.ShowMotorways := cgLayers.Checked[liMotorways];
   FMap.ShowTrunk := cgLayers.Checked[liTrunk];
   FMap.ShowPrimary := cgLayers.Checked[liPrimary];
   FMap.ShowRail := cgLayers.Checked[liRail];
+  FMap.ShowRivers := cgLayers.Checked[liRivers];
   FMap.ShowBarycentre := cgLayers.Checked[liBary];
   FMap.ShowGeoCentre := cgLayers.Checked[liGeo];
   FMap.ShowCvdBarycentre := cgLayers.Checked[liCvdBary];
@@ -436,6 +474,8 @@ end;
 
 procedure TForm1.rgColourClick(Sender: TObject);
 begin
+  if rgColour.ItemIndex = ciPhysical then ShowPhysicalLayers
+  else if FPreLayers <> nil then RestoreLayers;
   ApplyColouring;
 end;
 
@@ -525,6 +565,47 @@ begin
   result := 100 * s / Max(t, 1);
 end;
 
+// the physical map's memo section: heights over the chosen areas, by LSOA
+// label point, population- and admissions-weighted, and the highest ground
+procedure TForm1.AddPhysical(L: TStrings);
+var
+  i, k: Integer;
+  h, sp, sh, se, seh, e, n, hmax: Double;
+  Band: array[0..4] of Double;
+const
+  BandTop: array[0..3] of Double = (10, 50, 100, 150);
+  BandName: array[0..4] of string = ('under 10 m', '10-50 m', '50-100 m', '100-150 m', '150 m and over');
+begin
+  ReliefHighest(e, n, hmax);
+  L.Add('PHYSICAL MAP');
+  L.Add('  Shaded relief from OS Terrain 50 (a 50 m terrain model, ground level), averaged onto');
+  L.Add(Format('  100 m cells and lit from the north-west, heights exaggerated %.0fx; rivers and canals', [ReliefExaggeration]));
+  L.Add('  from OpenStreetMap, the main ones heavier. The other rivers are mostly the Romney');
+  L.Add('  Marsh and Wantsum drains and the Medway''s and Stour''s tributaries.');
+  L.Add(Format('  Highest 100 m cell: %.0f m at %s, on the North Downs by Westerham (Betsom''s Hill, 251 m).',
+    [hmax, GridRef(e, n)]));
+  sp := 0; sh := 0; se := 0; seh := 0;
+  for k := 0 to 4 do Band[k] := 0;
+  for i := 0 to LsoaCount - 1 do
+    if FInc[i] then begin
+      h := ReliefHeight(LsoaLabelE[i], LsoaLabelN[i]);
+      if IsNan(h) then Continue;
+      sp := sp + LsoaPop[i]; sh := sh + LsoaPop[i] * h;
+      se := se + LsoaCvdEvents(i); seh := seh + LsoaCvdEvents(i) * h;
+      k := 0;
+      while (k < 4) and (h >= BandTop[k]) do Inc(k);
+      Band[k] := Band[k] + LsoaCvdEvents(i);
+    end;
+  if sp > 0 then begin
+    L.Add(Format('  Chosen areas, by LSOA label point: mean height %.0f m by population, %.0f m by expected %s admissions.',
+      [sh / sp, seh / se, CvdEventText]));
+    L.Add('  Share of the admissions living:');
+    for k := 0 to 4 do
+      L.Add(Format('    %-16s %5.1f %%', [BandName[k], 100 * Band[k] / se]));
+  end;
+  L.Add('');
+end;
+
 procedure TForm1.ShowInfo;
 var
   L: TStringList;
@@ -541,6 +622,7 @@ begin
   dom := FDepDomain;
   L := TStringList.Create;
   try
+    if rgColour.ItemIndex = ciPhysical then AddPhysical(L);
     i := FMap.Selected;
     if i >= 0 then begin
       L.Add('SELECTED AREA: ' + LsoaName[i] + '  (' + LsoaCode[i] + ')');
@@ -549,6 +631,8 @@ begin
         L.Add('  built-up area      ' + LsoaBUA[i]);
       L.Add(Format('  population         %s (%s)', [Thousands(LsoaPop[i]), PopulationYear]));
       L.Add(Format('  land area          %.3f km2', [LsoaLandKm2[i]]));
+      L.Add(Format('  height             %.0f m at its label point (OS Terrain 50)',
+        [ReliefHeight(LsoaLabelE[i], LsoaLabelN[i])]));
       L.Add(Format('  density            %s people per km2', [Thousands(LsoaDensity(i))]));
       L.Add('  Indices of Deprivation 2025      score    rank of 33,755   decile');
       for d := 0 to DomainCount - 1 do
@@ -666,6 +750,13 @@ begin
       if i < 0 then i := NearestLsoa(TownE[t], TownN[t]);
       if FInc[i] then
         L.Add(Format('  %-24s %9s  %s', [TownName[t], Thousands(TownPop[t]), AreaName[LsoaArea(i)]]));
+    end;
+    L.Add(Format('  smaller towns, %s-%s:', [Thousands(SmallTownMinPopulation), Thousands(TownMinPopulation)]));
+    for t := 0 to SmallTownCount - 1 do begin
+      i := LsoaAt(SmallTownE[t], SmallTownN[t]);
+      if i < 0 then i := NearestLsoa(SmallTownE[t], SmallTownN[t]);
+      if FInc[i] then
+        L.Add(Format('  %-24s %9s  %s', [Copy(SmallTownName[t], 1, 24), Thousands(SmallTownPop[t]), AreaName[LsoaArea(i)]]));
     end;
     memInfo.Lines.Text := L.Text;
   finally
@@ -1012,6 +1103,13 @@ begin
       L.Add(Format('    %-23s %6.0f admissions/yr   %5.1f min to %s',
         [DistrictName[d], DEv[d], DT[d] / DEv[d], DriveDomainShort(FDriveDomain)]));
   L.Add('');
+  if FDriveDomain = DriveQeqmKchDomain then begin
+    PairSummary(L, DriveHospQEQM, DriveHospKCH);
+    L.Add('');
+  end else if FDriveDomain = DriveWhhQeqmDomain then begin
+    PairSummary(L, DriveHospWHH, DriveHospQEQM);
+    L.Add('');
+  end;
   WhhKchSummary(L);
   L.Add('');
   AmbulanceSummary(L);
@@ -1548,6 +1646,49 @@ end;
 
 // one centre for the whole of Kent and Medway, whatever areas are chosen:
 // William Harvey (Ashford) against Kent and Canterbury
+// two hospitals against each other (the nearer-of-two drive choices other than
+// WHH/K&C, which has WhhKchSummary), for the chosen areas and speeds: by
+// district, the mean time to each, to the nearer, and the share of admissions
+// nearer the first
+procedure TForm1.PairSummary(L: TStrings; HA, HB: Integer);
+var
+  i, d: Integer;
+  w, ta, tb: Double;
+  Ev, SA, SB, SN, NA: array of Double;
+  function Abbr(h: Integer): string;
+  begin
+    if h = DriveHospWHH then result := 'WHH'
+    else if h = DriveHospKCH then result := 'K&C'
+    else result := HospitalShort[h];
+  end;
+  procedure Row(const Nm: string; e, a, b, n, na: Double);
+  begin
+    L.Add(Format('    %-23s %7.0f %9.1f %9.1f %7.1f %10.1f%%', [Nm, e, a / e, b / e, n / e, 100 * na / e]));
+  end;
+begin
+  SetLength(Ev, DistrictCount + 1); SetLength(SA, DistrictCount + 1); SetLength(SB, DistrictCount + 1);
+  SetLength(SN, DistrictCount + 1); SetLength(NA, DistrictCount + 1);
+  for i := 0 to LsoaCount - 1 do begin
+    if not FInc[i] then Continue;
+    w := LsoaCvdEvents(i);
+    ta := LsoaDriveMinutes(i, HA, FDriveScenario);
+    tb := LsoaDriveMinutes(i, HB, FDriveScenario);
+    for d in [LsoaDistrict[i], DistrictCount] do begin
+      Ev[d] := Ev[d] + w; SA[d] := SA[d] + w * ta; SB[d] := SB[d] + w * tb;
+      SN[d] := SN[d] + w * Min(ta, tb);
+      if ta < tb then NA[d] := NA[d] + w;
+    end;
+  end;
+  L.Add(UpperCase(HospitalName[HA]) + ' AGAINST ' + UpperCase(HospitalName[HB]) + ' - ' + TimeWhat + ', '
+    + DriveScenarioName[FDriveScenario] + ', weighted by expected ' + CvdEventText + ' admissions');
+  L.Add(Format('    %-23s %7s %9s %9s %7s %10s', ['district', 'adm/yr', Abbr(HA), Abbr(HB), 'nearer',
+    'nearer ' + Abbr(HA)]));
+  for d := 0 to DistrictCount - 1 do
+    if FDistInc[d] and (Ev[d] > 0) then Row(DistrictName[d], Ev[d], SA[d], SB[d], SN[d], NA[d]);
+  if Ev[DistrictCount] > 0 then
+    Row('chosen areas', Ev[DistrictCount], SA[DistrictCount], SB[DistrictCount], SN[DistrictCount], NA[DistrictCount]);
+end;
+
 procedure TForm1.WhhKchSummary(L: TStrings);
 const
   Hosp: array[0..1] of Integer = (DriveHospWHH, DriveHospKCH);
@@ -1832,6 +1973,23 @@ begin
       end;
       y0 := y0 + DriveBandCount * h + 10;
     end;
+    ciPhysical: begin
+      cv.TextOut(BarX, 2, 'Height, m (OS Terrain 50), shaded from the NW');
+      h := 84;
+      for y := 0 to h - 1 do begin
+        cv.Pen.Color := ReliefTint(ReliefTop * (1 - y / (h - 1)));
+        cv.Line(BarX, y0 + y, BarX + BarW, y0 + y);
+      end;
+      cv.Pen.Color := clBlack;
+      cv.Rectangle(BarX, y0, BarX + BarW, y0 + h);
+      for i := 0 to 5 do begin
+        y := y0 + Round((1 - 50 * i / ReliefTop) * (h - 1));
+        cv.Line(BarX + BarW, y, BarX + BarW + 5, y);
+        lab := IntToStr(50 * i);
+        cv.TextOut(BarX + BarW + 8, y - cv.TextHeight(lab) div 2, lab);
+      end;
+      y0 := y0 + h + 14;
+    end;
   else
     begin
       cv.TextOut(BarX, 2, 'No fill');
@@ -1843,12 +2001,21 @@ begin
   if cgLayers.Checked[liTrunk] then begin KeyLine(y0, clTrunk, 3, 'trunk road (primary route)', False); Inc(y0, KeyPitch); end;
   if cgLayers.Checked[liPrimary] then begin KeyLine(y0, clPrimary, 2, 'primary A road', False); Inc(y0, KeyPitch); end;
   if cgLayers.Checked[liRail] then begin KeyLine(y0, clRail, 4, 'railway', True); Inc(y0, KeyPitch); end;
+  if cgLayers.Checked[liRivers] then begin KeyLine(y0, clRiver, 2, 'river or canal (main rivers heavier)', False); Inc(y0, KeyPitch); end;
   cv.Pen.Width := 1;
   if cgLayers.Checked[liTowns] then begin
     cv.Brush.Style := bsSolid; cv.Brush.Color := clWhite; cv.Pen.Color := clBlack;
     cv.Ellipse(BarX + 13, y0 - 4, BarX + 21, y0 + 4);
     cv.Brush.Style := bsClear;
     cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, Format('town over %s', [Thousands(TownMinPopulation)]));
+    Inc(y0, KeyPitch);
+  end;
+  if cgLayers.Checked[liSmallTowns] then begin
+    cv.Brush.Style := bsSolid; cv.Brush.Color := clWhite; cv.Pen.Color := clBlack;
+    cv.Ellipse(BarX + 14, y0 - 3, BarX + 20, y0 + 3);
+    cv.Brush.Style := bsClear;
+    cv.TextOut(BarX + 42, y0 - cv.TextHeight('T') div 2, Format('town of %s-%s',
+      [Thousands(SmallTownMinPopulation), Thousands(TownMinPopulation)]));
     Inc(y0, KeyPitch);
   end;
   if cgLayers.Checked[liBary] then begin
@@ -1970,6 +2137,19 @@ procedure TForm1.RunSnapshot(Data: PtrInt);
     end;
   end;
 
+  procedure PrintPair;            // the memo's two-hospital section
+  var
+    k: Integer;
+    on: Boolean;
+  begin
+    on := False;
+    for k := 0 to memInfo.Lines.Count - 1 do begin
+      if (Pos(' AGAINST ', memInfo.Lines[k]) > 0) and (Pos(' - ', memInfo.Lines[k]) > 0) then on := True;
+      if on and (memInfo.Lines[k] = '') then Break;
+      if on then WriteLn(memInfo.Lines[k]);
+    end;
+  end;
+
 var
   i: Integer;
   ok: Boolean;
@@ -1991,6 +2171,10 @@ begin
   FAmbBox.Checked := True; AmbBoxClick(nil); Save('drive_whh_kch_ambulance');
   FAmbBox.Checked := ok; AmbBoxClick(nil);
   rgSpeeds.ItemIndex := i; rgSpeedsClick(nil);
+  FDriveDomain := DriveQeqmKchDomain; FMap.SetDriveDomain(FDriveDomain); FBoxMode := -1; ApplyColouring; Save('drive_qeqm_kch');
+  PrintPair;
+  FDriveDomain := DriveWhhQeqmDomain; FMap.SetDriveDomain(FDriveDomain); FBoxMode := -1; ApplyColouring; Save('drive_whh_qeqm');
+  PrintPair;
   FDriveDomain := DriveBestDomain; FMap.SetDriveDomain(FDriveDomain); FBoxMode := -1; ApplyColouring; Save('drive_best');
   i := cbEvents.ItemIndex;
   cbEvents.ItemIndex := 2; cbEventsChange(nil); Save('drive_best_stemi');
@@ -2004,6 +2188,19 @@ begin
   FAreas := [0, 1]; ApplyAreas; ApplyColouring; Save('medians_north_east');
   FAreas := AllAreas; ApplyAreas; ApplyColouring;
   cgLayers.Checked[liMedians] := ok; ApplyLayers;
+  rgColour.ItemIndex := ciPhysical; rgColourClick(nil); Save('physical');
+  cgLayers.Checked[liSmallTowns] := False; ApplyLayers; Save('physical_large_towns');
+  cgLayers.Checked[liSmallTowns] := True; ApplyLayers;
+  for i := 0 to Min(16, memInfo.Lines.Count - 1) do WriteLn(memInfo.Lines[i]);   // its memo section
+  with GetFormImage do
+    try
+      SaveToFile(FSnapshot + '_physical_window.bmp');
+    finally
+      Free;
+    end;
+  FMap.SetView(578000, 158000, 3); Save('physical_zoom');
+  FMap.ResetView;
+  rgColour.ItemIndex := ciCvd; rgColourClick(nil);
   // zoom on the barycentre, with its LSOA selected
   FMap.SetView(FBaryE, FBaryN, 6);
   i := LsoaAt(FBaryE, FBaryN);

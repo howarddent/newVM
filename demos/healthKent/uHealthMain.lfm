@@ -93,6 +93,7 @@ object Form1: TForm1
             'Deprivation (IoD 2025)'
             'Expected admissions'
             'Drive time to hospital'
+            'Physical (relief, rivers)'
             'Nothing'
           )
           TabOrder = 0
@@ -214,6 +215,8 @@ object Form1: TForm1
             'Isochrones'
             'Hospitals'
             'Median lines'
+            'Rivers'
+            'Towns 10-50,000'
           )
           TabOrder = 2
           OnItemClick = cgLayersItemClick
