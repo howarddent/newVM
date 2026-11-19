@@ -167,10 +167,41 @@ begin
   Check(tag+' FGMRES plain', r < 1e-8, Timing(r, t));
 end;
 
+{ A nonsingular matrix whose diagonal is EXPLICITLY STORED BUT ZERO, which
+  is what FEM4's frequency-domain block systems look like (uDescriptor's
+  FactorFrequency adds a zero diagonal entry to every row so that a sparse
+  direct solver has a slot there). Solving it needs a genuine row
+  interchange, so this is the regression test for a backend that fails to
+  pivot - which an Accelerate build did, silently, returning NaN with an
+  OK status, until its pivotTolerance was set to the library's own default
+  rather than 0. Nothing else in this file needs pivoting at all. }
+procedure ZeroDiagonalPivot;
+var
+  R, C: TIntegerArray;
+  V: TDoubleArray;
+  A: TVMSparseMtx;
+  B, X: TVMobj;
+  ok: Boolean;
+begin
+  SetLength(R, 4); SetLength(C, 4); SetLength(V, 4);
+  //[[0 1],[1 0]] * (5,3) = (3,5)
+  R[0]:=0; C[0]:=1; V[0]:=1.0;
+  R[1]:=1; C[1]:=0; V[1]:=1.0;
+  R[2]:=0; C[2]:=0; V[2]:=0.0;   //explicit zero diagonal
+  R[3]:=1; C[3]:=1; V[3]:=0.0;
+  A := TripletsToSparse(2, 2, R, C, V);
+  B := TVMobj.Create(2,1); B.DataPtr[0] := 3.0; B.DataPtr[1] := 5.0;
+  X := PardisoSolve(A, B, False);
+  ok := SameValue(X.DataPtr[0], 5.0, 1e-12) and SameValue(X.DataPtr[1], 3.0, 1e-12);
+  Check('zero-diagonal pivot', ok,
+    Format('x = %.6f %.6f (expect 5, 3)', [X.DataPtr[0], X.DataPtr[1]]));
+end;
+
 var
   defaultThreads, requested: Integer;
 begin
   InitializeCBLAS;
+  ZeroDiagonalPivot;
   defaultThreads := GetMKLThreads;
   WriteLn('Default MKL threads: ', defaultThreads);
   RunAll('small', 6);
