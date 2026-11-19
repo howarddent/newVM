@@ -115,7 +115,9 @@ type
     FReliefTex: GLuint;             // the shaded relief, built on first use
     FReliefBuilt: Boolean;
     FShowBarycentre, FShowGeoCentre, FShowCvdBarycentre: Boolean;
-    FShowIsochrones, FShowHospitals, FShowMedians: Boolean;
+    FShowIsochrones, FShowHospitals, FShowMedians, FShowQuarters: Boolean;
+    FQuarterHosp: array[0..3] of Integer;    // the population quarters' chosen hospitals
+    FQuarterText: array[0..3] of string;
     FMedE, FMedN: Double;
     FMedQ: array[0..3] of Double;
     FDriveDomain, FDriveScenario: Integer;
@@ -144,6 +146,7 @@ type
     FIsoTex: array[0..3] of TKentTextTexture;
     FBestTex: TKentTextTexture;
     FQuadTex: array[0..3] of TKentTextTexture;
+    FQuarterTex: array[0..3] of TKentTextTexture;
     FTexBuilt: Boolean;
     procedure UpdateScale;
     procedure ToPixel(E, N: Double; out PX, PY: Double);
@@ -159,6 +162,7 @@ type
     procedure DrawHospitals;
     procedure DrawBestSite;
     procedure DrawMedianLines;
+    procedure DrawQuarters;
     procedure BuildTextures;
     procedure FreeTextures;
     function CreateTextTexture(const S: string; FontSize: Integer; Bold: Boolean): TKentTextTexture;
@@ -180,6 +184,7 @@ type
     procedure SetShowIsochrones(V: Boolean);
     procedure SetShowHospitals(V: Boolean);
     procedure SetShowMedians(V: Boolean);
+    procedure SetShowQuarters(V: Boolean);
   protected
     procedure MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
     procedure MouseMove(Shift: TShiftState; X, Y: Integer); override;
@@ -197,6 +202,8 @@ type
     // admissions' weighted median lines and the quadrant shares (NW, NE, SW, SE, %)
     procedure SetMedianLines(E, N: Double; const Q: array of Double);
     procedure SetDriveDomain(D: Integer);      // isochrones and hospital highlight
+    // the population quarters' chosen hospitals and labels (NW, NE, SW, SE)
+    procedure SetQuarters(const Hosp: array of Integer; const Labels: array of string);
     procedure SetDriveScenario(S: Integer);    // 0 free-flow, 1 peak, 2 blue light
     // after SetCvdEventKind: the best site, its isochrones and the labels follow the kind
     procedure EventKindChanged;
@@ -226,6 +233,7 @@ type
     property ShowIsochrones: Boolean read FShowIsochrones write SetShowIsochrones;
     property ShowHospitals: Boolean read FShowHospitals write SetShowHospitals;
     property ShowMedianLines: Boolean read FShowMedians write SetShowMedians;
+    property ShowQuarters: Boolean read FShowQuarters write SetShowQuarters;
     property DriveDomain: Integer read FDriveDomain;
     property DriveScenario: Integer read FDriveScenario;
     property OnSelectLsoa: TSelectLsoaEvent read FOnSelectLsoa write FOnSelectLsoa;
@@ -253,6 +261,7 @@ const
   clHospital = TColor($2020C8);     // RGB(200, 32, 32)
   clBestSite = TColor($3C8C14);     // RGB(20, 140, 60)
   clMedian = TColor($A05000);       // RGB(0, 80, 160)
+  clQuarter = TColor($00508C);      // RGB(140, 80, 0)
   clBestZone = TColor($1E5A00);     // RGB(0, 90, 30), the star's outline: the drive fill is green near it
   clIsochrone = TColor($9900D6);    // RGB(214, 0, 153)
   DriveBandMinutes = 10;            // fill bands
@@ -395,6 +404,7 @@ begin
   inherited Create(TheOwner);
   StencilBits := 8;
   FSelected := -1;
+  for k := 0 to 3 do FQuarterHosp[k] := -1;
   FMode := kcmDensity;
   FShowDistricts := True;
   FShowTowns := True;
@@ -563,6 +573,18 @@ begin
   Invalidate;
 end;
 
+procedure TKentMapView.SetQuarters(const Hosp: array of Integer; const Labels: array of string);
+var
+  k: Integer;
+begin
+  for k := 0 to 3 do begin
+    FQuarterHosp[k] := Hosp[k];
+    FQuarterText[k] := Labels[k];
+  end;
+  FTexBuilt := False;
+  Invalidate;
+end;
+
 procedure TKentMapView.SetMedianLines(E, N: Double; const Q: array of Double);
 var
   k: Integer;
@@ -610,6 +632,7 @@ procedure TKentMapView.SetShowCvdBarycentre(V: Boolean); begin SetBool(FShowCvdB
 procedure TKentMapView.SetShowIsochrones(V: Boolean); begin SetBool(FShowIsochrones, V); end;
 procedure TKentMapView.SetShowHospitals(V: Boolean); begin SetBool(FShowHospitals, V); end;
 procedure TKentMapView.SetShowMedians(V: Boolean); begin SetBool(FShowMedians, V); end;
+procedure TKentMapView.SetShowQuarters(V: Boolean); begin SetBool(FShowQuarters, V); end;
 
 // ---- text ---------------------------------------------------------------------
 
@@ -691,6 +714,8 @@ begin
   for i := 0 to 3 do
     if not IsNan(FMedE) then
       FQuadTex[i] := CreateTextTexture(Format('%s %.1f %%', [QuadName[i], FMedQ[i]]), 9, True);
+  for i := 0 to 3 do
+    if FQuarterText[i] <> '' then FQuarterTex[i] := CreateTextTexture(FQuarterText[i], 9, True);
   FTexBuilt := True;
 end;
 
@@ -715,6 +740,7 @@ begin
   for i := 0 to IsoLevelCount - 1 do Del(FIsoTex[i]);
   Del(FBestTex);
   for i := 0 to 3 do Del(FQuadTex[i]);
+  for i := 0 to 3 do Del(FQuarterTex[i]);
   FTexBuilt := False;
 end;
 
@@ -1008,6 +1034,58 @@ begin
     lx := EnsureRange(lx, FQuadTex[k].W / 2 + 4, Width - FQuadTex[k].W / 2 - 4);
     ly := EnsureRange(ly, FQuadTex[k].H + 4, Height - FQuadTex[k].H - 4);
     DrawLabel(FQuadTex[k], lx - FQuadTex[k].W / 2, ly, True);
+  end;
+end;
+
+// the population quarters: the two lines, each quarter's label out towards
+// its corner, and a ring round each quarter's chosen hospital
+procedure TKentMapView.DrawQuarters;
+const
+  QuadSE: array[0..3] of Integer = (-1, 1, -1, 1);
+  QuadSN: array[0..3] of Integer = (1, 1, -1, -1);
+var
+  Q: TPopQuarters;
+  ca, sa, cb, sb, x0, y0, x1, y1, cx, cy, ex, ny, lx, ly, px, py: Double;
+  k, pass, i: Integer;
+begin
+  Q := PopQuarters;
+  ca := Cos(DegToRad(Q.AngE)); sa := Sin(DegToRad(Q.AngE));
+  cb := Cos(DegToRad(Q.AngN)); sb := Sin(DegToRad(Q.AngN));
+  for pass := 0 to 1 do begin
+    if pass = 0 then begin glColor4f(1, 1, 1, 0.85); glLineWidth(5.0); end
+    else begin GLColour(clQuarter); glLineWidth(2.4); end;
+    glBegin(GL_LINES);
+      ToPixel((Q.CE - FNMin * sa) / ca, FNMin, x0, y0);      // near north-south
+      ToPixel((Q.CE - FNMax * sa) / ca, FNMax, x1, y1);
+      glVertex2d(x0, y0); glVertex2d(x1, y1);
+      ToPixel(FEMin, (Q.CN + FEMin * sb) / cb, x0, y0);      // near east-west
+      ToPixel(FEMax, (Q.CN + FEMax * sb) / cb, x1, y1);
+      glVertex2d(x0, y0); glVertex2d(x1, y1);
+    glEnd;
+  end;
+  for k := 0 to 3 do                             // rings round the chosen hospitals
+    if (FQuarterHosp[k] >= 0) and (FQuarterHosp[k] < HospitalCount) then begin
+      ToPixel(HospitalE[FQuarterHosp[k]], HospitalN[FQuarterHosp[k]], px, py);
+      for pass := 0 to 1 do begin
+        if pass = 0 then begin glColor4f(1, 1, 1, 0.9); glLineWidth(6.0); end
+        else begin GLColour(clQuarter); glLineWidth(3.0); end;
+        glBegin(GL_LINE_LOOP);
+          for i := 0 to 31 do glVertex2d(px + 15 * Cos(2 * Pi * i / 32), py + 15 * Sin(2 * Pi * i / 32));
+        glEnd;
+      end;
+    end;
+  ToPixel(FEMin, FNMin, x0, y0);
+  ToPixel(FEMax, FNMax, x1, y1);
+  ToPixel(Q.CrossE, Q.CrossN, cx, cy);
+  for k := 0 to 3 do begin                       // labels near the corners, clear of the towns
+    if not FQuarterTex[k].Built then Continue;
+    if QuadSE[k] > 0 then ex := x1 else ex := x0;
+    if QuadSN[k] > 0 then ny := Max(y0, y1) else ny := Min(y0, y1);
+    lx := cx + 0.92 * (ex - cx);
+    ly := cy + 0.92 * (ny - cy);
+    lx := EnsureRange(lx, FQuarterTex[k].W / 2 + 4, Width - FQuarterTex[k].W / 2 - 4);
+    ly := EnsureRange(ly, FQuarterTex[k].H + 4, Height - FQuarterTex[k].H - 4);
+    DrawLabel(FQuarterTex[k], lx - FQuarterTex[k].W / 2, ly, True);
   end;
 end;
 
@@ -1314,6 +1392,7 @@ begin
   glDisable(GL_LINE_SMOOTH);
   if FShowIsochrones then DrawIsoLabels;
   if FShowMedians then DrawMedianLines;
+  if FShowQuarters then DrawQuarters;
   DrawMarkers;
   if FShowHospitals then begin
     DrawHospitals;

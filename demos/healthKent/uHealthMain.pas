@@ -41,7 +41,11 @@ unit uHealthMain;
      (weighted by expected admissions), the geographic centre and the
      admissions' weighted median lines (--medians: a north-south and an
      east-west line, each with half the admissions either side, and the
-     share in each quadrant they make). Wheel zooms,
+     share in each quadrant they make) and the population quarters
+     (--quarters: two lines that split the population into four equal
+     quarters, each with the hospital inside it that gives the lowest
+     admissions-weighted mean drive time under every speed scenario,
+     ringed; see uKentData.PopQuarters). Wheel zooms,
      drag pans, a click selects an LSOA and the memo shows its figures.
      The legend beside the map shows the colour scale (and, for
      deprivation, the share of residents in each decile) and the line and
@@ -168,6 +172,8 @@ type
     procedure ViewChanged(Sender: TObject);
     procedure ShowInfo;
     procedure AddPhysical(L: TStrings);
+    procedure QuartersSummary(L: TStrings);
+    procedure UpdateQuarters;
     procedure CvdSummary(L: TStrings);
     procedure CorridorSummary(L: TStrings; Total: Double);
     procedure DriveSummary(L: TStrings);
@@ -200,7 +206,7 @@ const
   liDistricts = 0; liLsoas = 1; liTowns = 2; liMotorways = 3; liTrunk = 4;
   liPrimary = 5; liRail = 6; liBary = 7; liGeo = 8; liCvdBary = 9;
   liIsochrones = 10; liHospitals = 11; liMedians = 12;
-  liRivers = 13; liSmallTowns = 14;
+  liRivers = 13; liSmallTowns = 14; liQuarters = 15;
 
 // what the chosen event kind counts, for the memo
 function EventsPhrase: string;
@@ -301,6 +307,7 @@ begin
     cgLayers.Checked[d] := d in [liDistricts, liTowns, liMotorways, liTrunk, liRail, liBary, liGeo, liCvdBary,
       liIsochrones, liHospitals];
   cgLayers.Checked[liMedians] := Application.HasOption('medians');
+  cgLayers.Checked[liQuarters] := Application.HasOption('quarters');
   if rgColour.ItemIndex = ciPhysical then ShowPhysicalLayers;
   ApplyLayers;
   ApplyColouring;
@@ -331,6 +338,7 @@ begin
   FMap.SetCvdBarycentre(FCvdE, FCvdN);
   CvdMedianLines(FInc, FMedE, FMedN, FMedQ);
   FMap.SetMedianLines(FMedE, FMedN, FMedQ);
+  UpdateQuarters;
   several := (FAreas <> []) and (FAreas <> [0]) and (FAreas <> [1]) and (FAreas <> [2]);
   for a := 0 to AreaCount - 1 do begin
     c.BE := NaN;
@@ -437,7 +445,7 @@ begin
   end;
   for d in [liRivers, liMotorways, liTrunk, liPrimary, liRail, liTowns, liSmallTowns, liDistricts] do
     cgLayers.Checked[d] := True;
-  for d in [liIsochrones, liLsoas, liBary, liGeo, liCvdBary, liHospitals, liMedians] do
+  for d in [liIsochrones, liLsoas, liBary, liGeo, liCvdBary, liHospitals, liMedians, liQuarters] do
     cgLayers.Checked[d] := False;
   ApplyLayers;
 end;
@@ -469,6 +477,8 @@ begin
   FMap.ShowIsochrones := cgLayers.Checked[liIsochrones];
   FMap.ShowHospitals := cgLayers.Checked[liHospitals];
   FMap.ShowMedianLines := cgLayers.Checked[liMedians];
+  FMap.ShowQuarters := cgLayers.Checked[liQuarters];
+  UpdateQuarters;
   pbLegend.Invalidate;
 end;
 
@@ -567,6 +577,107 @@ end;
 
 // the physical map's memo section: heights over the chosen areas, by LSOA
 // label point, population- and admissions-weighted, and the highest ground
+// the population quarters (uKentData.PopQuarters): each quarter's best
+// hospital to the map, if the layer is on (it depends on the event kind)
+procedure TForm1.UpdateQuarters;
+var
+  q: Integer;
+  H: array[0..3] of Integer;
+  T: array[0..3] of string;
+  M: array[0..2] of Double;
+  Agree, Inside: Boolean;
+  P: TPopQuarters;
+begin
+  if (FMap = nil) or not cgLayers.Checked[liQuarters] then Exit;
+  P := PopQuarters;
+  for q := 0 to 3 do begin
+    H[q] := QuarterHospital(q, M, Agree, Inside);
+    T[q] := Format('%s %.1f %%: %s', [QuarterName[q], P.Share[q], HospitalShort[H[q]]]);
+  end;
+  FMap.SetQuarters(H, T);
+end;
+
+// the population quarters: lines, shares, and each quarter's hospitals'
+// admissions-weighted mean drive times under the three speed scenarios
+procedure TForm1.QuartersSummary(L: TStrings);
+var
+  P: TPopQuarters;
+  q, h, s, i, best, n: Integer;
+  M: array[0..2] of Double;
+  Agree, Inside: Boolean;
+  Pop, Ev, W, Sum, Over: array of Double;
+  Chosen: array[0..3] of Integer;
+  t, tn, tq: Double;
+  lat, lon: Double;
+  line: string;
+begin
+  P := PopQuarters;
+  SetLength(Pop, 4); SetLength(Ev, 4);
+  for i := 0 to LsoaCount - 1 do begin
+    q := LsoaQuarter(i);
+    Pop[q] := Pop[q] + LsoaPop[i];
+    Ev[q] := Ev[q] + LsoaCvdEvents(i);
+  end;
+  L.Add('POPULATION QUADRANTS AND THEIR HOSPITALS (whole of Kent and Medway, whatever areas are chosen)');
+  BNGToWGS84(P.CrossE, P.CrossN, lat, lon);
+  L.Add('  Two lines, each with half the population either side, turned until the four quarters were equal:');
+  L.Add(Format('  one %.2f deg off north-south, one %.2f deg off east-west (the pair nearest due north-south and', [P.AngE, P.AngN]));
+  L.Add(Format('  east-west). The east-west one was then moved %.1f km south, at the same angle, through the', [P.ShiftM / 1000]));
+  L.Add(Format('  population barycentre (%s), so the quarters are no longer equal. Crossing: %s (%.4fN %.4fE).',
+    [GridRef(P.BaryE, P.BaryN), GridRef(P.CrossE, P.CrossN), lat, lon]));
+  L.Add('  Mean drive minutes from the quadrant''s LSOAs, weighted by expected ' + CvdEventText
+    + ' admissions; hospitals inside the quadrant only:');
+  L.Add('    quadrant pop.   adm/yr  hospital              free-flow   peak  blue light  peak >60 min');
+  for q := 0 to 3 do begin
+    best := QuarterHospital(q, M, Agree, Inside);
+    Chosen[q] := best;
+    n := 0;
+    for h := 0 to HospitalCount - 1 do begin
+      if Inside and (PointQuarter(HospitalE[h], HospitalN[h]) <> q) then Continue;
+      if (not Inside) and (h <> best) then Continue;
+      SetLength(Sum, 3); SetLength(W, 1); SetLength(Over, 1);
+      for s := 0 to 2 do Sum[s] := 0;
+      W[0] := 0; Over[0] := 0;
+      for i := 0 to LsoaCount - 1 do
+        if LsoaQuarter(i) = q then begin
+          W[0] := W[0] + LsoaCvdEvents(i);
+          for s := 0 to 2 do Sum[s] := Sum[s] + LsoaCvdEvents(i) * LsoaTransportMinutes(i, h, s);
+          if LsoaTransportMinutes(i, h, 1) > 60 then Over[0] := Over[0] + LsoaCvdEvents(i);
+        end;
+      if n = 0 then line := Format('    %-7s %5.1f%% %7.0f  ', [QuarterName[q], 100 * Pop[q] / Max(1, Pop[0] + Pop[1] + Pop[2] + Pop[3]), Ev[q]])
+      else line := '                          ';
+      L.Add(line + Format('%s %-20s %8.1f %7.1f %9.1f %10.1f %%',
+        [IfThen(h = best, '>', ' '), HospitalShort[h], Sum[0] / W[0], Sum[1] / W[0], Sum[2] / W[0], 100 * Over[0] / W[0]]));
+      Inc(n);
+    end;
+    if not Inside then L.Add('      no hospital inside this quadrant: the best of all seven');
+    if not Agree then L.Add('      the scenarios disagree: chosen on the sum of the three means');
+  end;
+  L.Add('  > the quadrant''s hospital: the lowest mean in every scenario.');
+  // the four together: each quarter to its own hospital, and anyone to the nearest of the four
+  SetLength(Sum, 6); for s := 0 to 5 do Sum[s] := 0;
+  t := 0;
+  for i := 0 to LsoaCount - 1 do begin
+    t := t + LsoaCvdEvents(i);
+    for s := 0 to 2 do begin
+      tq := LsoaTransportMinutes(i, Chosen[LsoaQuarter(i)], s);
+      tn := tq;
+      for q := 0 to 3 do tn := Min(tn, LsoaTransportMinutes(i, Chosen[q], s));
+      Sum[s] := Sum[s] + LsoaCvdEvents(i) * tq;
+      Sum[3 + s] := Sum[3 + s] + LsoaCvdEvents(i) * tn;
+    end;
+  end;
+  L.Add('  The four together, county mean minutes      free-flow   peak  blue light');
+  L.Add(Format('    each quadrant to its own hospital         %8.1f %7.1f %9.1f', [Sum[0] / t, Sum[1] / t, Sum[2] / t]));
+  L.Add(Format('    to the nearest of the four                %8.1f %7.1f %9.1f', [Sum[3] / t, Sum[4] / t, Sum[5] / t]));
+  for s := 0 to 2 do begin
+    Sum[s] := 0;
+    for i := 0 to LsoaCount - 1 do Sum[s] := Sum[s] + LsoaCvdEvents(i) * LsoaTransportMinutes(i, DriveNearestDomain, s);
+  end;
+  L.Add(Format('    to the nearest of all seven               %8.1f %7.1f %9.1f', [Sum[0] / t, Sum[1] / t, Sum[2] / t]));
+  L.Add('');
+end;
+
 procedure TForm1.AddPhysical(L: TStrings);
 var
   i, k: Integer;
@@ -623,6 +734,7 @@ begin
   L := TStringList.Create;
   try
     if rgColour.ItemIndex = ciPhysical then AddPhysical(L);
+    if cgLayers.Checked[liQuarters] then QuartersSummary(L);
     i := FMap.Selected;
     if i >= 0 then begin
       L.Add('SELECTED AREA: ' + LsoaName[i] + '  (' + LsoaCode[i] + ')');
@@ -2063,6 +2175,10 @@ begin
     KeyLine(y0, clMedian, 3, 'median lines of admissions; % in each quadrant', False);
     Inc(y0, KeyPitch);
   end;
+  if cgLayers.Checked[liQuarters] then begin
+    KeyLine(y0, clQuarter, 3, 'population quadrants; ringed: each one''s hospital', False);
+    Inc(y0, KeyPitch);
+  end;
   if not ((FAreas = AllAreas) or (FAreas = [0]) or (FAreas = [1]) or (FAreas = [2]))
     and (cgLayers.Checked[liBary] or cgLayers.Checked[liCvdBary] or cgLayers.Checked[liGeo]) then
     cv.TextOut(BarX, y0 - cv.TextHeight('T') div 2, 'small markers: each chosen area''s own centres');
@@ -2188,6 +2304,14 @@ begin
   FAreas := [0, 1]; ApplyAreas; ApplyColouring; Save('medians_north_east');
   FAreas := AllAreas; ApplyAreas; ApplyColouring;
   cgLayers.Checked[liMedians] := ok; ApplyLayers;
+  cgLayers.Checked[liQuarters] := True; ApplyLayers; ShowInfo; Save('quarters');
+  ok := False;                                   // its memo section
+  for i := 0 to memInfo.Lines.Count - 1 do begin
+    if Pos('POPULATION QUADRANTS', memInfo.Lines[i]) = 1 then ok := True;
+    if ok and (memInfo.Lines[i] = '') then Break;
+    if ok then WriteLn(memInfo.Lines[i]);
+  end;
+  cgLayers.Checked[liQuarters] := False; ApplyLayers; ShowInfo;
   rgColour.ItemIndex := ciPhysical; rgColourClick(nil); Save('physical');
   cgLayers.Checked[liSmallTowns] := False; ApplyLayers; Save('physical_large_towns');
   cgLayers.Checked[liSmallTowns] := True; ApplyLayers;

@@ -3865,6 +3865,42 @@ packages. Compiled binaries and each demo's own `lib/` output are
       against K&C; against WHH, Canterbury goes 31.5 % and Dover 39 % to WHH.
       Snapshot adds `_drive_qeqm_kch` and `_drive_whh_qeqm` and prints both
       sections.
+  - **Population quadrants** (2026-11-18, layer "Pop. quarters",
+    `--quarters`): Kent and Medway in four quadrants, each with the existing
+    hospital inside it that serves it best.
+    - **The lines** (`uKentData.PopQuarters`, computed once, whole ICB
+      whatever areas are chosen; mid-2024 population by LSOA label point).
+      First, two lines that each halve the population, turned until all four
+      quarters are within 0.2 points of 25 %. Many pairs do that; the one kept
+      is nearest due north-south and east-west (angles searched in 0.25 deg
+      steps over +-20 deg, least sum of squares): 1.50 deg off north-south and
+      -5.75 off east-west. Then, at the user's request, the east-west line is
+      moved 3.6 km south at the same angle so it passes through the population
+      barycentre (TQ 87980 58078). The quadrants are then unequal: NW 27.6,
+      NE 28.6, SW 22.4, SE 21.4 %, crossing at TQ 78586 59024 by Maidstone.
+      `EqualCN` keeps the equal-quarters offset.
+    - **The hospital** (`QuarterHospital`): among the hospitals inside the
+      quadrant, the lowest mean drive time from its LSOAs, weighted by expected
+      admissions (the chosen kind), in every speed scenario. If the scenarios
+      disagree it takes the lowest sum and the memo says so; with no hospital
+      inside, the best of all seven. They agree in all four. MI + stroke,
+      free-flow / peak / blue light, minutes:
+      - NW Darent Valley 14.9 / 18.4 / 12.1 (Medway 17.6);
+      - NE Kent and Canterbury 26.7 / 33.8 / 21.9 (QEQM 30.2);
+      - SW Maidstone 19.0 / 24.3 / 15.4 (Tunbridge Wells 19.9, close);
+      - SE William Harvey 20.5 / 25.0 / 17.3, the only hospital inside.
+    - **The four together**: each quadrant to its own hospital 20.8 / 26.1 /
+      17.1 min, to the nearest of the four 18.1 / 22.8 / 14.7, to the nearest
+      of all seven 13.0 / 16.6 / 10.6.
+    - **Before the move** (equal quarters): NW Darent Valley, SW Maidstone,
+      SE William Harvey, NE QEQM (the only hospital inside then; 35 % over an
+      hour at peak); each to its own 21.8 / 27.3 / 17.9, nearest of the four
+      17.1 / 21.5 / 14.0. Moving the line puts K&C in the NE, and that
+      quadrant's mean falls 3.5 min.
+    - **Map**: the two lines (brown), each quadrant's share and hospital near
+      its corner, and a ring round each chosen hospital. Memo section
+      "POPULATION QUADRANTS AND THEIR HOSPITALS" at the top while the layer is
+      on. Snapshot adds `_quarters` and prints the section.
   - **Physical map** (2026-11-17, fill "Physical (relief, rivers)",
     `--colour=4`; "Nothing" is now 5): shaded relief with rivers, main
     roads and railways. `make_physical_data.py <physical dir> <src dir>`
@@ -3927,7 +3963,7 @@ packages. Compiled binaries and each demo's own `lib/` output are
   - `--snapshot=<prefix>` saves density/IMD/health/admissions (per km2 and
     ratio)/zoomed maps and the window, prints the memo and exits;
     `--colour=<0..5>`, `--domain=<0..7>`, `--cvd=<0|1>`, `--areas=<list>`,
-    `--drive=<0..11>`, `--speeds=<0..2>`, `--weighting=<0..2>`, `--medians`,
+    `--drive=<0..11>`, `--speeds=<0..2>`, `--weighting=<0..2>`, `--medians`, `--quarters`,
     `--ambulance`.
 - **`newPoly`** — least-squares polynomial fitting with
   `newPolymath.pas`'s `TPolynomial.Fit` (see its own section above),

@@ -447,6 +447,40 @@ procedure CvdBarycentre(const Include: array of Boolean; out E, N: Double);
 // the expected admissions' weighted median easting and northing (label
 // points), and the share of admissions in each quadrant they make:
 // Q[0] NW, Q[1] NE, Q[2] SW, Q[3] SE
+// Population quarters: two straight lines, one near north-south and one near
+// east-west, that split the whole ICB's population (mid-2024, by LSOA label
+// point) into four quarters - NW, NE, SW, SE (0..3, as the median lines).
+// Each line halves the population, so opposite quarters are equal, and the
+// pair is turned until all four are equal (to 0.2 points of %). Of the many
+// such pairs, the one nearest due north-south and east-west is kept: the line
+// angles from those are searched in 0.25 deg steps over +-20 deg, least sum of
+// squares. The near east-west line is then moved, keeping its angle, to pass
+// through the population barycentre (at the user's request, 2026-11-18), so
+// the quarters are no longer equal: Share gives what they hold. A quarter's
+// line test: E cos(AngE) + N sin(AngE) > CE is east of
+// the first line, -E sin(AngN) + N cos(AngN) > CN north of the second.
+type
+  TPopQuarters = record
+    AngE, AngN: Double;              // degrees off due north-south / east-west
+    CE, CN: Double;                  // the lines' offsets (m)
+    EqualCN: Double;                 // the east-west line's offset for equal quarters
+    BaryE, BaryN: Double;            // the population barycentre it is moved to
+    ShiftM: Double;                  // how far it moved, m (positive: south)
+    CrossE, CrossN: Double;          // where they cross
+    Share: array[0..3] of Double;    // % of the population, NW NE SW SE
+  end;
+function PopQuarters: TPopQuarters;  // computed once
+function PointQuarter(E, N: Double): Integer;
+function LsoaQuarter(i: Integer): Integer;
+// the best existing hospital in quarter q: the lowest admissions-weighted mean
+// drive time from the quarter's LSOAs (chosen event kind) in every speed
+// scenario; if the scenarios disagree, the lowest of their sum (Agree False).
+// Only hospitals inside the quarter count; with none, every hospital does
+// (Inside False). Means: that hospital's mean minutes per scenario.
+function QuarterHospital(q: Integer; out Means: array of Double; out Agree, Inside: Boolean): Integer;
+const
+  QuarterName: array[0..3] of string = ('NW', 'NE', 'SW', 'SE');
+
 procedure CvdMedianLines(const Include: array of Boolean; out E, N: Double;
   out Q: array of Double);
 // geographic centre of the districts with IncDistrict[d] true ([] = all)
@@ -927,6 +961,147 @@ begin
     if Abs(cum - tot / 2) < best then begin best := Abs(cum - tot / 2); k := i; end;
   end;
   result := (V[idx[k]] + V[idx[k + 1]]) / 2;
+end;
+
+var
+  FQuarters: TPopQuarters;
+  FQuartersDone: Boolean = False;
+
+function PopQuarters: TPopQuarters;
+const
+  MaxAng = 20.0;
+  Step = 0.25;
+  Tol = 0.2;                         // % points
+var
+  na, a, b, i, k: Integer;
+  VE, VN, PopW, OffE, OffN: array of Double;
+  East, North: array of array of Boolean;
+  q: array[0..3] of Double;
+  ang, tot, dev, cost, best, bestDev: Double;
+  ia, ib, ja, jb: Integer;
+begin
+  if FQuartersDone then Exit(FQuarters);
+  na := Round(2 * MaxAng / Step) + 1;
+  SetLength(VE, LsoaCount); SetLength(VN, LsoaCount); SetLength(PopW, LsoaCount);
+  SetLength(OffE, na); SetLength(OffN, na);
+  SetLength(East, na, LsoaCount); SetLength(North, na, LsoaCount);
+  tot := 0;
+  for i := 0 to LsoaCount - 1 do begin PopW[i] := LsoaPop[i]; tot := tot + PopW[i]; end;
+  for a := 0 to na - 1 do begin
+    ang := DegToRad(-MaxAng + a * Step);
+    for i := 0 to LsoaCount - 1 do begin
+      VE[i] := LsoaLabelE[i] * Cos(ang) + LsoaLabelN[i] * Sin(ang);
+      VN[i] := -LsoaLabelE[i] * Sin(ang) + LsoaLabelN[i] * Cos(ang);
+    end;
+    OffE[a] := WeightedMedian(VE, PopW, []);
+    OffN[a] := WeightedMedian(VN, PopW, []);
+    for i := 0 to LsoaCount - 1 do begin
+      East[a][i] := VE[i] > OffE[a];
+      North[a][i] := VN[i] > OffN[a];
+    end;
+  end;
+  best := Infinity; bestDev := Infinity;
+  ia := na div 2; ib := na div 2; ja := ia; jb := ib;
+  for a := 0 to na - 1 do
+    for b := 0 to na - 1 do begin
+      for k := 0 to 3 do q[k] := 0;
+      for i := 0 to LsoaCount - 1 do begin
+        k := 0;
+        if East[a][i] then k := 1;
+        if not North[b][i] then k := k + 2;
+        q[k] := q[k] + PopW[i];
+      end;
+      dev := 0;
+      for k := 0 to 3 do dev := Max(dev, Abs(100 * q[k] / tot - 25));
+      cost := Sqr(-MaxAng + a * Step) + Sqr(-MaxAng + b * Step);
+      if (dev <= Tol) and (cost < best) then begin best := cost; ia := a; ib := b; end;
+      if dev < bestDev then begin bestDev := dev; ja := a; jb := b; end;
+    end;
+  if IsInfinite(best) then begin ia := ja; ib := jb; end;   // none within Tol: the most equal
+  with FQuarters do begin
+    AngE := -MaxAng + ia * Step;
+    AngN := -MaxAng + ib * Step;
+    CE := OffE[ia];
+    EqualCN := OffN[ib];
+    PopulationBarycentre([], BaryE, BaryN);
+    CN := -BaryE * Sin(DegToRad(AngN)) + BaryN * Cos(DegToRad(AngN));
+    ShiftM := EqualCN - CN;
+    // solve E cos a + N sin a = CE, -E sin b + N cos b = CN
+    ang := Cos(DegToRad(AngE)) * Cos(DegToRad(AngN)) + Sin(DegToRad(AngE)) * Sin(DegToRad(AngN));
+    CrossE := (CE * Cos(DegToRad(AngN)) - CN * Sin(DegToRad(AngE))) / ang;
+    CrossN := (CN * Cos(DegToRad(AngE)) + CE * Sin(DegToRad(AngN))) / ang;
+  end;
+  FQuartersDone := True;
+  for k := 0 to 3 do FQuarters.Share[k] := 0;
+  for i := 0 to LsoaCount - 1 do begin
+    k := PointQuarter(LsoaLabelE[i], LsoaLabelN[i]);
+    FQuarters.Share[k] := FQuarters.Share[k] + 100 * PopW[i] / tot;
+  end;
+  result := FQuarters;
+end;
+
+function PointQuarter(E, N: Double): Integer;
+var
+  Q: TPopQuarters;
+begin
+  Q := PopQuarters;
+  result := 0;
+  if E * Cos(DegToRad(Q.AngE)) + N * Sin(DegToRad(Q.AngE)) > Q.CE then result := 1;
+  if -E * Sin(DegToRad(Q.AngN)) + N * Cos(DegToRad(Q.AngN)) <= Q.CN then result := result + 2;
+end;
+
+function LsoaQuarter(i: Integer): Integer;
+begin
+  result := PointQuarter(LsoaLabelE[i], LsoaLabelN[i]);
+end;
+
+function QuarterHospital(q: Integer; out Means: array of Double; out Agree, Inside: Boolean): Integer;
+var
+  h, s, i, n: Integer;
+  M: array of array of Double;    // [hospital][scenario]
+  Cand: array of Boolean;
+  w, sum: Double;
+  bestS: array[0..2] of Integer;
+  bestSum: Double;
+begin
+  NeedCvd;
+  SetLength(M, HospitalCount, DriveScenarioCount);
+  SetLength(Cand, HospitalCount);
+  n := 0;
+  for h := 0 to HospitalCount - 1 do begin
+    Cand[h] := PointQuarter(HospitalE[h], HospitalN[h]) = q;
+    if Cand[h] then Inc(n);
+  end;
+  Inside := n > 0;
+  if not Inside then for h := 0 to HospitalCount - 1 do Cand[h] := True;
+  for h := 0 to HospitalCount - 1 do
+    for s := 0 to DriveScenarioCount - 1 do begin
+      w := 0; sum := 0;
+      for i := 0 to LsoaCount - 1 do
+        if LsoaQuarter(i) = q then begin
+          w := w + CvdEv[i];
+          sum := sum + CvdEv[i] * LsoaTransportMinutes(i, h, s);
+        end;
+      if w > 0 then M[h][s] := sum / w else M[h][s] := 0;
+    end;
+  for s := 0 to DriveScenarioCount - 1 do begin
+    bestS[s] := -1;
+    for h := 0 to HospitalCount - 1 do
+      if Cand[h] and ((bestS[s] < 0) or (M[h][s] < M[bestS[s]][s])) then bestS[s] := h;
+  end;
+  Agree := True;
+  for s := 1 to DriveScenarioCount - 1 do if bestS[s] <> bestS[0] then Agree := False;
+  if Agree then result := bestS[0]
+  else begin
+    result := -1; bestSum := Infinity;
+    for h := 0 to HospitalCount - 1 do
+      if Cand[h] then begin
+        sum := 0;
+        for s := 0 to DriveScenarioCount - 1 do sum := sum + M[h][s];
+        if sum < bestSum then begin bestSum := sum; result := h; end;
+      end;
+  end;
+  for s := 0 to Min(High(Means), DriveScenarioCount - 1) do Means[s] := M[result][s];
 end;
 
 procedure CvdMedianLines(const Include: array of Boolean; out E, N: Double;

@@ -1,0 +1,28 @@
+ideal0_0.1.npz
+  TR 00248 43764 (Ashford 1.6 km)  pop 434654  18.0 / 22.1 / 15.2
+  TR 31136 65714 (Margate 5.5 km)  pop 434682  16.5 / 20.4 / 13.2
+  TQ 52621 67656 (Swanley 1.7 km)  pop 531203  16.0 / 19.6 / 13.4
+  TQ 74994 62617 (Chatham 2.9 km)  pop 531145  11.5 / 14.3 / 9.5
+  overall, same allocation: 15.31 / 18.88 / 12.71
+  existing ['Darent Valley', 'Medway Maritime', 'William Harvey', 'QEQM'] 17.68 / 22.26 / 14.62
+ideal1_0.1.npz
+  TQ 74994 62617 (Chatham 2.9 km)  pop 531177  11.5 / 14.3 / 9.6
+  TR 00675 44196 (Ashford 1.9 km)  pop 434642  17.9 / 21.9 / 15.2
+  TR 33909 64625 (Ramsgate 3.7 km)  pop 434667  16.5 / 20.4 / 13.2
+  TQ 52621 67656 (Swanley 1.7 km)  pop 531198  16.1 / 19.7 / 13.5
+  overall, same allocation: 15.32 / 18.86 / 12.72
+  existing ['Darent Valley', 'Medway Maritime', 'William Harvey', 'QEQM'] 17.68 / 22.26 / 14.62
+ideal2_0.1.npz
+  TR 00248 43764 (Ashford 1.6 km)  pop 434671  18.4 / 22.5 / 15.4
+  TQ 74460 62708 (Chatham 3.1 km)  pop 531186  11.3 / 14.1 / 9.3
+  TR 33909 64625 (Ramsgate 3.7 km)  pop 434703  16.4 / 20.4 / 13.2
+  TQ 52621 67656 (Swanley 1.7 km)  pop 531124  16.0 / 19.6 / 13.4
+  overall, same allocation: 15.33 / 18.92 / 12.69
+  existing ['Darent Valley', 'Medway Maritime', 'Maidstone', 'Kent and Canterbury'] 17.70 / 22.37 / 14.53
+ideal0_0.025.npz
+  TQ 52621 67656 (Swanley 1.7 km)  pop 494989  16.0 / 19.6 / 13.4
+  TQ 76495 67443 (Chatham 2.3 km)  pop 494994  11.4 / 15.3 / 9.2
+  TR 00675 44196 (Ashford 1.9 km)  pop 470849  18.5 / 22.6 / 15.8
+  TR 31118 65765 (Margate 5.5 km)  pop 470852  17.7 / 22.0 / 14.2
+  overall, same allocation: 15.84 / 19.81 / 13.13
+  existing ['Darent Valley', 'Medway Maritime', 'Maidstone', 'Kent and Canterbury'] 18.01 / 22.71 / 14.87

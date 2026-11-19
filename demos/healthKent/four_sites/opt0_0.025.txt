@@ -1,0 +1,41 @@
+scenario free-flow car population 1931684.0 band 470847 494994
+
+existing, capacitated (top 6) | unconstrained nearest
+   18.01   17.37  Darent Valley, Medway Maritime, Maidstone, Kent and Canterbury
+   18.03   17.49  Darent Valley, Medway Maritime, William Harvey, Kent and Canterbury
+   18.24   17.03  Darent Valley, Medway Maritime, William Harvey, QEQM
+   18.41   17.95  Darent Valley, Medway Maritime, Maidstone, QEQM
+   18.43   17.11  Darent Valley, Maidstone, William Harvey, Kent and Canterbury
+   18.68   16.67  Darent Valley, Maidstone, William Harvey, QEQM
+
+best existing four, capacitated  mean 18.01 min
+   Darent Valley                pop  470863 (24.4 %)  mean  16.3  max  38.6
+   Medway Maritime              pop  471045 (24.4 %)  mean  13.2  max  35.1
+   Maidstone                    pop  494827 (25.6 %)  mean  20.2  max  56.4
+   Kent and Canterbury          pop  494949 (25.6 %)  mean  22.0  max  35.5
+best existing four, nearest (no capacity)  mean 16.67 min
+   Darent Valley                pop  416916 (21.6 %)  mean  13.0  max  35.7
+   Maidstone                    pop  801591 (41.5 %)  mean  18.0  max  37.6
+   William Harvey               pop  409511 (21.2 %)  mean  18.5  max  34.1
+   QEQM                         pop  303666 (15.7 %)  mean  15.6  max  31.5
+  start -> 15.853
+  start -> 15.871
+  start -> 15.843
+  start -> 15.880
+  start -> 15.871
+  start -> 15.843
+  start -> 16.737
+  start -> 15.880
+  start -> 16.821
+  start -> 15.852
+  start -> 15.852
+  start -> 15.852
+  start -> 15.871
+  start -> 16.189
+  start -> 16.821
+
+ideal four, capacitated  mean 15.84 min
+   TQ/TR 552621 167657 (7.0 km from Darent Valley) pop  494989 (25.6 %)  mean  16.0  max  32.4
+   TQ/TR 576496 167444 (1.1 km from Medway Maritime) pop  494994 (25.6 %)  mean  11.4  max  35.2
+   TQ/TR 600675 144196 (4.1 km from William Harvey) pop  470849 (24.4 %)  mean  18.5  max  41.9
+   TQ/TR 631118 165766 (6.4 km from QEQM) pop  470852 (24.4 %)  mean  17.7  max  39.7

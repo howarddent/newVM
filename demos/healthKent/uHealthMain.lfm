@@ -190,7 +190,7 @@ object Form1: TForm1
         end
         object cgLayers: TCheckGroup
           Left = 4
-          Height = 146
+          Height = 172
           Top = 514
           Width = 402
           Align = alTop
@@ -217,6 +217,7 @@ object Form1: TForm1
             'Median lines'
             'Rivers'
             'Towns 10-50,000'
+            'Pop. quarters'
           )
           TabOrder = 2
           OnItemClick = cgLayersItemClick
