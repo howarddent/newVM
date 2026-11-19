@@ -164,14 +164,9 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See [`LICENSE`](LICENSE)
 for the full text.
 
 Third-party material in this repository keeps its own licence, not this
-one: `LMath/`, `Delphi OOFEM/`, `demos/JetVent/naca1135.pas` and
-`rayfanno.pas` (public domain), `Anaesthetics/PK-PD/ut_dgls.pas`
-(J-P Moreau) and its DMath-derived `ubisect`/`usecant`/`uerrors`, the
-three Kaps-Rentrop integrators ported from *Numerical Recipes*
-(`Anaesthetics/PK-PD/kaps_Rentrop.PAS`, `Anaesthetics/PK-PD_FPC/uKapsRentrop.pas`,
-`demos/Benney/ukapsrentrop.pas`), whose terms are Numerical Recipes'
-own, the recorded data under `demos/BioSpectra/data/` (see its
-`README.md` for sources and terms), and the place, outline and county
+one: `LMath/` and `Delphi OOFEM/` (public domain), the Kaps-Rentrop
+integrator ported from *Numerical Recipes* (`demos/Benney/ukapsrentrop.pas`),
+whose terms are Numerical Recipes' own, and the place, outline and county
 tables in `demos/CanterburyRain/*.inc` (GeoNames, CC BY 4.0; Natural
 Earth, public domain; ONS boundaries and Met Office averages, Open
 Government Licence), and the Kent and Medway tables in
@@ -198,13 +193,8 @@ the 2D wave equation `u_tt = u_xx + u_yy`, rendered live via the
 
 ![2D Wave Equation demo](docs/images/wave2d.png)
 
-`JetFlow` (under `demos/`), a jet-ventilation calculator built on
-JetVent's cannula model: oxygen flow from the driving pressure and the
-jet's bore and length, whether the jet is choked, the highest Mach number
-and lowest temperature and pressure in the jet, its thrust, and the stall
-pressure into adult male, adult female and 7-year-old tracheas; any bore
-and length, or one of JetVent's six bench cannulae from a list. Here the
-Lindholm (2 mm, 9.5 cm) at 3.5 bar is choked and expands to Mach 1.31 at
-−55 °C outside it:
-
-![JetFlow jet-ventilation calculator](docs/images/jetflow.png)
+The anaesthesia and clinical demos (JetVent, JetFlow, O2Entrainment,
+BioSpectra, GlassSpine, the PK/PD simulator, and the FEM4 HFJV,
+Defibrillation and ThermEx1 examples) now live in their own repository,
+[anaesthesia-sims](https://github.com/howarddent/anaesthesia-sims), which
+uses newVM as a submodule.

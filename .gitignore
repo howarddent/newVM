@@ -33,8 +33,8 @@ openblas.dll
 # an extension (.pas/.lpr/.lpi/.lfm/.ico/...).
 demos/*/[A-Za-z]*
 !demos/*/*.*
-# ...but a demo's data/ directory is real content (demos/BioSpectra/data/ holds
-# the PhysioNet excerpts) - a directory has no dot, so the negation above
+# ...but a demo's data/ directory is real content (none here now; BioSpectra's
+# PhysioNet excerpts moved to anaesthesia-sims) - a directory has no dot, so the negation above
 # would not rescue it, and git never descends into an excluded directory
 !demos/*/data/
 # demos/healthKent/four_sites/ is an analysis folder (scripts and results)
@@ -129,6 +129,3 @@ Graphs/packagefiles.xml
 # gmsh post-processing output (.pos) written by the FEM4 examples - generated
 # results, several MB per time step; the .geo/.msh/.scr inputs stay tracked
 *.pos
-# ThermEx1's time-history output; the concrete_cp_*.csv material data in the
-# same folder are inputs and stay tracked, so this is by name, not *.csv
-Delphi OOFEM/FEM4/Development/Examples/Data/thermex1.csv
