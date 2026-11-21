@@ -142,6 +142,7 @@ uses
 {$I kentdata.inc}
 {$I cvddata.inc}
 {$I drivedata.inc}
+{$I catchmentdata.inc}
 
 const
   // the domains a user can choose: DriveBestDomain stands for the best site
@@ -186,7 +187,7 @@ type
   end;
 
 const
-  Sources: array[0..22] of TSourceEntry = (
+  Sources: array[0..23] of TSourceEntry = (
     (Title: 'Lower layer Super Output Area population estimates (small area, 2021-based), mid-2024';
      Publisher: 'Office for National Statistics (via Nomis, dataset NM_2014_1)';
      Edition: 'mid-2024 estimates, released 7 November 2025 - the latest published';
@@ -337,7 +338,14 @@ const
      Edition: 'downloaded 17 November 2026';
      Licence: 'Open Database Licence (ODbL) 1.0';
      URL: 'https://www.openstreetmap.org/copyright';
-     Use: 'The Rivers layer: rivers and canals, the main ones (Medway, Thames, Stour, Rother, Darent, Beult, Eden, Teise) heavier.')
+     Use: 'The Rivers layer: rivers and canals, the main ones (Medway, Thames, Stour, Rother, Darent, Beult, Eden, Teise) heavier.'),
+    (Title: 'NHS acute (hospital) trust catchment populations - Table 4, emergency admissions';
+     Publisher: 'Office for Health Improvement and Disparities';
+     Edition: 'April 2026 release, catchment year 2024 (HES 2022-23 to 2024-25, ONS mid-2022 populations)';
+     Licence: 'Open Government Licence v3.0';
+     URL: 'https://www.gov.uk/government/statistics/nhs-acute-hospital-trust-catchment-populations-april-2026';
+     Use: 'East Kent Hospitals'' catchment (663,004) by MSOA, shared between LSOAs by population '
+       + '(make_catchment_data.py): the memo''s East Kent with two or three A&Es section.')
   );
 
   Glossary: array[0..21] of TGlossaryEntry = (

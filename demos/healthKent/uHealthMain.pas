@@ -180,6 +180,7 @@ type
     procedure DriveSummary(L: TStrings);
     procedure WhhKchSummary(L: TStrings);
     procedure PairSummary(L: TStrings; HA, HB: Integer);
+    procedure EastKentSitesSummary(L: TStrings);
     procedure BestSiteSummary(L: TStrings);
     procedure FillSources;
     function DecileShare(Domain, Decile: Integer): Double;
@@ -1242,6 +1243,8 @@ begin
   end;
   WhhKchSummary(L);
   L.Add('');
+  EastKentSitesSummary(L);
+  L.Add('');
   AmbulanceSummary(L);
   L.Add('');
   VariationSummary(L);
@@ -1817,6 +1820,93 @@ begin
     if FDistInc[d] and (Ev[d] > 0) then Row(DistrictName[d], Ev[d], SA[d], SB[d], SN[d], NA[d]);
   if Ev[DistrictCount] > 0 then
     Row('chosen areas', Ev[DistrictCount], SA[DistrictCount], SB[DistrictCount], SN[DistrictCount], NA[DistrictCount]);
+end;
+
+// East Kent Hospitals' catchment (OHID, catchmentdata.inc) shared between
+// its A&Es as they are - William Harvey and QEQM - and with a third at Kent
+// and Canterbury: each LSOA's catchment goes to the site with the quickest
+// plain drive, in every speed scenario. Whole trust, whatever areas are
+// chosen or the weighting; the few hundred residents outside Kent and Medway
+// (no drive times) are counted at William Harvey, nearest for nearly all.
+procedure TForm1.EastKentSitesSummary(L: TStrings);
+const
+  Site: array[0..2] of Integer = (DriveHospWHH, DriveHospQEQM, DriveHospKCH);
+  Abbr: array[0..2] of string = ('WHH', 'QEQM', 'K&C');
+var
+  i, k, n, sc, d, best: Integer;
+  t, bt, c, inKent: Double;
+  Pop: array[0..1, 0..2] of Double;
+  Mins: array[0..1] of Double;
+  DPop, DMin2, DMin3: array of Double;
+  DSite: array of array[0..2] of Double;
+begin
+  L.Add(Format('EAST KENT WITH TWO OR THREE A&Es: CATCHMENTS OF WILLIAM HARVEY, QEQM AND KENT AND CANTERBURY (%d)',
+    [EkCatchYear]));
+  L.Add(Format('  East Kent Hospitals'' catchment, %s people (OHID, emergency admissions; see Sources), each LSOA',
+    [Thousands(EkCatchTotal)]));
+  L.Add('  to the quickest site by plain drive. Today''s two A&Es, then a third at Kent and Canterbury.');
+  L.Add('  Whole trust, whatever areas or weighting are chosen.');
+  inKent := EkCatchTotal - EkCatchOutside;
+  L.Add('                                 two A&Es                    three A&Es');
+  L.Add('  speeds                 WHH       QEQM   mean min     WHH       QEQM      K&C   mean min');
+  for sc := 0 to DriveScenarioCount - 1 do begin
+    for n := 0 to 1 do begin
+      for k := 0 to 2 do Pop[n, k] := 0;
+      Mins[n] := 0;
+    end;
+    for i := 0 to LsoaCount - 1 do begin
+      c := LsoaEkCatch[i];
+      if c <= 0 then Continue;
+      for n := 0 to 1 do begin
+        best := 0; bt := LsoaTransportMinutes(i, Site[0], sc);
+        for k := 1 to n + 1 do begin
+          t := LsoaTransportMinutes(i, Site[k], sc);
+          if t < bt then begin bt := t; best := k; end;
+        end;
+        Pop[n, best] := Pop[n, best] + c;
+        Mins[n] := Mins[n] + c * bt;
+      end;
+    end;
+    for n := 0 to 1 do Pop[n, 0] := Pop[n, 0] + EkCatchOutside;
+    L.Add(Format('  %-20s %8s %9s %8.1f %10s %9s %8s %8.1f',
+      [DriveScenarioName[sc], Thousands(Pop[0, 0]), Thousands(Pop[0, 1]), Mins[0] / inKent,
+       Thousands(Pop[1, 0]), Thousands(Pop[1, 1]), Thousands(Pop[1, 2]), Mins[1] / inKent]));
+  end;
+
+  // by district, for the chosen speeds
+  SetLength(DPop, DistrictCount); SetLength(DMin2, DistrictCount); SetLength(DMin3, DistrictCount);
+  SetLength(DSite, DistrictCount);
+  for d := 0 to DistrictCount - 1 do
+    for k := 0 to 2 do DSite[d][k] := 0;
+  for i := 0 to LsoaCount - 1 do begin
+    c := LsoaEkCatch[i];
+    if c <= 0 then Continue;
+    d := LsoaDistrict[i];
+    DPop[d] := DPop[d] + c;
+    DMin2[d] := DMin2[d] + c * Min(LsoaTransportMinutes(i, DriveHospWHH, FDriveScenario),
+      LsoaTransportMinutes(i, DriveHospQEQM, FDriveScenario));
+    best := 0; bt := LsoaTransportMinutes(i, Site[0], FDriveScenario);
+    for k := 1 to 2 do begin
+      t := LsoaTransportMinutes(i, Site[k], FDriveScenario);
+      if t < bt then begin bt := t; best := k; end;
+    end;
+    DSite[d][best] := DSite[d][best] + c;
+    DMin3[d] := DMin3[d] + c * bt;
+  end;
+  L.Add('');
+  L.Add('  By district with three A&Es, ' + DriveScenarioName[FDriveScenario]
+    + ' (chosen under Drive speeds); districts of 1,000 or more:');
+  L.Add(Format('    %-23s %9s %9s %9s %9s   %s', ['district', 'catchment', Abbr[0], Abbr[1], Abbr[2],
+    'mean min, 2 -> 3 A&Es']));
+  for d := 0 to DistrictCount - 1 do
+    if DPop[d] >= 1000 then
+      L.Add(Format('    %-23s %9s %9s %9s %9s   %5.1f -> %4.1f',
+        [DistrictName[d], Thousands(DPop[d]), Thousands(DSite[d][0]), Thousands(DSite[d][1]),
+         Thousands(DSite[d][2]), DMin2[d] / DPop[d], DMin3[d] / DPop[d]]));
+  L.Add(Format('  %s live outside Kent and Medway and are counted at William Harvey. Nearest by drive',
+    [Thousands(EkCatchOutside)]));
+  L.Add('  is not where everyone goes, and the trust total is held fixed: a third A&E would likely draw');
+  L.Add('  some patients from Medway and Maidstone too. Mean minutes are a plain drive (no 999 times).');
 end;
 
 procedure TForm1.WhhKchSummary(L: TStrings);

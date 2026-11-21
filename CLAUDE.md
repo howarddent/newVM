@@ -3043,6 +3043,29 @@ packages. Compiled binaries and each demo's own `lib/` output are
       its corner, and a ring round each chosen hospital. Memo section
       "POPULATION QUADRANTS AND THEIR HOSPITALS" at the top while the layer is
       on. Snapshot adds `_quarters` and prints the section.
+  - **East Kent with two or three A&Es** (2026-11-21, memo section after
+    the WHH/K&C one, `EastKentSitesSummary`; always the whole trust). East Kent
+    Hospitals' catchment population, OHID's April 2026 trust catchments
+    (emergency admissions, catchment year 2024, 663,004), is shared between
+    William Harvey and QEQM, then with a third A&E at Kent and Canterbury.
+    Each LSOA goes to the quickest site by plain drive, in all three speed
+    scenarios; the district table is for the chosen speeds.
+    - **Data**: `make_catchment_data.py <...-Emergency.csv>` writes
+      `catchmentdata.inc`. It takes OHID's Table 4, the trust's catchment by
+      MSOA, converted from the 550 MB-unpacked ODS with soffice (the command
+      is in its header). Each MSOA is shared between its LSOAs by population,
+      matched by name, and the whole is scaled to the published total (the
+      MSOAs sum 2.7 % short). 698 people live outside Kent and Medway; they
+      are counted at William Harvey.
+    - **Results** (free-flow / peak / blue light): two A&Es, WHH 383k / 386k /
+      381k and QEQM 280k / 277k / 282k. Three A&Es, WHH 250k / 252k / 244k,
+      QEQM 177k / 179k / 177k and K&C 236k / 232k / 242k. The mean drive falls
+      from 17.6 to 13.9 min (peak 22.2 to 17.6). Canterbury district at peak
+      goes from 32.1 to 16.0 min and Swale (Faversham) from 33.9 to 25.0;
+      Thanet, Ashford and Folkestone don't change.
+    - **Cross-check**: an England-wide version of the split on a separate OSM
+      graph (`~/data/dgh-split`, MSOA centroids, free-flow) gives 250k / 184k
+      / 229k.
   - **Physical map** (2026-11-17, fill "Physical (relief, rivers)",
     `--colour=4`; "Nothing" is now 5): shaded relief with rivers, main
     roads and railways. `make_physical_data.py <physical dir> <src dir>`
