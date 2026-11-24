@@ -602,6 +602,7 @@ type
     procedure TestFGMRESSolveNoPreconditionerMatchesPardiso;
     procedure TestPardisoFactorReusedMatchesPardisoSolve;
     procedure TestPardisoFactorSymmetricIndefinite;
+    procedure TestPardisoFactorRefactorNewValues;
   end;
   {$ENDIF}
 
@@ -5014,6 +5015,45 @@ begin
   AssertEquals(0.0, X[0,0], DblTol);
   AssertEquals(1.0, X[1,0], DblTol);
   AssertEquals(1.0, X[2,0], DblTol);
+end;
+
+procedure TVMSparseTests.TestPardisoFactorRefactorNewValues;
+var
+  RowIdx, ColIdx: TIntegerArray;
+  Val: TDoubleArray;
+  A, A2: TVMSparseMtx;
+  B, X, Xd: TVMobj;
+  LU: TPardisoFactor;
+  i, mt: Integer;
+begin
+  // factorise [2 0 1; 0 2 1; 1 1 0], then refactorise the same pattern
+  // with [4 0 1; 0 5 2; 1 2 0.5] and compare with a fresh PardisoSolve
+  SetLength(RowIdx,7); SetLength(ColIdx,7); SetLength(Val,7);
+  RowIdx[0]:=0; ColIdx[0]:=0; Val[0]:=2;
+  RowIdx[1]:=0; ColIdx[1]:=2; Val[1]:=1;
+  RowIdx[2]:=1; ColIdx[2]:=1; Val[2]:=2;
+  RowIdx[3]:=1; ColIdx[3]:=2; Val[3]:=1;
+  RowIdx[4]:=2; ColIdx[4]:=0; Val[4]:=1;
+  RowIdx[5]:=2; ColIdx[5]:=1; Val[5]:=1;
+  RowIdx[6]:=2; ColIdx[6]:=2; Val[6]:=0;
+  A := TripletsToSparse(3,3,RowIdx,ColIdx,Val);
+  Val[0]:=4; Val[2]:=5; Val[3]:=2; Val[5]:=2; Val[6]:=0.5;
+  A2 := TripletsToSparse(3,3,RowIdx,ColIdx,Val);
+  B := TVMobj.Create(3,1);
+  B[0,0]:=1; B[1,0]:=3; B[2,0]:=1;
+  Xd := PardisoSolve(A2, B, False);
+  for mt := 0 to 1 do
+  begin
+    if mt = 0 then LU := TPardisoFactor.Create(A, 11)
+    else LU := TPardisoFactor.Create(A, -2);
+    try
+      LU.Refactor(A2);
+      X := LU.Solve(B);
+    finally
+      LU.Free;
+    end;
+    for i := 0 to 2 do AssertEquals(Xd[i,0], X[i,0], DblTol);
+  end;
 end;
 
 procedure TVMSparseTests.TestFGMRESSolveMatchesPardiso;

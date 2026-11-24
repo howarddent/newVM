@@ -180,6 +180,12 @@ type
     destructor Destroy; override;
     { B (N,1) or (1,N); the result is (N,1). B is not changed. }
     function Solve(const B: TVMobj): TVMobj;
+    { New values on the same sparsity pattern (same Rows and stored
+      entries as the matrix given to Create): numerical factorisation
+      only (phase 22), reusing the analysis - for Newton iterations,
+      where the pattern is fixed and the reordering would otherwise be
+      repeated every time. }
+    procedure Refactor(const A: TVMSparseMtx);
     property N: Integer read FN;
   end;
 
@@ -799,6 +805,32 @@ begin
   Call(33, Bcopy.DataPtr, result.DataPtr, 1, err);
   if err <> 0 then
     raise Exception.Create(s + 'PARDISO reported error code ' + IntToStr(err));
+end;
+
+procedure TPardisoFactor.Refactor(const A: TVMSparseMtx);
+const
+  s = 'TPardisoFactor.Refactor : ';
+var
+  err: Integer;
+  dummy: Double;
+  U: TVMSparseMtx;
+begin
+  assert(A.Rows = FN, s+'A must have the size of the matrix given to Create');
+  if FMType = 11 then
+  begin
+    assert(Length(A.FValues) = Length(FA.FValues), s+'A must have the same sparsity pattern');
+    Move(A.FValues[0], FA.FValues[0], Length(A.FValues) * SizeOf(Double));
+  end
+  else
+  begin
+    U := ExtractUpperCSR(A);
+    assert(Length(U.FValues) = Length(FA.FValues), s+'A must have the same sparsity pattern');
+    Move(U.FValues[0], FA.FValues[0], Length(U.FValues) * SizeOf(Double));
+  end;
+  dummy := 0;
+  Call(22, @dummy, @dummy, 1, err);
+  if err <> 0 then
+    raise Exception.Create(s + 'PARDISO factorisation failed, error code ' + IntToStr(err));
 end;
 
 destructor TPardisoFactor.Destroy;
