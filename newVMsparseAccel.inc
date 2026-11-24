@@ -210,6 +210,33 @@ begin
   AccelSolveWith(FNum, Bcopy.DataPtr, result.DataPtr, FN);
 end;
 
+{ Refactor: new values on the same pattern. Unlike the MKL version this
+  repeats the symbolic analysis too - the old factorisation is released
+  and Create's steps are run again - so it is correct but saves nothing
+  over a new TPardisoFactor. Reusing FSym is the improvement to make. }
+procedure TPardisoFactor.Refactor(const A: TVMSparseMtx);
+const
+  s = 'TPardisoFactor.Refactor : ';
+var
+  M: SparseMatrix_Double;
+  FactorType: Byte;
+  Symmetric: Boolean;
+begin
+  assert((A.Rows = FN) and (A.Cols = FN), s+'A must have the size of the matrix given to Create');
+  if FStore <> nil then
+  begin
+    _SparseDestroyOpaqueNumeric_Double(@FNum);
+    _SparseDestroyOpaqueSymbolic(@FSym);
+    FreeMem(FStore);
+    FStore := nil;
+  end;
+  FA := A;
+  AccelFactorKind(FMType, FactorType, Symmetric);
+  FCSC := ToCSC(A, Symmetric);
+  M := AccelMatrix(FCSC, FN, FN, Symmetric);
+  AccelFactor(M, FactorType, Symmetric, FSym, FNum, FStore);
+end;
+
 destructor TPardisoFactor.Destroy;
 begin
   if FStore <> nil then
