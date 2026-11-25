@@ -1375,6 +1375,31 @@ Five things that cost real debugging time, in the order they bite:
   Accelerate's `SparseMatrixStructure`, which is why `TPardisoFactor`
   holds its `TAccelCSC` as a field rather than a local.
 
+**`TPardisoFactor.Refactor` reuses the symbolic factorisation** (fixed
+2026-11-25; first built and run on a Mac the same day, which `d4cc513`'s
+message said was still outstanding). It was written releasing both
+factorisations and re-running all of `Create`'s steps, so it was correct
+but saved nothing over constructing a new `TPardisoFactor` — while the
+MKL body it mirrors has always done phase 22 alone. The ordering, the
+symbolic factorisation and the factor storage all depend on the pattern
+only (`factorSize_Double` comes from `Sym`), so all three are kept and
+only `_SparseDestroyOpaqueNumeric_Double` + `AccelNumeric` (phase 22,
+split out of `AccelFactor` for this) run per call. **The CSC must be
+refilled in place**, by `ToCSCValues` in `newVMsparse.pas` rather than a
+fresh `ToCSC`: `FSym` and the `SparseMatrixStructure` refer to those very
+arrays, so reassigning `FCSC` would leave both pointing at arrays the
+refcount had freed — the same "referenced, not copied" fact as the bullet
+above, one step further on. `ToCSCValues` repeats the counting sort
+(which reproduces the same `ColStart`/`RowIdx` for an unchanged pattern)
+and asserts the pattern matches as it goes. A failed numeric
+factorisation leaves `FStore` nil, the state a failed `Create` leaves, so
+`Destroy` can't double-release. Measured on `lvrun --beats=1 --profile`
+(M4 Max, 644 nodes, 429 steps, 3.23 Newton iterations a step): the solver
+went from **25.9 s to 2.4 s** and the beat from 29.5 s to 7.7 s, with
+every reported figure identical. Nothing else moves — `hfjvcheck` builds
+a `TPardisoFactor` per frequency and never calls `Refactor`, and came out
+at 52.5 s against 52.8 s before.
+
 **`FGMRESSolve` is hand-written here, and the direct solve is not.**
 Accelerate does ship `_SparseCGSolve`/`_SparseGMRESSolve`, but they are
 unusable from this unit for two independent reasons: their preconditioner

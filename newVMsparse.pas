@@ -524,6 +524,40 @@ begin
     end;
 end;
 
+{ Refills an existing TAccelCSC from A's values, in the very arrays an
+  Accelerate SparseMatrixStructure already points at - so a kept symbolic
+  factorisation stays valid across it. A must have the pattern C was built
+  from (TPardisoFactor.Refactor's own contract); the counting sort of
+  ToCSC is repeated rather than cached, which for an unchanged pattern
+  reproduces exactly the same ColStart/RowIdx, and the asserts check that
+  as it goes rather than trusting the caller. O(NonZeros), negligible
+  against the factorisation it feeds. }
+procedure ToCSCValues(const A: TVMSparseMtx; LowerOnly: Boolean; var C: TAccelCSC);
+const
+  s = 'ToCSCValues : ';
+var
+  i, r, col, k, nnz: Integer;
+  cursor: array of Integer;
+begin
+  assert(Length(C.ColStart) = A.Cols + 1, s+'A must have the pattern C was built from');
+  SetLength(cursor, A.Cols);
+  for i := 0 to A.Cols - 1 do cursor[i] := C.ColStart[i];
+
+  nnz := 0;
+  for r := 0 to A.Rows - 1 do
+    for k := A.FRowPtr[r] to A.FRowPtr[r+1] - 1 do
+    begin
+      col := A.FColInd[k];
+      if LowerOnly and (r < col) then Continue;   //keep the lower triangle
+      assert((cursor[col] < C.ColStart[col+1]) and (C.RowIdx[cursor[col]] = r),
+        s+'A must have the pattern C was built from');
+      C.Values[cursor[col]] := A.FValues[k];
+      Inc(cursor[col]);
+      Inc(nnz);
+    end;
+  assert(nnz = Length(C.RowIdx), s+'A must have the pattern C was built from');
+end;
+
 { Fills an Accelerate SparseMatrix_Double view onto an already-built
   TAccelCSC. The CSC arrays are referenced, not copied, so C must outlive
   every call that uses the returned record. }

@@ -55,27 +55,22 @@ end;
   sizes the symbolic factorisation reports. Workspace is scratch and freed
   as soon as the numeric factorisation returns; Store holds the factors and
   must live exactly as long as Num does. }
-procedure AccelFactor(const M: SparseMatrix_Double; FactorType: Byte; Symmetric: Boolean;
-  out Sym: SparseOpaqueSymbolicFactorization; out Num: SparseOpaqueFactorization_Double;
-  out Store: Pointer);
-const
-  s = 'Accelerate sparse factorisation : ';
+{ PARDISO phase 22 on its own: the numerical factorisation, into factor
+  storage the caller has already sized from Sym (whose factorSize_Double
+  depends on the pattern alone, so the same block serves every
+  factorisation of that pattern). Split out of AccelFactor below so
+  TPardisoFactor.Refactor can keep its symbolic factorisation and pay for
+  the fill-reducing ordering once instead of once per Newton iteration.
+  The workspace is scratch and goes back immediately; the caller checks
+  Num.status, since what to do about a failure differs between the two. }
+procedure AccelNumeric(const M: SparseMatrix_Double; FactorType: Byte; Symmetric: Boolean;
+  var Sym: SparseOpaqueSymbolicFactorization; out Num: SparseOpaqueFactorization_Double;
+  Store: Pointer);
 var
-  so: SparseSymbolicFactorOptions;
   no: SparseNumericFactorOptions;
   ws: Pointer;
 begin
-  so := DefaultSymbolicOptions;
   no := DefaultNumericOptions;
-
-  if Symmetric then
-    Sym := _SparseSymbolicFactorSymmetric(FactorType, @M.structure, @so)
-  else
-    Sym := _SparseSymbolicFactorLU(FactorType, @M.structure, @so);
-  if Sym.status <> SparseStatusOK then
-    raise Exception.Create(s + 'symbolic factorisation failed: ' + SparseStatusText(Sym.status));
-
-  Store := GetMem(Sym.factorSize_Double);
   ws := GetMem(Sym.workspaceSize_Double);
   try
     if Symmetric then
@@ -85,6 +80,27 @@ begin
   finally
     FreeMem(ws);
   end;
+end;
+
+procedure AccelFactor(const M: SparseMatrix_Double; FactorType: Byte; Symmetric: Boolean;
+  out Sym: SparseOpaqueSymbolicFactorization; out Num: SparseOpaqueFactorization_Double;
+  out Store: Pointer);
+const
+  s = 'Accelerate sparse factorisation : ';
+var
+  so: SparseSymbolicFactorOptions;
+begin
+  so := DefaultSymbolicOptions;
+
+  if Symmetric then
+    Sym := _SparseSymbolicFactorSymmetric(FactorType, @M.structure, @so)
+  else
+    Sym := _SparseSymbolicFactorLU(FactorType, @M.structure, @so);
+  if Sym.status <> SparseStatusOK then
+    raise Exception.Create(s + 'symbolic factorisation failed: ' + SparseStatusText(Sym.status));
+
+  Store := GetMem(Sym.factorSize_Double);
+  AccelNumeric(M, FactorType, Symmetric, Sym, Num, Store);
 
   if Num.status <> SparseStatusOK then
   begin
@@ -210,10 +226,20 @@ begin
   AccelSolveWith(FNum, Bcopy.DataPtr, result.DataPtr, FN);
 end;
 
-{ Refactor: new values on the same pattern. Unlike the MKL version this
-  repeats the symbolic analysis too - the old factorisation is released
-  and Create's steps are run again - so it is correct but saves nothing
-  over a new TPardisoFactor. Reusing FSym is the improvement to make. }
+{ Refactor: new values on the same pattern, the numerical factorisation
+  alone (PARDISO's phase 22), reusing the symbolic one - the point of the
+  class, and what makes it worth holding across a Newton iteration. The
+  ordering, the symbolic factorisation and the factor storage all depend
+  on the pattern only, so all three are kept; only the numeric
+  factorisation is released and remade, into the same storage block.
+  That is why the CSC is refilled in place (ToCSCValues) rather than
+  rebuilt: FSym and the SparseMatrixStructure handed to Accelerate refer
+  to those very arrays, and a fresh ToCSC would leave both pointing at
+  arrays the refcount had freed.
+
+  (Until 2026-11-25 this released the symbolic factorisation too and ran
+  all of Create's steps again, so it was correct but saved nothing over a
+  new TPardisoFactor; the MKL body above has always done phase 22 alone.) }
 procedure TPardisoFactor.Refactor(const A: TVMSparseMtx);
 const
   s = 'TPardisoFactor.Refactor : ';
@@ -223,18 +249,29 @@ var
   Symmetric: Boolean;
 begin
   assert((A.Rows = FN) and (A.Cols = FN), s+'A must have the size of the matrix given to Create');
-  if FStore <> nil then
+  assert(FStore <> nil, s+'the factorisation from Create has already been released');
+  AccelFactorKind(FMType, FactorType, Symmetric);
+
+  { asserts the pattern matches as it refills, so a caller that changed it
+    is caught here rather than factorising stale structure }
+  ToCSCValues(A, Symmetric, FCSC);
+  FA := A;
+
+  _SparseDestroyOpaqueNumeric_Double(@FNum);
+  M := AccelMatrix(FCSC, FN, FN, Symmetric);
+  AccelNumeric(M, FactorType, Symmetric, FSym, FNum, FStore);
+
+  if FNum.status <> SparseStatusOK then
   begin
-    _SparseDestroyOpaqueNumeric_Double(@FNum);
+    { FNum is gone and FStore holds a half-written factorisation, so give
+      the symbolic factorisation and the storage back too and leave FStore
+      nil - the same state a failed Create leaves, which Destroy and the
+      assert above both read correctly. }
     _SparseDestroyOpaqueSymbolic(@FSym);
     FreeMem(FStore);
     FStore := nil;
+    raise Exception.Create(s + 'numerical factorisation failed: ' + SparseStatusText(FNum.status));
   end;
-  FA := A;
-  AccelFactorKind(FMType, FactorType, Symmetric);
-  FCSC := ToCSC(A, Symmetric);
-  M := AccelMatrix(FCSC, FN, FN, Symmetric);
-  AccelFactor(M, FactorType, Symmetric, FSym, FNum, FStore);
 end;
 
 destructor TPardisoFactor.Destroy;
